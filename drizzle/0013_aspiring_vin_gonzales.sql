@@ -1,0 +1,1 @@
+CREATE INDEX `idx_integrations_user_active` ON `integrations` (`userId`,`isActive`);

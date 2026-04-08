@@ -1,0 +1,1 @@
+CREATE INDEX `idx_orders_lead_id` ON `orders` (`leadId`);

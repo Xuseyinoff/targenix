@@ -1,0 +1,1 @@
+CREATE INDEX `idx_orders_user_status` ON `orders` (`userId`,`status`);

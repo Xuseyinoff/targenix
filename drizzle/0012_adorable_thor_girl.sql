@@ -1,0 +1,1 @@
+CREATE INDEX `idx_facebook_connections_page_id` ON `facebook_connections` (`pageId`);

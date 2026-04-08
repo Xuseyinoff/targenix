@@ -1,0 +1,1 @@
+ALTER TABLE `facebook_connections` ADD `facebookAccountId` int;

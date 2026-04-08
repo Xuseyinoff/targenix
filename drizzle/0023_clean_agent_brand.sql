@@ -1,0 +1,1 @@
+ALTER TABLE `leads` ADD `platform` enum('fb','ig') DEFAULT 'fb' NOT NULL;

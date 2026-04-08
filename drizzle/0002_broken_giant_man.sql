@@ -1,0 +1,1 @@
+ALTER TABLE `facebook_connections` ADD CONSTRAINT `facebook_connections_pageId_unique` UNIQUE(`pageId`);

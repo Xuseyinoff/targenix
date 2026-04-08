@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm check:*)",
+      "Bash(pnpm dev:*)",
+      "Bash(pnpm add:*)",
+      "Bash(xargs grep:*)",
+      "Bash(pnpm test:*)",
+      "Bash(gh auth:*)",
+      "Bash(git --version)",
+      "Bash(git -C \"C:/Users/DELL/OneDrive/Desktop/targenix.uz\" status)",
+      "Bash(winget --version)"
+    ]
+  }
+}
