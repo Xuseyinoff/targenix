@@ -7,7 +7,6 @@
  */
 
 const REQUIRED = [
-  "DATABASE_URL",
   "APP_URL",
   "FACEBOOK_APP_SECRET",
   "FACEBOOK_VERIFY_TOKEN",
@@ -22,6 +21,15 @@ export function validateEnv(): void {
     if (!process.env[key]) {
       missing.push(key);
     }
+  }
+
+  // Database URL: accept any of these three (Railway uses different names)
+  const hasDb =
+    process.env.MYSQL_PUBLIC_URL ||
+    process.env.MYSQL_URL ||
+    process.env.DATABASE_URL;
+  if (!hasDb) {
+    missing.push("DATABASE_URL (or MYSQL_PUBLIC_URL / MYSQL_URL)");
   }
 
   if (missing.length > 0) {

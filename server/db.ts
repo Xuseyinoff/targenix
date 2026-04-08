@@ -18,13 +18,42 @@ import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
+/**
+ * Resolves the MySQL connection URL from environment variables.
+ * Railway auto-sets DATABASE_URL to a socket path (/var/lib/mysql) when MySQL
+ * is linked as a plugin. We prefer TCP URLs (MYSQL_PUBLIC_URL, MYSQL_URL) over
+ * socket paths so mysql2 can connect properly.
+ */
+function resolveDatabaseUrl(): string | undefined {
+  const candidates = [
+    process.env.MYSQL_PUBLIC_URL,  // Railway public TCP URL (preferred)
+    process.env.MYSQL_URL,          // Railway internal TCP URL
+    process.env.DATABASE_URL,       // Generic fallback
+  ];
+
+  for (const url of candidates) {
+    if (url && url.startsWith("mysql://")) {
+      return url;
+    }
+  }
+
+  // Last resort: return DATABASE_URL even if it's a socket (will fail gracefully)
+  return process.env.DATABASE_URL;
+}
+
 export async function getDb() {
-  if (!_db && process.env.DATABASE_URL) {
-    try {
-      _db = drizzle(process.env.DATABASE_URL);
-    } catch (error) {
-      console.warn("[Database] Failed to connect:", error);
-      _db = null;
+  if (!_db) {
+    const url = resolveDatabaseUrl();
+    if (url) {
+      try {
+        _db = drizzle(url);
+        console.log("[Database] Connected via", url.startsWith("mysql://")
+          ? url.replace(/:\/\/[^@]+@/, "://<credentials>@")
+          : "(socket)");
+      } catch (error) {
+        console.warn("[Database] Failed to connect:", error);
+        _db = null;
+      }
     }
   }
   return _db;
