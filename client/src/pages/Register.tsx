@@ -252,17 +252,19 @@ export default function Register() {
             </div>
           </div>
 
-          {/* OAuth */}
-          <button
-            onClick={() => { window.location.href = getLoginUrl(); }}
-            className="w-full py-2.5 rounded-xl font-medium text-slate-300 text-sm transition-all duration-200 hover:text-white flex items-center justify-center gap-2"
-            style={{
-              background: "rgba(255,255,255,0.04)",
-              border: "1px solid rgba(255,255,255,0.1)",
-            }}
-          >
-            Continue with Manus (Google / Apple)
-          </button>
+          {/* OAuth — only shown when VITE_OAUTH_PORTAL_URL + VITE_APP_ID are configured */}
+          {getLoginUrl() && (
+            <button
+              onClick={() => { window.location.href = getLoginUrl()!; }}
+              className="w-full py-2.5 rounded-xl font-medium text-slate-300 text-sm transition-all duration-200 hover:text-white flex items-center justify-center gap-2"
+              style={{
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.1)",
+              }}
+            >
+              Continue with Manus (Google / Apple)
+            </button>
+          )}
         </div>
 
         <p className="text-center text-sm text-slate-500 mt-6">
