@@ -2,10 +2,10 @@ import type { Request, Response, Router } from "express";
 import { Router as createRouter } from "express";
 import { eq } from "drizzle-orm";
 import { getDb } from "../db";
-import { webhookEvents, users, facebookConnections } from "../../drizzle/schema";
+import { webhookEvents, facebookConnections } from "../../drizzle/schema";
 import { verifyWebhookSignature } from "../services/facebookService";
 import { saveIncomingLead } from "../services/leadService";
-import { processLead } from "../services/leadService";
+import { dispatchLeadProcessing } from "../services/leadDispatch";
 import { addSseClient, emitWebhookEvent } from "./sseEmitter";
 import { log } from "../services/appLogger";
 
@@ -16,7 +16,7 @@ router.get("/events/stream", (req: Request, res: Response) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Origin", process.env.APP_URL || "http://localhost:3000");
   res.flushHeaders();
 
   // Send a heartbeat every 20s to keep the connection alive
@@ -156,12 +156,8 @@ router.post("/facebook", async (req: Request, res: Response) => {
     for (const userId of userIds) {
       const leadId = await saveIncomingLead({ userId, pageId, formId, leadgenId: `${leadgenId}-u${userId}`, rawData: value });
       if (leadId) {
-        setImmediate(async () => {
-          await processLead({ leadId, leadgenId, pageId, formId, userId }).catch(async (err) => {
-            await log.error("LEAD", `processLead failed — leadgenId=${leadgenId} userId=${userId}`, { error: String(err) }, leadId, pageId, userId);
-          });
-          emitWebhookEvent({ type: "processed", eventId: savedEventId, leadgenId, pageId, formId, processed: true, timestamp: new Date().toISOString() });
-        });
+        await dispatchLeadProcessing({ leadId, leadgenId, pageId, formId, userId });
+        emitWebhookEvent({ type: "processed", eventId: savedEventId, leadgenId, pageId, formId, processed: true, timestamp: new Date().toISOString() });
       }
     }
 
@@ -200,12 +196,8 @@ router.post("/facebook", async (req: Request, res: Response) => {
           const leadId = await saveIncomingLead({ userId, pageId, formId: formId || "", leadgenId, rawData: change.value });
 
           if (leadId) {
-            setImmediate(async () => {
-              await processLead({ leadId, leadgenId, pageId, formId: formId || "", userId }).catch(async (err) => {
-                await log.error("LEAD", `processLead failed — leadgenId=${leadgenId} userId=${userId}`, { error: String(err) }, leadId, pageId, userId);
-              });
-              emitWebhookEvent({ type: "processed", eventId: savedEventId, leadgenId, pageId, formId, processed: true, timestamp: new Date().toISOString() });
-            });
+            await dispatchLeadProcessing({ leadId, leadgenId, pageId, formId: formId || "", userId });
+            emitWebhookEvent({ type: "processed", eventId: savedEventId, leadgenId, pageId, formId, processed: true, timestamp: new Date().toISOString() });
           }
         }
 

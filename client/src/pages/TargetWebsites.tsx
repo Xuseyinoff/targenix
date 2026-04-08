@@ -484,7 +484,7 @@ export default function TargetWebsites() {
         {/* Header */}
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <h1 className="text-xl font-bold">Target Websites</h1>
+            <h1 className="text-xl font-bold">Destinations</h1>
             <p className="text-muted-foreground text-xs mt-0.5 hidden sm:block">
               Reusable affiliate site configurations — set up once, use in many Lead Routings
             </p>

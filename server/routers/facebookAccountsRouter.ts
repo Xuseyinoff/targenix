@@ -375,14 +375,14 @@ export const facebookAccountsRouter = router({
       const existing = await db
         .select({ id: facebookAccounts.id })
         .from(facebookAccounts)
-        .where(eq(facebookAccounts.fbUserId, profile.id))
+        .where(and(eq(facebookAccounts.userId, userId), eq(facebookAccounts.fbUserId, profile.id)))
         .limit(1);
       const encryptedToken = encrypt(longLivedToken);
       if (existing.length > 0) {
         await db
           .update(facebookAccounts)
           .set({ fbUserName: profile.name, accessToken: encryptedToken, tokenExpiresAt: expiresAt ?? undefined })
-          .where(eq(facebookAccounts.fbUserId, profile.id));
+          .where(and(eq(facebookAccounts.userId, userId), eq(facebookAccounts.fbUserId, profile.id)));
       } else {
         await db.insert(facebookAccounts).values({
           userId,

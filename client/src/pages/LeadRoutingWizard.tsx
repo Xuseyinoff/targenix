@@ -613,25 +613,25 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                 ) : !targetWebsites?.length ? (
                   <div className="text-center py-6 space-y-3">
                     <Globe className="h-10 w-10 text-muted-foreground mx-auto" />
-                    <p className="text-muted-foreground text-sm">No target websites configured yet.</p>
+                    <p className="text-muted-foreground text-sm">No destinations configured yet.</p>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => navigate("/target-websites")}
+                      onClick={() => navigate("/destinations")}
                     >
                       <Plus className="h-4 w-4 mr-1" />
-                      Add Target Website First
+                      Add Destination First
                     </Button>
                   </div>
                 ) : (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <Label>Select Target Website</Label>
+                      <Label>Select Destination</Label>
                       <Button
                         variant="ghost"
                         size="sm"
                         className="text-xs h-7 px-2"
-                        onClick={() => navigate("/target-websites")}
+                        onClick={() => navigate("/destinations")}
                       >
                         <Plus className="h-3 w-3 mr-1" />
                         Add New

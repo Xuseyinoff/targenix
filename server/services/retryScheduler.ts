@@ -10,8 +10,8 @@
 
 import { eq } from "drizzle-orm";
 import { getDb } from "../db";
-import { leads, users } from "../../drizzle/schema";
-import { processLead } from "./leadService";
+import { leads } from "../../drizzle/schema";
+import { dispatchLeadProcessing } from "./leadDispatch";
 
 /** How often to retry (ms). Default: every hour. */
 const RETRY_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
@@ -37,34 +37,47 @@ export async function retryAllFailedLeads(): Promise<{ retried: number }> {
     return { retried: 0 };
   }
 
-  // Reset all FAILED → RECEIVED in one query
-  await db
-    .update(leads)
-    .set({ status: "RECEIVED" })
-    .where(eq(leads.status, "FAILED"));
+  // Safety cap: never blast more than 500 at once. If backlog > 500,
+  // something systemic broke — fix root cause, not symptoms.
+  const toRetry = failedLeads.slice(0, 500);
+  if (failedLeads.length > 500) {
+    console.warn(`[RetryScheduler] Backlog too large (${failedLeads.length}), capping retry at 500`);
+  }
 
-  // Re-process each lead asynchronously
-  for (const lead of failedLeads) {
-    setImmediate(() => {
-      const result = processLead({
-        leadId: lead.id,
-        leadgenId: lead.leadgenId,
-        pageId: lead.pageId,
-        formId: lead.formId,
-        userId: lead.userId,
-      });
-      if (result && typeof result.catch === "function") {
-        result.catch((err: unknown) =>
-          console.error(`[RetryScheduler] lead ${lead.id} error:`, err)
+  // Reset selected FAILED leads → PENDING (not RECEIVED — PENDING means "queued, not yet processing")
+  // We do it per-lead to avoid a bulk update that races with new failures
+  const ids = toRetry.map((l) => l.id);
+  for (const id of ids) {
+    await db.update(leads).set({ status: "PENDING" }).where(eq(leads.id, id));
+  }
+
+  // Dispatch in batches of 10, with 2s between batches — prevents API rate-limit spikes
+  const BATCH_SIZE = 10;
+  const BATCH_DELAY_MS = 2000;
+
+  for (let i = 0; i < toRetry.length; i += BATCH_SIZE) {
+    const batch = toRetry.slice(i, i + BATCH_SIZE);
+    const delayMs = (i / BATCH_SIZE) * BATCH_DELAY_MS;
+
+    setTimeout(() => {
+      for (const lead of batch) {
+        void dispatchLeadProcessing({
+          leadId: lead.id,
+          leadgenId: lead.leadgenId,
+          pageId: lead.pageId,
+          formId: lead.formId,
+          userId: lead.userId,
+        }).catch((err: unknown) =>
+          console.error(`[RetryScheduler] dispatch failed for lead ${lead.id}:`, err)
         );
       }
-    });
+    }, delayMs);
   }
 
   console.log(
-    `[RetryScheduler] ${new Date().toISOString()} — retrying ${failedLeads.length} FAILED lead(s)`
+    `[RetryScheduler] ${new Date().toISOString()} — queued ${toRetry.length} FAILED lead(s) in batches of ${BATCH_SIZE}`
   );
-  return { retried: failedLeads.length };
+  return { retried: toRetry.length };
 }
 
 /**

@@ -13,6 +13,8 @@ import Connections from "./pages/Connections";
 import TargetWebsites from "./pages/TargetWebsites";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
+import ForgotPassword from "./pages/ForgotPassword";
+import ResetPassword from "./pages/ResetPassword";
 import LeadRoutingWizard from "./pages/LeadRoutingWizard";
 import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
@@ -72,7 +74,9 @@ function Router() {
       {/* Legacy redirects kept for any bookmarks */}
       <Route path="/facebook" component={Connections} />
       <Route path="/facebook-accounts" component={Connections} />
+      <Route path="/destinations" component={TargetWebsites} />
       <Route path="/target-websites" component={TargetWebsites} />
+      <Route path="/activity" component={Logs} />
       <Route path="/logs" component={Logs} />
       <Route path="/admin/logs" component={AdminLogs} />
       <Route path="/admin/backfill" component={AdminBackfill} />
@@ -87,6 +91,8 @@ function Router() {
       {/* Auth pages */}
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
+      <Route path="/forgot-password" component={ForgotPassword} />
+      <Route path="/reset-password" component={ResetPassword} />
       {/* Public pages */}
       <Route path="/privacy" component={Privacy} />
       <Route path="/terms" component={Terms} />

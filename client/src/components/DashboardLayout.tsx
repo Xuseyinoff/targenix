@@ -39,20 +39,43 @@ import {
   Webhook,
   Zap,
 } from "lucide-react";
+
+type NavItem = {
+  icon: React.ElementType;
+  label: string;
+  path: string;
+};
+
+type NavGroup = {
+  label?: string;
+  items: NavItem[];
+};
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
 
-const menuItems = [
-  { icon: LayoutDashboard, label: "Overview", path: "/overview" },
-  { icon: Zap, label: "Leads", path: "/leads" },
-  { icon: Plug, label: "Integrations", path: "/integrations" },
-  { icon: Facebook, label: "Connections", path: "/connections" },
-  { icon: Globe, label: "Target Websites", path: "/target-websites" },
-  { icon: ScrollText, label: "Logs", path: "/logs" },
-  { icon: Settings, label: "Settings", path: "/settings" },
+const navGroups: NavGroup[] = [
+  {
+    items: [
+      { icon: LayoutDashboard, label: "Overview", path: "/overview" },
+      { icon: Zap, label: "Leads", path: "/leads" },
+    ],
+  },
+  {
+    label: "Facebook",
+    items: [
+      { icon: Facebook, label: "Connections", path: "/connections" },
+      { icon: Plug, label: "Integrations", path: "/integrations" },
+      { icon: Globe, label: "Destinations", path: "/destinations" },
+    ],
+  },
+  {
+    items: [
+      { icon: ScrollText, label: "Activity", path: "/activity" },
+    ],
+  },
 ];
 
 const adminMenuItems = [
@@ -83,17 +106,9 @@ const businessToolsItems = [
     active: false,
     placeholder: true,
   },
-  {
-    icon: ScrollText,
-    label: "Logs",
-    path: "/business/logs",
-    active: false,
-    placeholder: true,
-  },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
-const BUSINESS_TOOLS_EXPANDED_KEY = "business-tools-expanded";
 const DEFAULT_WIDTH = 260;
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 400;
@@ -155,22 +170,17 @@ function DashboardLayoutContent({
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const activeMenuItem = menuItems.find((item) => item.path === location);
+  const allItems = navGroups.flatMap((g) => g.items);
+  const activeMenuItem = allItems.find((item) => item.path === location);
   const isMobile = useIsMobile();
 
   // Business Tools expand/collapse state — default expanded
-  const [businessToolsExpanded, setBusinessToolsExpanded] = useState(() => {
-    const saved = localStorage.getItem(BUSINESS_TOOLS_EXPANDED_KEY);
-    return saved === null ? true : saved === "true";
-  });
+  const [businessToolsExpanded, setBusinessToolsExpanded] = useState(false);
 
   const isBusinessToolsActive = businessToolsItems.some(
     (item) => location === item.path || location.startsWith("/business/")
   );
 
-  useEffect(() => {
-    localStorage.setItem(BUSINESS_TOOLS_EXPANDED_KEY, String(businessToolsExpanded));
-  }, [businessToolsExpanded]);
 
   useEffect(() => {
     if (isCollapsed) setIsResizing(false);
@@ -224,30 +234,43 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          <SidebarContent className="gap-0 pt-2">
-            {/* Main nav items */}
-            <SidebarMenu className="px-2 py-1">
-              {menuItems.map((item) => {
-                const isActive = location === item.path;
-                return (
-                  <SidebarMenuItem key={item.path}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => setLocation(item.path)}
-                      tooltip={item.label}
-                      className="h-9 transition-all font-normal text-sidebar-foreground/80 hover:text-sidebar-foreground"
-                    >
-                      <item.icon
-                        className={`h-4 w-4 ${isActive ? "text-sidebar-primary" : ""}`}
-                      />
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
+          <SidebarContent className="gap-0 pt-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+            {/* Main nav groups */}
+            {navGroups.map((group, gi) => (
+              <div key={gi}>
+                {gi > 0 && !isCollapsed && (
+                  <div className="mx-3 my-1 border-t border-sidebar-border/50" />
+                )}
+                {group.label && !isCollapsed && (
+                  <div className="px-4 pt-2 pb-0.5">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/40">
+                      {group.label}
+                    </span>
+                  </div>
+                )}
+                <SidebarMenu className="px-2 py-0.5">
+                  {group.items.map((item) => {
+                    const isActive = location === item.path;
+                    return (
+                      <SidebarMenuItem key={item.path}>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          onClick={() => setLocation(item.path)}
+                          tooltip={item.label}
+                          className="h-9 transition-all font-normal text-sidebar-foreground/80 hover:text-sidebar-foreground"
+                        >
+                          <item.icon className={`h-4 w-4 ${isActive ? "text-sidebar-primary" : ""}`} />
+                          <span>{item.label}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </div>
+            ))}
 
             {/* Business Tools section */}
+            {!isCollapsed && <div className="mx-3 my-1 border-t border-sidebar-border/50" />}
             <div className="px-2 mt-1">
               {/* Section header — collapsible */}
               <button
@@ -300,6 +323,7 @@ function DashboardLayoutContent({
                               } else {
                                 setLocation(item.path);
                               }
+                              setBusinessToolsExpanded(false);
                             }}
                             tooltip={item.label}
                             className={`
@@ -360,7 +384,8 @@ function DashboardLayoutContent({
             {/* Admin section — only visible to admins */}
             {user?.role === "admin" && (
               <>
-                <div className="px-3 py-1.5 mt-2">
+                {!isCollapsed && <div className="mx-3 my-1 border-t border-sidebar-border/50" />}
+                <div className="px-3 py-1.5 mt-1">
                   <span className="text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/40">
                     Admin
                   </span>
@@ -390,34 +415,51 @@ function DashboardLayoutContent({
           </SidebarContent>
 
           <SidebarFooter className="p-3 border-t border-sidebar-border">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-sidebar-accent/50 transition-colors w-full text-left focus:outline-none">
-                  <Avatar className="h-8 w-8 border border-sidebar-border shrink-0">
-                    <AvatarFallback className="text-xs font-medium bg-primary/20 text-sidebar-foreground">
-                      {user?.name?.charAt(0).toUpperCase() ?? "U"}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
-                    <p className="text-xs font-medium truncate leading-none text-sidebar-foreground">
-                      {user?.name || "User"}
-                    </p>
-                    <p className="text-xs text-sidebar-foreground/50 truncate mt-1">
-                      {user?.email || ""}
-                    </p>
-                  </div>
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem
-                  onClick={logout}
-                  className="cursor-pointer text-destructive focus:text-destructive"
+            <div className="flex items-center gap-1">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-sidebar-accent/50 transition-colors flex-1 min-w-0 text-left focus:outline-none">
+                    <Avatar className="h-8 w-8 border border-sidebar-border shrink-0">
+                      <AvatarFallback className="text-xs font-medium bg-primary/20 text-sidebar-foreground">
+                        {user?.name?.charAt(0).toUpperCase() ?? "U"}
+                      </AvatarFallback>
+                    </Avatar>
+                    {!isCollapsed && (
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium truncate leading-none text-sidebar-foreground">
+                          {user?.name || "User"}
+                        </p>
+                        <p className="text-xs text-sidebar-foreground/50 truncate mt-1">
+                          {user?.email || ""}
+                        </p>
+                      </div>
+                    )}
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem
+                    onClick={logout}
+                    className="cursor-pointer text-destructive focus:text-destructive"
+                  >
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>Sign out</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {!isCollapsed && (
+                <button
+                  onClick={() => setLocation("/settings")}
+                  className={`h-8 w-8 flex items-center justify-center rounded-lg transition-colors shrink-0 focus:outline-none
+                    ${location === "/settings"
+                      ? "bg-sidebar-accent text-sidebar-primary"
+                      : "text-sidebar-foreground/50 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                    }`}
+                  title="Settings"
                 >
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>Sign out</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  <Settings className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           </SidebarFooter>
         </Sidebar>
         <div

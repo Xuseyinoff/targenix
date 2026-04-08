@@ -35,6 +35,16 @@ export const users = mysqlTable("users", {
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
+// ─── Password Reset Tokens ────────────────────────────────────────────────────
+export const passwordResetTokens = mysqlTable("password_reset_tokens", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  token: varchar("token", { length: 64 }).notNull().unique(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  usedAt: timestamp("usedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
 // ─── Facebook Accounts ────────────────────────────────────────────────────────
 // Stores a connected Facebook User Account (obtained via User Access Token).
 // One platform user can connect multiple Facebook accounts.
@@ -214,6 +224,12 @@ export const leads = mysqlTable("leads", {
   uqLeadgenUser: uniqueIndex("uq_leads_leadgen_user").on(t.leadgenId, t.userId),
   // Speeds up retryAllFailedLeads and WHERE userId=? AND status=? queries
   idxUserStatus: index("idx_leads_user_status").on(t.userId, t.status),
+  // Speeds up paginated leads dashboard (WHERE userId=? ORDER BY createdAt DESC)
+  idxUserCreatedAt: index("idx_leads_user_created_at").on(t.userId, t.createdAt),
+  // Speeds up per-page analytics (WHERE userId=? AND pageId=? AND status=?)
+  idxUserPageStatus: index("idx_leads_user_page_status").on(t.userId, t.pageId, t.status),
+  // Speeds up global time-series queries (admin analytics, archival)
+  idxCreatedAt: index("idx_leads_created_at").on(t.createdAt),
 }));
 
 export type Lead = typeof leads.$inferSelect;
@@ -236,6 +252,10 @@ export const orders = mysqlTable("orders", {
   // Speeds up: getOrderStats (WHERE userId = ?) and any filter by userId + status
   // e.g. SELECT COUNT(*) ... WHERE userId = ? (covers SUM(CASE WHEN status = ...) aggregations)
   idxUserStatus: index("idx_orders_user_status").on(t.userId, t.status),
+  // Speeds up: per-integration analytics (WHERE integrationId = ? AND status = ?)
+  idxIntegrationStatus: index("idx_orders_integration_status").on(t.integrationId, t.status),
+  // Speeds up: time-series order analytics and archival
+  idxCreatedAt: index("idx_orders_created_at").on(t.createdAt),
 }));
 
 export type Order = typeof orders.$inferSelect;
@@ -289,10 +309,12 @@ export const appLogs = mysqlTable("app_logs", {
 }, (t) => ({
   // Retention cleanup + Logs page pagination filtered by user
   idxUserCreatedAt: index("idx_app_logs_user_created_at").on(t.userId, t.createdAt),
-  // Admin filter by logType
-  idxLogType: index("idx_app_logs_log_type").on(t.logType),
-  // Admin filter by eventType
-  idxEventType: index("idx_app_logs_event_type").on(t.eventType),
+  // Admin filter by logType + time (covers ORDER BY createdAt on filtered results)
+  idxLogTypeCreatedAt: index("idx_app_logs_log_type_created_at").on(t.logType, t.createdAt),
+  // Admin filter by eventType + time
+  idxEventTypeCreatedAt: index("idx_app_logs_event_type_created_at").on(t.eventType, t.createdAt),
+  // Admin filter by level + time (ERROR/WARN dashboards)
+  idxLevelCreatedAt: index("idx_app_logs_level_created_at").on(t.level, t.createdAt),
   // Global time-based queries (admin dashboard, archival cron)
   idxCreatedAt: index("idx_app_logs_created_at").on(t.createdAt),
 }));

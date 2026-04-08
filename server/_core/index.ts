@@ -1,5 +1,9 @@
 import "dotenv/config";
+import { validateEnv } from "./validateEnv";
+validateEnv();
 import express from "express";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
@@ -12,9 +16,8 @@ import facebookWebhookRouter from "../webhooks/facebookWebhook";
 import { registerFacebookOAuthRoutes } from "../routes/facebookOAuthCallback";
 import { handleTelegramWebhook, registerTelegramWebhook } from "../webhooks/telegramWebhook";
 import { log } from "../services/appLogger";
-import { startRetryScheduler } from "../services/retryScheduler";
-import { startLogRetentionScheduler } from "../services/logRetentionScheduler";
-import { startFormsRefreshScheduler } from "../services/formsRefreshScheduler";
+import { getLeadDispatchMode } from "../services/leadDispatch";
+import { getDb } from "../db";
 import type { Request, Response, NextFunction } from "express";
 
 /**
@@ -93,6 +96,35 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
+  // Security headers
+  app.use(
+    helmet({
+      contentSecurityPolicy: false, // Vite/React inline scripts require this off
+      crossOriginEmbedderPolicy: false,
+    })
+  );
+
+  // Rate limiting — auth endpoints (login / register): 10 attempts per 15 min per IP
+  const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many attempts. Please try again in 15 minutes." },
+  });
+  app.use("/api/trpc/emailAuth.login", authLimiter);
+  app.use("/api/trpc/emailAuth.register", authLimiter);
+
+  // Rate limiting — webhook endpoint: 500 req per min per IP (DDoS protection)
+  const webhookLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 500,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many webhook requests." },
+  });
+  app.use("/api/webhooks", webhookLimiter);
+
   // Capture raw body for webhook signature verification BEFORE json parsing
   app.use((req, _res, next) => {
     const chunks: Buffer[] = [];
@@ -109,6 +141,39 @@ async function startServer() {
 
   // HTTP request/response logging (after body parsers so body is available)
   app.use(httpLogger);
+
+  // Health check — used by Railway, Betterstack, and uptime monitors
+  app.get("/api/health", async (_req, res) => {
+    let dbOk = false;
+    let lastWebhookAt: string | null = null;
+
+    try {
+      const db = await getDb();
+      if (db) {
+        const { webhookEvents } = await import("../../drizzle/schema");
+        const { desc } = await import("drizzle-orm");
+        const rows = await db
+          .select({ createdAt: webhookEvents.createdAt })
+          .from(webhookEvents)
+          .orderBy(desc(webhookEvents.createdAt))
+          .limit(1);
+        dbOk = true;
+        lastWebhookAt = rows[0]?.createdAt?.toISOString() ?? null;
+      }
+    } catch {
+      dbOk = false;
+    }
+
+    const status = dbOk ? "ok" : "degraded";
+    res.status(dbOk ? 200 : 503).json({
+      status,
+      dispatchMode: getLeadDispatchMode(),
+      dbConnected: dbOk,
+      lastWebhookAt,
+      uptime: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
+  });
 
   // Webhook routes (no auth required)
   app.use("/api/webhooks", facebookWebhookRouter);
@@ -151,7 +216,11 @@ async function startServer() {
     console.log(`Server running on http://localhost:${port}/`);
   });
 
-  console.log("[Server] Lead processing: synchronous in-process mode (no Redis required)");
+  const dispatchMode = getLeadDispatchMode();
+  console.log(`[Server] Lead dispatch mode: ${dispatchMode}`);
+  if (dispatchMode === "in-process") {
+    console.warn("[Server] WARNING: REDIS_URL not set — leads processed in-process (not durable). Set REDIS_URL for production.");
+  }
 
   // Register Telegram bot webhook URL with Telegram servers
   const appUrl = process.env.APP_URL;
@@ -159,14 +228,9 @@ async function startServer() {
     void registerTelegramWebhook(appUrl);
   }
 
-  // Start hourly auto-retry scheduler for FAILED leads
-  startRetryScheduler();
-
-  // Start hourly log retention cleanup (48h for users, 30d for admins)
-  startLogRetentionScheduler();
-
-  // Start 24h forms refresh scheduler (keeps facebook_forms table up to date)
-  startFormsRefreshScheduler();
+  // NOTE: Background schedulers (retry, log retention, forms refresh) are intentionally
+  // NOT started here. They run exclusively in the worker process (server/workers/run.ts).
+  // This prevents duplicate scheduler runs when the web server scales to multiple instances.
 }
 
 startServer().catch(console.error);

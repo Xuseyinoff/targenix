@@ -9,6 +9,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
@@ -19,6 +28,7 @@ import {
   Loader2,
   ExternalLink,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 
 export default function Settings() {
@@ -36,6 +46,8 @@ export default function Settings() {
 
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState("");
 
   const generateTokenMutation = trpc.telegram.generateConnectToken.useMutation({
     onSuccess: (data) => {
@@ -46,6 +58,14 @@ export default function Settings() {
       toast.error(err.message);
       setConnecting(false);
     },
+  });
+
+  const deleteAccountMutation = trpc.emailAuth.deleteAccount.useMutation({
+    onSuccess: () => {
+      toast.success("Account deleted.");
+      window.location.href = "/";
+    },
+    onError: (err) => toast.error(err.message),
   });
 
   const disconnectMutation = trpc.telegram.disconnect.useMutation({
@@ -224,7 +244,69 @@ export default function Settings() {
             )}
           </CardContent>
         </Card>
+        <Separator />
+
+        {/* ─── Danger Zone ────────────────────────────────────────────────── */}
+        <Card className="border-destructive/40">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-lg bg-destructive/10 flex items-center justify-center">
+                <Trash2 className="h-5 w-5 text-destructive" />
+              </div>
+              <div>
+                <CardTitle className="text-base text-destructive">Danger Zone</CardTitle>
+                <CardDescription>
+                  Permanently delete your account and all associated data
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground mb-4">
+              This will permanently delete your account, all leads, integrations, Facebook connections, destinations, and activity logs. <strong>This action cannot be undone.</strong>
+            </p>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setShowDeleteDialog(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-2" />
+              Delete my account
+            </Button>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Delete Account Dialog */}
+      <Dialog open={showDeleteDialog} onOpenChange={(v) => { setShowDeleteDialog(v); setDeleteConfirm(""); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-destructive">Delete account</DialogTitle>
+            <DialogDescription>
+              This will permanently delete all your data. Type <strong>DELETE</strong> to confirm.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            placeholder="Type DELETE to confirm"
+            value={deleteConfirm}
+            onChange={(e) => setDeleteConfirm(e.target.value)}
+            autoComplete="off"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setShowDeleteDialog(false); setDeleteConfirm(""); }}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteConfirm !== "DELETE" || deleteAccountMutation.isPending}
+              onClick={() => deleteAccountMutation.mutate()}
+            >
+              {deleteAccountMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Delete permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }
