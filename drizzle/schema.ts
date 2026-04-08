@@ -299,3 +299,23 @@ export const appLogs = mysqlTable("app_logs", {
 
 export type AppLog = typeof appLogs.$inferSelect;
 export type InsertAppLog = typeof appLogs.$inferInsert;
+
+// ─── Facebook OAuth States ───────────────────────────────────────────────────
+// Stores CSRF state tokens for Facebook Authorization Code Flow.
+// Each state is tied to a userId and expires after 10 minutes.
+export const facebookOauthStates = mysqlTable("facebook_oauth_states", {
+  id: int("id").autoincrement().primaryKey(),
+  /** The random CSRF state token sent to Facebook */
+  state: varchar("state", { length: 128 }).notNull().unique(),
+  /** The user who initiated the OAuth flow */
+  userId: int("userId").notNull(),
+  /** When this state expires (10 minutes from creation) */
+  expiresAt: timestamp("expiresAt").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  idxState: uniqueIndex("uq_facebook_oauth_states_state").on(t.state),
+  idxUserId: index("idx_facebook_oauth_states_user_id").on(t.userId),
+}));
+
+export type FacebookOauthState = typeof facebookOauthStates.$inferSelect;
+export type InsertFacebookOauthState = typeof facebookOauthStates.$inferInsert;

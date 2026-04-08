@@ -18,7 +18,7 @@ import {
   fetchLeadsFromForm,
   extractLeadFields,
 } from "../services/facebookService";
-import { dispatchLeadProcessing } from "../services/leadDispatch";
+import { processLead } from "../services/leadService";
 
 export const leadsRouter = router({
   list: protectedProcedure
@@ -107,17 +107,19 @@ export const leadsRouter = router({
       // Reset status to RECEIVED so processLead can re-run
       await db
         .update(leads)
-        .set({ status: "PENDING" })
+        .set({ status: "RECEIVED" })
         .where(eq(leads.id, lead.id));
 
       // Re-run lead processing (non-blocking)
-      void dispatchLeadProcessing({
+      setImmediate(() => {
+        processLead({
           leadId: lead.id,
           leadgenId: lead.leadgenId,
           pageId: lead.pageId,
           formId: lead.formId,
           userId: lead.userId,
         }).catch((err) => console.error(`[RetryLead] lead ${lead.id} error:`, err));
+      });
 
       return { ok: true, leadId: lead.id };
     }),
@@ -139,18 +141,20 @@ export const leadsRouter = router({
       // Reset all FAILED → RECEIVED
       await db
         .update(leads)
-        .set({ status: "PENDING" })
+        .set({ status: "RECEIVED" })
         .where(and(eq(leads.userId, userId), eq(leads.status, "FAILED")));
 
       // Re-process each lead
       for (const lead of failedLeads) {
-        void dispatchLeadProcessing({
+        setImmediate(() => {
+          processLead({
             leadId: lead.id,
             leadgenId: lead.leadgenId,
             pageId: lead.pageId,
             formId: lead.formId,
             userId: lead.userId,
           }).catch((err) => console.error(`[RetryAllFailed] lead ${lead.id} error:`, err));
+        });
       }
 
       console.log(`[RetryAllFailed] Retrying ${failedLeads.length} failed leads for user ${userId}`);
@@ -267,7 +271,7 @@ export const leadsRouter = router({
         const existing = await db
           .select({ id: leads.id })
           .from(leads)
-          .where(and(eq(leads.leadgenId, item.id), eq(leads.userId, userId)))
+          .where(eq(leads.leadgenId, item.id))
           .limit(1);
 
         if (existing.length > 0) {
@@ -292,11 +296,12 @@ export const leadsRouter = router({
         const [saved] = await db
           .select({ id: leads.id })
           .from(leads)
-          .where(and(eq(leads.leadgenId, item.id), eq(leads.userId, userId)))
+          .where(eq(leads.leadgenId, item.id))
           .limit(1);
 
         if (saved) {
-          void dispatchLeadProcessing({
+          setImmediate(() => {
+            processLead({
               leadId: saved.id,
               leadgenId: item.id,
               pageId: input.pageId,
@@ -305,6 +310,7 @@ export const leadsRouter = router({
             }).catch((err) =>
               console.error("[PollLeads] processLead error:", err)
             );
+          });
         }
 
         synced++;

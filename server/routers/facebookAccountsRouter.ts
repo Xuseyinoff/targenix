@@ -24,6 +24,7 @@ import {
   getFbUserProfile,
   listUserPages,
   getAllGrantedPages,
+  getBusinessManagerPages,
   listPageLeadForms,
   getFormFields,
   subscribePageToApp,
@@ -186,11 +187,24 @@ export const facebookAccountsRouter = router({
           connectedAt: now,
         });
         accountId = (inserted as unknown as { insertId: number }).insertId;
+      }      // ── Step 4: Fetch ALL granted pages (personal + Business Manager) ───────
+      const pages = await getAllGrantedPages(longLivedToken, appId, appSecret);
+
+      // Also fetch Business Manager pages (requires business_management scope)
+      let bmPages: typeof pages = [];
+      try {
+        bmPages = await getBusinessManagerPages(longLivedToken, appId, appSecret);
+      } catch (err) {
+        console.warn("[FB] Business Manager pages fetch failed (non-critical):", String(err));
       }
 
-      // ── Step 4: Fetch ALL granted pages ───────────────────────────────────
-      const pages = await getAllGrantedPages(longLivedToken, appId, appSecret);
-      const returnedPageIds = new Set(pages.map((p) => p.id));
+      // Merge and deduplicate pages by ID
+      const mergedPageMap = new Map(pages.map((p) => [p.id, p]));
+      for (const p of bmPages) {
+        if (!mergedPageMap.has(p.id)) mergedPageMap.set(p.id, p);
+      }
+      const allPages = Array.from(mergedPageMap.values());
+      const returnedPageIds = new Set(allPages.map((p) => p.id));
 
       const results: Array<{
         pageId: string;
@@ -218,8 +232,8 @@ export const facebookAccountsRouter = router({
         }
       }
 
-      // ── Step 6: Subscribe each returned page and upsert connection ─────────
-      for (const page of pages) {
+      // ── Step 6: Subscribe each returned page and upsert connection ─────────────────
+      for (const page of allPages) {
         let subscribed = false;
         let subscriptionError: string | undefined;
 
@@ -443,9 +457,9 @@ export const facebookAccountsRouter = router({
       const [conn] = await db
         .select()
         .from(facebookConnections)
-        .where(eq(facebookConnections.pageId, input.pageId))
+        .where(and(eq(facebookConnections.pageId, input.pageId), eq(facebookConnections.userId, userId)))
         .limit(1);
-      if (!conn || conn.userId !== userId) throw new Error("Page not found in connections");
+      if (!conn) throw new Error("Page not found in your connections");
       const pageToken = decrypt(conn.accessToken);
       const forms = await listPageLeadForms(input.pageId, pageToken);
       return forms;
@@ -462,9 +476,9 @@ export const facebookAccountsRouter = router({
       const [conn] = await db
         .select()
         .from(facebookConnections)
-        .where(eq(facebookConnections.pageId, input.pageId))
+        .where(and(eq(facebookConnections.pageId, input.pageId), eq(facebookConnections.userId, userId)))
         .limit(1);
-      if (!conn || conn.userId !== userId) throw new Error("Page not found in connections");
+      if (!conn) throw new Error("Page not found in your connections");
       const pageToken = decrypt(conn.accessToken);
       const details = await getFormFields(input.formId, pageToken);
       return details.questions ?? [];
@@ -505,7 +519,7 @@ export const facebookAccountsRouter = router({
         const [conn] = await db
           .select()
           .from(facebookConnections)
-          .where(eq(facebookConnections.pageId, input.pageId))
+          .where(and(eq(facebookConnections.pageId, input.pageId), eq(facebookConnections.userId, userId)))
           .limit(1);
         if (conn) {
           pageAccessToken = decrypt(conn.accessToken);
@@ -520,16 +534,16 @@ export const facebookAccountsRouter = router({
       const result = await subscribePageToApp(input.pageId, pageAccessToken);
       const encryptedPageToken = encrypt(pageAccessToken);
 
-      const existing = await db
+       const existing = await db
         .select({ id: facebookConnections.id })
         .from(facebookConnections)
-        .where(eq(facebookConnections.pageId, input.pageId))
+        .where(and(eq(facebookConnections.pageId, input.pageId), eq(facebookConnections.userId, userId)))
         .limit(1);
       if (existing.length > 0) {
         await db
           .update(facebookConnections)
           .set({ accessToken: encryptedPageToken, pageName: pageName ?? undefined, isActive: true, facebookAccountId: input.accountId })
-          .where(eq(facebookConnections.pageId, input.pageId));
+          .where(and(eq(facebookConnections.pageId, input.pageId), eq(facebookConnections.userId, userId)));
       } else {
         await db.insert(facebookConnections).values({
           userId,

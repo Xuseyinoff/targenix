@@ -88,6 +88,35 @@ export async function graphRequest<T>(
   }
 }
 
+// ─── Authorization Code Exchange ────────────────────────────────────────────
+
+/**
+ * Exchange an Authorization Code for a short-lived user access token.
+ * This is the server-side step in the Authorization Code Flow.
+ * The code is received from Facebook's OAuth callback redirect.
+ */
+export async function exchangeCodeForToken(
+  code: string,
+  appId: string,
+  appSecret: string,
+  redirectUri: string
+): Promise<string> {
+  const result = await graphRequest<{ access_token: string; token_type: string; expires_in?: number }>(
+    "GET",
+    "/oauth/access_token",
+    {
+      params: {
+        client_id: appId,
+        client_secret: appSecret,
+        redirect_uri: redirectUri,
+        code,
+      },
+      logLabel: "exchangeCodeForToken",
+    }
+  );
+  return result.access_token;
+}
+
 // ─── Token Exchange ───────────────────────────────────────────────────────────
 
 export interface LongLivedTokenResult {
@@ -223,6 +252,98 @@ export async function getAllGrantedPages(
     pageIds: allPages.map((p) => p.id),
   });
   return allPages;
+}
+
+// ─── Business Manager Pages ─────────────────────────────────────────────────
+
+/**
+ * Fetch pages owned by the user's Business Manager accounts.
+ * Requires business_management scope.
+ * Merges results with personal pages for a complete list.
+ */
+export async function getBusinessManagerPages(
+  userAccessToken: string,
+  appId: string,
+  appSecret: string
+): Promise<FbPage[]> {
+  const appToken = `${appId}|${appSecret}`;
+
+  // 1. List all businesses the user has access to
+  let businessIds: string[] = [];
+  try {
+    const bizResult = await graphRequest<{ data: Array<{ id: string; name: string }> }>(
+      "GET",
+      "/me/businesses",
+      {
+        params: {
+          access_token: userAccessToken,
+          fields: "id,name",
+          limit: 100,
+        },
+        logLabel: "getBusinesses",
+      }
+    );
+    businessIds = (bizResult.data ?? []).map((b) => b.id);
+    await log.info("FACEBOOK", `Found ${businessIds.length} Business Manager accounts`, { businessIds });
+  } catch (err) {
+    await log.warn("FACEBOOK", "Failed to fetch businesses (user may not have BM access)", {
+      error: String(err),
+    });
+    return [];
+  }
+
+  if (businessIds.length === 0) return [];
+
+  // 2. For each business, fetch owned pages
+  const pageMap = new Map<string, FbPage>();
+
+  for (const bizId of businessIds) {
+    try {
+      const pagesResult = await graphRequest<{ data: Array<{ id: string; name: string }> }>(
+        "GET",
+        `/${bizId}/owned_pages`,
+        {
+          params: {
+            access_token: userAccessToken,
+            fields: "id,name",
+            limit: 100,
+          },
+          logLabel: `getBizOwnedPages(${bizId})`,
+        }
+      );
+
+      for (const page of pagesResult.data ?? []) {
+        if (pageMap.has(page.id)) continue;
+        // Fetch page-level access token for this page
+        try {
+          const pageWithToken = await graphRequest<FbPage>("GET", `/${page.id}`, {
+            params: {
+              access_token: userAccessToken,
+              fields: "id,name,access_token,category",
+            },
+            logLabel: `getBizPageToken(${page.id})`,
+          });
+          if (pageWithToken.access_token) {
+            pageMap.set(page.id, pageWithToken);
+          }
+        } catch (err) {
+          await log.warn("FACEBOOK", `Failed to get token for BM page ${page.id}`, {
+            error: String(err),
+          });
+        }
+      }
+    } catch (err) {
+      await log.warn("FACEBOOK", `Failed to fetch pages for business ${bizId}`, {
+        error: String(err),
+      });
+    }
+  }
+
+  const bmPages = Array.from(pageMap.values());
+  await log.info("FACEBOOK", `getBusinessManagerPages: returning ${bmPages.length} BM pages`, {
+    pageIds: bmPages.map((p) => p.id),
+  });
+  return bmPages;
 }
 
 // ─── Lead Forms ───────────────────────────────────────────────────────────────

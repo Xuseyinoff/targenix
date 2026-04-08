@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -29,50 +29,33 @@ import {
   ChevronDown,
   ChevronRight,
   Plus,
+  ShieldCheck,
 } from "lucide-react";
 
-const FB_APP_ID = import.meta.env.VITE_FACEBOOK_APP_ID as string;
-const FB_PERMISSIONS =
-  "pages_show_list,pages_read_engagement,pages_manage_metadata,leads_retrieval";
-
+/**
+ * Connections page — uses Authorization Code Flow (server-side) for security.
+ *
+ * Flow:
+ *  1. Click "Connect Facebook Account"
+ *  2. Frontend calls /api/auth/facebook/initiate → server generates CSRF state, returns OAuth URL
+ *  3. Frontend opens OAuth URL in a popup window
+ *  4. Facebook redirects to /api/auth/facebook/callback with code+state
+ *  5. Server verifies CSRF state, exchanges code for token, saves pages
+ *  6. Callback page sends postMessage to opener with result
+ *  7. Frontend receives message, shows success/error, refreshes data
+ */
 export default function Connections() {
-  const [fbSdkReady, setFbSdkReady] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [connectResult, setConnectResult] = useState<{
     fbUserName: string;
-    connectedAt?: Date;
     warnings?: string[];
     pages: Array<{ pageId: string; pageName: string; subscribed: boolean; isNew?: boolean; error?: string }>;
   } | null>(null);
   const [expandedAccounts, setExpandedAccounts] = useState<Set<number>>(new Set());
+  const popupRef = useRef<Window | null>(null);
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const utils = trpc.useUtils();
-
-  // ── Load FB SDK ────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (window.FB) {
-      setFbSdkReady(true);
-      return;
-    }
-    window.fbAsyncInit = () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (window.FB as any).init({
-        appId: FB_APP_ID,
-        cookie: true,
-        xfbml: false,
-        version: "v21.0",
-      });
-      setFbSdkReady(true);
-    };
-    if (!document.getElementById("facebook-jssdk")) {
-      const script = document.createElement("script");
-      script.id = "facebook-jssdk";
-      script.src = "https://connect.facebook.net/en_US/sdk.js";
-      script.async = true;
-      script.defer = true;
-      document.body.appendChild(script);
-    }
-  }, []);
 
   // ── Queries ────────────────────────────────────────────────────────────────
   const {
@@ -84,28 +67,6 @@ export default function Connections() {
   });
 
   // ── Mutations ──────────────────────────────────────────────────────────────
-  const connectMutation = trpc.facebookAccounts.connectAndSubscribeAll.useMutation({
-    onSuccess: (data) => {
-      setConnectResult({
-        fbUserName: data.fbUserName,
-        connectedAt: data.connectedAt,
-        warnings: data.warnings,
-        pages: data.pages,
-      });
-      utils.facebookAccounts.getAccountsWithPages.invalidate();
-      utils.facebookAccounts.listConnectedPages.invalidate();
-      const subscribed = data.pages.filter((p) => p.subscribed).length;
-      const newPages = data.pages.filter((p) => p.isNew).length;
-      toast.success(
-        `Connected as ${data.fbUserName} — ${subscribed}/${data.pages.length} pages subscribed${newPages > 0 ? `, ${newPages} new` : ""}.`
-      );
-    },
-    onError: (err) => {
-      toast.error(err.message);
-    },
-    onSettled: () => setConnecting(false),
-  });
-
   const toggleMutation = trpc.facebookAccounts.togglePageActive.useMutation({
     onSuccess: () => {
       utils.facebookAccounts.getAccountsWithPages.invalidate();
@@ -127,38 +88,115 @@ export default function Connections() {
     },
   });
 
-  // ── Handlers ───────────────────────────────────────────────────────────────
-  const handleConnectFacebook = useCallback(() => {
-    if (!fbSdkReady || !window.FB) {
-      toast.error("Facebook SDK not ready. Please wait a moment and try again.");
-      return;
+  // ── Listen for postMessage from OAuth popup ────────────────────────────────
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      // Only handle messages from our own origin
+      if (event.origin !== window.location.origin) return;
+
+      const data = event.data;
+      if (!data || typeof data !== "object") return;
+
+      if (data.type === "fb_oauth_success") {
+        setConnecting(false);
+        setConnectResult({
+          fbUserName: data.fbUserName,
+          warnings: data.warnings ?? [],
+          pages: data.pages ?? [],
+        });
+        utils.facebookAccounts.getAccountsWithPages.invalidate();
+        utils.facebookAccounts.listConnectedPages.invalidate();
+
+        const subscribed = (data.pages ?? []).filter((p: { subscribed: boolean }) => p.subscribed).length;
+        const newPages = (data.pages ?? []).filter((p: { isNew: boolean }) => p.isNew).length;
+        toast.success(
+          `Connected as ${data.fbUserName} — ${subscribed}/${(data.pages ?? []).length} pages subscribed${newPages > 0 ? `, ${newPages} new` : ""}.`
+        );
+
+        // Clean up popup polling
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+      } else if (data.type === "fb_oauth_error") {
+        setConnecting(false);
+        toast.error(data.error ?? "Facebook connection failed.");
+
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+      }
     }
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [utils]);
+
+  // ── Cleanup on unmount ─────────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (popupRef.current && !popupRef.current.closed) popupRef.current.close();
+    };
+  }, []);
+
+  // ── Connect Facebook Account (Authorization Code Flow) ─────────────────────
+  const handleConnectFacebook = useCallback(async () => {
+    if (connecting) return;
     setConnecting(true);
     setConnectResult(null);
 
-    const doLogin = () => {
-      window.FB!.login(
-        (response) => {
-          if (response.authResponse?.accessToken) {
-            connectMutation.mutate({ accessToken: response.authResponse.accessToken });
-          } else {
-            setConnecting(false);
-            toast.error("Facebook login was cancelled or permissions were denied.");
-          }
-        },
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        { scope: FB_PERMISSIONS, auth_type: "rerequest", return_scopes: true } as any
-      );
-    };
+    try {
+      // Step 1: Get OAuth URL from server (server generates CSRF state)
+      const response = await fetch("/api/auth/facebook/initiate", {
+        credentials: "include",
+      });
 
-    window.FB!.getLoginStatus((statusResponse) => {
-      if (statusResponse.status === "connected") {
-        window.FB!.logout(() => doLogin());
-      } else {
-        doLogin();
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Failed to initiate OAuth" }));
+        throw new Error(errorData.error ?? "Failed to initiate OAuth");
       }
-    });
-  }, [fbSdkReady, connectMutation]);
+
+      const { oauthUrl } = await response.json();
+
+      // Step 2: Open OAuth URL in popup
+      const popupWidth = 600;
+      const popupHeight = 700;
+      const left = Math.round(window.screenX + (window.outerWidth - popupWidth) / 2);
+      const top = Math.round(window.screenY + (window.outerHeight - popupHeight) / 2);
+
+      const popup = window.open(
+        oauthUrl,
+        "facebook_oauth",
+        `width=${popupWidth},height=${popupHeight},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`
+      );
+
+      if (!popup) {
+        throw new Error("Popup was blocked. Please allow popups for this site and try again.");
+      }
+
+      popupRef.current = popup;
+
+      // Step 3: Poll for popup closure (detect user cancellation)
+      pollIntervalRef.current = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(pollIntervalRef.current!);
+          pollIntervalRef.current = null;
+          // If still connecting after popup closed, user cancelled
+          setConnecting((prev) => {
+            if (prev) {
+              toast.error("Facebook connection cancelled.");
+            }
+            return false;
+          });
+        }
+      }, 500);
+    } catch (error) {
+      setConnecting(false);
+      toast.error(error instanceof Error ? error.message : "Failed to connect Facebook account.");
+    }
+  }, [connecting]);
 
   function toggleAccount(accountId: number) {
     setExpandedAccounts((prev) => {
@@ -199,7 +237,7 @@ export default function Connections() {
             </Button>
             <Button
               onClick={handleConnectFacebook}
-              disabled={connecting || !fbSdkReady}
+              disabled={connecting}
               className="bg-[#1877F2] hover:bg-[#166fe5] text-white gap-2"
             >
               {connecting ? (
@@ -210,6 +248,12 @@ export default function Connections() {
               {connecting ? "Connecting..." : "Connect Facebook Account"}
             </Button>
           </div>
+        </div>
+
+        {/* ── Security badge ── */}
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <ShieldCheck className="h-3.5 w-3.5 text-green-500" />
+          <span>Secured with Authorization Code Flow — your token never touches the browser</span>
         </div>
 
         {/* ── Connection result banner ── */}
@@ -272,7 +316,7 @@ export default function Connections() {
             </p>
             <Button
               onClick={handleConnectFacebook}
-              disabled={connecting || !fbSdkReady}
+              disabled={connecting}
               size="sm"
               className="bg-[#1877F2] hover:bg-[#166fe5] text-white gap-2"
             >
@@ -493,9 +537,10 @@ export default function Connections() {
             <div className="space-y-1">
               <p className="font-medium text-foreground">How it works</p>
               <p>
-                When you click "Connect Facebook Account", a Facebook login popup opens. After you
-                grant permissions, Targenix.uz automatically fetches all pages you manage and
-                subscribes each one to receive lead ads via webhook. You can then go to{" "}
+                When you click "Connect Facebook Account", a secure Facebook login popup opens using
+                Authorization Code Flow. After you grant permissions, Targenix.uz automatically
+                fetches all pages you manage (including Business Manager pages) and subscribes each
+                one to receive lead ads via webhook. You can then go to{" "}
                 <strong>Integrations</strong> to create routing rules for any connected page.
               </p>
             </div>

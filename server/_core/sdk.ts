@@ -39,15 +39,8 @@ class OAuthService {
   }
 
   private decodeState(state: string): string {
-    try {
-      const redirectUri = atob(state);
-      if (!redirectUri || typeof redirectUri !== "string") {
-        throw new Error("empty result");
-      }
-      return redirectUri;
-    } catch {
-      throw new Error("Invalid OAuth state parameter");
-    }
+    const redirectUri = atob(state);
+    return redirectUri;
   }
 
   async getTokenByCode(

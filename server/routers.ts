@@ -12,13 +12,13 @@ import { logsRouter } from "./routers/logsRouter";
 import { emailAuthRouter } from "./routers/emailAuthRouter";
 import { telegramRouter } from "./routers/telegramRouter";
 import { adminBackfillRouter } from "./routers/adminBackfillRouter";
-import { toPublicUser } from "./_core/publicUser";
+import { adAnalyticsRouter } from "./routers/adAnalyticsRouter";
 
 export const appRouter = router({
   system: systemRouter,
 
   auth: router({
-    me: publicProcedure.query(opts => toPublicUser(opts.ctx.user)),
+    me: publicProcedure.query(opts => opts.ctx.user),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -36,6 +36,7 @@ export const appRouter = router({
   emailAuth: emailAuthRouter,
   telegram: telegramRouter,
   adminBackfill: adminBackfillRouter,
+  adAnalytics: adAnalyticsRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -25,8 +25,7 @@ export function startLeadWorker(): Worker {
     },
     {
       connection: getRedisConnection() as any,
-      concurrency: 15,
-      lockDuration: 60000, // 60s lock — worker must complete within this window
+      concurrency: 5,
     }
   );
 

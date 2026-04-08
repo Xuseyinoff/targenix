@@ -39,14 +39,10 @@ export function getSessionCookieOptions(
   //       ? hostname
   //       : undefined;
 
-  const secure = isSecureRequest(req);
-
   return {
     httpOnly: true,
     path: "/",
-    // Chrome rejects SameSite=None cookies unless Secure=true.
-    // On local HTTP development we need a cookie policy the browser will keep.
-    sameSite: secure ? "none" : "lax",
-    secure,
+    sameSite: "none",
+    secure: isSecureRequest(req),
   };
 }

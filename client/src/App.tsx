@@ -22,6 +22,9 @@ import AdminLogs from "./pages/AdminLogs";
 import AdminBackfill from "./pages/AdminBackfill";
 import LeadDetail from "./pages/LeadDetail";
 import Settings from "./pages/Settings";
+import AdAccounts from "./pages/AdAccounts";
+import Analytics from "./pages/Analytics";
+import Campaigns from "./pages/Campaigns";
 import { useAuth } from "./_core/hooks/useAuth";
 import { useEffect } from "react";
 
@@ -75,6 +78,12 @@ function Router() {
       <Route path="/admin/backfill" component={AdminBackfill} />
       <Route path="/leads/:id" component={LeadDetail} />
       <Route path="/settings" component={Settings} />
+      {/* Business Tools routes */}
+      <Route path="/business/ad-accounts" component={AdAccounts} />
+      <Route path="/business/ad-accounts/:id/campaigns" component={Campaigns} />
+      <Route path="/business/analytics" component={Analytics} />
+      {/* Legacy /ad-accounts redirect */}
+      <Route path="/ad-accounts" component={AdAccounts} />
       {/* Auth pages */}
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />

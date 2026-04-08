@@ -22,7 +22,7 @@ export function getLeadQueue(): Queue<LeadJobData> {
           delay: 5000,
         },
         removeOnComplete: { count: 100 },
-        removeOnFail: { count: 200, age: 86400 }, // keep failed jobs max 24h
+        removeOnFail: { count: 200 },
       },
     });
   }
@@ -33,7 +33,7 @@ export async function enqueueLeadJob(data: LeadJobData): Promise<void> {
   try {
     const queue = getLeadQueue();
     await queue.add("process-lead", data, {
-      jobId: `lead-${data.userId}-${data.leadgenId}`,
+      jobId: `lead-${data.leadgenId}`,
     });
     console.log(`[Queue] Enqueued lead job for leadgenId=${data.leadgenId}`);
   } catch (err) {
