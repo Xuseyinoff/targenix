@@ -110,7 +110,7 @@ function DataDeletionEN() {
           , Facebook will automatically notify us to delete your data. We will process this deletion within 30 days and provide a status URL at:
         </p>
         <code className="block mt-2 bg-gray-100 px-3 py-2 rounded text-sm text-gray-700">
-          https://leadadsweb-8bpfwfmt.manus.space/data-deletion
+          https://targenix.uz/data-deletion
         </code>
       </Section>
 
@@ -221,7 +221,7 @@ function DataDeletionUZ() {
           orqali ilovani Facebook hisobingizdan olib tashlasangiz, Facebook bizga ma'lumotlaringizni o'chirish uchun avtomatik ravishda xabar beradi. Biz ushbu o'chirishni 30 kun ichida qayta ishlaymiz va holat URL manzilini quyidagi manzilda taqdim etamiz:
         </p>
         <code className="block mt-2 bg-gray-100 px-3 py-2 rounded text-sm text-gray-700">
-          https://leadadsweb-8bpfwfmt.manus.space/data-deletion
+          https://targenix.uz/data-deletion
         </code>
       </Section>
 
