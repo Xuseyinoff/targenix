@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "cross-env NODE_ENV=development tsx watch server/_core/index.ts",
     "dev:worker": "cross-env NODE_ENV=development tsx watch server/workers/run.ts",
-    "build": "vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist && esbuild server/workers/run.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/worker.js",
+    "build": "tsc --noEmit && vite build && esbuild server/_core/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist && esbuild server/workers/run.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/worker.js",
     "start": "cross-env NODE_ENV=production node dist/index.js",
     "start:worker": "cross-env NODE_ENV=production node dist/worker.js",
     "check": "tsc --noEmit",

@@ -168,10 +168,7 @@ export default function WebhookHealth() {
   };
 
   const copyToken = () => {
-    if (webhookInfo?.verifyToken) {
-      navigator.clipboard.writeText(webhookInfo.verifyToken);
-      toast.success("Verify token copied");
-    }
+    toast.info("Copy FACEBOOK_VERIFY_TOKEN from Railway Variables dashboard");
   };
 
   // Non-admin guard — show access denied while redirect is in progress
@@ -289,7 +286,7 @@ export default function WebhookHealth() {
               </label>
               <div className="flex items-center gap-2 mt-1.5">
                 <code className="flex-1 text-xs bg-muted px-3 py-2 rounded-lg border truncate">
-                  {webhookInfo?.verifyToken ?? "(set FACEBOOK_VERIFY_TOKEN)"}
+                  (copy from Railway Variables → FACEBOOK_VERIFY_TOKEN)
                 </code>
                 <Button variant="outline" size="sm" onClick={copyToken}>
                   <Copy className="h-3.5 w-3.5" />

@@ -102,7 +102,7 @@ export default function FacebookConnections() {
                   <Copy className="h-3 w-3" />
                 </Button>
               </li>
-              <li>Set Verify Token: <code className="bg-background px-1 rounded">{webhookInfo?.verifyToken}</code></li>
+              <li>Set Verify Token: copy <code className="bg-background px-1 rounded">FACEBOOK_VERIFY_TOKEN</code> from Railway Variables</li>
               <li>Subscribe to <strong>leadgen</strong> field</li>
               <li>Generate a <strong>Long-Lived Page Access Token</strong> and add it below</li>
             </ol>

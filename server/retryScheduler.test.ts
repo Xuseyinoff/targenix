@@ -78,10 +78,13 @@ describe("retryScheduler", () => {
 
 describe("retryAllFailedLeads", () => {
   beforeEach(() => {
+    vi.useFakeTimers();
     vi.resetModules();
   });
 
   afterEach(() => {
+    vi.runAllTimers();
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -102,20 +105,16 @@ describe("retryAllFailedLeads", () => {
     const selectChain = {
       select: vi.fn(),
       from: vi.fn(),
-      where: vi.fn(),
-      limit: vi.fn(),
-      offset: vi.fn().mockResolvedValue([]), // empty array — no FAILED leads
+      where: vi.fn().mockResolvedValue([]), // terminal — resolves to empty array
     };
     selectChain.select.mockReturnValue(selectChain);
     selectChain.from.mockReturnValue(selectChain);
-    selectChain.where.mockReturnValue(selectChain);
-    selectChain.limit.mockReturnValue(selectChain);
 
     vi.doMock("./db", () => ({
       getDb: vi.fn().mockResolvedValue(selectChain),
     }));
-    vi.doMock("./services/leadService", () => ({
-      processLead: vi.fn(),
+    vi.doMock("./services/leadDispatch", () => ({
+      dispatchLeadProcessing: vi.fn().mockResolvedValue(undefined),
     }));
 
     const { retryAllFailedLeads } = await import("./services/retryScheduler");
@@ -123,7 +122,7 @@ describe("retryAllFailedLeads", () => {
     expect(result).toEqual({ retried: 0 });
   });
 
-  it("resets FAILED leads and calls processLead for each", async () => {
+  it("resets FAILED leads and calls dispatchLeadProcessing for each", async () => {
     const failedLeads = [
       { id: 1, leadgenId: "lg1", pageId: "p1", formId: "f1", userId: 1, status: "FAILED" },
       { id: 2, leadgenId: "lg2", pageId: "p2", formId: "f2", userId: 1, status: "FAILED" },
@@ -137,46 +136,31 @@ describe("retryAllFailedLeads", () => {
     updateChain.update.mockReturnValue(updateChain);
     updateChain.set.mockReturnValue(updateChain);
 
-    let selectCallCount = 0;
     const selectChain = {
       select: vi.fn(),
       from: vi.fn(),
-      where: vi.fn(),
-      limit: vi.fn(),
-      // First call returns failedLeads batch, second call returns [] (end of pagination)
-      offset: vi.fn().mockImplementation(() => {
-        selectCallCount++;
-        return Promise.resolve(selectCallCount === 1 ? failedLeads : []);
-      }),
+      where: vi.fn().mockResolvedValue(failedLeads), // terminal — resolves to leads array
     };
     selectChain.select.mockReturnValue(selectChain);
     selectChain.from.mockReturnValue(selectChain);
-    selectChain.where.mockReturnValue(selectChain);
-    selectChain.limit.mockReturnValue(selectChain);
 
     const fakeDb = {
       ...selectChain,
       ...updateChain,
     };
 
-    const processLeadMock = vi.fn().mockReturnValue(Promise.resolve(undefined));
+    const dispatchMock = vi.fn().mockResolvedValue(undefined);
 
     vi.doMock("./db", () => ({
       getDb: vi.fn().mockResolvedValue(fakeDb),
     }));
-    vi.doMock("../../drizzle/schema", () => ({
-      leads: {},
-      users: {},
-    }));
-    vi.doMock("./services/leadService", () => ({
-      processLead: processLeadMock,
+    vi.doMock("./services/leadDispatch", () => ({
+      dispatchLeadProcessing: dispatchMock,
     }));
 
     const { retryAllFailedLeads } = await import("./services/retryScheduler");
     const result = await retryAllFailedLeads();
 
     expect(result.retried).toBe(2);
-    // processLead is called via setImmediate, so we just check it was scheduled
-    // (actual invocation is async)
   });
 });
