@@ -306,6 +306,36 @@ function buildHeaders(
   return result;
 }
 
+// ─── SSRF protection ─────────────────────────────────────────────────────────
+/**
+ * Validate that a URL is safe to send outbound HTTP requests to.
+ * Blocks non-HTTPS, localhost, and all RFC1918 / link-local address ranges.
+ * Throws an Error if the URL is blocked.
+ */
+function assertSafeOutboundUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error(`Outbound URL must use HTTPS (got ${parsed.protocol})`);
+  }
+  const host = parsed.hostname.toLowerCase();
+  // Block loopback, link-local, and all RFC1918 private ranges
+  const blocked = [
+    "localhost", "127.0.0.1", "0.0.0.0", "::1",
+    "169.254.",           // link-local (AWS/Azure/GCP metadata)
+    "10.",                // RFC1918
+    "192.168.",           // RFC1918
+    ...Array.from({ length: 16 }, (_, i) => `172.${16 + i}.`), // RFC1918 172.16-31
+  ];
+  if (blocked.some((b) => host === b.replace(/\.$/, "") || host.startsWith(b))) {
+    throw new Error(`Outbound URL targets a private/internal address: ${host}`);
+  }
+}
+
 // ─── Main dispatcher ─────────────────────────────────────────────────────────
 /**
  * Send a lead to a target website using its template config.
@@ -330,6 +360,11 @@ export async function sendAffiliateOrderByTemplate(
     // URL priority: cfg.url (legacy) → siteUrl (from target_websites.url column)
     const url = (cfg.url as string) || siteUrl || "";
     if (!url) return { success: false, error: "No URL configured for custom template" };
+
+    // SSRF protection: reject localhost, RFC1918, and non-HTTPS URLs before
+    // issuing the outbound HTTP request. Without this, a user could point their
+    // target website at an internal Railway service or cloud metadata endpoint.
+    assertSafeOutboundUrl(url);
 
     const method = (cfg.method as string) ?? "POST";
 

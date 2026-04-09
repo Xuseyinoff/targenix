@@ -30,6 +30,32 @@ import {
   type TemplateConfig,
 } from "../services/affiliateService";
 
+/**
+ * Validate a custom target website URL before storing it.
+ * Must be HTTPS and must not target private/internal addresses (SSRF prevention).
+ */
+function validateTargetUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("Invalid URL format");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("Target website URL must use HTTPS");
+  }
+  const host = parsed.hostname.toLowerCase();
+  const blocked = [
+    "localhost", "127.0.0.1", "0.0.0.0", "::1",
+    "169.254.",
+    "10.", "192.168.",
+    ...Array.from({ length: 16 }, (_, i) => `172.${16 + i}.`),
+  ];
+  if (blocked.some((b) => host === b.replace(/\.$/, "") || host.startsWith(b))) {
+    throw new Error("Target website URL must not point to internal or private addresses");
+  }
+}
+
 // ─── Variable field definitions per template ──────────────────────────────────
 export const TEMPLATE_VARIABLE_FIELDS: Record<string, Array<{ key: string; label: string; placeholder: string; required: boolean }>> = {
   sotuvchi: [
@@ -113,6 +139,11 @@ export const targetWebsitesRouter = router({
       if (input.templateType === "sotuvchi") url = "https://sotuvchi.com/api/v2/order";
       else if (input.templateType === "100k") url = "https://api.100k.uz/api/shop/v1/orders/target";
       else url = input.url ?? "";
+
+      // For custom templates the user provides the URL — validate it before storing
+      if (input.templateType === "custom" && url) {
+        validateTargetUrl(url);
+      }
 
       // Build templateConfig
       const config: Record<string, unknown> = {};
@@ -215,8 +246,13 @@ export const targetWebsitesRouter = router({
           // Update URL for known templates
           if (input.templateType === "sotuvchi") updates.url = "https://sotuvchi.com/api/v2/order";
           else if (input.templateType === "100k") updates.url = "https://api.100k.uz/api/shop/v1/orders/target";
-          else if (input.url) updates.url = input.url;
+          else if (input.url) {
+            validateTargetUrl(input.url);
+            updates.url = input.url;
+          }
         } else if (input.url) {
+          const effectiveType = site.templateType;
+          if (effectiveType === "custom") validateTargetUrl(input.url);
           updates.url = input.url;
         }
       }

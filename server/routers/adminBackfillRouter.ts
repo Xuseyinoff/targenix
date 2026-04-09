@@ -119,20 +119,24 @@ export const adminBackfillRouter = router({
       const formId = intg.formId ?? (cfg.formId as string);
       const createdAt = intg.createdAt;
 
+      // IMPORTANT: scope all lead queries to intg.userId so admin only previews
+      // leads belonging to that specific user, not all users who share the page+form.
+      const ownerId = intg.userId;
+
       let rows;
 
       if (input.mode === "manual" && input.leadIds?.length) {
         rows = await db
           .select({ id: leads.id, fullName: leads.fullName, phone: leads.phone, createdAt: leads.createdAt, status: leads.status })
           .from(leads)
-          .where(and(eq(leads.pageId, pageId), eq(leads.formId, formId), inArray(leads.id, input.leadIds)))
+          .where(and(eq(leads.userId, ownerId), eq(leads.pageId, pageId), eq(leads.formId, formId), inArray(leads.id, input.leadIds)))
           .orderBy(desc(leads.createdAt));
       } else if (input.mode === "hours" && input.hours) {
         const cutoff = new Date(createdAt.getTime() - input.hours * 3600 * 1000);
         rows = await db
           .select({ id: leads.id, fullName: leads.fullName, phone: leads.phone, createdAt: leads.createdAt, status: leads.status })
           .from(leads)
-          .where(and(eq(leads.pageId, pageId), eq(leads.formId, formId), lt(leads.createdAt, createdAt), gte(leads.createdAt, cutoff)))
+          .where(and(eq(leads.userId, ownerId), eq(leads.pageId, pageId), eq(leads.formId, formId), lt(leads.createdAt, createdAt), gte(leads.createdAt, cutoff)))
           .orderBy(desc(leads.createdAt));
       } else {
         // Default: count mode
@@ -140,7 +144,7 @@ export const adminBackfillRouter = router({
         rows = await db
           .select({ id: leads.id, fullName: leads.fullName, phone: leads.phone, createdAt: leads.createdAt, status: leads.status })
           .from(leads)
-          .where(and(eq(leads.pageId, pageId), eq(leads.formId, formId), lt(leads.createdAt, createdAt)))
+          .where(and(eq(leads.userId, ownerId), eq(leads.pageId, pageId), eq(leads.formId, formId), lt(leads.createdAt, createdAt)))
           .orderBy(desc(leads.createdAt))
           .limit(limit);
       }
@@ -187,11 +191,12 @@ export const adminBackfillRouter = router({
       const formId = intg.formId ?? (cfg.formId as string);
       const userId = intg.userId;
 
-      // Fetch the leads
+      // Fetch the leads — scope to userId so admin only processes the integration
+      // owner's leads, not any other user who may share the same page+form.
       const leadRows = await db
         .select()
         .from(leads)
-        .where(and(eq(leads.pageId, pageId), eq(leads.formId, formId), inArray(leads.id, input.leadIds)));
+        .where(and(eq(leads.userId, userId), eq(leads.pageId, pageId), eq(leads.formId, formId), inArray(leads.id, input.leadIds)));
 
       const results: Array<{ leadId: number; fullName: string | null; phone: string | null; success: boolean; error?: string }> = [];
 
