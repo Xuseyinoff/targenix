@@ -212,9 +212,9 @@ class SDKServer {
       });
       const { openId, appId, name } = payload as Record<string, unknown>;
 
+      // appId is optional for email/password auth (no OAuth app configured)
       if (
         !isNonEmptyString(openId) ||
-        !isNonEmptyString(appId) ||
         !isNonEmptyString(name)
       ) {
         console.warn("[Auth] Session payload missing required fields");
@@ -222,9 +222,9 @@ class SDKServer {
       }
 
       return {
-        openId,
-        appId,
-        name,
+        openId: openId as string,
+        appId: isNonEmptyString(appId) ? appId : "",
+        name: name as string,
       };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
