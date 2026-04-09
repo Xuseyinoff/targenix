@@ -68,7 +68,8 @@ export const facebookRouter = router({
     base = base.replace(/\/api\/webhooks\/facebook.*$/, "");
     return {
       url: `${base}/api/webhooks/facebook`,
-      verifyToken: process.env.FACEBOOK_VERIFY_TOKEN || "(set FACEBOOK_VERIFY_TOKEN env var)",
+      // verifyToken is intentionally omitted — it is a server secret and must
+      // be copied from the Railway Variables dashboard, never from the API.
     };
   }),
 });

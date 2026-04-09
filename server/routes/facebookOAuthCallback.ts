@@ -78,6 +78,22 @@ async function cleanupExpiredStates(): Promise<void> {
  *  GET /api/auth/facebook/initiate  — generate state, redirect to Facebook
  *  GET /api/auth/facebook/callback  — receive code+state, exchange for token, save
  */
+/**
+ * Get the allowed postMessage target origin for the opener window.
+ * This prevents any cross-origin window from receiving OAuth data.
+ */
+function getAllowedOrigin(): string {
+  const appUrl = ENV.appUrl;
+  if (appUrl) {
+    try {
+      return new URL(appUrl).origin;
+    } catch {
+      return appUrl.replace(/\/+$/, "");
+    }
+  }
+  return "http://localhost:3000";
+}
+
 export function registerFacebookOAuthRoutes(app: Express): void {
   // ── Initiate OAuth flow ──────────────────────────────────────────────────────
   app.get("/api/auth/facebook/initiate", async (req: Request, res: Response) => {
@@ -159,13 +175,16 @@ export function registerFacebookOAuthRoutes(app: Express): void {
     const stateParam = req.query["state"] as string | undefined;
     const errorParam = req.query["error"] as string | undefined;
 
+    const allowedOrigin = getAllowedOrigin();
+
     // Handle user denial
     if (errorParam) {
       await log.warn("FACEBOOK", "OAuth callback: user denied permissions", { error: errorParam });
+      const errorData = JSON.stringify({ type: "fb_oauth_error", error: errorParam });
       res.send(`
         <html><body>
           <script>
-            window.opener && window.opener.postMessage({ type: 'fb_oauth_error', error: '${errorParam}' }, '*');
+            window.opener && window.opener.postMessage(${errorData}, ${JSON.stringify(allowedOrigin)});
             window.close();
           </script>
           <p>Facebook connection cancelled. You can close this window.</p>
@@ -175,10 +194,11 @@ export function registerFacebookOAuthRoutes(app: Express): void {
     }
 
     if (!code || !stateParam) {
+      const errorData = JSON.stringify({ type: "fb_oauth_error", error: "Missing code or state" });
       res.status(400).send(`
         <html><body>
           <script>
-            window.opener && window.opener.postMessage({ type: 'fb_oauth_error', error: 'Missing code or state' }, '*');
+            window.opener && window.opener.postMessage(${errorData}, ${JSON.stringify(allowedOrigin)});
             window.close();
           </script>
           <p>Invalid OAuth callback. You can close this window.</p>
@@ -205,10 +225,11 @@ export function registerFacebookOAuthRoutes(app: Express): void {
         await log.error("FACEBOOK", "OAuth CSRF check failed: state not found", {
           state: stateParam.slice(0, 8) + "...",
         });
+        const csrfErrorData = JSON.stringify({ type: "fb_oauth_error", error: "CSRF validation failed" });
         res.status(403).send(`
           <html><body>
             <script>
-              window.opener && window.opener.postMessage({ type: 'fb_oauth_error', error: 'CSRF validation failed' }, '*');
+              window.opener && window.opener.postMessage(${csrfErrorData}, ${JSON.stringify(allowedOrigin)});
               window.close();
             </script>
             <p>Security validation failed. Please try again.</p>
@@ -223,10 +244,11 @@ export function registerFacebookOAuthRoutes(app: Express): void {
         await log.error("FACEBOOK", "OAuth CSRF check failed: state expired", {
           userId: savedState.userId,
         });
+        const expiredErrorData = JSON.stringify({ type: "fb_oauth_error", error: "OAuth session expired. Please try again." });
         res.status(403).send(`
           <html><body>
             <script>
-              window.opener && window.opener.postMessage({ type: 'fb_oauth_error', error: 'OAuth session expired. Please try again.' }, '*');
+              window.opener && window.opener.postMessage(${expiredErrorData}, ${JSON.stringify(allowedOrigin)});
               window.close();
             </script>
             <p>OAuth session expired. Please try again.</p>
@@ -462,7 +484,7 @@ export function registerFacebookOAuthRoutes(app: Express): void {
           <body>
             <script>
               try {
-                window.opener && window.opener.postMessage(${successData}, '*');
+                window.opener && window.opener.postMessage(${successData}, ${JSON.stringify(allowedOrigin)});
               } catch(e) {}
               window.close();
             </script>
@@ -472,10 +494,11 @@ export function registerFacebookOAuthRoutes(app: Express): void {
       `);
     } catch (error) {
       await log.error("FACEBOOK", "OAuth callback failed", { error: String(error) });
+      const catchErrorData = JSON.stringify({ type: "fb_oauth_error", error: "Failed to connect Facebook account. Please try again." });
       res.send(`
         <html><body>
           <script>
-            window.opener && window.opener.postMessage({ type: 'fb_oauth_error', error: ${JSON.stringify(String(error))} }, '*');
+            window.opener && window.opener.postMessage(${catchErrorData}, ${JSON.stringify(allowedOrigin)});
             window.close();
           </script>
           <p>Failed to connect Facebook account. Please try again.</p>

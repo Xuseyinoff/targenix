@@ -34,7 +34,7 @@ import {
 import { eq, and, gt } from "drizzle-orm";
 import { sdk } from "../_core/sdk";
 import { getSessionCookieOptions } from "../_core/cookies";
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME, SESSION_EXPIRATION_MS } from "@shared/const";
 import { sendPasswordResetEmail } from "../services/emailService";
 
 const BCRYPT_ROUNDS = 12;
@@ -93,11 +93,11 @@ export const authRouter = router({
 
       const sessionToken = await sdk.createSessionToken(openId, {
         name: input.name ?? normalizedEmail.split("@")[0],
-        expiresInMs: ONE_YEAR_MS,
+        expiresInMs: SESSION_EXPIRATION_MS,
       });
 
       const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+      ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: SESSION_EXPIRATION_MS });
 
       return { success: true, email: normalizedEmail };
     }),
@@ -107,7 +107,7 @@ export const authRouter = router({
     .input(
       z.object({
         email: z.string().email("Invalid email address"),
-        password: z.string().min(1, "Password is required"),
+        password: z.string().min(8, "Password must be at least 8 characters"),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -138,11 +138,11 @@ export const authRouter = router({
 
       const sessionToken = await sdk.createSessionToken(user.openId, {
         name: user.name ?? normalizedEmail.split("@")[0],
-        expiresInMs: ONE_YEAR_MS,
+        expiresInMs: SESSION_EXPIRATION_MS,
       });
 
       const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+      ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: SESSION_EXPIRATION_MS });
 
       return { success: true, email: normalizedEmail, name: user.name };
     }),
@@ -234,11 +234,11 @@ export const authRouter = router({
 
       const sessionToken = await sdk.createSessionToken(user.openId, {
         name: user.name ?? "",
-        expiresInMs: ONE_YEAR_MS,
+        expiresInMs: SESSION_EXPIRATION_MS,
       });
 
       const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+      ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: SESSION_EXPIRATION_MS });
 
       return { success: true };
     }),

@@ -46,6 +46,22 @@ export function validateEnv(): void {
     process.exit(1);
   }
 
+  // Reject obviously weak keys: sequential digits, repeating chars, or known placeholder values.
+  const weakPatterns = [
+    /^12345678901234567890123456789012$/,  // sequential digits placeholder
+    /^(.)\1{10,}/,                          // 10+ repeated same character
+    /^(default|insecure|test|secret|change)/i, // known placeholder prefixes
+  ];
+  const encKey = process.env.ENCRYPTION_KEY!;
+  const uniqueChars = new Set(encKey).size;
+  if (uniqueChars < 10 || weakPatterns.some((r) => r.test(encKey))) {
+    console.error(
+      "[startup] FATAL: ENCRYPTION_KEY appears weak or is a placeholder. " +
+      "Generate a strong key with: node -e \"console.log(require('crypto').randomBytes(16).toString('hex'))\""
+    );
+    process.exit(1);
+  }
+
   if (process.env.JWT_SECRET!.length < 32) {
     console.error(
       `[startup] FATAL: JWT_SECRET must be at least 32 characters (got ${process.env.JWT_SECRET!.length}). ` +

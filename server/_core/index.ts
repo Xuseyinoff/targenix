@@ -103,7 +103,7 @@ async function startServer() {
     })
   );
 
-  // Rate limiting — auth endpoints (login / register): 10 attempts per 15 min per IP
+  // Rate limiting — auth endpoints (login / register / facebook): 10 attempts per 15 min per IP
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 10,
@@ -115,10 +115,21 @@ async function startServer() {
   app.use("/api/trpc/auth.register", authLimiter);
   app.use("/api/trpc/auth.facebookLogin", authLimiter);
 
-  // Rate limiting — webhook endpoint: 500 req per min per IP (DDoS protection)
+  // Rate limiting — password reset: 5 requests per hour per IP to prevent email spam/abuse
+  const passwordResetLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: "Too many password reset requests. Please try again in 1 hour." },
+  });
+  app.use("/api/trpc/auth.forgotPassword", passwordResetLimiter);
+  app.use("/api/trpc/auth.resetPassword", passwordResetLimiter);
+
+  // Rate limiting — webhook endpoint: 100 req per min per IP (DDoS protection)
   const webhookLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 500,
+    max: 100,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many webhook requests." },
