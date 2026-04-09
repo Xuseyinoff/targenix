@@ -9,7 +9,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-interface ManusDialogProps {
+interface AuthDialogProps {
   title?: string;
   logo?: string;
   open?: boolean;
@@ -18,14 +18,15 @@ interface ManusDialogProps {
   onClose?: () => void;
 }
 
-export function ManusDialog({
+/** Generic login prompt dialog. */
+export function AuthDialog({
   title,
   logo,
   open = false,
   onLogin,
   onOpenChange,
   onClose,
-}: ManusDialogProps) {
+}: AuthDialogProps) {
   const [internalOpen, setInternalOpen] = useState(open);
 
   useEffect(() => {
@@ -63,7 +64,6 @@ export function ManusDialog({
             </div>
           ) : null}
 
-          {/* Title and subtitle */}
           {title ? (
             <DialogTitle className="text-xl font-semibold text-[#34322d] leading-[26px] tracking-[-0.44px]">
               {title}
@@ -75,7 +75,6 @@ export function ManusDialog({
         </div>
 
         <DialogFooter className="px-5 py-5">
-          {/* Login button */}
           <Button
             onClick={onLogin}
             className="w-full h-10 bg-[#1a1a19] hover:bg-[#1a1a19]/90 text-white rounded-[10px] text-sm font-medium leading-5 tracking-[-0.154px]"
@@ -87,3 +86,6 @@ export function ManusDialog({
     </Dialog>
   );
 }
+
+// Legacy alias — remove once all call sites are updated
+export { AuthDialog as ManusDialog };

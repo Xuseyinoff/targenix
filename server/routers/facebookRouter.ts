@@ -64,7 +64,7 @@ export const facebookRouter = router({
     }),
 
   webhookUrl: protectedProcedure.query(() => {
-    let base = (process.env.APP_URL || "https://your-domain.manus.space").replace(/\/+$/, "");
+    let base = (process.env.APP_URL || "https://targenix.uz").replace(/\/+$/, "");
     base = base.replace(/\/api\/webhooks\/facebook.*$/, "");
     return {
       url: `${base}/api/webhooks/facebook`,
