@@ -9,7 +9,7 @@ export default function ForgotPassword() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
 
-  const mutation = trpc.emailAuth.forgotPassword.useMutation({
+  const mutation = trpc.auth.forgotPassword.useMutation({
     onSuccess: () => setSent(true),
     onError: (err) => toast.error(err.message),
   });

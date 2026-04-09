@@ -7,7 +7,6 @@ import rateLimit from "express-rate-limit";
 import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerOAuthRoutes } from "./oauth";
 import { registerChatRoutes } from "./chat";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
@@ -112,8 +111,9 @@ async function startServer() {
     legacyHeaders: false,
     message: { error: "Too many attempts. Please try again in 15 minutes." },
   });
-  app.use("/api/trpc/emailAuth.login", authLimiter);
-  app.use("/api/trpc/emailAuth.register", authLimiter);
+  app.use("/api/trpc/auth.login", authLimiter);
+  app.use("/api/trpc/auth.register", authLimiter);
+  app.use("/api/trpc/auth.facebookLogin", authLimiter);
 
   // Rate limiting — webhook endpoint: 500 req per min per IP (DDoS protection)
   const webhookLimiter = rateLimit({
@@ -183,8 +183,6 @@ async function startServer() {
     void handleTelegramWebhook(req, res);
   });
 
-  // OAuth callback under /api/oauth/callback
-  registerOAuthRoutes(app);
   // Facebook Authorization Code Flow OAuth routes
   registerFacebookOAuthRoutes(app);
   // Chat API with streaming and tool calling

@@ -60,7 +60,7 @@ export default function Settings() {
     },
   });
 
-  const deleteAccountMutation = trpc.emailAuth.deleteAccount.useMutation({
+  const deleteAccountMutation = trpc.auth.deleteAccount.useMutation({
     onSuccess: () => {
       toast.success("Account deleted.");
       window.location.href = "/";

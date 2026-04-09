@@ -3,7 +3,13 @@ import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Zap, Eye, EyeOff, Loader2, ArrowLeft, CheckCircle } from "lucide-react";
-import { getLoginUrl } from "@/const";
+
+declare const FB: {
+  login: (
+    cb: (response: { authResponse?: { accessToken: string } }) => void,
+    opts: { scope: string }
+  ) => void;
+};
 
 export default function Register() {
   const [, setLocation] = useLocation();
@@ -13,16 +19,27 @@ export default function Register() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [fbLoading, setFbLoading] = useState(false);
 
   const utils = trpc.useUtils();
 
-  const registerMutation = trpc.emailAuth.register.useMutation({
+  const registerMutation = trpc.auth.register.useMutation({
     onSuccess: async () => {
       await utils.auth.me.invalidate();
       toast.success("Account created successfully");
       setLocation("/");
     },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const facebookLoginMutation = trpc.auth.facebookLogin.useMutation({
+    onSuccess: async () => {
+      await utils.auth.me.invalidate();
+      toast.success("Logged in with Facebook");
+      setLocation("/");
+    },
     onError: (err) => {
+      setFbLoading(false);
       toast.error(err.message);
     },
   });
@@ -44,8 +61,28 @@ export default function Register() {
     registerMutation.mutate({ email, password, name: name || undefined });
   };
 
+  const handleFacebookLogin = () => {
+    if (typeof FB === "undefined") {
+      toast.error("Facebook SDK not loaded. Please refresh and try again.");
+      return;
+    }
+    setFbLoading(true);
+    FB.login(
+      (response) => {
+        if (response.authResponse?.accessToken) {
+          facebookLoginMutation.mutate({ accessToken: response.authResponse.accessToken });
+        } else {
+          setFbLoading(false);
+          toast.error("Facebook login was cancelled.");
+        }
+      },
+      { scope: "public_profile,email" }
+    );
+  };
+
   const passwordsMatch = confirmPassword && password === confirmPassword;
   const passwordsMismatch = confirmPassword && password !== confirmPassword;
+  const isLoading = registerMutation.isPending || fbLoading;
 
   const inputStyle = {
     background: "rgba(255,255,255,0.06)",
@@ -124,7 +161,7 @@ export default function Register() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 autoComplete="name"
-                disabled={registerMutation.isPending}
+                disabled={isLoading}
                 className="w-full px-3.5 py-2.5 rounded-xl text-sm text-white placeholder-slate-500 outline-none transition-all disabled:opacity-50"
                 style={inputStyle}
                 onFocus={handleFocus}
@@ -144,7 +181,7 @@ export default function Register() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
-                disabled={registerMutation.isPending}
+                disabled={isLoading}
                 className="w-full px-3.5 py-2.5 rounded-xl text-sm text-white placeholder-slate-500 outline-none transition-all disabled:opacity-50"
                 style={inputStyle}
                 onFocus={handleFocus}
@@ -165,7 +202,7 @@ export default function Register() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="new-password"
-                  disabled={registerMutation.isPending}
+                  disabled={isLoading}
                   className="w-full px-3.5 py-2.5 pr-10 rounded-xl text-sm text-white placeholder-slate-500 outline-none transition-all disabled:opacity-50"
                   style={inputStyle}
                   onFocus={handleFocus}
@@ -195,7 +232,7 @@ export default function Register() {
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   autoComplete="new-password"
-                  disabled={registerMutation.isPending}
+                  disabled={isLoading}
                   className="w-full px-3.5 py-2.5 pr-10 rounded-xl text-sm text-white placeholder-slate-500 outline-none transition-all disabled:opacity-50"
                   style={{
                     ...inputStyle,
@@ -231,7 +268,7 @@ export default function Register() {
             {/* Submit */}
             <button
               type="submit"
-              disabled={registerMutation.isPending || !!passwordsMismatch}
+              disabled={isLoading || !!passwordsMismatch}
               className="w-full py-2.5 rounded-xl font-semibold text-white text-sm transition-all duration-200 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-2"
               style={{ background: "linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)" }}
             >
@@ -252,19 +289,23 @@ export default function Register() {
             </div>
           </div>
 
-          {/* OAuth — only shown when VITE_OAUTH_PORTAL_URL + VITE_APP_ID are configured */}
-          {getLoginUrl() && (
-            <button
-              onClick={() => { window.location.href = getLoginUrl()!; }}
-              className="w-full py-2.5 rounded-xl font-medium text-slate-300 text-sm transition-all duration-200 hover:text-white flex items-center justify-center gap-2"
-              style={{
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid rgba(255,255,255,0.1)",
-              }}
-            >
-              Continue with Manus (Google / Apple)
-            </button>
-          )}
+          {/* Facebook Login */}
+          <button
+            type="button"
+            onClick={handleFacebookLogin}
+            disabled={isLoading}
+            className="w-full py-2.5 rounded-xl font-medium text-white text-sm transition-all duration-200 hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2.5"
+            style={{ background: "#1877F2" }}
+          >
+            {fbLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
+              </svg>
+            )}
+            Continue with Facebook
+          </button>
         </div>
 
         <p className="text-center text-sm text-slate-500 mt-6">

@@ -1,20 +1,35 @@
 /**
- * emailAuthRouter
+ * authRouter — unified authentication router.
  *
- * Provides email/password registration and login as an alternative to
- * the Manus OAuth flow. Uses bcrypt for password hashing and issues the
- * same JWT session cookie that the rest of the app already understands.
+ * Procedures:
+ *   auth.register        — email + password registration
+ *   auth.login           — email + password login
+ *   auth.facebookLogin   — Facebook Login (verify access_token via Graph API)
+ *   auth.me              — return current user from session
+ *   auth.logout          — clear session cookie
+ *   auth.forgotPassword  — send password-reset email
+ *   auth.resetPassword   — apply new password from reset token
+ *   auth.deleteAccount   — GDPR account removal
  */
 
 import { z } from "zod";
 import bcrypt from "bcryptjs";
+import axios from "axios";
 import { TRPCError } from "@trpc/server";
 import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import {
-  users, passwordResetTokens, facebookAccounts, facebookConnections,
-  facebookForms, facebookOauthStates, targetWebsites, integrations,
-  leads, orders, appLogs,
+  users,
+  passwordResetTokens,
+  facebookAccounts,
+  facebookConnections,
+  facebookForms,
+  facebookOauthStates,
+  targetWebsites,
+  integrations,
+  leads,
+  orders,
+  appLogs,
 } from "../../drizzle/schema";
 import { eq, and, gt } from "drizzle-orm";
 import { sdk } from "../_core/sdk";
@@ -24,22 +39,28 @@ import { sendPasswordResetEmail } from "../services/emailService";
 
 const BCRYPT_ROUNDS = 12;
 
-/**
- * Derive a stable openId for a brand-new email-only account.
- * Existing OAuth accounts keep their original openId and are found by email column.
- */
 function emailToOpenId(email: string): string {
   return `email:${email.toLowerCase().trim()}`;
 }
 
-export const emailAuthRouter = router({
-  // ── Register ────────────────────────────────────────────────────────────────
+export const authRouter = router({
+  // ── Me ──────────────────────────────────────────────────────────────────────
+  me: publicProcedure.query((opts) => opts.ctx.user),
+
+  // ── Logout ──────────────────────────────────────────────────────────────────
+  logout: publicProcedure.mutation(({ ctx }) => {
+    const cookieOptions = getSessionCookieOptions(ctx.req);
+    ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+    return { success: true } as const;
+  }),
+
+  // ── Register ─────────────────────────────────────────────────────────────────
   register: publicProcedure
     .input(
       z.object({
         email: z.string().email("Invalid email address"),
         password: z.string().min(8, "Password must be at least 8 characters"),
-        name: z.string().min(1, "Name is required").max(128).optional(),
+        name: z.string().min(1).max(128).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -49,7 +70,6 @@ export const emailAuthRouter = router({
       const normalizedEmail = input.email.toLowerCase().trim();
       const openId = emailToOpenId(normalizedEmail);
 
-      // Check for existing account
       const [existing] = await db
         .select({ id: users.id })
         .from(users)
@@ -71,7 +91,6 @@ export const emailAuthRouter = router({
         lastSignedIn: new Date(),
       });
 
-      // Issue session cookie so the user is immediately logged in
       const sessionToken = await sdk.createSessionToken(openId, {
         name: input.name ?? normalizedEmail.split("@")[0],
         expiresInMs: ONE_YEAR_MS,
@@ -83,7 +102,7 @@ export const emailAuthRouter = router({
       return { success: true, email: normalizedEmail };
     }),
 
-  // ── Login ────────────────────────────────────────────────────────────────────
+  // ── Login ─────────────────────────────────────────────────────────────────────
   login: publicProcedure
     .input(
       z.object({
@@ -97,8 +116,6 @@ export const emailAuthRouter = router({
 
       const normalizedEmail = input.email.toLowerCase().trim();
 
-      // Look up by email column — this finds BOTH pure email accounts AND
-      // OAuth accounts (Google, Apple, etc.) that have a passwordHash set.
       const [user] = await db
         .select()
         .from(users)
@@ -114,13 +131,11 @@ export const emailAuthRouter = router({
         throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid email or password." });
       }
 
-      // Update lastSignedIn
       await db
         .update(users)
         .set({ lastSignedIn: new Date() })
         .where(eq(users.openId, user.openId));
 
-      // Issue session using the user's real openId (preserves all their data)
       const sessionToken = await sdk.createSessionToken(user.openId, {
         name: user.name ?? normalizedEmail.split("@")[0],
         expiresInMs: ONE_YEAR_MS,
@@ -130,6 +145,102 @@ export const emailAuthRouter = router({
       ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
 
       return { success: true, email: normalizedEmail, name: user.name };
+    }),
+
+  // ── Facebook Login ────────────────────────────────────────────────────────────
+  // Frontend calls window.FB.login() to get a short-lived access token,
+  // then sends it here. We verify it via the Graph API and create/find the user.
+  facebookLogin: publicProcedure
+    .input(z.object({ accessToken: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+
+      // 1. Verify access token via Facebook Graph API
+      let fbProfile: { id: string; name?: string; email?: string };
+      try {
+        const { data } = await axios.get("https://graph.facebook.com/me", {
+          params: { fields: "id,name,email", access_token: input.accessToken },
+          timeout: 10_000,
+        });
+        fbProfile = data;
+      } catch {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid Facebook access token." });
+      }
+
+      if (!fbProfile.id) {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid Facebook access token." });
+      }
+
+      const fbOpenId = `fb:${fbProfile.id}`;
+      const fbEmail = fbProfile.email?.toLowerCase();
+
+      // 2. Look up user by Facebook openId (returning FB Login user)
+      let [user] = await db.select().from(users).where(eq(users.openId, fbOpenId)).limit(1);
+
+      // 3. Look up via facebookAccounts (user who connected FB for Marketing API)
+      if (!user) {
+        const [fbAccount] = await db
+          .select({ userId: facebookAccounts.userId })
+          .from(facebookAccounts)
+          .where(eq(facebookAccounts.fbUserId, fbProfile.id))
+          .limit(1);
+
+        if (fbAccount) {
+          const [found] = await db
+            .select()
+            .from(users)
+            .where(eq(users.id, fbAccount.userId))
+            .limit(1);
+          user = found;
+        }
+      }
+
+      // 4. Look up by email if available
+      if (!user && fbEmail) {
+        const [found] = await db
+          .select()
+          .from(users)
+          .where(eq(users.email, fbEmail))
+          .limit(1);
+        user = found;
+      }
+
+      // 5. Create new user
+      if (!user) {
+        await db.insert(users).values({
+          openId: fbOpenId,
+          email: fbEmail ?? null,
+          name: fbProfile.name ?? null,
+          loginMethod: "facebook",
+          lastSignedIn: new Date(),
+        });
+        const [created] = await db
+          .select()
+          .from(users)
+          .where(eq(users.openId, fbOpenId))
+          .limit(1);
+        user = created;
+      }
+
+      if (!user) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to create user." });
+      }
+
+      await db
+        .update(users)
+        .set({ lastSignedIn: new Date() })
+        .where(eq(users.id, user.id));
+
+      const sessionToken = await sdk.createSessionToken(user.openId, {
+        name: user.name ?? "",
+        expiresInMs: ONE_YEAR_MS,
+      });
+
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+
+      return { success: true };
     }),
 
   // ── Forgot Password ──────────────────────────────────────────────────────────
@@ -150,7 +261,6 @@ export const emailAuthRouter = router({
       // Always return success to prevent email enumeration
       if (!user) return { success: true };
 
-      // Generate secure random token
       const token = Array.from(crypto.getRandomValues(new Uint8Array(32)))
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
@@ -186,7 +296,7 @@ export const emailAuthRouter = router({
         .where(
           and(
             eq(passwordResetTokens.token, input.token),
-            gt(passwordResetTokens.expiresAt, new Date()),
+            gt(passwordResetTokens.expiresAt, new Date())
           )
         )
         .limit(1);
@@ -199,37 +309,40 @@ export const emailAuthRouter = router({
 
       await Promise.all([
         db.update(users).set({ passwordHash }).where(eq(users.id, resetToken.userId)),
-        db.update(passwordResetTokens).set({ usedAt: new Date() }).where(eq(passwordResetTokens.id, resetToken.id)),
+        db
+          .update(passwordResetTokens)
+          .set({ usedAt: new Date() })
+          .where(eq(passwordResetTokens.id, resetToken.id)),
       ]);
 
       return { success: true };
     }),
 
   // ── Delete Account (GDPR) ────────────────────────────────────────────────────
-  deleteAccount: protectedProcedure
-    .mutation(async ({ ctx }) => {
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+  deleteAccount: protectedProcedure.mutation(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
-      const userId = ctx.user.id;
+    const userId = ctx.user.id;
 
-      // Delete all user data in dependency order (children before parents)
-      await db.delete(orders).where(eq(orders.userId, userId));
-      await db.delete(leads).where(eq(leads.userId, userId));
-      await db.delete(integrations).where(eq(integrations.userId, userId));
-      await db.delete(targetWebsites).where(eq(targetWebsites.userId, userId));
-      await db.delete(facebookForms).where(eq(facebookForms.userId, userId));
-      await db.delete(facebookConnections).where(eq(facebookConnections.userId, userId));
-      await db.delete(facebookAccounts).where(eq(facebookAccounts.userId, userId));
-      await db.delete(facebookOauthStates).where(eq(facebookOauthStates.userId, userId));
-      await db.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, userId));
-      await db.delete(appLogs).where(eq(appLogs.userId, userId));
-      await db.delete(users).where(eq(users.id, userId));
+    await db.delete(orders).where(eq(orders.userId, userId));
+    await db.delete(leads).where(eq(leads.userId, userId));
+    await db.delete(integrations).where(eq(integrations.userId, userId));
+    await db.delete(targetWebsites).where(eq(targetWebsites.userId, userId));
+    await db.delete(facebookForms).where(eq(facebookForms.userId, userId));
+    await db.delete(facebookConnections).where(eq(facebookConnections.userId, userId));
+    await db.delete(facebookAccounts).where(eq(facebookAccounts.userId, userId));
+    await db.delete(facebookOauthStates).where(eq(facebookOauthStates.userId, userId));
+    await db.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, userId));
+    await db.delete(appLogs).where(eq(appLogs.userId, userId));
+    await db.delete(users).where(eq(users.id, userId));
 
-      // Clear session cookie
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+    const cookieOptions = getSessionCookieOptions(ctx.req);
+    ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
 
-      return { success: true };
-    }),
+    return { success: true };
+  }),
 });
+
+// Legacy export alias — kept for internal imports during migration
+export const emailAuthRouter = authRouter;

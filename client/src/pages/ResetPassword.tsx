@@ -13,7 +13,7 @@ export default function ResetPassword() {
   const [showPassword, setShowPassword] = useState(false);
   const [done, setDone] = useState(false);
 
-  const mutation = trpc.emailAuth.resetPassword.useMutation({
+  const mutation = trpc.auth.resetPassword.useMutation({
     onSuccess: () => setDone(true),
     onError: (err) => toast.error(err.message),
   });
