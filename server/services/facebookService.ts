@@ -1,5 +1,5 @@
 import axios from "axios";
-import { createHmac } from "crypto";
+import { createHmac, timingSafeEqual } from "crypto";
 import { log } from "./appLogger";
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v21.0";
@@ -41,7 +41,16 @@ export function verifyWebhookSignature(
     return false;
   }
   const expected = createHmac("sha256", appSecret).update(rawBody).digest("hex");
-  const isValid = expected === digest;
+  // Use constant-time comparison to prevent timing attacks that could allow
+  // byte-by-byte brute-forcing of the HMAC value.
+  let isValid = false;
+  try {
+    const expectedBuf = Buffer.from(expected, "hex");
+    const digestBuf = Buffer.from(digest, "hex");
+    isValid = expectedBuf.length === digestBuf.length && timingSafeEqual(expectedBuf, digestBuf);
+  } catch {
+    isValid = false;
+  }
   if (!isValid) {
     console.warn("[Facebook] Signature mismatch — possible tampered request");
   }
@@ -230,6 +239,18 @@ export async function validatePageToken(
   }
 }
 
+// Maximum length for any extracted lead field value.
+// Prevents oversized payloads from Facebook form submissions being stored,
+// forwarded to affiliate APIs, or injected into Telegram messages.
+const MAX_LEAD_FIELD_LENGTH = 512;
+
+function sanitizeFieldValue(val: string | null | undefined): string | null {
+  if (!val) return null;
+  // Trim whitespace and enforce max length
+  const trimmed = val.trim().slice(0, MAX_LEAD_FIELD_LENGTH);
+  return trimmed || null;
+}
+
 /**
  * Extract common fields from lead field_data array.
  */
@@ -242,7 +263,7 @@ export function extractLeadFields(fieldData: LeadFieldData[]): {
   const getExact = (names: string[]): string | null => {
     for (const name of names) {
       const field = fieldData.find((f) => f.name.toLowerCase() === name.toLowerCase());
-      if (field?.values?.[0]) return field.values[0];
+      if (field?.values?.[0]) return sanitizeFieldValue(field.values[0]);
     }
     return null;
   };
@@ -251,7 +272,7 @@ export function extractLeadFields(fieldData: LeadFieldData[]): {
   const getPartial = (keywords: string[]): string | null => {
     for (const kw of keywords) {
       const field = fieldData.find((f) => f.name.toLowerCase().includes(kw.toLowerCase()));
-      if (field?.values?.[0]) return field.values[0];
+      if (field?.values?.[0]) return sanitizeFieldValue(field.values[0]);
     }
     return null;
   };

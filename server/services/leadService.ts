@@ -87,13 +87,13 @@ async function resolvePageAccessToken(
     const intPageId = integration.pageId ?? "";
     const intFormId = integration.formId ?? "";
     if (intPageId === pageId && intFormId === formId) {
-      // Use the account token
+      // Use the account token — MUST verify userId to prevent cross-user token access
       const accountId = config.accountId as number | undefined;
       if (accountId) {
         const [account] = await db
           .select()
           .from(facebookAccounts)
-          .where(eq(facebookAccounts.id, accountId))
+          .where(and(eq(facebookAccounts.id, accountId), eq(facebookAccounts.userId, userId)))
           .limit(1);
         if (account) {
           return decrypt(account.accessToken);
@@ -105,11 +105,12 @@ async function resolvePageAccessToken(
   // 2. facebookAccounts stores user-level tokens, not page-level tokens
   // Page tokens are obtained dynamically via the Graph API when needed
 
-  // 3. Legacy fallback: facebookConnections
+  // 3. Legacy fallback: facebookConnections — MUST include userId to prevent
+  //    cross-user token access when multiple users share the same Facebook page.
   const [connection] = await db
     .select()
     .from(facebookConnections)
-    .where(eq(facebookConnections.pageId, pageId))
+    .where(and(eq(facebookConnections.pageId, pageId), eq(facebookConnections.userId, userId)))
     .limit(1);
   if (connection) {
     return decrypt(connection.accessToken);
@@ -145,6 +146,35 @@ function extractWithMapping(
 }
 
 /**
+ * Validate that a target URL is safe to send requests to.
+ * Rejects non-HTTPS, localhost, and RFC1918 private ranges to prevent SSRF.
+ */
+function assertSafeTargetUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error("targetUrl is not a valid URL");
+  }
+  if (parsed.protocol !== "https:") {
+    throw new Error("targetUrl must use HTTPS — plain HTTP is not allowed");
+  }
+  const host = parsed.hostname.toLowerCase();
+  const blocked = [
+    "localhost", "127.0.0.1", "0.0.0.0", "::1",
+    // Link-local
+    "169.254.",
+    // RFC1918 private ranges
+    "10.", "192.168.",
+    // RFC1918 172.16.0.0/12
+    ...Array.from({ length: 16 }, (_, i) => `172.${16 + i}.`),
+  ];
+  if (blocked.some((b) => host === b.replace(/\.$/, "") || host.startsWith(b))) {
+    throw new Error("targetUrl must not target internal or private network addresses");
+  }
+}
+
+/**
  * Send lead to a LEAD_ROUTING target website.
  */
 async function sendLeadToTargetWebsite(
@@ -167,6 +197,12 @@ async function sendLeadToTargetWebsite(
 
   if (!targetUrl) {
     return { success: false, error: "No targetUrl configured in LEAD_ROUTING integration" };
+  }
+
+  try {
+    assertSafeTargetUrl(targetUrl);
+  } catch (err) {
+    return { success: false, error: `Invalid targetUrl: ${err instanceof Error ? err.message : String(err)}` };
   }
 
   try {
@@ -242,10 +278,12 @@ export async function sendLeadTelegramNotification(params: {
   let targetWebsiteName: string | null = null;
 
   try {
+    // MUST filter by userId — without it, another user's page name would leak
+    // into this user's Telegram notification.
     const [conn] = await db
       .select({ pageName: facebookConnections.pageName })
       .from(facebookConnections)
-      .where(eq(facebookConnections.pageId, params.lead.pageId))
+      .where(and(eq(facebookConnections.pageId, params.lead.pageId), eq(facebookConnections.userId, params.userId)))
       .limit(1);
     pageName = conn?.pageName ?? null;
 

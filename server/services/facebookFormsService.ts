@@ -167,7 +167,9 @@ export async function getLeadSourceInfo(params: {
     };
   }
 
-  // 2. Graph API fallback — find page token for this user + pageId
+  // 2. Graph API fallback — find page token for this user + pageId only.
+  //    Never fall back to another user's connection: that would decrypt and use
+  //    a different tenant's Facebook credentials.
   const [conn] = await db
     .select()
     .from(facebookConnections)
@@ -179,13 +181,7 @@ export async function getLeadSourceInfo(params: {
     )
     .limit(1);
 
-  // If no connection for this user, try any connection for this page (cross-user fallback)
-  const connToUse = conn ?? (await db
-    .select()
-    .from(facebookConnections)
-    .where(eq(facebookConnections.pageId, params.pageId))
-    .limit(1)
-    .then(r => r[0] ?? null));
+  const connToUse = conn ?? null;
 
   if (!connToUse) {
     // No token available — show raw IDs

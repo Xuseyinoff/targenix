@@ -177,16 +177,18 @@ export const leadsRouter = router({
 
       if (!lead) throw new Error("Lead not found");
 
-      // Fetch orders with integration details
+      // Fetch orders — scope to both leadId AND userId for defense-in-depth
       const orderRows = await db
         .select()
         .from(orders)
-        .where(eq(orders.leadId, input.id))
+        .where(and(eq(orders.leadId, input.id), eq(orders.userId, userId)))
         .orderBy(orders.createdAt);
 
       // Enrich each order with integration name, type, and target website
       const enrichedOrders = await Promise.all(
         orderRows.map(async (order) => {
+          // Include userId filter: prevents reading another user's integration details
+          // if an order's integrationId were ever mismatched.
           const [intg] = await db
             .select({
               id: integrations.id,
@@ -196,7 +198,7 @@ export const leadsRouter = router({
               config: integrations.config,
             })
             .from(integrations)
-            .where(eq(integrations.id, order.integrationId))
+            .where(and(eq(integrations.id, order.integrationId), eq(integrations.userId, userId)))
             .limit(1);
 
           let targetWebsiteName: string | null = null;
@@ -268,10 +270,13 @@ export const leadsRouter = router({
       let skipped = 0;
 
       for (const item of polledLeads) {
+        // Must filter by BOTH leadgenId AND userId — two users can legitimately own
+        // the same Facebook lead (composite unique index on schema).
+        // Without userId, User B's lead is skipped if User A already polled it.
         const existing = await db
           .select({ id: leads.id })
           .from(leads)
-          .where(eq(leads.leadgenId, item.id))
+          .where(and(eq(leads.leadgenId, item.id), eq(leads.userId, userId)))
           .limit(1);
 
         if (existing.length > 0) {
