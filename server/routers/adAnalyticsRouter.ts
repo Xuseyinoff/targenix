@@ -1,14 +1,16 @@
 /**
  * adAnalyticsRouter.ts
  *
- * tRPC procedures for the Business Tools → Ad Analytics module.
+ * tRPC procedures for Business Tools → Ads Manager.
  *
- * Procedures:
- *  - adAnalytics.listAdAccounts   — list all ad accounts across connected FB accounts
- *  - adAnalytics.getInsights      — fetch insights for a specific ad account (with date preset)
- *  - adAnalytics.listCampaigns    — list campaigns for a specific ad account
- *  - adAnalytics.getCampaignInsights — fetch campaign-level insights (CPL/CTR/CVR)
- *  - adAnalytics.checkAlerts      — compare CPL vs 7-day avg, send Telegram alert if anomaly
+ * Architecture: DB-first (stale-while-revalidate)
+ *  1. Read from DB cache (adAccountsCache, campaignsCache, campaignInsightsCache, adSetsCache)
+ *  2. If data is stale (>8 min) or missing → trigger background sync
+ *  3. Return cached data immediately (fast response)
+ *  4. syncNow → force immediate sync for a specific FB account
+ *
+ * Graph API is NEVER called on every page load.
+ * All data flows: Facebook API → DB cache → Frontend.
  */
 
 import { TRPCError } from "@trpc/server";
@@ -17,62 +19,34 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { decrypt } from "../encryption";
 import {
-  fetchAdAccounts,
-  fetchAdAccountInsights,
-  type AdAccount,
-  type InsightsSummary,
-} from "../services/adAccountsService";
+  facebookAccounts,
+  adAccountsCache,
+  campaignsCache,
+  campaignInsightsCache,
+  adSetsCache,
+} from "../../drizzle/schema";
+import { eq, and, desc, asc, sql } from "drizzle-orm";
 import {
-  fetchCampaigns,
-  fetchCampaignInsights,
-} from "../services/campaignService";
+  syncFbAccountData,
+  syncAdSetsForCampaign,
+  isStale,
+} from "../services/adsSyncService";
 import { notifyOwner } from "../_core/notification";
-import { facebookAccounts } from "../../drizzle/schema";
-import { eq, desc } from "drizzle-orm";
+import { fetchAdAccountInsights } from "../services/adAccountsService";
 
 // ─── Date preset validation ───────────────────────────────────────────────────
 const DATE_PRESETS = ["today", "yesterday", "last_7d", "last_30d"] as const;
 type DatePreset = typeof DATE_PRESETS[number];
 
-// Map frontend presets to Facebook API date_preset values
-const FB_DATE_PRESET_MAP: Record<DatePreset, string> = {
+// Frontend preset → DB cache key (only last_7d and last_30d are synced by background job)
+const CACHE_PRESET_MAP: Record<DatePreset, string> = {
   today: "today",
   yesterday: "yesterday",
-  last_7d: "last_7_days",
+  last_7d: "last_7d",
   last_30d: "last_30d",
 };
 
-// ─── Helper: get all decrypted tokens for a user ──────────────────────────────
-async function getUserFbTokens(
-  userId: number
-): Promise<Array<{ id: number; fbUserId: string; fbUserName: string; accessToken: string }>> {
-  const db = await getDb();
-  if (!db) return [];
-
-  const rows = await db
-    .select({
-      id: facebookAccounts.id,
-      fbUserId: facebookAccounts.fbUserId,
-      fbUserName: facebookAccounts.fbUserName,
-      accessToken: facebookAccounts.accessToken,
-    })
-    .from(facebookAccounts)
-    .where(eq(facebookAccounts.userId, userId))
-    .orderBy(desc(facebookAccounts.createdAt));
-
-  return rows.map((r) => ({
-    ...r,
-    accessToken: (() => {
-      try {
-        return decrypt(r.accessToken);
-      } catch {
-        return "";
-      }
-    })(),
-  })).filter((r) => r.accessToken !== "");
-}
-
-// ─── Helper: get single decrypted token with ownership check ──────────────────
+// ─── Helper: get decrypted token with ownership check ─────────────────────────
 async function getVerifiedToken(userId: number, fbAccountId: number): Promise<string> {
   const db = await getDb();
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -83,12 +57,8 @@ async function getVerifiedToken(userId: number, fbAccountId: number): Promise<st
     .where(eq(facebookAccounts.id, fbAccountId))
     .limit(1);
 
-  if (!account) {
-    throw new TRPCError({ code: "NOT_FOUND", message: "Facebook account not found" });
-  }
-  if (account.userId !== userId) {
-    throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
-  }
+  if (!account) throw new TRPCError({ code: "NOT_FOUND", message: "Facebook account not found" });
+  if (account.userId !== userId) throw new TRPCError({ code: "FORBIDDEN", message: "Access denied" });
 
   try {
     return decrypt(account.accessToken);
@@ -97,79 +67,345 @@ async function getVerifiedToken(userId: number, fbAccountId: number): Promise<st
   }
 }
 
+// ─── Helper: get all decrypted tokens for a user ─────────────────────────────
+async function getUserFbAccounts(userId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(facebookAccounts)
+    .where(eq(facebookAccounts.userId, userId))
+    .orderBy(desc(facebookAccounts.createdAt));
+}
+
 // ─── Helper: classify Facebook API errors ────────────────────────────────────
 function classifyFbError(err: unknown): TRPCError {
   const msg = err instanceof Error ? err.message : String(err);
-  if (
-    msg.includes("AUTH_ERROR") ||
-    msg.includes("190") ||
-    msg.includes("OAuthException") ||
-    msg.includes("401") ||
-    msg.includes("403")
-  ) {
+  if (msg.includes("AUTH_ERROR") || msg.includes("190") || msg.includes("OAuthException") || msg.includes("401") || msg.includes("403")) {
     return new TRPCError({
       code: "UNAUTHORIZED",
       message: "Facebook token expired or insufficient permissions. Please reconnect your account.",
     });
   }
-  return new TRPCError({
-    code: "INTERNAL_SERVER_ERROR",
-    message: `Failed to fetch data: ${msg}`,
-  });
+  return new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Failed to fetch data: ${msg}` });
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 export const adAnalyticsRouter = router({
-  // ── List all ad accounts across all connected FB accounts ──────────────────
+
+  // ── List ad accounts — reads from DB, triggers background sync if stale ────
   listAdAccounts: protectedProcedure.query(async ({ ctx }) => {
     const userId = ctx.user.id;
-    const tokens = await getUserFbTokens(userId);
+    const db = await getDb();
+    if (!db) return [];
 
-    if (tokens.length === 0) {
-      return [];
-    }
+    // Read from DB cache (join with facebookAccounts to get fbUserName)
+    const cached = await db
+      .select({
+        id: adAccountsCache.id,
+        userId: adAccountsCache.userId,
+        facebookAccountId: adAccountsCache.facebookAccountId,
+        fbAdAccountId: adAccountsCache.fbAdAccountId,
+        name: adAccountsCache.name,
+        status: adAccountsCache.status,
+        statusCode: adAccountsCache.statusCode,
+        currency: adAccountsCache.currency,
+        timezone: adAccountsCache.timezone,
+        balance: adAccountsCache.balance,
+        amountSpent: adAccountsCache.amountSpent,
+        minDailyBudget: adAccountsCache.minDailyBudget,
+        lastSyncedAt: adAccountsCache.lastSyncedAt,
+        fbUserName: facebookAccounts.fbUserName,
+      })
+      .from(adAccountsCache)
+      .leftJoin(facebookAccounts, eq(adAccountsCache.facebookAccountId, facebookAccounts.id))
+      .where(eq(adAccountsCache.userId, userId))
+      .orderBy(asc(adAccountsCache.name));
 
-    const results: Array<AdAccount & { fbAccountId: number; fbUserName: string }> = [];
-
-    for (const token of tokens) {
-      try {
-        const accounts = await fetchAdAccounts(token.accessToken);
-        for (const acc of accounts) {
-          results.push({
-            ...acc,
-            fbAccountId: token.id,
-            fbUserName: token.fbUserName,
-          });
-        }
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        // Token expired or permission denied — surface as empty, not crash
-        if (msg.includes("190") || msg.includes("OAuthException") || msg.includes("AUTH_ERROR")) {
-          continue;
-        }
-        throw new TRPCError({
-          code: "INTERNAL_SERVER_ERROR",
-          message: `Failed to fetch ad accounts: ${msg}`,
-        });
+    // If any account is stale, trigger background sync (non-blocking)
+    const anyStale = cached.length === 0 || cached.some((a) => isStale(a.lastSyncedAt));
+    if (anyStale) {
+      const fbAccounts = await getUserFbAccounts(userId);
+      for (const fbAccount of fbAccounts) {
+        try {
+          const accessToken = decrypt(fbAccount.accessToken);
+          void syncFbAccountData(userId, fbAccount.id, accessToken).catch((e: unknown) =>
+            console.error(`[adAnalytics] bg sync failed for fbacc=${fbAccount.id}:`, e instanceof Error ? e.message : e)
+          );
+        } catch { /* ignore decrypt errors */ }
       }
     }
 
-    return results;
+    // Return cached data (possibly empty on first load — frontend shows loading state)
+    return cached.map((a) => ({
+      id: a.fbAdAccountId,
+      accountId: a.fbAdAccountId.replace("act_", ""),
+      fbAccountId: a.facebookAccountId,
+      fbUserName: a.fbUserName ?? "",
+      name: a.name,
+      status: a.status as "ACTIVE" | "DISABLED" | "UNSETTLED" | "PENDING_RISK_REVIEW" | "PENDING_SETTLEMENT" | "IN_GRACE_PERIOD" | "PENDING_CLOSURE" | "CLOSED" | "ANY_ACTIVE" | "ANY_CLOSED" | "UNKNOWN",
+      statusCode: a.statusCode,
+      currency: a.currency,
+      timezone: a.timezone ?? "",
+      balance: a.balance,
+      amountSpent: a.amountSpent,
+      minDailyBudget: a.minDailyBudget,
+      lastSyncedAt: a.lastSyncedAt?.toISOString() ?? null,
+    }));
   }),
 
-  // ── Get account-level insights for a specific ad account ──────────────────
-  getInsights: protectedProcedure
-    .input(
-      z.object({
-        adAccountId: z.string().min(1),
-        fbAccountId: z.number().int().positive(),
-        datePreset: z.enum(DATE_PRESETS).optional().default("last_30d"),
+  // ── List campaigns for an ad account — from DB ─────────────────────────────
+  listCampaigns: protectedProcedure
+    .input(z.object({
+      adAccountId: z.string().min(1),
+      fbAccountId: z.number().int().positive(),
+    }))
+    .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) return [];
+
+      // Ownership check
+      await getVerifiedToken(ctx.user.id, input.fbAccountId);
+
+      const cached = await db
+        .select()
+        .from(campaignsCache)
+        .where(and(
+          eq(campaignsCache.userId, ctx.user.id),
+          eq(campaignsCache.fbAdAccountId, input.adAccountId)
+        ))
+        .orderBy(asc(campaignsCache.name));
+
+      // Trigger background sync if stale
+      if (cached.length === 0 || cached.some((c) => isStale(c.lastSyncedAt))) {
+        try {
+          const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
+          void syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken).catch((e: unknown) =>
+            console.error("[adAnalytics] bg campaign sync failed:", e instanceof Error ? e.message : e)
+          );
+        } catch { /* ignore */ }
+      }
+
+      return cached.map((c) => ({
+        id: c.fbCampaignId,
+        name: c.name,
+        status: c.status as "ACTIVE" | "PAUSED" | "DELETED" | "ARCHIVED",
+        objective: c.objective,
+        dailyBudget: c.dailyBudget,
+        lifetimeBudget: c.lifetimeBudget,
+        lastSyncedAt: c.lastSyncedAt?.toISOString() ?? null,
+      }));
+    }),
+
+  // ── Get campaign-level insights — from DB ──────────────────────────────────
+  getCampaignInsights: protectedProcedure
+    .input(z.object({
+      adAccountId: z.string().min(1),
+      fbAccountId: z.number().int().positive(),
+      datePreset: z.enum(DATE_PRESETS).optional().default("last_30d"),
+    }))
+    .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+
+      await getVerifiedToken(ctx.user.id, input.fbAccountId);
+      const cacheKey = CACHE_PRESET_MAP[input.datePreset];
+
+      // Check if this preset is cached
+      const cachedInsights = await db
+        .select()
+        .from(campaignInsightsCache)
+        .where(and(
+          eq(campaignInsightsCache.userId, ctx.user.id),
+          eq(campaignInsightsCache.fbAdAccountId, input.adAccountId),
+          eq(campaignInsightsCache.datePreset, cacheKey)
+        ));
+
+      // Check if campaigns are cached (to get currency)
+      const [accountMeta] = await db
+        .select({ currency: adAccountsCache.currency, lastSyncedAt: adAccountsCache.lastSyncedAt })
+        .from(adAccountsCache)
+        .where(and(
+          eq(adAccountsCache.userId, ctx.user.id),
+          eq(adAccountsCache.fbAdAccountId, input.adAccountId)
+        ))
+        .limit(1);
+
+      const currency = accountMeta?.currency ?? "USD";
+
+      // Trigger bg sync if stale or missing
+      const anyStale = cachedInsights.length === 0 || cachedInsights.some(
+        (r) => isStale(r.syncedAt)
+      );
+      if (anyStale) {
+        try {
+          const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
+          void syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken).catch((e: unknown) =>
+            console.error("[adAnalytics] bg insights sync failed:", e instanceof Error ? e.message : e)
+          );
+        } catch { /* ignore */ }
+      }
+
+      // Build response from cache
+      const campaigns = cachedInsights.map((row) => ({
+        campaignId: row.fbCampaignId,
+        campaignName: row.fbCampaignId, // will be enriched below
+        spend: parseFloat(row.spend),
+        impressions: row.impressions,
+        clicks: row.clicks,
+        leads: row.leads,
+        cpl: parseFloat(row.cpl),
+        ctr: parseFloat(row.ctr),
+        conversionRate: parseFloat(row.conversionRate),
+      }));
+
+      // Enrich with campaign names from campaignsCache
+      if (campaigns.length > 0) {
+        const campaignRows = await db
+          .select({ fbCampaignId: campaignsCache.fbCampaignId, name: campaignsCache.name })
+          .from(campaignsCache)
+          .where(and(
+            eq(campaignsCache.userId, ctx.user.id),
+            eq(campaignsCache.fbAdAccountId, input.adAccountId)
+          ));
+        const nameMap = new Map(campaignRows.map((c) => [c.fbCampaignId, c.name]));
+        for (const c of campaigns) {
+          c.campaignName = nameMap.get(c.campaignId) ?? c.campaignId;
+        }
+      }
+
+      // Aggregate totals
+      const totalSpend = campaigns.reduce((s, c) => s + c.spend, 0);
+      const totalLeads = campaigns.reduce((s, c) => s + c.leads, 0);
+      const totalImpressions = campaigns.reduce((s, c) => s + c.impressions, 0);
+      const totalClicks = campaigns.reduce((s, c) => s + c.clicks, 0);
+      const avgCpl = totalLeads > 0 ? totalSpend / totalLeads : 0;
+      const avgCtr = totalImpressions > 0 ? (totalClicks / totalImpressions) * 100 : 0;
+
+      return {
+        datePreset: input.datePreset,
+        currency,
+        totalSpend: Math.round(totalSpend * 100) / 100,
+        totalLeads,
+        totalImpressions,
+        totalClicks,
+        avgCpl: Math.round(avgCpl * 100) / 100,
+        avgCtr: Math.round(avgCtr * 100) / 100,
+        campaigns: campaigns.sort((a, b) => b.spend - a.spend),
+      };
+    }),
+
+  // ── List ad sets for a campaign — from DB, synced on demand ───────────────
+  listAdSets: protectedProcedure
+    .input(z.object({
+      adAccountId: z.string().min(1),
+      fbAccountId: z.number().int().positive(),
+      fbCampaignId: z.string().min(1),
+    }))
+    .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) return [];
+
+      const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
+
+      const cached = await db
+        .select()
+        .from(adSetsCache)
+        .where(and(
+          eq(adSetsCache.userId, ctx.user.id),
+          eq(adSetsCache.fbCampaignId, input.fbCampaignId)
+        ))
+        .orderBy(asc(adSetsCache.name));
+
+      // Sync on demand if stale
+      if (cached.length === 0 || cached.some((a) => isStale(a.lastSyncedAt))) {
+        try {
+          void syncAdSetsForCampaign(
+            ctx.user.id,
+            input.fbAccountId,
+            input.adAccountId,
+            input.fbCampaignId,
+            accessToken
+          ).catch((e: unknown) =>
+            console.error("[adAnalytics] ad sets sync failed:", e instanceof Error ? e.message : e)
+          );
+        } catch { /* ignore */ }
+      }
+
+      return cached.map((a) => ({
+        id: a.fbAdSetId,
+        name: a.name,
+        status: a.status as "ACTIVE" | "PAUSED" | "DELETED" | "ARCHIVED",
+        dailyBudget: a.dailyBudget,
+        lifetimeBudget: a.lifetimeBudget,
+        optimizationGoal: a.optimizationGoal ?? "",
+        billingEvent: a.billingEvent ?? "",
+        lastSyncedAt: a.lastSyncedAt?.toISOString() ?? null,
+      }));
+    }),
+
+  // ── Force sync for a specific FB account ──────────────────────────────────
+  syncNow: protectedProcedure
+    .input(z.object({
+      fbAccountId: z.number().int().positive(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
+      try {
+        const result = await syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken);
+        return { success: true, ...result };
+      } catch (err) {
+        throw classifyFbError(err);
+      }
+    }),
+
+  // ── Get sync status for all FB accounts ───────────────────────────────────
+  getSyncStatus: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return [];
+
+    const fbAccounts = await getUserFbAccounts(ctx.user.id);
+
+    const statuses = await Promise.all(
+      fbAccounts.map(async (fbAcc) => {
+        // Find the most recent sync time across all ad accounts for this FB account
+        const [latest] = await db
+          .select({ lastSyncedAt: adAccountsCache.lastSyncedAt })
+          .from(adAccountsCache)
+          .where(and(
+            eq(adAccountsCache.userId, ctx.user.id),
+            eq(adAccountsCache.facebookAccountId, fbAcc.id)
+          ))
+          .orderBy(desc(adAccountsCache.lastSyncedAt))
+          .limit(1);
+
+        const lastSyncedAt = latest?.lastSyncedAt ?? null;
+        return {
+          fbAccountId: fbAcc.id,
+          fbUserName: fbAcc.fbUserName,
+          lastSyncedAt: lastSyncedAt?.toISOString() ?? null,
+          isStale: isStale(lastSyncedAt),
+          tokenExpiresAt: fbAcc.tokenExpiresAt?.toISOString() ?? null,
+        };
       })
-    )
+    );
+
+    return statuses;
+  }),
+
+  // ── Account-level insights (for Analytics page) ────────────────────────────
+  getInsights: protectedProcedure
+    .input(z.object({
+      adAccountId: z.string().min(1),
+      fbAccountId: z.number().int().positive(),
+      datePreset: z.enum(DATE_PRESETS).optional().default("last_30d"),
+    }))
     .query(async ({ ctx, input }) => {
       const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
+      const FB_DATE_PRESET_MAP: Record<DatePreset, string> = {
+        today: "today", yesterday: "yesterday", last_7d: "last_7_days", last_30d: "last_30d",
+      };
       const fbDatePreset = FB_DATE_PRESET_MAP[input.datePreset];
-
       try {
         const insights = await fetchAdAccountInsights(input.adAccountId, accessToken, "USD", fbDatePreset);
         return insights;
@@ -178,69 +414,16 @@ export const adAnalyticsRouter = router({
       }
     }),
 
-  // ── List campaigns for a specific ad account ──────────────────────────────
-  listCampaigns: protectedProcedure
-    .input(
-      z.object({
-        adAccountId: z.string().min(1),
-        fbAccountId: z.number().int().positive(),
-      })
-    )
-    .query(async ({ ctx, input }) => {
-      const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
-
-      try {
-        const campaigns = await fetchCampaigns(input.adAccountId, accessToken);
-        return campaigns;
-      } catch (err) {
-        throw classifyFbError(err);
-      }
-    }),
-
-  // ── Get campaign-level insights ───────────────────────────────────────────
-  getCampaignInsights: protectedProcedure
-    .input(
-      z.object({
-        adAccountId: z.string().min(1),
-        fbAccountId: z.number().int().positive(),
-        datePreset: z.enum(DATE_PRESETS).optional().default("last_30d"),
-      })
-    )
-    .query(async ({ ctx, input }) => {
-      const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
-      const fbDatePreset = FB_DATE_PRESET_MAP[input.datePreset];
-
-      // Get ad account currency
-      let currency = "USD";
-      try {
-        const accounts = await fetchAdAccounts(accessToken);
-        const account = accounts.find((a) => a.id === input.adAccountId);
-        if (account) currency = account.currency;
-      } catch {
-        // Use default USD
-      }
-
-      try {
-        const insights = await fetchCampaignInsights(input.adAccountId, accessToken, fbDatePreset, currency);
-        return insights;
-      } catch (err) {
-        throw classifyFbError(err);
-      }
-    }),
-
-  // ── Check CPL alerts — compare today vs 7-day avg ─────────────────────────
+  // ── CPL alert check ────────────────────────────────────────────────────────
   checkAlerts: protectedProcedure
-    .input(
-      z.object({
-        adAccountId: z.string().min(1),
-        adAccountName: z.string(),
-        fbAccountId: z.number().int().positive(),
-      })
-    )
+    .input(z.object({
+      adAccountId: z.string().min(1),
+      adAccountName: z.string(),
+      fbAccountId: z.number().int().positive(),
+    }))
     .mutation(async ({ ctx, input }) => {
       const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
-
-      let insights: InsightsSummary;
+      let insights;
       try {
         insights = await fetchAdAccountInsights(input.adAccountId, accessToken);
       } catch {
@@ -250,43 +433,24 @@ export const adAnalyticsRouter = router({
       const daily = insights.daily;
       if (daily.length < 8) return { alerted: false };
 
-      // Today = last entry; 7-day avg = entries before today
       const today = daily[daily.length - 1];
-      const last7 = daily.slice(-8, -1); // 7 days before today
-
-      const avg7Cpl =
-        last7.filter((d) => d.leads > 0).reduce((s, d) => s + d.cpl, 0) /
+      const last7 = daily.slice(-8, -1);
+      const avg7Cpl = last7.filter((d) => d.leads > 0).reduce((s, d) => s + d.cpl, 0) /
         (last7.filter((d) => d.leads > 0).length || 1);
-
-      const avg7Leads =
-        last7.reduce((s, d) => s + d.leads, 0) / last7.length;
-
+      const avg7Leads = last7.reduce((s, d) => s + d.leads, 0) / last7.length;
       const alerts: string[] = [];
 
-      // CPL spike: today's CPL > 130% of 7-day avg
       if (today.leads > 0 && avg7Cpl > 0 && today.cpl > avg7Cpl * 1.3) {
-        alerts.push(
-          `⚠️ Alert: High CPL detected on ${input.adAccountName}. Current: $${today.cpl.toFixed(2)} (7-day avg: $${avg7Cpl.toFixed(2)}, +${Math.round(((today.cpl - avg7Cpl) / avg7Cpl) * 100)}%)`
-        );
+        alerts.push(`⚠️ High CPL on ${input.adAccountName}. Current: $${today.cpl.toFixed(2)} (7d avg: $${avg7Cpl.toFixed(2)}, +${Math.round(((today.cpl - avg7Cpl) / avg7Cpl) * 100)}%)`);
       }
-
-      // Lead volume drop: today's leads < 50% of 7-day avg
       if (avg7Leads > 0 && today.leads < avg7Leads * 0.5) {
-        alerts.push(
-          `⚠️ Alert: Lead volume drop on ${input.adAccountName}. Today: ${today.leads} leads (7-day avg: ${avg7Leads.toFixed(1)}, -${Math.round(((avg7Leads - today.leads) / avg7Leads) * 100)}%)`
-        );
+        alerts.push(`⚠️ Lead volume drop on ${input.adAccountName}. Today: ${today.leads} (7d avg: ${avg7Leads.toFixed(1)}, -${Math.round(((avg7Leads - today.leads) / avg7Leads) * 100)}%)`);
       }
-
       if (alerts.length === 0) return { alerted: false };
 
       try {
-        await notifyOwner({
-          title: `Ad Performance Alert — ${input.adAccountName}`,
-          content: alerts.join("\n\n"),
-        });
-      } catch {
-        // Non-fatal
-      }
+        await notifyOwner({ title: `Ad Alert — ${input.adAccountName}`, content: alerts.join("\n\n") });
+      } catch { /* non-fatal */ }
 
       return { alerted: true, alerts };
     }),

@@ -341,3 +341,117 @@ export const facebookOauthStates = mysqlTable("facebook_oauth_states", {
 
 export type FacebookOauthState = typeof facebookOauthStates.$inferSelect;
 export type InsertFacebookOauthState = typeof facebookOauthStates.$inferInsert;
+
+// ─── Ad Accounts Cache ────────────────────────────────────────────────────────
+// Synced from Facebook Marketing API by background job (every 10 min).
+// Frontend reads from this instead of calling Graph API directly.
+export const adAccountsCache = mysqlTable("ad_accounts_cache", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  /** FK to facebookAccounts.id — which connected FB user owns this ad account */
+  facebookAccountId: int("facebookAccountId").notNull(),
+  /** Facebook ad account ID (act_XXXXXXXXX format) */
+  fbAdAccountId: varchar("fbAdAccountId", { length: 64 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  /** ACTIVE | DISABLED | UNSETTLED | PENDING_RISK_REVIEW | ... */
+  status: varchar("status", { length: 32 }).notNull().default("UNKNOWN"),
+  statusCode: int("statusCode").notNull().default(0),
+  currency: varchar("currency", { length: 8 }).notNull().default("USD"),
+  timezone: varchar("timezone", { length: 64 }),
+  /** Account balance in cents as string (from Facebook API) */
+  balance: varchar("balance", { length: 32 }).notNull().default("0"),
+  /** Total lifetime spend in cents as string */
+  amountSpent: varchar("amountSpent", { length: 32 }).notNull().default("0"),
+  minDailyBudget: varchar("minDailyBudget", { length: 32 }).notNull().default("0"),
+  /** When this record was last synced from Facebook */
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  uqUserAccount: uniqueIndex("uq_ad_accounts_cache_user_account").on(t.userId, t.fbAdAccountId),
+  idxFbAccount: index("idx_ad_accounts_cache_fb_account").on(t.facebookAccountId),
+}));
+
+export type AdAccountCache = typeof adAccountsCache.$inferSelect;
+export type InsertAdAccountCache = typeof adAccountsCache.$inferInsert;
+
+// ─── Campaigns Cache ──────────────────────────────────────────────────────────
+// Synced from Facebook Marketing API. One row per campaign per user.
+export const campaignsCache = mysqlTable("campaigns_cache", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  facebookAccountId: int("facebookAccountId").notNull(),
+  fbAdAccountId: varchar("fbAdAccountId", { length: 64 }).notNull(),
+  /** Facebook campaign ID (numeric string) */
+  fbCampaignId: varchar("fbCampaignId", { length: 64 }).notNull(),
+  name: varchar("name", { length: 512 }).notNull(),
+  status: varchar("status", { length: 32 }).notNull().default("ACTIVE"),
+  objective: varchar("objective", { length: 64 }).notNull().default(""),
+  dailyBudget: varchar("dailyBudget", { length: 32 }).notNull().default("0"),
+  lifetimeBudget: varchar("lifetimeBudget", { length: 32 }).notNull().default("0"),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  uqUserCampaign: uniqueIndex("uq_campaigns_cache_user_campaign").on(t.userId, t.fbCampaignId),
+  idxUserAdAccount: index("idx_campaigns_cache_user_ad_account").on(t.userId, t.fbAdAccountId),
+}));
+
+export type CampaignCache = typeof campaignsCache.$inferSelect;
+export type InsertCampaignCache = typeof campaignsCache.$inferInsert;
+
+// ─── Ad Sets Cache ─────────────────────────────────────────────────────────────
+// Synced on-demand when user drills into a campaign.
+export const adSetsCache = mysqlTable("ad_sets_cache", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  facebookAccountId: int("facebookAccountId").notNull(),
+  fbAdAccountId: varchar("fbAdAccountId", { length: 64 }).notNull(),
+  fbCampaignId: varchar("fbCampaignId", { length: 64 }).notNull(),
+  /** Facebook ad set ID (numeric string) */
+  fbAdSetId: varchar("fbAdSetId", { length: 64 }).notNull(),
+  name: varchar("name", { length: 512 }).notNull(),
+  status: varchar("status", { length: 32 }).notNull().default("ACTIVE"),
+  dailyBudget: varchar("dailyBudget", { length: 32 }).notNull().default("0"),
+  lifetimeBudget: varchar("lifetimeBudget", { length: 32 }).notNull().default("0"),
+  optimizationGoal: varchar("optimizationGoal", { length: 64 }),
+  billingEvent: varchar("billingEvent", { length: 64 }),
+  lastSyncedAt: timestamp("lastSyncedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  uqUserAdSet: uniqueIndex("uq_ad_sets_cache_user_adset").on(t.userId, t.fbAdSetId),
+  idxUserCampaign: index("idx_ad_sets_cache_user_campaign").on(t.userId, t.fbCampaignId),
+}));
+
+export type AdSetCache = typeof adSetsCache.$inferSelect;
+export type InsertAdSetCache = typeof adSetsCache.$inferInsert;
+
+// ─── Campaign Insights Cache ──────────────────────────────────────────────────
+// Stores aggregated performance metrics per campaign per date preset.
+// Sourced from a single campaign-level insights API call (not per-campaign).
+// Key: (userId, fbCampaignId, datePreset) — refreshed every sync cycle.
+export const campaignInsightsCache = mysqlTable("campaign_insights_cache", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  facebookAccountId: int("facebookAccountId").notNull(),
+  fbAdAccountId: varchar("fbAdAccountId", { length: 64 }).notNull(),
+  fbCampaignId: varchar("fbCampaignId", { length: 64 }).notNull(),
+  /** Frontend date preset: today | yesterday | last_7d | last_30d */
+  datePreset: varchar("datePreset", { length: 32 }).notNull(),
+  spend: varchar("spend", { length: 32 }).notNull().default("0"),
+  impressions: int("impressions").notNull().default(0),
+  clicks: int("clicks").notNull().default(0),
+  leads: int("leads").notNull().default(0),
+  ctr: varchar("ctr", { length: 16 }).notNull().default("0"),
+  cpl: varchar("cpl", { length: 16 }).notNull().default("0"),
+  conversionRate: varchar("conversionRate", { length: 16 }).notNull().default("0"),
+  /** When this row was last synced from Facebook */
+  syncedAt: timestamp("syncedAt").defaultNow().notNull(),
+}, (t) => ({
+  uqKey: uniqueIndex("uq_campaign_insights_cache_key").on(t.userId, t.fbCampaignId, t.datePreset),
+  idxUserAdAccount: index("idx_campaign_insights_cache_account").on(t.userId, t.fbAdAccountId),
+}));
+
+export type CampaignInsightsCacheRow = typeof campaignInsightsCache.$inferSelect;
+export type InsertCampaignInsightsCache = typeof campaignInsightsCache.$inferInsert;

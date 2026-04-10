@@ -17,6 +17,7 @@ import { startLeadWorker } from "./leadWorker";
 import { startRetryScheduler } from "../services/retryScheduler";
 import { startLogRetentionScheduler } from "../services/logRetentionScheduler";
 import { startFormsRefreshScheduler } from "../services/formsRefreshScheduler";
+import { startAdsSyncScheduler } from "../services/adsSyncScheduler";
 
 if (!process.env.REDIS_URL) {
   console.error("[Worker] FATAL: REDIS_URL is required. Worker process cannot run without Redis.");
@@ -35,6 +36,7 @@ console.log("[Worker] Starting background schedulers...");
 startRetryScheduler();
 startLogRetentionScheduler();
 startFormsRefreshScheduler();
+startAdsSyncScheduler();
 
 console.log("[Worker] All systems running. Waiting for jobs...");
 
