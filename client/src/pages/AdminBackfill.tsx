@@ -11,14 +11,15 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Shield, Users, Zap, ChevronRight, ChevronLeft, Send, CheckCircle2, XCircle, Loader2, RefreshCw, ChevronsUpDown, Search } from "lucide-react";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Shield, Users, Zap, ChevronRight, ChevronLeft, Send, CheckCircle2, XCircle, Loader2, RefreshCw } from "lucide-react";
+  CommandDialog,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+} from "@/components/ui/command";
 import { toast } from "sonner";
 
 type Step = 1 | 2 | 3 | 4;
@@ -52,6 +53,8 @@ export default function AdminBackfill() {
   const [sendTelegram, setSendTelegram] = useState(true);
   const [sendResults, setSendResults] = useState<SendResult[] | null>(null);
   const [isSending, setIsSending] = useState(false);
+  const [userDialogOpen, setUserDialogOpen] = useState(false);
+  const [integrationDialogOpen, setIntegrationDialogOpen] = useState(false);
 
   // ── Data queries ────────────────────────────────────────────────────────────
   const { data: usersData, isLoading: loadingUsers } = trpc.adminBackfill.listUsers.useQuery(
@@ -186,44 +189,84 @@ export default function AdminBackfill() {
               </CardTitle>
               <CardDescription>Choose which user's integrations to backfill</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              {loadingUsers ? (
-                <div className="flex items-center gap-2 text-muted-foreground text-sm py-4">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading users...
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {usersData?.map(u => (
-                    <button
-                      key={u.id}
-                      onClick={() => setSelectedUserId(u.id)}
-                      className={`w-full flex items-center justify-between px-4 py-3 rounded-lg border text-left transition-colors ${
-                        selectedUserId === u.id
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:border-primary/50 hover:bg-muted/50"
-                      }`}
-                    >
-                      <div>
-                        <p className="font-medium text-sm">{u.name || u.email}</p>
-                        <p className="text-xs text-muted-foreground">{u.email}</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {u.role === "admin" && (
-                          <Badge variant="secondary" className="text-xs">Admin</Badge>
-                        )}
-                        {selectedUserId === u.id && (
-                          <CheckCircle2 className="h-4 w-4 text-primary" />
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="flex justify-end pt-2">
-                <Button
-                  disabled={!selectedUserId}
-                  onClick={() => setStep(2)}
-                >
+            <CardContent className="space-y-4">
+              {/* Search trigger */}
+              <button
+                type="button"
+                onClick={() => setUserDialogOpen(true)}
+                disabled={loadingUsers}
+                className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-border hover:border-primary/60 hover:bg-muted/40 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loadingUsers ? (
+                  <span className="flex items-center gap-2 text-muted-foreground text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading users...
+                  </span>
+                ) : selectedUser ? (
+                  <span className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                      <Users className="h-4 w-4 text-primary" />
+                    </div>
+                    <span>
+                      <p className="font-medium text-sm">{selectedUser.name || selectedUser.email}</p>
+                      <p className="text-xs text-muted-foreground">{selectedUser.email}</p>
+                    </span>
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-2 text-muted-foreground text-sm">
+                    <Search className="h-4 w-4" />
+                    Search and select a user...
+                  </span>
+                )}
+                <ChevronsUpDown className="h-4 w-4 text-muted-foreground shrink-0 ml-2" />
+              </button>
+
+              {/* User search dialog */}
+              <CommandDialog
+                open={userDialogOpen}
+                onOpenChange={setUserDialogOpen}
+                title="Select User"
+                description="Search users by name or email"
+              >
+                <CommandInput placeholder="Search by name or email..." />
+                <CommandList className="max-h-80">
+                  <CommandEmpty>No users found.</CommandEmpty>
+                  <CommandGroup heading={`${usersData?.length ?? 0} users`}>
+                    {usersData?.map(u => (
+                      <CommandItem
+                        key={u.id}
+                        value={`${u.name ?? ""} ${u.email} ${u.role}`}
+                        onSelect={() => {
+                          setSelectedUserId(u.id);
+                          setSelectedIntegrationId(null);
+                          setUserDialogOpen(false);
+                        }}
+                        className="flex items-center justify-between py-2.5 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-3">
+                          <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center shrink-0 text-xs font-semibold uppercase">
+                            {(u.name || u.email).charAt(0)}
+                          </div>
+                          <span>
+                            <p className="font-medium text-sm leading-tight">{u.name || u.email}</p>
+                            <p className="text-xs text-muted-foreground leading-tight">{u.email}</p>
+                          </span>
+                        </span>
+                        <span className="flex items-center gap-2 shrink-0 ml-2">
+                          {u.role === "admin" && (
+                            <Badge variant="secondary" className="text-xs">Admin</Badge>
+                          )}
+                          {selectedUserId === u.id && (
+                            <CheckCircle2 className="h-4 w-4 text-primary" />
+                          )}
+                        </span>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </CommandDialog>
+
+              <div className="flex justify-end pt-1">
+                <Button disabled={!selectedUserId} onClick={() => setStep(2)}>
                   Next <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
               </div>
@@ -242,50 +285,92 @@ export default function AdminBackfill() {
                 LEAD_ROUTING integrations for <strong>{selectedUser?.name || selectedUser?.email}</strong>
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              {loadingIntegrations ? (
-                <div className="flex items-center gap-2 text-muted-foreground text-sm py-4">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Loading integrations...
-                </div>
-              ) : integrationsData?.length === 0 ? (
-                <p className="text-muted-foreground text-sm py-4">No LEAD_ROUTING integrations found for this user.</p>
-              ) : (
-                <div className="space-y-2">
-                  {integrationsData?.map(intg => (
-                    <button
-                      key={intg.id}
-                      onClick={() => setSelectedIntegrationId(intg.id)}
-                      className={`w-full flex items-start justify-between px-4 py-3 rounded-lg border text-left transition-colors ${
-                        selectedIntegrationId === intg.id
-                          ? "border-primary bg-primary/5"
-                          : "border-border hover:border-primary/50 hover:bg-muted/50"
-                      }`}
-                    >
-                      <div className="space-y-0.5">
-                        <p className="font-medium text-sm">{intg.name}</p>
-                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                          {intg.accountName && <span>Account: {intg.accountName}</span>}
-                          {intg.pageName && <span>Page: {intg.pageName}</span>}
-                          {intg.formName && <span>Form: {intg.formName}</span>}
-                          {intg.targetWebsiteName && <span>→ {intg.targetWebsiteName}</span>}
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          Created: {new Date(intg.createdAt).toLocaleString()}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0 ml-2">
-                        <Badge variant={intg.isActive ? "default" : "secondary"} className="text-xs">
-                          {intg.isActive ? "Active" : "Inactive"}
-                        </Badge>
-                        {selectedIntegrationId === intg.id && (
-                          <CheckCircle2 className="h-4 w-4 text-primary" />
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="flex justify-between pt-2">
+            <CardContent className="space-y-4">
+              {/* Search trigger */}
+              <button
+                type="button"
+                onClick={() => setIntegrationDialogOpen(true)}
+                disabled={loadingIntegrations}
+                className="w-full flex items-center justify-between px-4 py-3 rounded-lg border border-border hover:border-primary/60 hover:bg-muted/40 transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loadingIntegrations ? (
+                  <span className="flex items-center gap-2 text-muted-foreground text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading integrations...
+                  </span>
+                ) : selectedIntegration ? (
+                  <span className="flex items-center gap-3 min-w-0">
+                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
+                      <Zap className="h-4 w-4 text-primary" />
+                    </div>
+                    <span className="min-w-0">
+                      <p className="font-medium text-sm truncate">{selectedIntegration.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {[selectedIntegration.accountName, selectedIntegration.pageName, selectedIntegration.targetWebsiteName]
+                          .filter(Boolean).join(" · ")}
+                      </p>
+                    </span>
+                  </span>
+                ) : integrationsData?.length === 0 ? (
+                  <span className="text-muted-foreground text-sm">No LEAD_ROUTING integrations found for this user</span>
+                ) : (
+                  <span className="flex items-center gap-2 text-muted-foreground text-sm">
+                    <Search className="h-4 w-4" />
+                    Search and select an integration...
+                  </span>
+                )}
+                <ChevronsUpDown className="h-4 w-4 text-muted-foreground shrink-0 ml-2" />
+              </button>
+
+              {/* Integration search dialog */}
+              <CommandDialog
+                open={integrationDialogOpen}
+                onOpenChange={setIntegrationDialogOpen}
+                title="Select Integration"
+                description="Search integrations by name, account, page, form, or target website"
+              >
+                <CommandInput placeholder="Search integrations..." />
+                <CommandList className="max-h-96">
+                  <CommandEmpty>No integrations found.</CommandEmpty>
+                  <CommandGroup heading={`${integrationsData?.length ?? 0} integrations`}>
+                    {integrationsData?.map(intg => (
+                      <CommandItem
+                        key={intg.id}
+                        value={`${intg.name} ${intg.accountName ?? ""} ${intg.pageName ?? ""} ${intg.formName ?? ""} ${intg.targetWebsiteName ?? ""}`}
+                        onSelect={() => {
+                          setSelectedIntegrationId(intg.id);
+                          setIntegrationDialogOpen(false);
+                        }}
+                        className="flex items-start justify-between py-2.5 cursor-pointer"
+                      >
+                        <span className="flex items-start gap-3 min-w-0">
+                          <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center shrink-0 mt-0.5">
+                            <Zap className="h-3.5 w-3.5 text-muted-foreground" />
+                          </div>
+                          <span className="min-w-0">
+                            <p className="font-medium text-sm leading-tight truncate">{intg.name}</p>
+                            <div className="flex flex-wrap gap-x-2 gap-y-0 text-xs text-muted-foreground leading-tight mt-0.5">
+                              {intg.accountName && <span>Account: {intg.accountName}</span>}
+                              {intg.pageName && <span>Page: {intg.pageName}</span>}
+                              {intg.formName && <span>Form: {intg.formName}</span>}
+                              {intg.targetWebsiteName && <span>→ {intg.targetWebsiteName}</span>}
+                            </div>
+                          </span>
+                        </span>
+                        <span className="flex items-center gap-2 shrink-0 ml-2 mt-0.5">
+                          <Badge variant={intg.isActive ? "default" : "secondary"} className="text-xs">
+                            {intg.isActive ? "Active" : "Inactive"}
+                          </Badge>
+                          {selectedIntegrationId === intg.id && (
+                            <CheckCircle2 className="h-4 w-4 text-primary" />
+                          )}
+                        </span>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </CommandList>
+              </CommandDialog>
+
+              <div className="flex justify-between pt-1">
                 <Button variant="outline" onClick={() => setStep(1)}>
                   <ChevronLeft className="h-4 w-4 mr-1" /> Back
                 </Button>
