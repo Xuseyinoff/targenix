@@ -20,6 +20,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -702,8 +710,7 @@ export default function LeadRoutingWizard({
               {step === 1 && "Choose which Facebook account to use"}
               {step === 2 && "Pick the page that has the lead form"}
               {step === 3 && "Select the lead form to capture from"}
-              {step === 4 &&
-                "Choose required fields and add optional metadata or static values"}
+              {step === 4 && "Map form fields to outbound payload keys"}
               {step === 5 &&
                 "Where should leads be sent, and with which offer?"}
               {step === 6 && "Review your configuration before saving"}
@@ -1056,28 +1063,28 @@ export default function LeadRoutingWizard({
                     No fields found in this form.
                   </p>
                 ) : (
-                  <div className="space-y-4">
-                    <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-1">
-                      <p className="font-semibold">Required fields</p>
-                      <p className="text-xs text-muted-foreground">
-                        We auto-detected the most likely Full Name and Phone
-                        Number fields. Adjust them if this form uses different
-                        keys.
-                      </p>
-                    </div>
-                    <div className="space-y-3">
-                      <div className="space-y-1.5">
-                        <Label>Full Name field</Label>
+                  <div className="space-y-3">
+                    {/* Required auto-mapped fields */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="w-28 shrink-0 text-xs font-medium">
+                          Full Name{" "}
+                          <span className="text-destructive">*</span>
+                        </span>
                         <Select
                           value={state.nameField}
                           onValueChange={value => set({ nameField: value })}
                         >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Select field for full name..." />
+                          <SelectTrigger className="h-8 text-xs flex-1">
+                            <SelectValue placeholder="Select field..." />
                           </SelectTrigger>
                           <SelectContent>
                             {formFields.map(f => (
-                              <SelectItem key={f.key} value={f.key}>
+                              <SelectItem
+                                key={f.key}
+                                value={f.key}
+                                className="text-xs"
+                              >
                                 {f.key}
                                 {f.label ? ` — ${f.label}` : ""}
                               </SelectItem>
@@ -1085,18 +1092,25 @@ export default function LeadRoutingWizard({
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1.5">
-                        <Label>Phone Number field</Label>
+                      <div className="flex items-center gap-2">
+                        <span className="w-28 shrink-0 text-xs font-medium">
+                          Phone Number{" "}
+                          <span className="text-destructive">*</span>
+                        </span>
                         <Select
                           value={state.phoneField}
                           onValueChange={value => set({ phoneField: value })}
                         >
-                          <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Select field for phone number..." />
+                          <SelectTrigger className="h-8 text-xs flex-1">
+                            <SelectValue placeholder="Select field..." />
                           </SelectTrigger>
                           <SelectContent>
                             {formFields.map(f => (
-                              <SelectItem key={f.key} value={f.key}>
+                              <SelectItem
+                                key={f.key}
+                                value={f.key}
+                                className="text-xs"
+                              >
                                 {f.key}
                                 {f.label ? ` — ${f.label}` : ""}
                               </SelectItem>
@@ -1105,245 +1119,216 @@ export default function LeadRoutingWizard({
                         </Select>
                       </div>
                     </div>
-                    <div className="rounded-lg border p-4 space-y-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <p className="text-sm font-semibold">Extra fields</p>
-                          <p className="text-xs text-muted-foreground">
-                            Add optional payload fields only if your destination
-                            needs them, like campaign metadata or fixed tags.
-                          </p>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={addExtraField}
-                        >
-                          <Plus className="h-4 w-4 mr-1" />
-                          Add Field
-                        </Button>
-                      </div>
 
-                      {state.extraFields.length === 0 ? (
-                        <div className="rounded-md border border-dashed bg-muted/20 px-4 py-5 text-sm text-muted-foreground">
-                          No optional fields yet. Add one if you want to send
-                          Facebook metadata like campaign name, ad ID, or a
-                          static value such as a source tag.
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          {state.extraFields.map((field, index) => {
-                            const trimmedDestKey = field.destKey.trim();
-                            const isDuplicate =
-                              !!trimmedDestKey &&
-                              duplicateExtraDestKeys.has(trimmedDestKey);
-                            const isMissingSource =
-                              !!trimmedDestKey &&
-                              (field.sourceType === "form"
-                                ? !field.sourceField
-                                : !field.staticValue?.trim());
+                    <div className="h-px bg-border" />
 
-                            return (
-                              <div
-                                key={`${index}-${trimmedDestKey || "new"}`}
-                                className="rounded-lg border p-4 space-y-3"
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="flex-1 space-y-1.5">
-                                    <Label>Destination key</Label>
-                                    <Input
-                                      placeholder="e.g. campaign_name"
-                                      value={field.destKey}
-                                      onChange={e =>
-                                        updateExtraField(index, {
-                                          destKey: e.target.value,
-                                        })
-                                      }
-                                    />
-                                    <p className="text-[11px] text-muted-foreground">
-                                      This key is sent to the target API exactly
-                                      as written.
-                                    </p>
-                                  </div>
-
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="mt-6 h-9 w-9 text-muted-foreground hover:text-destructive"
-                                    onClick={() => removeExtraField(index)}
-                                    aria-label="Remove extra field"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </Button>
-                                </div>
-
-                                <div className="space-y-1.5">
-                                  <Label>Source</Label>
-                                  <div className="inline-flex rounded-md border bg-muted/20 p-1">
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        updateExtraField(index, {
-                                          sourceType: "form",
-                                        })
-                                      }
-                                      className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
-                                        field.sourceType === "form"
-                                          ? "bg-background text-foreground shadow-sm"
-                                          : "text-muted-foreground hover:text-foreground"
-                                      }`}
-                                    >
-                                      From form
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        updateExtraField(index, {
-                                          sourceType: "static",
-                                        })
-                                      }
-                                      className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
-                                        field.sourceType === "static"
-                                          ? "bg-background text-foreground shadow-sm"
-                                          : "text-muted-foreground hover:text-foreground"
-                                      }`}
-                                    >
-                                      Static value
-                                    </button>
-                                  </div>
-                                </div>
-
-                                {field.sourceType === "form" ? (
-                                  <div className="space-y-1.5">
-                                    <Label>Form field or metadata</Label>
-                                    <Select
-                                      value={field.sourceField || undefined}
-                                      onValueChange={value =>
-                                        updateExtraField(index, {
-                                          sourceField: value,
-                                        })
-                                      }
-                                    >
-                                      <SelectTrigger className="w-full">
-                                        <SelectValue placeholder="Choose a source..." />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectGroup>
-                                          <SelectLabel>Form fields</SelectLabel>
-                                          {formFields.map(option => (
-                                            <SelectItem
-                                              key={option.key}
-                                              value={option.key}
-                                            >
-                                              {option.label
-                                                ? `${option.label} (${option.key})`
-                                                : option.key}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectGroup>
-                                        <SelectGroup>
-                                          <SelectLabel>
-                                            Facebook metadata
-                                          </SelectLabel>
-                                          {FB_METADATA_FIELDS.map(option => (
-                                            <SelectItem
-                                              key={option.key}
-                                              value={option.key}
-                                            >
-                                              {option.label}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectGroup>
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                ) : (
-                                  <div className="space-y-1.5">
-                                    <Label>Static value</Label>
-                                    <Input
-                                      placeholder="e.g. facebook_leads"
-                                      value={field.staticValue ?? ""}
-                                      onChange={e =>
-                                        updateExtraField(index, {
-                                          staticValue: e.target.value,
-                                        })
-                                      }
-                                    />
-                                  </div>
-                                )}
-
-                                {isDuplicate && (
-                                  <p className="text-xs text-destructive">
-                                    This destination key is duplicated. Each
-                                    extra field key must be unique.
-                                  </p>
-                                )}
-                                {!isDuplicate && isMissingSource && (
-                                  <p className="text-xs text-destructive">
-                                    Fill in the source before moving to the next
-                                    step.
-                                  </p>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                    <div className="rounded-md bg-muted/50 p-4 text-sm space-y-3">
-                      <div>
-                        <p className="font-medium">Payload mapping preview</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          This is the mapping Targenix will use when building
-                          the outbound payload.
+                    {/* Extra fields */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          Extra fields
                         </p>
-                      </div>
-
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-muted-foreground">
-                            Full Name
-                          </span>
-                          <span className="font-medium text-right">
-                            {getSourceLabel(state.nameField, formFields)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between gap-3">
-                          <span className="text-muted-foreground">
-                            Phone Number
-                          </span>
-                          <span className="font-medium text-right">
-                            {getSourceLabel(state.phoneField, formFields)}
-                          </span>
-                        </div>
-
-                        {mappedExtraFields.length > 0 ? (
-                          mappedExtraFields.map(field => (
-                            <div
-                              key={field.destKey}
-                              className="flex items-center justify-between gap-3"
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs gap-1 px-2.5"
                             >
-                              <span className="text-muted-foreground">
-                                {field.destKey}
-                              </span>
-                              <span className="font-medium text-right">
-                                {field.staticValue !== undefined
-                                  ? `"${field.staticValue}"`
-                                  : getSourceLabel(
-                                      field.sourceField ?? "",
-                                      formFields
-                                    )}
-                              </span>
-                            </div>
-                          ))
-                        ) : (
-                          <p className="text-xs text-muted-foreground">
-                            No optional fields added.
-                          </p>
-                        )}
+                              <Plus className="h-3 w-3" />
+                              Add Field
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent
+                            align="end"
+                            className="max-h-72 overflow-y-auto"
+                          >
+                            {formFields.length > 0 && (
+                              <>
+                                <DropdownMenuLabel className="text-[11px]">
+                                  Form fields
+                                </DropdownMenuLabel>
+                                {formFields.map(f => (
+                                  <DropdownMenuItem
+                                    key={f.key}
+                                    className="text-xs"
+                                    onClick={() =>
+                                      setState(current => ({
+                                        ...current,
+                                        extraFields: [
+                                          ...current.extraFields,
+                                          {
+                                            destKey: f.key,
+                                            sourceType: "form",
+                                            sourceField: f.key,
+                                            staticValue: "",
+                                          },
+                                        ],
+                                      }))
+                                    }
+                                  >
+                                    {f.label ? `${f.label} (${f.key})` : f.key}
+                                  </DropdownMenuItem>
+                                ))}
+                                <DropdownMenuSeparator />
+                              </>
+                            )}
+                            <DropdownMenuLabel className="text-[11px]">
+                              Facebook metadata
+                            </DropdownMenuLabel>
+                            {FB_METADATA_FIELDS.map(f => (
+                              <DropdownMenuItem
+                                key={f.key}
+                                className="text-xs"
+                                onClick={() =>
+                                  setState(current => ({
+                                    ...current,
+                                    extraFields: [
+                                      ...current.extraFields,
+                                      {
+                                        destKey: f.key,
+                                        sourceType: "form",
+                                        sourceField: f.key,
+                                        staticValue: "",
+                                      },
+                                    ],
+                                  }))
+                                }
+                              >
+                                {f.label}
+                              </DropdownMenuItem>
+                            ))}
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-xs"
+                              onClick={addExtraField}
+                            >
+                              Custom field...
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
+
+                      {state.extraFields.map((field, index) => {
+                        const trimmedDestKey = field.destKey.trim();
+                        const isDuplicate =
+                          !!trimmedDestKey &&
+                          duplicateExtraDestKeys.has(trimmedDestKey);
+                        const isMissingSource =
+                          !!trimmedDestKey &&
+                          (field.sourceType === "form"
+                            ? !field.sourceField
+                            : !field.staticValue?.trim());
+
+                        return (
+                          <div
+                            key={`${index}-${trimmedDestKey || "new"}`}
+                            className={`flex items-center gap-1.5${isDuplicate || isMissingSource ? " rounded-lg p-1 ring-1 ring-destructive/40 bg-destructive/5" : ""}`}
+                          >
+                            <Input
+                              className="h-8 text-xs w-32 shrink-0 font-mono"
+                              placeholder="key"
+                              value={field.destKey}
+                              onChange={e =>
+                                updateExtraField(index, {
+                                  destKey: e.target.value,
+                                })
+                              }
+                            />
+                            <span className="text-muted-foreground text-xs shrink-0">
+                              →
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              {field.sourceType === "form" ? (
+                                <Select
+                                  value={field.sourceField || undefined}
+                                  onValueChange={value =>
+                                    updateExtraField(index, {
+                                      sourceField: value,
+                                    })
+                                  }
+                                >
+                                  <SelectTrigger className="h-8 text-xs">
+                                    <SelectValue placeholder="Select source..." />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectGroup>
+                                      <SelectLabel>Form fields</SelectLabel>
+                                      {formFields.map(option => (
+                                        <SelectItem
+                                          key={option.key}
+                                          value={option.key}
+                                          className="text-xs"
+                                        >
+                                          {option.label
+                                            ? `${option.label} (${option.key})`
+                                            : option.key}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectGroup>
+                                    <SelectGroup>
+                                      <SelectLabel>
+                                        Facebook metadata
+                                      </SelectLabel>
+                                      {FB_METADATA_FIELDS.map(option => (
+                                        <SelectItem
+                                          key={option.key}
+                                          value={option.key}
+                                          className="text-xs"
+                                        >
+                                          {option.label}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectGroup>
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <Input
+                                  className="h-8 text-xs"
+                                  placeholder="static value..."
+                                  value={field.staticValue ?? ""}
+                                  onChange={e =>
+                                    updateExtraField(index, {
+                                      staticValue: e.target.value,
+                                    })
+                                  }
+                                />
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              title={
+                                field.sourceType === "form"
+                                  ? "Switch to static value"
+                                  : "Switch to form field"
+                              }
+                              onClick={() =>
+                                updateExtraField(index, {
+                                  sourceType:
+                                    field.sourceType === "form"
+                                      ? "static"
+                                      : "form",
+                                })
+                              }
+                              className="h-8 w-8 shrink-0 flex items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+                            >
+                              {field.sourceType === "form" ? (
+                                <Pencil className="h-3 w-3" />
+                              ) : (
+                                <Tag className="h-3 w-3" />
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeExtraField(index)}
+                              className="h-8 w-8 shrink-0 flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
