@@ -3,23 +3,27 @@
 -- All new columns are nullable — safe to run against existing data.
 -- Run backfill-leads.ts after this migration to populate historical rows.
 
+-- Step 1: Add new columns using ALGORITHM=INSTANT (MySQL 8.0+)
+-- Does NOT rewrite the table — zero disk space needed, near-instant execution.
+-- AFTER clauses are not supported with INSTANT, columns go to the end (no functional difference).
 ALTER TABLE `leads`
-  -- Denormalized source info (from facebook_forms)
-  ADD COLUMN `pageName`     VARCHAR(255)  NULL AFTER `platform`,
-  ADD COLUMN `formName`     VARCHAR(255)  NULL AFTER `pageName`,
+  ADD COLUMN `pageName`     VARCHAR(255)  NULL,
+  ADD COLUMN `formName`     VARCHAR(255)  NULL,
+  ADD COLUMN `campaignId`   VARCHAR(100)  NULL,
+  ADD COLUMN `campaignName` VARCHAR(255)  NULL,
+  ADD COLUMN `adsetId`      VARCHAR(100)  NULL,
+  ADD COLUMN `adsetName`    VARCHAR(255)  NULL,
+  ADD COLUMN `adId`         VARCHAR(100)  NULL,
+  ADD COLUMN `adName`       VARCHAR(255)  NULL,
+  ADD COLUMN `extraFields`  JSON          NULL,
+  ALGORITHM=INSTANT;
 
-  -- Ad attribution (from Graph API)
-  ADD COLUMN `campaignId`   VARCHAR(100)  NULL AFTER `formName`,
-  ADD COLUMN `campaignName` VARCHAR(255)  NULL AFTER `campaignId`,
-  ADD COLUMN `adsetId`      VARCHAR(100)  NULL AFTER `campaignName`,
-  ADD COLUMN `adsetName`    VARCHAR(255)  NULL AFTER `adsetId`,
-  ADD COLUMN `adId`         VARCHAR(100)  NULL AFTER `adsetName`,
-  ADD COLUMN `adName`       VARCHAR(255)  NULL AFTER `adId`,
+-- Step 2: Add indexes (these do require some I/O but no full table copy)
+ALTER TABLE `leads`
+  ADD INDEX `idx_leads_user_platform_created_at` (`userId`, `platform`, `createdAt`);
 
-  -- Remaining field_data (email, city, custom)
-  ADD COLUMN `extraFields`  JSON          NULL AFTER `adName`,
+ALTER TABLE `leads`
+  ADD INDEX `idx_leads_user_form_id` (`userId`, `formId`);
 
-  -- New indexes
-  ADD INDEX `idx_leads_user_platform_created_at` (`userId`, `platform`, `createdAt`),
-  ADD INDEX `idx_leads_user_form_id`             (`userId`, `formId`),
-  ADD INDEX `idx_leads_user_campaign_id`         (`userId`, `campaignId`);
+ALTER TABLE `leads`
+  ADD INDEX `idx_leads_user_campaign_id` (`userId`, `campaignId`);
