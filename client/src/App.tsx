@@ -27,6 +27,7 @@ import Settings from "./pages/Settings";
 import AdAccounts from "./pages/AdAccounts";
 import Analytics from "./pages/Analytics";
 import Campaigns from "./pages/Campaigns";
+import AdSets from "./pages/AdSets";
 import { useAuth } from "./_core/hooks/useAuth";
 import { useEffect } from "react";
 
@@ -85,6 +86,7 @@ function Router() {
       {/* Business Tools routes */}
       <Route path="/business/ad-accounts" component={AdAccounts} />
       <Route path="/business/ad-accounts/:id/campaigns" component={Campaigns} />
+      <Route path="/business/ad-accounts/:accountId/campaigns/:campaignId/adsets" component={AdSets} />
       <Route path="/business/analytics" component={Analytics} />
       {/* Legacy /ad-accounts redirect */}
       <Route path="/ad-accounts" component={AdAccounts} />

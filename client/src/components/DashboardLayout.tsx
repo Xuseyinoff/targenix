@@ -90,6 +90,7 @@ const businessToolsItems = [
     label: "Ad Accounts",
     path: "/business/ad-accounts",
     active: true,
+    placeholder: false,
   },
   {
     icon: BarChart3,
