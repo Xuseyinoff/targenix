@@ -1192,8 +1192,18 @@ export default function LeadRoutingWizard({
                       );
                     })}
 
-                    {/* Add Field */}
-                    <div className="flex justify-end pt-1">
+                    {/* Add Field + Custom */}
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs gap-1.5"
+                        onClick={addExtraField}
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        Custom
+                      </Button>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button
@@ -1212,7 +1222,7 @@ export default function LeadRoutingWizard({
                         >
                           {formFields.length > 0 && (
                             <>
-                              <DropdownMenuLabel className="text-[11px]">
+                              <DropdownMenuLabel className="text-xs font-semibold text-foreground">
                                 Form fields
                               </DropdownMenuLabel>
                               {formFields.map(f => (
@@ -1240,7 +1250,7 @@ export default function LeadRoutingWizard({
                               <DropdownMenuSeparator />
                             </>
                           )}
-                          <DropdownMenuLabel className="text-[11px]">
+                          <DropdownMenuLabel className="text-xs font-semibold text-foreground">
                             Facebook metadata
                           </DropdownMenuLabel>
                           {FB_METADATA_FIELDS.map(f => (
@@ -1265,13 +1275,6 @@ export default function LeadRoutingWizard({
                               {f.label}
                             </DropdownMenuItem>
                           ))}
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-xs"
-                            onClick={addExtraField}
-                          >
-                            Custom field...
-                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
