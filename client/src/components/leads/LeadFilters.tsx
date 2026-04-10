@@ -1,4 +1,4 @@
-import { Facebook, Instagram, Search, X } from "lucide-react";
+import { Facebook, Instagram, Search, X, ChevronDown, Check } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -8,7 +8,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+} from "@/components/ui/command";
 import { cn } from "@/lib/utils";
+import { useState, useMemo } from "react";
 import type { LeadFilters } from "@/hooks/useLeadFilters";
 
 export interface FormsIndexItem {
@@ -23,6 +33,7 @@ interface LeadFiltersProps {
   filters: LeadFilters;
   pageOptions: FormsIndexItem[];
   formOptions: FormsIndexItem[];
+  allFormsIndex: FormsIndexItem[];
 }
 
 function PlatformIcon({ platform }: { platform?: string }) {
@@ -64,7 +75,171 @@ function Chip({
   );
 }
 
-export function LeadFilters({ filters, pageOptions, formOptions }: LeadFiltersProps) {
+// ─── Searchable Pages Dropdown ────────────────────────────────────────────────
+
+function PagesDropdown({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: FormsIndexItem[];
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((p) => p.pageId === value);
+  const label = selected ? (selected.pageName ?? selected.pageId) : "All Pages";
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          className={cn(
+            "flex h-9 items-center justify-between gap-1.5 rounded-md border bg-background px-3 text-sm transition-colors",
+            "hover:bg-accent hover:text-accent-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+            "min-w-[140px] max-w-[200px]",
+            value !== "ALL" ? "border-primary/40 text-foreground" : "text-muted-foreground"
+          )}
+        >
+          {selected && <PlatformIcon platform={selected.platform} />}
+          <span className="flex-1 text-left truncate">{label}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[220px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search pages..." />
+          <CommandList>
+            <CommandEmpty>No pages found.</CommandEmpty>
+            <CommandGroup>
+              <CommandItem
+                value="ALL"
+                onSelect={() => { onChange("ALL"); setOpen(false); }}
+                className="gap-2"
+              >
+                <Check className={cn("h-4 w-4 shrink-0", value === "ALL" ? "opacity-100" : "opacity-0")} />
+                <span className="text-sm">All Pages</span>
+              </CommandItem>
+              {options.map((p) => (
+                <CommandItem
+                  key={p.pageId}
+                  value={`${p.pageName ?? ""} ${p.pageId}`}
+                  onSelect={() => { onChange(p.pageId); setOpen(false); }}
+                  className="gap-2"
+                >
+                  <Check className={cn("h-4 w-4 shrink-0", value === p.pageId ? "opacity-100" : "opacity-0")} />
+                  <PlatformIcon platform={p.platform} />
+                  <span className="truncate">{p.pageName ?? p.pageId}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ─── Searchable Forms Dropdown (grouped by page) ──────────────────────────────
+
+function FormsDropdown({
+  value,
+  onChange,
+  options,
+  allFormsIndex,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: FormsIndexItem[];
+  allFormsIndex: FormsIndexItem[];
+}) {
+  const [open, setOpen] = useState(false);
+
+  // Find selected form label from full index (not just filtered options)
+  const selected = allFormsIndex.find((f) => f.formId === value);
+  const label = selected ? (selected.formName ?? selected.formId) : "All Forms";
+
+  // Group options by page
+  const groups = useMemo(() => {
+    const map = new Map<string, { pageName: string; platform?: string; forms: FormsIndexItem[] }>();
+    for (const f of options) {
+      const key = f.pageId;
+      if (!map.has(key)) {
+        map.set(key, { pageName: f.pageName ?? f.pageId, platform: f.platform, forms: [] });
+      }
+      map.get(key)!.forms.push(f);
+    }
+    return Array.from(map.entries());
+  }, [options]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          className={cn(
+            "flex h-9 items-center justify-between gap-1.5 rounded-md border bg-background px-3 text-sm transition-colors",
+            "hover:bg-accent hover:text-accent-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+            "min-w-[140px] max-w-[220px]",
+            value !== "ALL" ? "border-primary/40 text-foreground" : "text-muted-foreground"
+          )}
+        >
+          <span className="flex-1 text-left truncate">{label}</span>
+          <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[260px] p-0" align="start">
+        <Command>
+          <CommandInput placeholder="Search forms..." />
+          <CommandList className="max-h-[320px]">
+            <CommandEmpty>No forms found.</CommandEmpty>
+            {/* All Forms option */}
+            <CommandGroup>
+              <CommandItem
+                value="ALL"
+                onSelect={() => { onChange("ALL"); setOpen(false); }}
+                className="gap-2"
+              >
+                <Check className={cn("h-4 w-4 shrink-0", value === "ALL" ? "opacity-100" : "opacity-0")} />
+                <span className="text-sm">All Forms</span>
+              </CommandItem>
+            </CommandGroup>
+
+            {/* Grouped by page */}
+            {groups.map(([pageId, group]) => (
+              <CommandGroup
+                key={pageId}
+                heading={
+                  <span className="flex items-center gap-1.5">
+                    <PlatformIcon platform={group.platform} />
+                    <span className="font-semibold text-foreground">{group.pageName}</span>
+                  </span>
+                }
+              >
+                {group.forms.map((f) => (
+                  <CommandItem
+                    key={f.formId}
+                    value={`${group.pageName} ${f.formName ?? ""} ${f.formId}`}
+                    onSelect={() => { onChange(f.formId); setOpen(false); }}
+                    className="gap-2 pl-4"
+                  >
+                    <Check className={cn("h-4 w-4 shrink-0", value === f.formId ? "opacity-100" : "opacity-0")} />
+                    <span className="truncate text-muted-foreground">{f.formName ?? f.formId}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
+export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }: LeadFiltersProps) {
   const {
     search, platformFilter, statusFilter, hasActiveFilters,
     pageIdFilter, formIdFilter,
@@ -87,22 +262,40 @@ export function LeadFilters({ filters, pageOptions, formOptions }: LeadFiltersPr
 
       {/* Mobile: horizontal chip scroll */}
       <div className="flex gap-2 overflow-x-auto pb-1 md:hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <Chip active={platformFilter === "ALL" && statusFilter === "ALL"} onClick={() => { handlePlatformChange("ALL"); handleStatusChange("ALL"); }}>
+        <Chip
+          active={platformFilter === "ALL" && statusFilter === "ALL"}
+          onClick={() => { handlePlatformChange("ALL"); handleStatusChange("ALL"); }}
+        >
           All
         </Chip>
-        <Chip active={platformFilter === "ig"} onClick={() => handlePlatformChange(platformFilter === "ig" ? "ALL" : "ig")}>
+        <Chip
+          active={platformFilter === "ig"}
+          onClick={() => handlePlatformChange(platformFilter === "ig" ? "ALL" : "ig")}
+        >
           <Instagram className="h-3 w-3" />Instagram
         </Chip>
-        <Chip active={platformFilter === "fb"} onClick={() => handlePlatformChange(platformFilter === "fb" ? "ALL" : "fb")}>
+        <Chip
+          active={platformFilter === "fb"}
+          onClick={() => handlePlatformChange(platformFilter === "fb" ? "ALL" : "fb")}
+        >
           <Facebook className="h-3 w-3" />Facebook
         </Chip>
-        <Chip active={statusFilter === "RECEIVED"} onClick={() => handleStatusChange(statusFilter === "RECEIVED" ? "ALL" : "RECEIVED")}>
+        <Chip
+          active={statusFilter === "RECEIVED"}
+          onClick={() => handleStatusChange(statusFilter === "RECEIVED" ? "ALL" : "RECEIVED")}
+        >
           Received
         </Chip>
-        <Chip active={statusFilter === "PENDING"} onClick={() => handleStatusChange(statusFilter === "PENDING" ? "ALL" : "PENDING")}>
+        <Chip
+          active={statusFilter === "PENDING"}
+          onClick={() => handleStatusChange(statusFilter === "PENDING" ? "ALL" : "PENDING")}
+        >
           Pending
         </Chip>
-        <Chip active={statusFilter === "FAILED"} onClick={() => handleStatusChange(statusFilter === "FAILED" ? "ALL" : "FAILED")}>
+        <Chip
+          active={statusFilter === "FAILED"}
+          onClick={() => handleStatusChange(statusFilter === "FAILED" ? "ALL" : "FAILED")}
+        >
           Failed
         </Chip>
         {hasActiveFilters && (
@@ -113,7 +306,8 @@ export function LeadFilters({ filters, pageOptions, formOptions }: LeadFiltersPr
       </div>
 
       {/* Desktop: dropdown selects */}
-      <div className="hidden md:flex flex-wrap gap-2">
+      <div className="hidden md:flex flex-wrap gap-2 items-center">
+        {/* Platform — simple 3-item select, no search needed */}
         <Select value={platformFilter} onValueChange={handlePlatformChange}>
           <SelectTrigger className="w-[130px] h-9">
             <SelectValue placeholder="Platform" />
@@ -133,39 +327,26 @@ export function LeadFilters({ filters, pageOptions, formOptions }: LeadFiltersPr
           </SelectContent>
         </Select>
 
+        {/* Pages — searchable */}
         {pageOptions.length > 0 && (
-          <Select value={pageIdFilter} onValueChange={handlePageIdChange}>
-            <SelectTrigger className="w-[160px] h-9">
-              <SelectValue placeholder="All Pages" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ALL">All Pages</SelectItem>
-              {pageOptions.map((p) => (
-                <SelectItem key={p.pageId} value={p.pageId}>
-                  <span className="flex items-center gap-2">
-                    <PlatformIcon platform={p.platform} />
-                    {p.pageName}
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <PagesDropdown
+            value={pageIdFilter}
+            onChange={handlePageIdChange}
+            options={pageOptions}
+          />
         )}
 
+        {/* Forms — searchable, grouped by page */}
         {formOptions.length > 0 && (
-          <Select value={formIdFilter} onValueChange={handleFormIdChange}>
-            <SelectTrigger className="w-[160px] h-9">
-              <SelectValue placeholder="All Forms" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="ALL">All Forms</SelectItem>
-              {formOptions.map((f) => (
-                <SelectItem key={f.formId} value={f.formId}>{f.formName}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <FormsDropdown
+            value={formIdFilter}
+            onChange={handleFormIdChange}
+            options={formOptions}
+            allFormsIndex={allFormsIndex}
+          />
         )}
 
+        {/* Status — simple 4-item select */}
         <Select value={statusFilter} onValueChange={handleStatusChange}>
           <SelectTrigger className="w-[120px] h-9">
             <SelectValue placeholder="Status" />

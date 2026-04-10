@@ -277,7 +277,12 @@ export default function Leads() {
         )}
 
         {/* Filters */}
-        <LeadFilters filters={filters} pageOptions={pageOptions} formOptions={formOptions} />
+        <LeadFilters
+          filters={filters}
+          pageOptions={pageOptions}
+          formOptions={formOptions}
+          allFormsIndex={formsIndex ?? []}
+        />
 
         {/* Content */}
         {isLoading ? (
