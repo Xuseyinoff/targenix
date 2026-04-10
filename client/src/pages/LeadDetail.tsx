@@ -3,72 +3,149 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
-  ChevronLeft,
-  User,
+  ArrowLeft,
   Phone,
-  Mail,
-  Calendar,
-  Zap,
+  Clock,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Check,
   CheckCircle2,
   XCircle,
-  Clock,
-  Globe,
-  ExternalLink,
+  Zap,
   Send,
   MessageSquare,
   Link2,
-  Copy,
-  ChevronDown,
-  ChevronUp,
-  FileText,
+  ExternalLink,
   Facebook,
   Instagram,
-  Hash,
 } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
 
-function PlatformIcon({ platform }: { platform?: string | null }) {
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function formatDate(dateStr: string | Date): string {
+  const d = new Date(dateStr as string);
+  return d.toLocaleString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getInitials(name?: string | null): string {
+  if (!name?.trim()) return "?";
+  const parts = name.trim().split(" ");
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return parts[0][0].toUpperCase();
+}
+
+// ─── Platform badge ───────────────────────────────────────────────────────────
+
+function PlatformBadge({ platform }: { platform?: string | null }) {
   if (platform === "ig") {
     return (
-      <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 shrink-0">
-        <Instagram className="h-3 w-3 text-white" />
+      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-orange-500/10 via-pink-500/10 to-purple-500/10 border border-pink-500/25 text-orange-400">
+        <Instagram className="h-3 w-3" />
+        Instagram
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-blue-600 shrink-0">
-      <Facebook className="h-3 w-3 text-white" />
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/10 border border-blue-500/25 text-blue-400">
+      <Facebook className="h-3 w-3" />
+      Facebook
     </span>
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  if (status === "SENT")
-    return <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0">{status}</Badge>;
-  if (status === "FAILED")
-    return <Badge variant="destructive">{status}</Badge>;
-  return <Badge variant="secondary">{status}</Badge>;
+// ─── Copy button with 2s success state ───────────────────────────────────────
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className={`h-8 w-8 rounded-lg border flex items-center justify-center transition-all duration-200 ${
+        copied
+          ? "bg-green-500 border-green-500 text-white"
+          : "bg-background border-border text-muted-foreground hover:bg-primary hover:border-primary hover:text-white"
+      }`}
+    >
+      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+    </button>
+  );
 }
 
-function IntegrationTypeIcon({ type }: { type: string | null }) {
+// ─── Section wrapper ──────────────────────────────────────────────────────────
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="px-5 py-4">
+      <p className="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground mb-3">
+        {label}
+      </p>
+      {children}
+    </div>
+  );
+}
+
+// ─── Marketing row ────────────────────────────────────────────────────────────
+
+function MarketingRow({ label, value }: { label: string; value?: string | null }) {
+  if (!value) return null;
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-xs text-muted-foreground w-20 shrink-0">{label}</span>
+      <span
+        className="text-sm font-medium text-right truncate max-w-[220px] cursor-default"
+        title={value}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// ─── Integration delivery icons / status ─────────────────────────────────────
+
+function IntegrationIcon({ type }: { type: string | null }) {
   if (type === "TELEGRAM") return <MessageSquare className="h-4 w-4 text-blue-500" />;
   if (type === "AFFILIATE") return <Link2 className="h-4 w-4 text-purple-500" />;
   if (type === "LEAD_ROUTING") return <Send className="h-4 w-4 text-orange-500" />;
   return <Zap className="h-4 w-4 text-muted-foreground" />;
 }
 
+function StatusBadge({ status }: { status: string }) {
+  if (status === "SENT")
+    return (
+      <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0">
+        {status}
+      </Badge>
+    );
+  if (status === "FAILED") return <Badge variant="destructive">{status}</Badge>;
+  return <Badge variant="secondary">{status}</Badge>;
+}
+
+// ─── Response block ───────────────────────────────────────────────────────────
+
 function ResponseBlock({ data }: { data: unknown }) {
   const [expanded, setExpanded] = useState(false);
   if (!data) return <span className="text-muted-foreground text-xs">—</span>;
-
   const str = typeof data === "string" ? data : JSON.stringify(data, null, 2);
   const isLong = str.length > 200;
   const display = isLong && !expanded ? str.slice(0, 200) + "…" : str;
-
   return (
     <div className="mt-2">
       <pre className="text-xs bg-muted/60 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all font-mono leading-relaxed">
@@ -79,39 +156,40 @@ function ResponseBlock({ data }: { data: unknown }) {
           onClick={() => setExpanded(v => !v)}
           className="flex items-center gap-1 text-xs text-primary mt-1 hover:underline"
         >
-          {expanded ? <><ChevronUp className="h-3 w-3" /> Show less</> : <><ChevronDown className="h-3 w-3" /> Show more</>}
+          {expanded ? (
+            <><ChevronUp className="h-3 w-3" /> Show less</>
+          ) : (
+            <><ChevronDown className="h-3 w-3" /> Show more</>
+          )}
         </button>
       )}
     </div>
   );
 }
 
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export default function LeadDetail() {
   const params = useParams<{ id: string }>();
   const [, setLocation] = useLocation();
   const leadId = parseInt(params.id ?? "0", 10);
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [techOpen, setTechOpen] = useState(false);
 
   const { data, isLoading, error } = trpc.leads.getDetail.useQuery(
     { id: leadId },
     { enabled: !!leadId }
   );
 
-  // ALL hooks must be before any early returns (Rules of Hooks)
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
-  const [techDetailsOpen, setTechDetailsOpen] = useState(false);
-
-  const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text).then(() => toast.success(`${label} copied`));
-  };
-
   if (isLoading) {
     return (
       <DashboardLayout>
-        <div className="space-y-4 max-w-3xl animate-pulse">
-          <div className="h-8 w-48 bg-muted rounded" />
-          <div className="h-40 bg-muted rounded-xl" />
-          <div className="h-64 bg-muted rounded-xl" />
+        <div className="max-w-lg space-y-3 animate-pulse">
+          <div className="h-8 w-32 bg-muted rounded" />
+          <div className="h-44 bg-muted rounded-2xl" />
+          <div className="h-28 bg-muted rounded-2xl" />
+          <div className="h-28 bg-muted rounded-2xl" />
         </div>
       </DashboardLayout>
     );
@@ -122,9 +200,9 @@ export default function LeadDetail() {
       <DashboardLayout>
         <div className="flex flex-col items-center justify-center py-24 gap-3">
           <XCircle className="h-10 w-10 text-muted-foreground/30" />
-          <p className="text-muted-foreground">Lead not found or access denied.</p>
+          <p className="text-muted-foreground text-sm">Lead not found or access denied.</p>
           <Button variant="outline" size="sm" onClick={() => setLocation("/leads")}>
-            <ChevronLeft className="h-4 w-4 mr-1" /> Back to Leads
+            <ArrowLeft className="h-4 w-4 mr-1" /> Back to Leads
           </Button>
         </div>
       </DashboardLayout>
@@ -132,167 +210,224 @@ export default function LeadDetail() {
   }
 
   const { lead, orders } = data;
+  const raw = (lead as any).rawData as Record<string, any> | null | undefined;
+
+  // Platform
+  const platform = (lead as any).platform ?? raw?.platform ?? "fb";
+
+  // Field data from rawData
+  const fieldData: Array<{ name: string; values: string[] }> =
+    raw?.field_data ?? [];
+
+  // Marketing info
+  const campaignName: string = (lead as any).campaignName ?? raw?.campaign_name ?? "";
+  const adsetName: string = (lead as any).adsetName ?? raw?.adset_name ?? "";
+  const adName: string = (lead as any).adName ?? raw?.ad_name ?? "";
+  const campaignId: string = (lead as any).campaignId ?? raw?.campaign_id ?? "";
+
+  // Counts
   const sentCount = orders.filter(o => o.status === "SENT").length;
   const failedCount = orders.filter(o => o.status === "FAILED").length;
 
-  // Resolve source info from enriched orders or lead fields
-  const sourcePageName = (lead as any).pageName ?? lead.pageId;
-  const sourceFormName = (lead as any).formName ?? lead.formId;
-  const sourcePlatform = (lead as any).platform ?? "fb";
-  const platformLabel = sourcePlatform === "ig" ? "Instagram" : "Facebook";
-
   return (
     <DashboardLayout>
-      <div className="space-y-5 max-w-3xl">
-        {/* Back button */}
-        <Button variant="ghost" size="sm" className="-ml-2" onClick={() => setLocation("/leads")}>
-          <ChevronLeft className="h-4 w-4 mr-1" /> Back to Leads
+      <div className="max-w-lg space-y-4">
+        {/* Back */}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="-ml-2 text-muted-foreground hover:text-foreground"
+          onClick={() => setLocation("/leads")}
+        >
+          <ArrowLeft className="h-4 w-4 mr-1" />
+          Back to Leads
         </Button>
 
-        {/* Lead info card */}
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="h-11 w-11 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-                  <User className="h-5 w-5 text-primary" />
-                </div>
-                <div>
-                  <CardTitle className="text-lg leading-tight">
-                    {lead.fullName || <span className="text-muted-foreground font-normal">Unknown</span>}
-                  </CardTitle>
-                  {/* Source line */}
-                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                    <PlatformIcon platform={sourcePlatform} />
-                    <span className="text-xs text-muted-foreground font-medium">{platformLabel}</span>
-                    <span className="text-muted-foreground/40 text-xs">•</span>
-                    <span className="text-xs text-muted-foreground">{sourcePageName}</span>
-                    <span className="text-muted-foreground/40 text-xs">•</span>
-                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <FileText className="h-3 w-3" />{sourceFormName}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground/60 mt-0.5">
-                    Lead ID: #{lead.id} &nbsp;·&nbsp; {new Date(lead.createdAt).toLocaleString()}
-                  </p>
-                </div>
+        {/* ── Main card ── */}
+        <div className="rounded-2xl border bg-card overflow-hidden">
+
+          {/* Hero */}
+          <div className="flex items-start gap-4 px-5 pt-5 pb-4">
+            <div className="h-14 w-14 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-xl font-bold text-primary/60 shrink-0 select-none">
+              {getInitials(lead.fullName)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h1 className="text-xl font-bold tracking-tight leading-tight">
+                {lead.fullName || <span className="text-muted-foreground font-normal">Unknown</span>}
+              </h1>
+              <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                <PlatformBadge platform={platform} />
+                {lead.leadgenId && (
+                  <span className="text-xs text-muted-foreground font-mono">
+                    #{lead.leadgenId}
+                  </span>
+                )}
               </div>
-              <Badge variant={lead.status === "FAILED" ? "destructive" : "secondary"} className="shrink-0">
-                {lead.status}
-              </Badge>
             </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {lead.phone && (
-                <div className="flex items-center gap-2.5 group">
-                  <Phone className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="text-sm">{lead.phone}</span>
-                  <button
-                    onClick={() => copyToClipboard(lead.phone!, "Phone")}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+          </div>
+
+          {/* Date row */}
+          <div className="flex items-center gap-2 text-xs text-muted-foreground px-5 pb-4">
+            <Clock className="h-3.5 w-3.5 shrink-0" />
+            {formatDate(lead.createdAt)}
+          </div>
+
+          <div className="h-px bg-border mx-0" />
+
+          {/* Contact */}
+          {lead.phone && (
+            <>
+              <Section label="Contact">
+                <div className="flex items-center gap-3 bg-muted/40 border rounded-xl px-4 py-3.5">
+                  <div className="h-9 w-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center shrink-0">
+                    <Phone className="h-4 w-4 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-base font-medium tracking-wide">{lead.phone}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Phone number</p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <a
+                      href={`tel:${lead.phone}`}
+                      className="h-8 w-8 rounded-lg border border-border bg-background flex items-center justify-center text-muted-foreground hover:bg-primary hover:border-primary hover:text-white transition-all duration-200"
+                    >
+                      <Phone className="h-3.5 w-3.5" />
+                    </a>
+                    <CopyButton text={lead.phone} />
+                  </div>
+                </div>
+              </Section>
+              <div className="h-px bg-border" />
+            </>
+          )}
+
+          {/* Marketing */}
+          {(campaignName || adsetName || adName) && (
+            <>
+              <Section label="Ad info">
+                <div className="space-y-2.5">
+                  <MarketingRow label="Campaign" value={campaignName} />
+                  <MarketingRow label="Ad Set" value={adsetName} />
+                  <MarketingRow label="Ad" value={adName} />
+                </div>
+              </Section>
+              <div className="h-px bg-border" />
+            </>
+          )}
+
+          {/* Dynamic field_data */}
+          {fieldData.filter(f => f.values?.[0]).length > 0 && (
+            <>
+              <Section label="Form data">
+                <div className="space-y-2">
+                  {fieldData
+                    .filter(f => f.values?.[0])
+                    .map(f => (
+                      <div
+                        key={f.name}
+                        className="flex items-center bg-muted/40 border rounded-xl px-4 py-2.5 gap-3"
+                      >
+                        <span className="text-xs text-muted-foreground capitalize w-24 shrink-0">
+                          {f.name.replace(/_/g, " ")}
+                        </span>
+                        <span className="text-sm font-medium flex-1 min-w-0 truncate">
+                          {f.values[0]}
+                        </span>
+                      </div>
+                    ))}
+                </div>
+              </Section>
+              <div className="h-px bg-border" />
+            </>
+          )}
+
+          {/* Technical details — collapsible */}
+          <div className="px-5 py-4">
+            <button
+              onClick={() => setTechOpen(v => !v)}
+              className="flex items-center justify-between w-full"
+            >
+              <p className="text-[10px] font-semibold tracking-widest uppercase text-muted-foreground">
+                Technical details
+              </p>
+              {techOpen ? (
+                <ChevronUp className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              )}
+            </button>
+
+            {techOpen && (
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                {[
+                  { label: "Lead ID", value: lead.leadgenId },
+                  { label: "Internal ID", value: String(lead.id) },
+                  { label: "Form ID", value: lead.formId },
+                  { label: "Page ID", value: lead.pageId },
+                  ...(campaignId ? [{ label: "Campaign ID", value: campaignId }] : []),
+                ].map(item => (
+                  <div
+                    key={item.label}
+                    className="bg-muted/40 border rounded-xl px-3 py-2.5"
                   >
-                    <Copy className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                  </button>
-                </div>
-              )}
-              {lead.email && (
-                <div className="flex items-center gap-2.5 group">
-                  <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="text-sm">{lead.email}</span>
-                  <button
-                    onClick={() => copyToClipboard(lead.email!, "Email")}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity"
-                  >
-                    <Copy className="h-3.5 w-3.5 text-muted-foreground hover:text-foreground" />
-                  </button>
-                </div>
-              )}
-            </div>
+                    <p className="text-[10px] text-muted-foreground mb-1">{item.label}</p>
+                    <code className="text-xs font-mono text-primary/80 break-all">
+                      {item.value || "—"}
+                    </code>
+                  </div>
+                ))}
+                {isAdmin && raw && (
+                  <div className="col-span-2 bg-muted/40 border rounded-xl px-3 py-2.5">
+                    <p className="text-[10px] text-muted-foreground mb-1">Raw JSON (Admin)</p>
+                    <pre className="text-[10px] font-mono overflow-x-auto whitespace-pre-wrap break-all max-h-40 text-muted-foreground">
+                      {JSON.stringify(raw, null, 2)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
 
-            {/* Summary pills */}
-            <div className="flex items-center gap-2 mt-4 pt-4 border-t">
-              <span className="text-xs text-muted-foreground">Integrations:</span>
-              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted font-medium">
-                {orders.length} total
-              </span>
-              {sentCount > 0 && (
-                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-medium">
-                  <CheckCircle2 className="h-3 w-3" /> {sentCount} sent
-                </span>
-              )}
-              {failedCount > 0 && (
-                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-medium">
-                  <XCircle className="h-3 w-3" /> {failedCount} failed
-                </span>
-              )}
-            </div>
-
-            {/* Technical Details (collapsed) */}
-            <div className="mt-3">
-              <button
-                onClick={() => setTechDetailsOpen(v => !v)}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {techDetailsOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-                Technical Details
-              </button>
-              {techDetailsOpen && (
-                <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 rounded-lg bg-muted/40 border text-xs">
-                  <div>
-                    <p className="text-muted-foreground mb-0.5">Lead ID (Leadgen)</p>
-                    <code className="font-mono text-[11px] break-all">{lead.leadgenId}</code>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground mb-0.5">Internal ID</p>
-                    <code className="font-mono text-[11px]">#{lead.id}</code>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground mb-0.5">Page ID</p>
-                    <code className="font-mono text-[11px]">{lead.pageId}</code>
-                  </div>
-                  <div>
-                    <p className="text-muted-foreground mb-0.5">Form ID</p>
-                    <code className="font-mono text-[11px]">{lead.formId}</code>
-                  </div>
-                  {isAdmin && (lead as any).rawData && (
-                    <div className="col-span-2">
-                      <p className="text-muted-foreground mb-1">Raw JSON (Admin)</p>
-                      <pre className="text-[10px] bg-background rounded p-2 overflow-x-auto whitespace-pre-wrap break-all max-h-40">
-                        {JSON.stringify((lead as any).rawData, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Orders / Integrations */}
+        {/* ── Integration Deliveries ── */}
         <div>
-          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-            Integration Deliveries ({orders.length})
-          </h2>
+          <div className="flex items-center gap-2 mb-3">
+            <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
+              Deliveries
+            </h2>
+            <span className="text-xs px-2 py-0.5 rounded-full bg-muted font-medium">{orders.length}</span>
+            {sentCount > 0 && (
+              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 font-medium">
+                <CheckCircle2 className="h-3 w-3" /> {sentCount} sent
+              </span>
+            )}
+            {failedCount > 0 && (
+              <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 font-medium">
+                <XCircle className="h-3 w-3" /> {failedCount} failed
+              </span>
+            )}
+          </div>
 
           {orders.length === 0 ? (
-            <Card>
-              <CardContent className="py-10 text-center">
-                <Clock className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
-                <p className="text-muted-foreground text-sm">No integrations processed yet.</p>
-              </CardContent>
-            </Card>
+            <div className="rounded-2xl border bg-card px-5 py-10 text-center">
+              <Clock className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
+              <p className="text-muted-foreground text-sm">No integrations processed yet.</p>
+            </div>
           ) : (
-            <div className="space-y-3">
-              {orders.map((order) => (
-                <Card key={order.id} className={(order.status as string) === "FAILED" ? "border-destructive/40" : ""}>
+            <div className="space-y-2.5">
+              {orders.map(order => (
+                <Card
+                  key={order.id}
+                  className={`rounded-2xl ${(order.status as string) === "FAILED" ? "border-destructive/40" : ""}`}
+                >
                   <CardContent className="pt-4 pb-4">
-                    {/* Order header */}
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-2.5">
-                        <IntegrationTypeIcon type={order.integrationType as string | null} />
+                        <IntegrationIcon type={order.integrationType as string | null} />
                         <div>
-                          <p className="text-sm font-medium leading-tight">{String(order.integrationName)}</p>
+                          <p className="text-sm font-medium leading-tight">
+                            {String(order.integrationName)}
+                          </p>
                           {order.targetWebsiteName && (
                             <div className="flex items-center gap-1 mt-0.5">
                               <span className="text-xs text-muted-foreground">→</span>
@@ -307,21 +442,21 @@ export default function LeadDetail() {
                                   <ExternalLink className="h-2.5 w-2.5" />
                                 </a>
                               ) : (
-                                <span className="text-xs text-muted-foreground">{String(order.targetWebsiteName)}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {String(order.targetWebsiteName)}
+                                </span>
                               )}
                             </div>
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <StatusBadge status={order.status as string} />
-                      </div>
+                      <StatusBadge status={order.status as string} />
                     </div>
 
                     <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2.5 text-xs text-muted-foreground">
                       <span className="flex items-center gap-1">
                         <Clock className="h-3 w-3" />
-                        {new Date(order.createdAt as Date).toLocaleString()}
+                        {formatDate(order.createdAt as Date)}
                       </span>
                       {order.integrationType && (
                         <span className="flex items-center gap-1">
@@ -330,11 +465,12 @@ export default function LeadDetail() {
                         </span>
                       )}
                       {(order.retryCount as number) > 0 && (
-                        <span className="text-amber-600">Retried {order.retryCount as number}×</span>
+                        <span className="text-amber-600">
+                          Retried {order.retryCount as number}×
+                        </span>
                       )}
                     </div>
 
-                    {/* Response data */}
                     {order.responseData && (
                       <div className="mt-3 pt-3 border-t">
                         <p className="text-xs font-medium text-muted-foreground mb-1">Response</p>
