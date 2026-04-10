@@ -301,9 +301,10 @@ export default function Campaigns() {
           </CardHeader>
           <CardContent className="p-0">
             {isLoading ? (
-              <div className="flex items-center justify-center h-40 text-muted-foreground">
-                <RefreshCw className="h-5 w-5 animate-spin mr-2" />
-                Loading…
+              <div className="flex flex-col items-center justify-center h-48 gap-3 text-muted-foreground">
+                <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+                <p className="text-sm">Syncing campaigns from Meta…</p>
+                <p className="text-xs text-muted-foreground/60">First load syncs automatically</p>
               </div>
             ) : isAuthError ? (
               <div className="p-6 text-center text-muted-foreground">

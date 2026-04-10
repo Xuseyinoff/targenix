@@ -90,6 +90,30 @@ function classifyFbError(err: unknown): TRPCError {
   return new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Failed to fetch data: ${msg}` });
 }
 
+// ─── Shared mapper ───────────────────────────────────────────────────────────
+function mapAdAccount(a: {
+  fbAdAccountId: string; facebookAccountId: number; fbUserName: string | null;
+  name: string; status: string; statusCode: number; currency: string;
+  timezone: string | null; balance: string; amountSpent: string;
+  minDailyBudget: string; lastSyncedAt: Date | null;
+}) {
+  return {
+    id: a.fbAdAccountId,
+    accountId: a.fbAdAccountId.replace("act_", ""),
+    fbAccountId: a.facebookAccountId,
+    fbUserName: a.fbUserName ?? "",
+    name: a.name,
+    status: a.status as "ACTIVE" | "DISABLED" | "UNSETTLED" | "PENDING_RISK_REVIEW" | "PENDING_SETTLEMENT" | "IN_GRACE_PERIOD" | "PENDING_CLOSURE" | "CLOSED" | "ANY_ACTIVE" | "ANY_CLOSED" | "UNKNOWN",
+    statusCode: a.statusCode,
+    currency: a.currency,
+    timezone: a.timezone ?? "",
+    balance: a.balance,
+    amountSpent: a.amountSpent,
+    minDailyBudget: a.minDailyBudget,
+    lastSyncedAt: a.lastSyncedAt?.toISOString() ?? null,
+  };
+}
+
 // ─── Router ───────────────────────────────────────────────────────────────────
 export const adAnalyticsRouter = router({
 
@@ -122,36 +146,56 @@ export const adAnalyticsRouter = router({
       .where(eq(adAccountsCache.userId, userId))
       .orderBy(asc(adAccountsCache.name));
 
-    // If any account is stale, trigger background sync (non-blocking)
-    const anyStale = cached.length === 0 || cached.some((a) => isStale(a.lastSyncedAt));
-    if (anyStale) {
-      const fbAccounts = await getUserFbAccounts(userId);
+    const fbAccounts = await getUserFbAccounts(userId);
+
+    if (cached.length === 0 && fbAccounts.length > 0) {
+      // ── First load: cache empty → sync synchronously so user sees data immediately ──
+      for (const fbAccount of fbAccounts) {
+        try {
+          const accessToken = decrypt(fbAccount.accessToken);
+          await syncFbAccountData(userId, fbAccount.id, accessToken);
+        } catch (err) {
+          console.error(`[adAnalytics] initial sync failed for fbacc=${fbAccount.id}:`, err instanceof Error ? err.message : err);
+        }
+      }
+      // Re-read from cache after sync
+      const fresh = await db
+        .select({
+          id: adAccountsCache.id,
+          userId: adAccountsCache.userId,
+          facebookAccountId: adAccountsCache.facebookAccountId,
+          fbAdAccountId: adAccountsCache.fbAdAccountId,
+          name: adAccountsCache.name,
+          status: adAccountsCache.status,
+          statusCode: adAccountsCache.statusCode,
+          currency: adAccountsCache.currency,
+          timezone: adAccountsCache.timezone,
+          balance: adAccountsCache.balance,
+          amountSpent: adAccountsCache.amountSpent,
+          minDailyBudget: adAccountsCache.minDailyBudget,
+          lastSyncedAt: adAccountsCache.lastSyncedAt,
+          fbUserName: facebookAccounts.fbUserName,
+        })
+        .from(adAccountsCache)
+        .leftJoin(facebookAccounts, eq(adAccountsCache.facebookAccountId, facebookAccounts.id))
+        .where(eq(adAccountsCache.userId, userId))
+        .orderBy(asc(adAccountsCache.name));
+      return fresh.map(mapAdAccount);
+    }
+
+    // ── Stale data: return immediately + background sync ──────────────────────
+    if (cached.some((a) => isStale(a.lastSyncedAt))) {
       for (const fbAccount of fbAccounts) {
         try {
           const accessToken = decrypt(fbAccount.accessToken);
           void syncFbAccountData(userId, fbAccount.id, accessToken).catch((e: unknown) =>
             console.error(`[adAnalytics] bg sync failed for fbacc=${fbAccount.id}:`, e instanceof Error ? e.message : e)
           );
-        } catch { /* ignore decrypt errors */ }
+        } catch { /* ignore */ }
       }
     }
 
-    // Return cached data (possibly empty on first load — frontend shows loading state)
-    return cached.map((a) => ({
-      id: a.fbAdAccountId,
-      accountId: a.fbAdAccountId.replace("act_", ""),
-      fbAccountId: a.facebookAccountId,
-      fbUserName: a.fbUserName ?? "",
-      name: a.name,
-      status: a.status as "ACTIVE" | "DISABLED" | "UNSETTLED" | "PENDING_RISK_REVIEW" | "PENDING_SETTLEMENT" | "IN_GRACE_PERIOD" | "PENDING_CLOSURE" | "CLOSED" | "ANY_ACTIVE" | "ANY_CLOSED" | "UNKNOWN",
-      statusCode: a.statusCode,
-      currency: a.currency,
-      timezone: a.timezone ?? "",
-      balance: a.balance,
-      amountSpent: a.amountSpent,
-      minDailyBudget: a.minDailyBudget,
-      lastSyncedAt: a.lastSyncedAt?.toISOString() ?? null,
-    }));
+    return cached.map(mapAdAccount);
   }),
 
   // ── List campaigns for an ad account — from DB ─────────────────────────────
@@ -176,8 +220,37 @@ export const adAnalyticsRouter = router({
         ))
         .orderBy(asc(campaignsCache.name));
 
-      // Trigger background sync if stale
-      if (cached.length === 0 || cached.some((c) => isStale(c.lastSyncedAt))) {
+      const mapCampaign = (c: typeof cached[number]) => ({
+        id: c.fbCampaignId,
+        name: c.name,
+        status: c.status as "ACTIVE" | "PAUSED" | "DELETED" | "ARCHIVED",
+        objective: c.objective,
+        dailyBudget: c.dailyBudget,
+        lifetimeBudget: c.lifetimeBudget,
+        lastSyncedAt: c.lastSyncedAt?.toISOString() ?? null,
+      });
+
+      if (cached.length === 0) {
+        // First load — sync synchronously
+        try {
+          const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
+          await syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken);
+        } catch (err) {
+          console.error("[adAnalytics] initial campaign sync failed:", err instanceof Error ? err.message : err);
+        }
+        const fresh = await db
+          .select()
+          .from(campaignsCache)
+          .where(and(
+            eq(campaignsCache.userId, ctx.user.id),
+            eq(campaignsCache.fbAdAccountId, input.adAccountId)
+          ))
+          .orderBy(asc(campaignsCache.name));
+        return fresh.map(mapCampaign);
+      }
+
+      // Stale → background sync + return stale data
+      if (cached.some((c) => isStale(c.lastSyncedAt))) {
         try {
           const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
           void syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken).catch((e: unknown) =>

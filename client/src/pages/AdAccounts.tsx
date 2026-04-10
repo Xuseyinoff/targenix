@@ -254,8 +254,14 @@ export default function AdAccounts() {
           </CardHeader>
           <CardContent className="p-0">
             {isLoading ? (
-              <div className="flex items-center justify-center py-16">
-                <RefreshCw className="h-5 w-5 animate-spin text-muted-foreground" />
+              <div className="flex flex-col items-center justify-center py-16 gap-3">
+                <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">
+                  Syncing your ad accounts from Meta…
+                </p>
+                <p className="text-xs text-muted-foreground/60">
+                  First load takes a moment — future loads will be instant
+                </p>
               </div>
             ) : !accounts || accounts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 gap-3">
