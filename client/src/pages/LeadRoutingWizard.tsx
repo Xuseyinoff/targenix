@@ -1063,172 +1063,105 @@ export default function LeadRoutingWizard({
                     No fields found in this form.
                   </p>
                 ) : (
-                  <div className="space-y-3">
-                    {/* Required auto-mapped fields */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <span className="w-28 shrink-0 text-xs font-medium">
-                          Full Name{" "}
-                          <span className="text-destructive">*</span>
-                        </span>
-                        <Select
-                          value={state.nameField}
-                          onValueChange={value => set({ nameField: value })}
-                        >
-                          <SelectTrigger className="h-8 text-xs flex-1">
-                            <SelectValue placeholder="Select field..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {formFields.map(f => (
-                              <SelectItem
-                                key={f.key}
-                                value={f.key}
-                                className="text-xs"
-                              >
-                                {f.key}
-                                {f.label ? ` — ${f.label}` : ""}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="w-28 shrink-0 text-xs font-medium">
-                          Phone Number{" "}
-                          <span className="text-destructive">*</span>
-                        </span>
-                        <Select
-                          value={state.phoneField}
-                          onValueChange={value => set({ phoneField: value })}
-                        >
-                          <SelectTrigger className="h-8 text-xs flex-1">
-                            <SelectValue placeholder="Select field..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {formFields.map(f => (
-                              <SelectItem
-                                key={f.key}
-                                value={f.key}
-                                className="text-xs"
-                              >
-                                {f.key}
-                                {f.label ? ` — ${f.label}` : ""}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
+                  <div className="space-y-2">
+                    {/* Full Name — standalone block */}
+                    <div className="rounded-lg border">
+                      <Select
+                        value={state.nameField}
+                        onValueChange={value => set({ nameField: value })}
+                      >
+                        <SelectTrigger className="border-0 shadow-none h-10 text-sm focus:ring-0">
+                          <SelectValue placeholder="Full name field..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {formFields.map(f => (
+                            <SelectItem key={f.key} value={f.key}>
+                              {f.key}
+                              {f.label ? ` — ${f.label}` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
-                    <div className="h-px bg-border" />
+                    {/* Phone Number — standalone block */}
+                    <div className="rounded-lg border">
+                      <Select
+                        value={state.phoneField}
+                        onValueChange={value => set({ phoneField: value })}
+                      >
+                        <SelectTrigger className="border-0 shadow-none h-10 text-sm focus:ring-0">
+                          <SelectValue placeholder="Phone number field..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {formFields.map(f => (
+                            <SelectItem key={f.key} value={f.key}>
+                              {f.key}
+                              {f.label ? ` — ${f.label}` : ""}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
 
-                    {/* Extra fields */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs font-medium text-muted-foreground">
-                          Extra fields
-                        </p>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-7 text-xs gap-1 px-2.5"
+                    {/* Extra field rows */}
+                    {state.extraFields.map((field, index) => {
+                      const trimmedDestKey = field.destKey.trim();
+                      const isDuplicate =
+                        !!trimmedDestKey &&
+                        duplicateExtraDestKeys.has(trimmedDestKey);
+
+                      return (
+                        <div
+                          key={`${index}-${field.sourceField || field.destKey || "new"}`}
+                          className={`flex items-center gap-2${isDuplicate ? " rounded-lg p-0.5 ring-1 ring-destructive/40" : ""}`}
+                        >
+                          {/* Left block — source field dropdown */}
+                          <div className="flex-1 rounded-lg border min-w-0">
+                            <Select
+                              value={field.sourceField || undefined}
+                              onValueChange={value =>
+                                updateExtraField(index, { sourceField: value })
+                              }
                             >
-                              <Plus className="h-3 w-3" />
-                              Add Field
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            align="end"
-                            className="max-h-72 overflow-y-auto"
-                          >
-                            {formFields.length > 0 && (
-                              <>
-                                <DropdownMenuLabel className="text-[11px]">
-                                  Form fields
-                                </DropdownMenuLabel>
-                                {formFields.map(f => (
-                                  <DropdownMenuItem
-                                    key={f.key}
-                                    className="text-xs"
-                                    onClick={() =>
-                                      setState(current => ({
-                                        ...current,
-                                        extraFields: [
-                                          ...current.extraFields,
-                                          {
-                                            destKey: f.key,
-                                            sourceType: "form",
-                                            sourceField: f.key,
-                                            staticValue: "",
-                                          },
-                                        ],
-                                      }))
-                                    }
-                                  >
-                                    {f.label ? `${f.label} (${f.key})` : f.key}
-                                  </DropdownMenuItem>
-                                ))}
-                                <DropdownMenuSeparator />
-                              </>
-                            )}
-                            <DropdownMenuLabel className="text-[11px]">
-                              Facebook metadata
-                            </DropdownMenuLabel>
-                            {FB_METADATA_FIELDS.map(f => (
-                              <DropdownMenuItem
-                                key={f.key}
-                                className="text-xs"
-                                onClick={() =>
-                                  setState(current => ({
-                                    ...current,
-                                    extraFields: [
-                                      ...current.extraFields,
-                                      {
-                                        destKey: f.key,
-                                        sourceType: "form",
-                                        sourceField: f.key,
-                                        staticValue: "",
-                                      },
-                                    ],
-                                  }))
-                                }
-                              >
-                                {f.label}
-                              </DropdownMenuItem>
-                            ))}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-xs"
-                              onClick={addExtraField}
-                            >
-                              Custom field...
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
+                              <SelectTrigger className="border-0 shadow-none h-10 text-sm focus:ring-0">
+                                <SelectValue placeholder="Select source..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectGroup>
+                                  <SelectLabel>Form fields</SelectLabel>
+                                  {formFields.map(option => (
+                                    <SelectItem
+                                      key={option.key}
+                                      value={option.key}
+                                    >
+                                      {option.key}
+                                      {option.label
+                                        ? ` — ${option.label}`
+                                        : ""}
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                                <SelectGroup>
+                                  <SelectLabel>Facebook metadata</SelectLabel>
+                                  {FB_METADATA_FIELDS.map(option => (
+                                    <SelectItem
+                                      key={option.key}
+                                      value={option.key}
+                                    >
+                                      {option.key} — {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                              </SelectContent>
+                            </Select>
+                          </div>
 
-                      {state.extraFields.map((field, index) => {
-                        const trimmedDestKey = field.destKey.trim();
-                        const isDuplicate =
-                          !!trimmedDestKey &&
-                          duplicateExtraDestKeys.has(trimmedDestKey);
-                        const isMissingSource =
-                          !!trimmedDestKey &&
-                          (field.sourceType === "form"
-                            ? !field.sourceField
-                            : !field.staticValue?.trim());
-
-                        return (
-                          <div
-                            key={`${index}-${trimmedDestKey || "new"}`}
-                            className={`flex items-center gap-1.5${isDuplicate || isMissingSource ? " rounded-lg p-1 ring-1 ring-destructive/40 bg-destructive/5" : ""}`}
-                          >
+                          {/* Right block — destination key (editable) */}
+                          <div className="flex-1 rounded-lg border min-w-0">
                             <Input
-                              className="h-8 text-xs w-32 shrink-0 font-mono"
-                              placeholder="key"
+                              className="border-0 shadow-none h-10 text-sm focus-visible:ring-0 font-mono"
+                              placeholder="value..."
                               value={field.destKey}
                               onChange={e =>
                                 updateExtraField(index, {
@@ -1236,99 +1169,103 @@ export default function LeadRoutingWizard({
                                 })
                               }
                             />
-                            <span className="text-muted-foreground text-xs shrink-0">
-                              →
-                            </span>
-                            <div className="flex-1 min-w-0">
-                              {field.sourceType === "form" ? (
-                                <Select
-                                  value={field.sourceField || undefined}
-                                  onValueChange={value =>
-                                    updateExtraField(index, {
-                                      sourceField: value,
-                                    })
+                          </div>
+
+                          {/* Delete */}
+                          <button
+                            type="button"
+                            onClick={() => removeExtraField(index)}
+                            className="h-10 w-8 shrink-0 flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+
+                    {/* Add Field */}
+                    <div className="flex justify-end pt-1">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-xs gap-1.5"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add Field
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          align="end"
+                          className="max-h-72 overflow-y-auto"
+                        >
+                          {formFields.length > 0 && (
+                            <>
+                              <DropdownMenuLabel className="text-[11px]">
+                                Form fields
+                              </DropdownMenuLabel>
+                              {formFields.map(f => (
+                                <DropdownMenuItem
+                                  key={f.key}
+                                  className="text-xs"
+                                  onClick={() =>
+                                    setState(current => ({
+                                      ...current,
+                                      extraFields: [
+                                        ...current.extraFields,
+                                        {
+                                          destKey: f.key,
+                                          sourceType: "form",
+                                          sourceField: f.key,
+                                          staticValue: "",
+                                        },
+                                      ],
+                                    }))
                                   }
                                 >
-                                  <SelectTrigger className="h-8 text-xs">
-                                    <SelectValue placeholder="Select source..." />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectGroup>
-                                      <SelectLabel>Form fields</SelectLabel>
-                                      {formFields.map(option => (
-                                        <SelectItem
-                                          key={option.key}
-                                          value={option.key}
-                                          className="text-xs"
-                                        >
-                                          {option.label
-                                            ? `${option.label} (${option.key})`
-                                            : option.key}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectGroup>
-                                    <SelectGroup>
-                                      <SelectLabel>
-                                        Facebook metadata
-                                      </SelectLabel>
-                                      {FB_METADATA_FIELDS.map(option => (
-                                        <SelectItem
-                                          key={option.key}
-                                          value={option.key}
-                                          className="text-xs"
-                                        >
-                                          {option.label}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectGroup>
-                                  </SelectContent>
-                                </Select>
-                              ) : (
-                                <Input
-                                  className="h-8 text-xs"
-                                  placeholder="static value..."
-                                  value={field.staticValue ?? ""}
-                                  onChange={e =>
-                                    updateExtraField(index, {
-                                      staticValue: e.target.value,
-                                    })
-                                  }
-                                />
-                              )}
-                            </div>
-                            <button
-                              type="button"
-                              title={
-                                field.sourceType === "form"
-                                  ? "Switch to static value"
-                                  : "Switch to form field"
-                              }
+                                  {f.key}
+                                  {f.label ? ` — ${f.label}` : ""}
+                                </DropdownMenuItem>
+                              ))}
+                              <DropdownMenuSeparator />
+                            </>
+                          )}
+                          <DropdownMenuLabel className="text-[11px]">
+                            Facebook metadata
+                          </DropdownMenuLabel>
+                          {FB_METADATA_FIELDS.map(f => (
+                            <DropdownMenuItem
+                              key={f.key}
+                              className="text-xs"
                               onClick={() =>
-                                updateExtraField(index, {
-                                  sourceType:
-                                    field.sourceType === "form"
-                                      ? "static"
-                                      : "form",
-                                })
+                                setState(current => ({
+                                  ...current,
+                                  extraFields: [
+                                    ...current.extraFields,
+                                    {
+                                      destKey: f.key,
+                                      sourceType: "form",
+                                      sourceField: f.key,
+                                      staticValue: "",
+                                    },
+                                  ],
+                                }))
                               }
-                              className="h-8 w-8 shrink-0 flex items-center justify-center rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
                             >
-                              {field.sourceType === "form" ? (
-                                <Pencil className="h-3 w-3" />
-                              ) : (
-                                <Tag className="h-3 w-3" />
-                              )}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => removeExtraField(index)}
-                              className="h-8 w-8 shrink-0 flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        );
-                      })}
+                              {f.key} — {f.label}
+                            </DropdownMenuItem>
+                          ))}
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            className="text-xs"
+                            onClick={addExtraField}
+                          >
+                            Custom field...
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </div>
                 )}
