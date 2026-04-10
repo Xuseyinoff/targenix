@@ -20,11 +20,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { ArrowLeft, RefreshCw, AlertTriangle, TrendingUp, Users, DollarSign, MousePointer } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, RefreshCw, AlertTriangle, TrendingUp, Users, DollarSign, MousePointer, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
+import { useState, useMemo } from "react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type DatePreset = "today" | "yesterday" | "last_7d" | "last_30d";
+type SortField = "spend" | "leads" | "cpl" | "ctr" | "convRate";
+type SortDir = "asc" | "desc";
 
 const DATE_PRESET_LABELS: Record<DatePreset, string> = {
   today: "Today",
@@ -60,6 +62,13 @@ function CampaignStatusBadge({ status }: { status: string }) {
   );
 }
 
+function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField; sortDir: SortDir }) {
+  if (sortField !== field) return <ChevronsUpDown className="inline h-3 w-3 ml-1 text-muted-foreground/40" />;
+  return sortDir === "desc"
+    ? <ChevronDown className="inline h-3 w-3 ml-1" />
+    : <ChevronUp className="inline h-3 w-3 ml-1" />;
+}
+
 function ReconnectAlert() {
   return (
     <Alert variant="destructive" className="mb-6">
@@ -80,6 +89,17 @@ export default function Campaigns() {
   const [, params] = useRoute("/business/ad-accounts/:id/campaigns");
   const [, navigate] = useLocation();
   const [datePreset, setDatePreset] = useState<DatePreset>("last_30d");
+  const [sortField, setSortField] = useState<SortField>("spend");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    } else {
+      setSortField(field);
+      setSortDir("desc");
+    }
+  };
 
   // Parse the ad account ID and fb account ID from the route
   // Format: act_123456789__fbAccountId_1
@@ -122,6 +142,26 @@ export default function Campaigns() {
   );
 
   const currency = insights?.currency ?? "USD";
+
+  const sortedCampaigns = useMemo(() => {
+    if (!campaigns) return [];
+    return [...campaigns].sort((a, b) => {
+      const insA = insightsMap.get(a.id);
+      const insB = insightsMap.get(b.id);
+      const getVal = (ins: typeof insA): number => {
+        if (!ins) return -Infinity;
+        switch (sortField) {
+          case "spend": return ins.spend;
+          case "leads": return ins.leads;
+          case "cpl": return ins.cpl;
+          case "ctr": return ins.ctr;
+          case "convRate": return ins.conversionRate;
+        }
+      };
+      const diff = getVal(insA) - getVal(insB);
+      return sortDir === "desc" ? -diff : diff;
+    });
+  }, [campaigns, insightsMap, sortField, sortDir]);
 
   if (!isValidRoute) {
     return (
@@ -272,15 +312,25 @@ export default function Campaigns() {
                       <TableHead className="pl-6">Campaign Name</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Objective</TableHead>
-                      <TableHead>Spend</TableHead>
-                      <TableHead>Leads</TableHead>
-                      <TableHead>CPL</TableHead>
-                      <TableHead>CTR</TableHead>
-                      <TableHead className="pr-6">Conv. Rate</TableHead>
+                      <TableHead className="cursor-pointer select-none hover:text-foreground" onClick={() => handleSort("spend")}>
+                        Spend<SortIcon field="spend" sortField={sortField} sortDir={sortDir} />
+                      </TableHead>
+                      <TableHead className="cursor-pointer select-none hover:text-foreground" onClick={() => handleSort("leads")}>
+                        Leads<SortIcon field="leads" sortField={sortField} sortDir={sortDir} />
+                      </TableHead>
+                      <TableHead className="cursor-pointer select-none hover:text-foreground" onClick={() => handleSort("cpl")}>
+                        CPL<SortIcon field="cpl" sortField={sortField} sortDir={sortDir} />
+                      </TableHead>
+                      <TableHead className="cursor-pointer select-none hover:text-foreground" onClick={() => handleSort("ctr")}>
+                        CTR<SortIcon field="ctr" sortField={sortField} sortDir={sortDir} />
+                      </TableHead>
+                      <TableHead className="pr-6 cursor-pointer select-none hover:text-foreground" onClick={() => handleSort("convRate")}>
+                        Conv. Rate<SortIcon field="convRate" sortField={sortField} sortDir={sortDir} />
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {campaigns.map((campaign) => {
+                    {sortedCampaigns.map((campaign) => {
                       const ins = insightsMap.get(campaign.id);
                       return (
                         <TableRow key={campaign.id}>
