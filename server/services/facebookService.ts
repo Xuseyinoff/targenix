@@ -20,6 +20,13 @@ export interface LeadData {
   created_time: string;
   field_data: LeadFieldData[];
   platform?: "fb" | "ig";
+  ad_id?: string;
+  ad_name?: string;
+  adset_id?: string;
+  adset_name?: string;
+  campaign_id?: string;
+  campaign_name?: string;
+  form_id?: string;
 }
 
 /**
@@ -73,7 +80,7 @@ export async function fetchLeadData(
   const startAt = Date.now();
   try {
     const response = await axios.get<LeadData>(url, {
-      params: { access_token: accessToken, fields: "id,created_time,field_data,platform" },
+      params: { access_token: accessToken, fields: "id,created_time,field_data,platform,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id" },
       timeout: 10000,
     });
     const duration = Date.now() - startAt;

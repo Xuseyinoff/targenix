@@ -10,6 +10,7 @@ export interface LeadPayload {
   email: string | null;
   pageId: string;
   formId: string;
+  extraFields?: Record<string, string>;
 }
 
 export type AffiliateResult = {
@@ -117,6 +118,9 @@ export function buildVariableContext(
     lead_id: lead.leadgenId,
     page_id: lead.pageId,
     form_id: lead.formId,
+    // User-defined extra field mappings (e.g. campaign_name, ad_id, static values)
+    ...(lead.extraFields ?? {}),
+    // Per-routing variable fields override extraFields if keys conflict
     ...extraVars,
   };
 }

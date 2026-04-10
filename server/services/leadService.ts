@@ -122,27 +122,68 @@ async function resolvePageAccessToken(
 /**
  * Extract field values from raw lead data using custom field mapping from LEAD_ROUTING config.
  * Falls back to the generic extractLeadFields if no mapping is configured.
+ * Also resolves extraFields (user-defined key→formField or staticValue mappings).
  */
 function extractWithMapping(
   fieldData: Array<{ name: string; values: string[] }>,
+  leadMeta: {
+    ad_id?: string; ad_name?: string;
+    adset_id?: string; adset_name?: string;
+    campaign_id?: string; campaign_name?: string;
+    form_id?: string; leadgen_id?: string;
+  },
   nameField?: string,
-  phoneField?: string
-): { fullName: string | null; phone: string | null; email: string | null } {
-  const get = (key: string) => {
+  phoneField?: string,
+  extraFields?: Array<{ destKey: string; sourceField?: string; staticValue?: string }>,
+): {
+  fullName: string | null;
+  phone: string | null;
+  email: string | null;
+  extra: Record<string, string>;
+} {
+  const getFormField = (key: string): string | null => {
     const f = fieldData.find((d) => d.name === key);
     return f?.values?.[0] ?? null;
   };
 
-  if (nameField || phoneField) {
-    return {
-      fullName: nameField ? get(nameField) : null,
-      phone: phoneField ? get(phoneField) : null,
-      email: get("email"),
-    };
+  // Facebook metadata resolver
+  const META_MAP: Record<string, string | undefined> = {
+    ad_id:         leadMeta.ad_id,
+    ad_name:       leadMeta.ad_name,
+    adset_id:      leadMeta.adset_id,
+    adset_name:    leadMeta.adset_name,
+    campaign_id:   leadMeta.campaign_id,
+    campaign_name: leadMeta.campaign_name,
+    form_id:       leadMeta.form_id,
+    lead_id:       leadMeta.leadgen_id,
+  };
+
+  const resolveSource = (sourceField: string): string | null =>
+    META_MAP[sourceField] !== undefined
+      ? (META_MAP[sourceField] ?? null)
+      : getFormField(sourceField);
+
+  const base = nameField || phoneField
+    ? {
+        fullName: nameField ? getFormField(nameField) : null,
+        phone:    phoneField ? getFormField(phoneField) : null,
+        email:    getFormField("email"),
+      }
+    : extractLeadFields(fieldData);
+
+  // Resolve user-defined extra field mappings
+  const extra: Record<string, string> = {};
+  for (const ef of extraFields ?? []) {
+    if (!ef.destKey) continue;
+    if (ef.staticValue !== undefined && ef.staticValue !== "") {
+      extra[ef.destKey] = ef.staticValue;
+    } else if (ef.sourceField) {
+      const val = resolveSource(ef.sourceField);
+      if (val !== null) extra[ef.destKey] = val;
+    }
   }
 
-  // Generic fallback
-  return extractLeadFields(fieldData);
+  return { ...base, extra };
 }
 
 /**
@@ -186,6 +227,7 @@ async function sendLeadToTargetWebsite(
     leadgenId: string;
     pageId: string;
     formId: string;
+    extraFields?: Record<string, string>;
   }
 ): Promise<{ success: boolean; responseData?: unknown; error?: string }> {
   const { targetUrl, targetHeaders, flow, offerId } = config as {
@@ -207,6 +249,8 @@ async function sendLeadToTargetWebsite(
 
   try {
     const body = {
+      // Extra fields first so core fields always override them
+      ...(payload.extraFields ?? {}),
       name: payload.fullName,
       phone: payload.phone,
       email: payload.email,
@@ -378,6 +422,7 @@ export async function processLead(params: {
   let phone: string | null = null;
   let email: string | null = null;
   let rawData: unknown = null;
+  let extraFieldsResolved: Record<string, string> = {};
 
   // Step 2: Fetch lead data from Graph API
   if (accessToken) {
@@ -395,6 +440,7 @@ export async function processLead(params: {
 
       let nameField: string | undefined;
       let phoneField: string | undefined;
+      let extraFields: Array<{ destKey: string; sourceField?: string; staticValue?: string }> | undefined;
 
       for (const integration of allIntegrations) {
         if (integration.type !== "LEAD_ROUTING") continue;
@@ -404,14 +450,27 @@ export async function processLead(params: {
         if (intPageId === params.pageId && intFormId === params.formId) {
           nameField = config.nameField as string | undefined;
           phoneField = config.phoneField as string | undefined;
+          extraFields = config.extraFields as typeof extraFields | undefined;
           break;
         }
       }
 
-      const fields = extractWithMapping(leadData.field_data, nameField, phoneField);
+      const leadMeta = {
+        ad_id:         leadData.ad_id,
+        ad_name:       leadData.ad_name,
+        adset_id:      leadData.adset_id,
+        adset_name:    leadData.adset_name,
+        campaign_id:   leadData.campaign_id,
+        campaign_name: leadData.campaign_name,
+        form_id:       leadData.form_id,
+        leadgen_id:    params.leadgenId,
+      };
+
+      const fields = extractWithMapping(leadData.field_data, leadMeta, nameField, phoneField, extraFields);
       fullName = fields.fullName;
       phone = fields.phone;
       email = fields.email;
+      extraFieldsResolved = fields.extra;
 
       // If Graph API returned platform field, update facebook_forms for accuracy
       if (leadData.platform === "fb" || leadData.platform === "ig") {
@@ -454,6 +513,7 @@ export async function processLead(params: {
     email,
     pageId: params.pageId,
     formId: params.formId,
+    extraFields: extraFieldsResolved,
   };
 
   // Step 5: Process each integration
