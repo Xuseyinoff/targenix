@@ -178,18 +178,23 @@ export default function Connections() {
 
       popupRef.current = popup;
 
-      // Step 3: Poll for popup closure (detect user cancellation)
+      // Step 3: Poll for popup closure (detect user cancellation).
+      // We wait 1500ms after the popup closes before showing a "cancelled" error.
+      // This gives any in-flight postMessage (sent just before window.close())
+      // time to arrive and be processed first. If fb_oauth_success arrives
+      // during that window, setConnecting(false) is called and the error is suppressed.
       pollIntervalRef.current = setInterval(() => {
         if (popup.closed) {
           clearInterval(pollIntervalRef.current!);
           pollIntervalRef.current = null;
-          // If still connecting after popup closed, user cancelled
-          setConnecting((prev) => {
-            if (prev) {
-              toast.error("Facebook connection cancelled.");
-            }
-            return false;
-          });
+          setTimeout(() => {
+            setConnecting((prev) => {
+              if (prev) {
+                toast.error("Facebook connection cancelled.");
+              }
+              return false;
+            });
+          }, 1500);
         }
       }, 500);
     } catch (error) {
