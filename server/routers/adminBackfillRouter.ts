@@ -15,6 +15,7 @@ import { getDb } from "../db";
 import { users, integrations, leads, orders, facebookConnections, facebookAccounts, targetWebsites } from "../../drizzle/schema";
 import { and, eq, lt, gte, desc, inArray } from "drizzle-orm";
 import { processLead } from "../services/leadService";
+import { retryAllFailedLeads } from "../services/retryScheduler";
 
 export const adminBackfillRouter = router({
   // ── 1. List all users ──────────────────────────────────────────────────────
@@ -225,4 +226,9 @@ export const adminBackfillRouter = router({
 
       return { results, sent, failed, total: results.length };
     }),
+
+  // ── 5. Manually trigger retry of all FAILED leads ─────────────────────────
+  triggerRetry: adminProcedure.mutation(async () => {
+    return retryAllFailedLeads();
+  }),
 });
