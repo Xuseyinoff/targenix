@@ -1064,42 +1064,56 @@ export default function LeadRoutingWizard({
                   </p>
                 ) : (
                   <div className="space-y-2">
-                    {/* Full Name — standalone block */}
-                    <div className="rounded-lg border">
-                      <Select
-                        value={state.nameField}
-                        onValueChange={value => set({ nameField: value })}
-                      >
-                        <SelectTrigger className="border-0 shadow-none h-10 text-sm focus:ring-0">
-                          <SelectValue placeholder="Full name field..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {formFields.map(f => (
-                            <SelectItem key={f.key} value={f.key}>
-                              {f.label || f.key}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    {/* Full Name row */}
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 rounded-lg border min-w-0">
+                        <Select
+                          value={state.nameField}
+                          onValueChange={value => set({ nameField: value })}
+                        >
+                          <SelectTrigger className="border-0 shadow-none h-10 text-sm focus:ring-0">
+                            <SelectValue placeholder="Full name field..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {formFields.map(f => (
+                              <SelectItem key={f.key} value={f.key}>
+                                {f.label || f.key}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex-1 rounded-lg border min-w-0 h-10 flex items-center px-3 bg-muted/30">
+                        <span className="text-sm font-mono text-muted-foreground truncate">
+                          {state.nameField || "—"}
+                        </span>
+                      </div>
                     </div>
 
-                    {/* Phone Number — standalone block */}
-                    <div className="rounded-lg border">
-                      <Select
-                        value={state.phoneField}
-                        onValueChange={value => set({ phoneField: value })}
-                      >
-                        <SelectTrigger className="border-0 shadow-none h-10 text-sm focus:ring-0">
-                          <SelectValue placeholder="Phone number field..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {formFields.map(f => (
-                            <SelectItem key={f.key} value={f.key}>
-                              {f.label || f.key}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    {/* Phone Number row */}
+                    <div className="flex items-center gap-2">
+                      <div className="flex-1 rounded-lg border min-w-0">
+                        <Select
+                          value={state.phoneField}
+                          onValueChange={value => set({ phoneField: value })}
+                        >
+                          <SelectTrigger className="border-0 shadow-none h-10 text-sm focus:ring-0">
+                            <SelectValue placeholder="Phone number field..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {formFields.map(f => (
+                              <SelectItem key={f.key} value={f.key}>
+                                {f.label || f.key}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex-1 rounded-lg border min-w-0 h-10 flex items-center px-3 bg-muted/30">
+                        <span className="text-sm font-mono text-muted-foreground truncate">
+                          {state.phoneField || "—"}
+                        </span>
+                      </div>
                     </div>
 
                     {/* Extra field rows */}
