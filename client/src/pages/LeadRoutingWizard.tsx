@@ -36,8 +36,10 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Search,
   Tag,
   User,
+  X,
   Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -99,6 +101,35 @@ function ScrollableList({ children, count }: { children: React.ReactNode; count:
   );
 }
 
+
+// ─── Step search input ────────────────────────────────────────────────────────
+
+function StepSearch({ value, onChange, placeholder }: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <div className="relative mb-3">
+      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+      <Input
+        className="pl-8 pr-8 h-8 text-sm"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        autoComplete="off"
+      />
+      {value && (
+        <button
+          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+          onClick={() => onChange("")}
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
 
 // ─── Auto-match helpers ───────────────────────────────────────────────────────
 
@@ -192,6 +223,18 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
   const [state, setState] = useState<WizardState>(INITIAL);
   const [editLoaded, setEditLoaded] = useState(false);
   const [ignoreDuplicate, setIgnoreDuplicate] = useState(false);
+  const [searchAccount, setSearchAccount] = useState("");
+  const [searchPage, setSearchPage] = useState("");
+  const [searchForm, setSearchForm] = useState("");
+  const [searchTarget, setSearchTarget] = useState("");
+
+  // Reset step searches when navigating away
+  useEffect(() => {
+    setSearchAccount("");
+    setSearchPage("");
+    setSearchForm("");
+    setSearchTarget("");
+  }, [step]);
   const utils = trpc.useUtils();
 
   const set = (patch: Partial<WizardState>) => setState((s) => ({ ...s, ...patch }));
@@ -440,30 +483,40 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                     </Button>
                   </div>
                 ) : (
-                  <div className="grid gap-2">
-                    {accounts.map((acct) => (
-                      <button
-                        key={acct.id}
-                        onClick={() => set({ accountId: acct.id, accountName: acct.fbUserName })}
-                        className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
-                          state.accountId === acct.id
-                            ? "border-primary bg-primary/5"
-                            : "border-border hover:bg-muted/50"
-                        }`}
-                      >
-                        <div className="h-9 w-9 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
-                          <User className="h-4 w-4 text-blue-600" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-sm">{acct.fbUserName}</p>
-                          <p className="text-xs text-muted-foreground">ID: {acct.fbUserId}</p>
-                        </div>
-                        {state.accountId === acct.id && (
-                          <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
+                  <>
+                    {accounts.length > 3 && (
+                      <StepSearch value={searchAccount} onChange={setSearchAccount} placeholder="Search accounts..." />
+                    )}
+                    <div className="grid gap-2">
+                      {accounts
+                        .filter((a) => !searchAccount || a.fbUserName.toLowerCase().includes(searchAccount.toLowerCase()))
+                        .map((acct) => (
+                          <button
+                            key={acct.id}
+                            onClick={() => set({ accountId: acct.id, accountName: acct.fbUserName })}
+                            className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
+                              state.accountId === acct.id
+                                ? "border-primary bg-primary/5"
+                                : "border-border hover:bg-muted/50"
+                            }`}
+                          >
+                            <div className="h-9 w-9 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
+                              <User className="h-4 w-4 text-blue-600" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">{acct.fbUserName}</p>
+                              <p className="text-xs text-muted-foreground">ID: {acct.fbUserId}</p>
+                            </div>
+                            {state.accountId === acct.id && (
+                              <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
+                            )}
+                          </button>
+                        ))}
+                      {searchAccount && !accounts.some((a) => a.fbUserName.toLowerCase().includes(searchAccount.toLowerCase())) && (
+                        <p className="text-xs text-muted-foreground text-center py-3">No accounts match "{searchAccount}"</p>
+                      )}
+                    </div>
+                  </>
                 )}
               </>
             )}
@@ -480,34 +533,45 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                   <p className="text-muted-foreground text-sm">
                     No pages found for this account. Make sure the account has pages_show_list permission.
                   </p>
-                ) : (
-                  <ScrollableList count={pages.length}>
-                    {pages.map((page) => (
-                      <button
-                        key={page.id}
-                        onClick={() => set({ pageId: page.id, pageName: page.name })}
-                        className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
-                          state.pageId === page.id
-                            ? "border-primary bg-primary/5"
-                            : "border-border hover:bg-muted/50"
-                        }`}
-                      >
-                        <div className="h-9 w-9 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
-                          <Facebook className="h-4 w-4 text-blue-600" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-sm">{page.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {page.category} · ID: {page.id}
-                          </p>
-                        </div>
-                        {state.pageId === page.id && (
-                          <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
+                ) : (() => {
+                  const filtered = pages.filter((p) =>
+                    !searchPage || p.name.toLowerCase().includes(searchPage.toLowerCase())
+                  );
+                  return (
+                    <>
+                      <StepSearch value={searchPage} onChange={setSearchPage} placeholder="Search pages..." />
+                      <ScrollableList count={filtered.length}>
+                        {filtered.map((page) => (
+                          <button
+                            key={page.id}
+                            onClick={() => set({ pageId: page.id, pageName: page.name })}
+                            className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
+                              state.pageId === page.id
+                                ? "border-primary bg-primary/5"
+                                : "border-border hover:bg-muted/50"
+                            }`}
+                          >
+                            <div className="h-9 w-9 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
+                              <Facebook className="h-4 w-4 text-blue-600" />
+                            </div>
+                            <div>
+                              <p className="font-medium text-sm">{page.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {page.category} · ID: {page.id}
+                              </p>
+                            </div>
+                            {state.pageId === page.id && (
+                              <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
+                            )}
+                          </button>
+                        ))}
+                        {filtered.length === 0 && (
+                          <p className="text-xs text-muted-foreground text-center py-3">No pages match "{searchPage}"</p>
                         )}
-                      </button>
-                    ))}
-                  </ScrollableList>
-                )}
+                      </ScrollableList>
+                    </>
+                  );
+                })()}
               </>
             )}
 
@@ -523,33 +587,44 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                   <p className="text-muted-foreground text-sm">
                     No lead forms found on this page. Create a lead gen form in Facebook Ads Manager first.
                   </p>
-                ) : (
-                  <ScrollableList count={forms.length}>
-                    {forms.map((form) => (
-                      <button
-                        key={form.id}
-                        onClick={() => set({ formId: form.id, formName: form.name })}
-                        className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
-                          state.formId === form.id
-                            ? "border-primary bg-primary/5"
-                            : "border-border hover:bg-muted/50"
-                        }`}
-                      >
-                        <FileText className="h-5 w-5 text-muted-foreground shrink-0" />
-                        <div>
-                          <p className="font-medium text-sm">{form.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            ID: {form.id}
-                            {form.status && ` · ${form.status}`}
-                          </p>
-                        </div>
-                        {state.formId === form.id && (
-                          <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
+                ) : (() => {
+                  const filtered = forms.filter((f) =>
+                    !searchForm || f.name.toLowerCase().includes(searchForm.toLowerCase())
+                  );
+                  return (
+                    <>
+                      <StepSearch value={searchForm} onChange={setSearchForm} placeholder={`Search ${forms.length} forms...`} />
+                      <ScrollableList count={filtered.length}>
+                        {filtered.map((form) => (
+                          <button
+                            key={form.id}
+                            onClick={() => set({ formId: form.id, formName: form.name })}
+                            className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
+                              state.formId === form.id
+                                ? "border-primary bg-primary/5"
+                                : "border-border hover:bg-muted/50"
+                            }`}
+                          >
+                            <FileText className="h-5 w-5 text-muted-foreground shrink-0" />
+                            <div>
+                              <p className="font-medium text-sm">{form.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                ID: {form.id}
+                                {form.status && ` · ${form.status}`}
+                              </p>
+                            </div>
+                            {state.formId === form.id && (
+                              <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
+                            )}
+                          </button>
+                        ))}
+                        {filtered.length === 0 && (
+                          <p className="text-xs text-muted-foreground text-center py-3">No forms match "{searchForm}"</p>
                         )}
-                      </button>
-                    ))}
-                  </ScrollableList>
-                )}
+                      </ScrollableList>
+                    </>
+                  );
+                })()}
 
                 {/* Duplicate warning */}
                 {duplicates.length > 0 && !ignoreDuplicate && (
@@ -730,41 +805,49 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                       </Button>
                     </div>
                     {/* Card list of target websites */}
+                    {targetWebsites.length > 3 && (
+                      <StepSearch value={searchTarget} onChange={setSearchTarget} placeholder={`Search ${targetWebsites.length} destinations...`} />
+                    )}
                     <div className="grid gap-2">
-                      {targetWebsites.map((site) => {
-                        const isSelected = state.targetWebsiteId === site.id;
-                        const tplLabel = site.templateType === "sotuvchi" ? "sotuvchi.com"
-                          : site.templateType === "100k" ? "100k.uz"
-                          : "Custom";
-                        return (
-                          <button
-                            key={site.id}
-                            onClick={() => {
-                              set({
-                                targetWebsiteId: site.id,
-                                targetWebsiteName: site.name,
-                                targetTemplateType: site.templateType ?? "custom",
-                                variableFields: {},
-                              });
-                            }}
-                            style={isSelected ? { borderColor: site.color, backgroundColor: `${site.color}10` } : {}}
-                            className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
-                              isSelected
-                                ? ""
-                                : "hover:border-muted-foreground/40 hover:bg-muted/30"
-                            }`}
-                          >
-                            <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: site.color }}>
-                              <Globe className="w-4 h-4 text-white" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="font-medium text-sm">{site.name}</p>
-                              <p className="text-xs text-muted-foreground">{tplLabel}</p>
-                            </div>
-                            {isSelected && <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />}
-                          </button>
-                        );
-                      })}
+                      {targetWebsites
+                        .filter((s) => !searchTarget || s.name.toLowerCase().includes(searchTarget.toLowerCase()))
+                        .map((site) => {
+                          const isSelected = state.targetWebsiteId === site.id;
+                          const tplLabel = site.templateType === "sotuvchi" ? "sotuvchi.com"
+                            : site.templateType === "100k" ? "100k.uz"
+                            : "Custom";
+                          return (
+                            <button
+                              key={site.id}
+                              onClick={() => {
+                                set({
+                                  targetWebsiteId: site.id,
+                                  targetWebsiteName: site.name,
+                                  targetTemplateType: site.templateType ?? "custom",
+                                  variableFields: {},
+                                });
+                              }}
+                              style={isSelected ? { borderColor: site.color, backgroundColor: `${site.color}10` } : {}}
+                              className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
+                                isSelected
+                                  ? ""
+                                  : "hover:border-muted-foreground/40 hover:bg-muted/30"
+                              }`}
+                            >
+                              <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: site.color }}>
+                                <Globe className="w-4 h-4 text-white" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-sm">{site.name}</p>
+                                <p className="text-xs text-muted-foreground">{tplLabel}</p>
+                              </div>
+                              {isSelected && <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />}
+                            </button>
+                          );
+                        })}
+                      {searchTarget && !targetWebsites.some((s) => s.name.toLowerCase().includes(searchTarget.toLowerCase())) && (
+                        <p className="text-xs text-muted-foreground text-center py-3">No destinations match "{searchTarget}"</p>
+                      )}
                     </div>
 
                     {/* Variable fields for selected template */}
