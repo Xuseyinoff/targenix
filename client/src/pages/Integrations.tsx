@@ -24,6 +24,8 @@ import {
   ArrowRight,
   CheckCircle2,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   FlaskConical,
   Globe,
   Loader2,
@@ -37,7 +39,7 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 
@@ -92,6 +94,8 @@ export default function Integrations() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterType, setFilterType] = useState<"ALL" | "TELEGRAM" | "LEAD_ROUTING" | "AFFILIATE">("ALL");
   const [filterStatus, setFilterStatus] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 20;
   const [testResult, setTestResult] = useState<{
     integrationId: number;
     integrationName: string;
@@ -174,6 +178,12 @@ export default function Integrations() {
       );
     });
   }, [integrations, searchQuery, filterType, filterStatus]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, filterType, filterStatus]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredIntegrations.length / PAGE_SIZE));
+  const pagedIntegrations = filteredIntegrations.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   const handleCreate = () => {
     const config: Record<string, unknown> =
@@ -287,7 +297,9 @@ export default function Integrations() {
 
               {/* Results count */}
               <span className="text-xs text-muted-foreground ml-auto">
-                {filteredIntegrations.length} of {integrations.length} integrations
+                {filteredIntegrations.length === integrations.length
+                  ? `${integrations.length} integrations`
+                  : `${filteredIntegrations.length} of ${integrations.length}`}
               </span>
             </div>
           </div>
@@ -370,7 +382,7 @@ export default function Integrations() {
         ) : (
           integrations && integrations.length > 0 && (
             <div className="grid gap-2">
-              {filteredIntegrations.map((integration) => {
+              {pagedIntegrations.map((integration) => {
                 const config = integration.config as Record<string, unknown>;
                 const isTelegram = integration.type === "TELEGRAM";
                 const isRouting = integration.type === "LEAD_ROUTING";
@@ -591,6 +603,46 @@ export default function Integrations() {
                   </Card>
                 );
               })}
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-1">
+                  <p className="text-xs text-muted-foreground">
+                    {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredIntegrations.length)} / {filteredIntegrations.length}
+                  </p>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      disabled={currentPage === 1}
+                      onClick={() => setCurrentPage((p) => p - 1)}
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                      <Button
+                        key={p}
+                        variant={p === currentPage ? "default" : "outline"}
+                        size="sm"
+                        className="h-7 w-7 p-0 text-xs"
+                        onClick={() => setCurrentPage(p)}
+                      >
+                        {p}
+                      </Button>
+                    ))}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      disabled={currentPage === totalPages}
+                      onClick={() => setCurrentPage((p) => p + 1)}
+                    >
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
           )
         )}
