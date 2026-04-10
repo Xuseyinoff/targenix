@@ -244,11 +244,11 @@ export default function AdminBackfill() {
                       >
                         <span className="flex items-center gap-3">
                           <div className="h-7 w-7 rounded-full bg-muted flex items-center justify-center shrink-0 text-xs font-semibold uppercase">
-                            {(u.name || u.email).charAt(0)}
+                            {(u.name ?? u.email ?? "?").charAt(0)}
                           </div>
                           <span>
-                            <p className="font-medium text-sm leading-tight">{u.name || u.email}</p>
-                            <p className="text-xs text-muted-foreground leading-tight">{u.email}</p>
+                            <p className="font-medium text-sm leading-tight">{u.name ?? u.email ?? "Unknown user"}</p>
+                            <p className="text-xs text-muted-foreground leading-tight">{u.email ?? "No email"}</p>
                           </span>
                         </span>
                         <span className="flex items-center gap-2 shrink-0 ml-2">
