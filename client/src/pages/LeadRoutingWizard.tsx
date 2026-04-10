@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { trpc } from "@/lib/trpc";
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   CheckCircle2,
@@ -33,12 +34,13 @@ import {
   FileText,
   Globe,
   Loader2,
+  Pencil,
   Plus,
   Tag,
   User,
   Zap,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import type { RouteComponentProps } from "wouter";
@@ -189,6 +191,7 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
   const [step, setStep] = useState(1);
   const [state, setState] = useState<WizardState>(INITIAL);
   const [editLoaded, setEditLoaded] = useState(false);
+  const [ignoreDuplicate, setIgnoreDuplicate] = useState(false);
   const utils = trpc.useUtils();
 
   const set = (patch: Partial<WizardState>) => setState((s) => ({ ...s, ...patch }));
@@ -231,9 +234,24 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
   );
 
   // ── Load existing integration for edit mode ──────────────────────────────
-  const { data: allIntegrations } = trpc.integrations.list.useQuery(undefined, {
-    enabled: isEditMode && !editLoaded,
-  });
+  const { data: allIntegrations } = trpc.integrations.list.useQuery();
+  // Duplicate detection: same pageId + formId already has a routing (excluding current edit)
+  const duplicates = useMemo(() => {
+    if (!allIntegrations || !state.formId || !state.pageId) return [];
+    return allIntegrations.filter(
+      (i) =>
+        i.type === "LEAD_ROUTING" &&
+        i.formId === state.formId &&
+        i.pageId === state.pageId &&
+        i.id !== editIntegrationId,
+    );
+  }, [allIntegrations, state.formId, state.pageId, editIntegrationId]);
+
+  // Reset ignoreDuplicate when form changes
+  useEffect(() => {
+    setIgnoreDuplicate(false);
+  }, [state.formId]);
+
   useEffect(() => {
     if (!isEditMode || editLoaded || !allIntegrations) return;
     const found = allIntegrations.find((i) => i.id === editIntegrationId);
@@ -321,7 +339,7 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
   const canNext = () => {
     if (step === 1) return !!state.accountId;
     if (step === 2) return !!state.pageId;
-    if (step === 3) return !!state.formId;
+    if (step === 3) return !!state.formId && (duplicates.length === 0 || ignoreDuplicate);
     if (step === 4) return !!state.nameField && !!state.phoneField;
     if (step === 5) {
       if (!state.targetWebsiteId) return false;
@@ -531,6 +549,80 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                       </button>
                     ))}
                   </ScrollableList>
+                )}
+
+                {/* Duplicate warning */}
+                {duplicates.length > 0 && !ignoreDuplicate && (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700 p-3 space-y-2.5">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                          This form already has {duplicates.length === 1 ? "an active routing" : `${duplicates.length} active routings`}
+                        </p>
+                        <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+                          Creating another routing for the same form will send each lead to multiple destinations.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Existing duplicates list */}
+                    <div className="space-y-1.5">
+                      {duplicates.map((dup) => {
+                        const cfg = dup.config as Record<string, unknown>;
+                        return (
+                          <div
+                            key={dup.id}
+                            className="flex items-center justify-between gap-2 bg-amber-100/60 dark:bg-amber-900/20 rounded-md px-2.5 py-2"
+                          >
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium text-amber-900 dark:text-amber-200 truncate">
+                                {dup.name}
+                              </p>
+                              <p className="text-[11px] text-amber-700 dark:text-amber-400 truncate">
+                                → {String((dup as { targetWebsiteName?: string }).targetWebsiteName ?? cfg.targetWebsiteName ?? "—")}
+                                {!dup.isActive && " · Inactive"}
+                              </p>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs shrink-0 border-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/30 dark:border-amber-700 dark:text-amber-200"
+                              onClick={() => navigate(`/integrations/edit-routing/${dup.id}`)}
+                            >
+                              <Pencil className="h-3 w-3 mr-1" />
+                              Edit existing
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs w-full text-amber-700 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/30"
+                      onClick={() => setIgnoreDuplicate(true)}
+                    >
+                      Create new routing anyway
+                    </Button>
+                  </div>
+                )}
+
+                {/* "Creating another routing" confirmation badge */}
+                {duplicates.length > 0 && ignoreDuplicate && (
+                  <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
+                    <CheckCircle2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <p className="text-xs text-muted-foreground flex-1">
+                      Creating an additional routing alongside {duplicates.length} existing one{duplicates.length > 1 ? "s" : ""}
+                    </p>
+                    <button
+                      className="text-[11px] underline text-muted-foreground hover:text-foreground"
+                      onClick={() => setIgnoreDuplicate(false)}
+                    >
+                      Undo
+                    </button>
+                  </div>
                 )}
               </>
             )}
