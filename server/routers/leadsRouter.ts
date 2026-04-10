@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray, desc, sql, count } from "drizzle-orm";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
   getLeads,
@@ -36,49 +36,48 @@ export const leadsRouter = router({
     )
     .query(async ({ ctx, input }) => {
       const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) return { items: [], total: 0 };
 
-      // Resolve platform filter → pageIds at DB level so pagination is correct
-      let platformPageIds: string[] | undefined;
-      if (input.platform) {
-        const db = await getDb();
-        if (db) {
-          const rows = await db
-            .selectDistinct({ pageId: facebookForms.pageId })
-            .from(facebookForms)
-            .where(
-              and(
-                eq(facebookForms.userId, userId),
-                eq(facebookForms.platform, input.platform)
-              )
-            );
-          platformPageIds = rows.map((r) => r.pageId);
-          // If no pages match the platform, return empty immediately
-          if (platformPageIds.length === 0) return { items: [], total: 0 };
-        }
-      }
+      // Platform filter: now resolved directly from leads.platform column (no extra query)
+      // pageId/formId filters also use dedicated leads columns with indexes
 
       const [items, total] = await Promise.all([
-        getLeads(userId, input.limit, input.offset, input.search, input.status, input.pageId, input.formId, platformPageIds),
-        getLeadsCount(userId, input.search, input.status, input.pageId, input.formId, platformPageIds),
+        getLeads(userId, input.limit, input.offset, input.search, input.status, input.pageId, input.formId, undefined, input.platform),
+        getLeadsCount(userId, input.search, input.status, input.pageId, input.formId, undefined, input.platform),
       ]);
 
-      // Enrich each lead with pageName, formName, platform from facebook_forms
-      const itemsEnriched = await Promise.all(
-        items.map(async (lead) => {
-          const [sourceInfo, orders] = await Promise.all([
-            getLeadSourceInfo({ userId, pageId: lead.pageId, formId: lead.formId }),
-            getOrdersByLeadId(lead.id),
-          ]);
-          return {
-            ...lead,
-            pageName: sourceInfo.pageName,
-            formName: sourceInfo.formName,
-            platform: sourceInfo.platform,
-            orders,
-          };
+      if (items.length === 0) return { items: [], total };
+
+      // Batch-load orders for all leads in one query (eliminates N+1)
+      const leadIds = items.map((l) => l.id);
+      const allOrders = await db
+        .select({
+          id:            orders.id,
+          leadId:        orders.leadId,
+          integrationId: orders.integrationId,
+          status:        orders.status,
+          retryCount:    orders.retryCount,
+          createdAt:     orders.createdAt,
         })
-      );
-      return { items: itemsEnriched, total };
+        .from(orders)
+        .where(and(eq(orders.userId, userId), inArray(orders.leadId, leadIds)));
+
+      // Group orders by leadId
+      const ordersByLead = new Map<number, typeof allOrders>();
+      for (const order of allOrders) {
+        const existing = ordersByLead.get(order.leadId) ?? [];
+        existing.push(order);
+        ordersByLead.set(order.leadId, existing);
+      }
+
+      // pageName/formName/platform are now denormalized in leads table — no extra queries
+      const itemsWithOrders = items.map((lead) => ({
+        ...lead,
+        orders: ordersByLead.get(lead.id) ?? [],
+      }));
+
+      return { items: itemsWithOrders, total };
     }),
 
   // ── Get all pages+forms for filter dropdowns ────────────────────────────────

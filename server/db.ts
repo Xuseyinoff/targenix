@@ -106,14 +106,16 @@ export async function getLeads(
   status?: "PENDING" | "RECEIVED" | "FAILED",
   pageId?: string,
   formId?: string,
-  pageIds?: string[]
+  pageIds?: string[],
+  platform?: "fb" | "ig"
 ): Promise<Lead[]> {
   const db = await getDb();
   if (!db) return [];
   const conditions = [eq(leads.userId, userId)];
-  if (status) conditions.push(eq(leads.status, status));
-  if (pageId) conditions.push(eq(leads.pageId, pageId));
-  if (formId) conditions.push(eq(leads.formId, formId));
+  if (status)   conditions.push(eq(leads.status,   status));
+  if (pageId)   conditions.push(eq(leads.pageId,   pageId));
+  if (formId)   conditions.push(eq(leads.formId,   formId));
+  if (platform) conditions.push(eq(leads.platform, platform));
   if (pageIds && pageIds.length > 0) conditions.push(inArray(leads.pageId, pageIds));
   if (search) {
     const like = `%${search}%`;
@@ -158,14 +160,16 @@ export async function getLeadsCount(
   status?: "PENDING" | "RECEIVED" | "FAILED",
   pageId?: string,
   formId?: string,
-  pageIds?: string[]
+  pageIds?: string[],
+  platform?: "fb" | "ig"
 ): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
   const conditions = [eq(leads.userId, userId)];
-  if (status) conditions.push(eq(leads.status, status));
-  if (pageId) conditions.push(eq(leads.pageId, pageId));
-  if (formId) conditions.push(eq(leads.formId, formId));
+  if (status)   conditions.push(eq(leads.status,   status));
+  if (pageId)   conditions.push(eq(leads.pageId,   pageId));
+  if (formId)   conditions.push(eq(leads.formId,   formId));
+  if (platform) conditions.push(eq(leads.platform, platform));
   if (pageIds && pageIds.length > 0) conditions.push(inArray(leads.pageId, pageIds));
   if (search) {
     const like = `%${search}%`;

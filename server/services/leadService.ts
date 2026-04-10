@@ -9,9 +9,29 @@ import { sendAffiliateOrder, sendAffiliateOrderByTemplate, type AffiliateConfig,
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
 
+// ─── Field extraction helpers ─────────────────────────────────────────────────
+
+const CORE_FIELD_NAMES = new Set(["full_name", "phone_number", "FULL_NAME", "PHONE_NUMBER"]);
+
+/**
+ * Build extraFields JSON from field_data — all entries except name + phone.
+ */
+function buildExtraFields(
+  fieldData: Array<{ name: string; values: string[] }>
+): Record<string, string> | null {
+  const extra: Record<string, string> = {};
+  for (const f of fieldData) {
+    if (CORE_FIELD_NAMES.has(f.name)) continue;
+    const val = f.values?.[0];
+    if (val !== undefined && val !== null && val !== "") extra[f.name] = val;
+  }
+  return Object.keys(extra).length > 0 ? extra : null;
+}
+
 /**
  * Save an incoming lead to the database with PENDING status.
  * Called from the webhook handler — must be fast.
+ * Writes pageName/formName immediately from facebook_forms cache.
  */
 export async function saveIncomingLead(params: {
   userId: number;
@@ -31,19 +51,41 @@ export async function saveIncomingLead(params: {
     const rawDataObj = params.rawData as Record<string, unknown> | null;
     const platform = (rawDataObj?.platform === "ig" ? "ig" : "fb") as "fb" | "ig";
 
+    // Lookup pageName/formName from facebook_forms (tenant-safe)
+    const [formRow] = await db
+      .select({ pageName: facebookForms.pageName, formName: facebookForms.formName })
+      .from(facebookForms)
+      .where(
+        and(
+          eq(facebookForms.userId, params.userId),
+          eq(facebookForms.pageId, params.pageId),
+          eq(facebookForms.formId, params.formId),
+        )
+      )
+      .limit(1);
+
     // Upsert to avoid duplicate processing
     await db
       .insert(leads)
       .values({
-        userId: params.userId,
-        pageId: params.pageId,
-        formId: params.formId,
+        userId:   params.userId,
+        pageId:   params.pageId,
+        formId:   params.formId,
         leadgenId: params.leadgenId,
-        rawData: params.rawData,
+        rawData:  params.rawData,
         platform,
-        status: "PENDING",
+        pageName: formRow?.pageName ?? null,
+        formName: formRow?.formName ?? null,
+        status:   "PENDING",
       })
-      .onDuplicateKeyUpdate({ set: { rawData: params.rawData, platform } });
+      .onDuplicateKeyUpdate({
+        set: {
+          rawData:  params.rawData,
+          platform,
+          pageName: formRow?.pageName ?? null,
+          formName: formRow?.formName ?? null,
+        },
+      });
 
     // Must filter by BOTH leadgenId AND userId — composite unique index
     const [saved] = await db
@@ -494,15 +536,51 @@ export async function processLead(params: {
     await log.warn("LEAD", `No access token found — lead data cannot be fetched`, { pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
   }
 
-  // Step 3: Update lead with enriched data
+  // Resolve pageName/formName for denormalized columns (tenant-safe)
+  let pageName: string | null = null;
+  let formName: string | null = null;
+  try {
+    const [formRow] = await db
+      .select({ pageName: facebookForms.pageName, formName: facebookForms.formName })
+      .from(facebookForms)
+      .where(
+        and(
+          eq(facebookForms.userId, params.userId),
+          eq(facebookForms.pageId, params.pageId),
+          eq(facebookForms.formId, params.formId),
+        )
+      )
+      .limit(1);
+    pageName = formRow?.pageName ?? null;
+    formName = formRow?.formName ?? null;
+  } catch { /* non-critical — lead still processed without page/form name */ }
+
+  // Extract extra field_data values (everything except full_name + phone_number)
+  const rawDataForFields = rawData as Record<string, unknown> | null;
+  const fieldDataArr = Array.isArray(rawDataForFields?.field_data)
+    ? (rawDataForFields!.field_data as Array<{ name: string; values: string[] }>)
+    : [];
+  const extraFieldsJson = buildExtraFields(fieldDataArr);
+
+  // Step 3: Update lead with all enriched data (single write, no further updates)
+  const rawDataRecord = rawData as Record<string, unknown> | null;
   await db
     .update(leads)
     .set({
       fullName,
       phone,
       email,
-      rawData: rawData ?? undefined,
-      status: "RECEIVED",
+      rawData:      rawData ?? undefined,
+      status:       "RECEIVED",
+      pageName,
+      formName,
+      campaignId:   rawDataRecord?.campaign_id   as string | null ?? null,
+      campaignName: rawDataRecord?.campaign_name as string | null ?? null,
+      adsetId:      rawDataRecord?.adset_id      as string | null ?? null,
+      adsetName:    rawDataRecord?.adset_name    as string | null ?? null,
+      adId:         rawDataRecord?.ad_id         as string | null ?? null,
+      adName:       rawDataRecord?.ad_name       as string | null ?? null,
+      extraFields:  extraFieldsJson,
     })
     .where(eq(leads.id, params.leadId));
 
@@ -622,12 +700,6 @@ export async function processLead(params: {
       })
       .where(eq(orders.id, order.id));
   }
-
-  // Final status update
-  await db
-    .update(leads)
-    .set({ status: "RECEIVED" })
-    .where(eq(leads.id, params.leadId));
 
   await log.info("LEAD", `Processing complete — leadId=${params.leadId} fullName=${fullName ?? "unknown"} phone=${phone ?? "none"}`, { leadId: params.leadId, fullName, phone, email, pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
 }

@@ -217,6 +217,26 @@ export const leads = mysqlTable("leads", {
   /** 'fb' = Facebook, 'ig' = Instagram — extracted from Graph API platform field */
   platform: mysqlEnum("platform", ["fb", "ig"]).default("fb").notNull(),
   status: mysqlEnum("status", ["PENDING", "RECEIVED", "FAILED"]).default("PENDING").notNull(),
+
+  // ── Denormalized source info (copied from facebook_forms on write) ─────────
+  // Eliminates N+1 queries on leads list — no JOIN needed at read time.
+  pageName:  varchar("pageName",  { length: 255 }),
+  formName:  varchar("formName",  { length: 255 }),
+
+  // ── Ad attribution (from Graph API lead data) ──────────────────────────────
+  // Enables campaign/ad analytics without parsing rawData JSON at query time.
+  campaignId:   varchar("campaignId",   { length: 100 }),
+  campaignName: varchar("campaignName", { length: 255 }),
+  adsetId:      varchar("adsetId",      { length: 100 }),
+  adsetName:    varchar("adsetName",    { length: 255 }),
+  adId:         varchar("adId",         { length: 100 }),
+  adName:       varchar("adName",       { length: 255 }),
+
+  // ── Extra field_data values (email, city, custom fields) ──────────────────
+  // Stores remaining field_data keys after name+phone extraction.
+  // Keeps schema clean while preserving all form answers.
+  extraFields: json("extraFields"),
+
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
@@ -228,6 +248,12 @@ export const leads = mysqlTable("leads", {
   idxUserCreatedAt: index("idx_leads_user_created_at").on(t.userId, t.createdAt),
   // Speeds up per-page analytics (WHERE userId=? AND pageId=? AND status=?)
   idxUserPageStatus: index("idx_leads_user_page_status").on(t.userId, t.pageId, t.status),
+  // Speeds up platform filter (WHERE userId=? AND platform=? ORDER BY createdAt DESC)
+  idxUserPlatformCreatedAt: index("idx_leads_user_platform_created_at").on(t.userId, t.platform, t.createdAt),
+  // Speeds up formId filter (WHERE userId=? AND formId=?)
+  idxUserFormId: index("idx_leads_user_form_id").on(t.userId, t.formId),
+  // Speeds up campaign analytics (WHERE userId=? AND campaignId=?)
+  idxUserCampaignId: index("idx_leads_user_campaign_id").on(t.userId, t.campaignId),
   // Speeds up global time-series queries (admin analytics, archival)
   idxCreatedAt: index("idx_leads_created_at").on(t.createdAt),
 }));
