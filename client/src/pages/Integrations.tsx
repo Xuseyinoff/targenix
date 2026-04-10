@@ -167,6 +167,7 @@ export default function Integrations() {
         i.name.toLowerCase().includes(q) ||
         i.type.toLowerCase().includes(q) ||
         String(i.pageName ?? "").toLowerCase().includes(q) ||
+        String(i.formName ?? "").toLowerCase().includes(q) ||
         String((i as { targetWebsiteName?: string }).targetWebsiteName ?? config.targetWebsiteName ?? "").toLowerCase().includes(q) ||
         String(config.chatId ?? "").toLowerCase().includes(q) ||
         String(config.url ?? "").toLowerCase().includes(q)
@@ -234,7 +235,7 @@ export default function Integrations() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input
                 className="pl-9 pr-9 h-9 text-sm bg-background"
-                placeholder="Search by name, type, page, URL..."
+                placeholder="Search by name, page, form, URL..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
