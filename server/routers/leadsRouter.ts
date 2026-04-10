@@ -18,6 +18,7 @@ import {
   fetchLeadsFromForm,
   extractLeadFields,
 } from "../services/facebookService";
+import { extractWithMappingForPoll } from "../services/leadService";
 import { processLead } from "../services/leadService";
 
 export const leadsRouter = router({
@@ -266,6 +267,24 @@ export const leadsRouter = router({
         return { synced: 0, skipped: 0, message: "No leads found in this form." };
       }
 
+      // Load LEAD_ROUTING integration config for this page+form to use nameField/phoneField
+      const [routingIntg] = await db
+        .select({ config: integrations.config })
+        .from(integrations)
+        .where(
+          and(
+            eq(integrations.userId, userId),
+            eq(integrations.type, "LEAD_ROUTING"),
+            eq(integrations.pageId, input.pageId),
+            eq(integrations.formId, input.formId),
+          )
+        )
+        .limit(1);
+
+      const routingCfg = (routingIntg?.config ?? {}) as Record<string, unknown>;
+      const nameField = routingCfg.nameField as string | undefined;
+      const phoneField = routingCfg.phoneField as string | undefined;
+
       let synced = 0;
       let skipped = 0;
 
@@ -284,7 +303,9 @@ export const leadsRouter = router({
           continue;
         }
 
-        const fields = extractLeadFields(item.field_data ?? []);
+        const fields = nameField || phoneField
+          ? extractWithMappingForPoll(item.field_data ?? [], nameField, phoneField)
+          : extractLeadFields(item.field_data ?? []);
 
         await db.insert(leads).values({
           userId,

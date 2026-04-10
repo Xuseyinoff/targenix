@@ -124,6 +124,14 @@ async function resolvePageAccessToken(
  * Falls back to the generic extractLeadFields if no mapping is configured.
  * Also resolves extraFields (user-defined key→formField or staticValue mappings).
  */
+export function extractWithMappingForPoll(
+  fieldData: Array<{ name: string; values: string[] }>,
+  nameField?: string,
+  phoneField?: string,
+): { fullName: string | null; phone: string | null; email: string | null } {
+  return extractWithMapping(fieldData, {}, nameField, phoneField);
+}
+
 function extractWithMapping(
   fieldData: Array<{ name: string; values: string[] }>,
   leadMeta: {

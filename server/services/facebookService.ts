@@ -110,6 +110,11 @@ export interface PollLeadItem {
   created_time: string;
   field_data: LeadFieldData[];
   ad_id?: string;
+  ad_name?: string;
+  adset_id?: string;
+  adset_name?: string;
+  campaign_id?: string;
+  campaign_name?: string;
   form_id?: string;
 }
 
@@ -147,7 +152,7 @@ export async function fetchLeadsFromForm(
     try {
       const params: Record<string, string | number> = {
         access_token: accessToken,
-        fields: "id,created_time,field_data,ad_id,form_id",
+        fields: "id,created_time,field_data,ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,form_id",
         limit: options.limit ?? 100,
       };
       if (afterCursor) params.after = afterCursor;
