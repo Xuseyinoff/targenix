@@ -29,14 +29,15 @@ import {
   Loader2,
   MessageCircle,
   Pencil,
-  Plug,
   Plus,
+  Search,
   Send,
   Trash2,
+  X,
   XCircle,
   Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 
@@ -88,6 +89,9 @@ export default function Integrations() {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterType, setFilterType] = useState<"ALL" | "TELEGRAM" | "LEAD_ROUTING" | "AFFILIATE">("ALL");
+  const [filterStatus, setFilterStatus] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [testResult, setTestResult] = useState<{
     integrationId: number;
     integrationName: string;
@@ -150,6 +154,26 @@ export default function Integrations() {
     onError: (err) => toast.error(`Test failed: ${err.message}`),
   });
 
+  const filteredIntegrations = useMemo(() => {
+    if (!integrations) return [];
+    const q = searchQuery.toLowerCase().trim();
+    return integrations.filter((i) => {
+      if (filterType !== "ALL" && i.type !== filterType) return false;
+      if (filterStatus === "ACTIVE" && !i.isActive) return false;
+      if (filterStatus === "INACTIVE" && i.isActive) return false;
+      if (!q) return true;
+      const config = i.config as Record<string, unknown>;
+      return (
+        i.name.toLowerCase().includes(q) ||
+        i.type.toLowerCase().includes(q) ||
+        String(i.pageName ?? "").toLowerCase().includes(q) ||
+        String((i as { targetWebsiteName?: string }).targetWebsiteName ?? config.targetWebsiteName ?? "").toLowerCase().includes(q) ||
+        String(config.chatId ?? "").toLowerCase().includes(q) ||
+        String(config.url ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [integrations, searchQuery, filterType, filterStatus]);
+
   const handleCreate = () => {
     const config: Record<string, unknown> =
       form.type === "TELEGRAM"
@@ -201,6 +225,72 @@ export default function Integrations() {
             </Button>
           </div>
         </div>
+
+        {/* Search & Filters — shown only when integrations exist */}
+        {!isLoading && integrations && integrations.length > 0 && (
+          <div className="space-y-2">
+            {/* Search input */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                className="pl-9 pr-9 h-9 text-sm bg-background"
+                placeholder="Search by name, type, page, URL..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
+                <button
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  onClick={() => setSearchQuery("")}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Filter chips row */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Type chips */}
+              <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
+                {(["ALL", "LEAD_ROUTING", "TELEGRAM", "AFFILIATE"] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setFilterType(t)}
+                    className={`text-xs px-2.5 py-1 rounded-md font-medium transition-all ${
+                      filterType === t
+                        ? "bg-background shadow-sm text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {t === "ALL" ? "All" : t === "LEAD_ROUTING" ? "Lead Routing" : t === "TELEGRAM" ? "Telegram" : "Affiliate"}
+                  </button>
+                ))}
+              </div>
+
+              {/* Status chips */}
+              <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
+                {(["ALL", "ACTIVE", "INACTIVE"] as const).map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setFilterStatus(s)}
+                    className={`text-xs px-2.5 py-1 rounded-md font-medium transition-all ${
+                      filterStatus === s
+                        ? "bg-background shadow-sm text-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {s === "ALL" ? "All Status" : s === "ACTIVE" ? "Active" : "Inactive"}
+                  </button>
+                ))}
+              </div>
+
+              {/* Results count */}
+              <span className="text-xs text-muted-foreground ml-auto">
+                {filteredIntegrations.length} of {integrations.length} integrations
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Quick-start cards when empty */}
         {!isLoading && !integrations?.length && (
@@ -258,10 +348,28 @@ export default function Integrations() {
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
+        ) : filteredIntegrations.length === 0 && integrations && integrations.length > 0 ? (
+          <div className="flex flex-col items-center justify-center py-14 text-center gap-3">
+            <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
+              <Search className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="text-sm font-medium">No integrations found</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Try adjusting your search or filters</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-xs h-7"
+              onClick={() => { setSearchQuery(""); setFilterType("ALL"); setFilterStatus("ALL"); }}
+            >
+              Clear filters
+            </Button>
+          </div>
         ) : (
           integrations && integrations.length > 0 && (
             <div className="grid gap-2">
-              {integrations.map((integration) => {
+              {filteredIntegrations.map((integration) => {
                 const config = integration.config as Record<string, unknown>;
                 const isTelegram = integration.type === "TELEGRAM";
                 const isRouting = integration.type === "LEAD_ROUTING";
