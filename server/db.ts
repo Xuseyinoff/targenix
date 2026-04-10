@@ -1,4 +1,4 @@
-import { eq, desc, count, and, sql } from "drizzle-orm";
+import { eq, desc, count, and, sql, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -105,7 +105,8 @@ export async function getLeads(
   search?: string,
   status?: "PENDING" | "RECEIVED" | "FAILED",
   pageId?: string,
-  formId?: string
+  formId?: string,
+  pageIds?: string[]
 ): Promise<Lead[]> {
   const db = await getDb();
   if (!db) return [];
@@ -113,6 +114,7 @@ export async function getLeads(
   if (status) conditions.push(eq(leads.status, status));
   if (pageId) conditions.push(eq(leads.pageId, pageId));
   if (formId) conditions.push(eq(leads.formId, formId));
+  if (pageIds && pageIds.length > 0) conditions.push(inArray(leads.pageId, pageIds));
   if (search) {
     const like = `%${search}%`;
     conditions.push(
@@ -155,7 +157,8 @@ export async function getLeadsCount(
   search?: string,
   status?: "PENDING" | "RECEIVED" | "FAILED",
   pageId?: string,
-  formId?: string
+  formId?: string,
+  pageIds?: string[]
 ): Promise<number> {
   const db = await getDb();
   if (!db) return 0;
@@ -163,6 +166,7 @@ export async function getLeadsCount(
   if (status) conditions.push(eq(leads.status, status));
   if (pageId) conditions.push(eq(leads.pageId, pageId));
   if (formId) conditions.push(eq(leads.formId, formId));
+  if (pageIds && pageIds.length > 0) conditions.push(inArray(leads.pageId, pageIds));
   if (search) {
     const like = `%${search}%`;
     conditions.push(

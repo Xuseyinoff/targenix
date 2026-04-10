@@ -11,7 +11,7 @@ import {
   getFacebookConnections,
   getDb,
 } from "../db";
-import { leads, orders, integrations, targetWebsites } from "../../drizzle/schema";
+import { leads, orders, integrations, targetWebsites, facebookForms } from "../../drizzle/schema";
 import { getLeadSourceInfo, getUserFormsIndex } from "../services/facebookFormsService";
 import { decrypt } from "../encryption";
 import {
@@ -36,10 +36,32 @@ export const leadsRouter = router({
     )
     .query(async ({ ctx, input }) => {
       const userId = ctx.user.id;
+
+      // Resolve platform filter → pageIds at DB level so pagination is correct
+      let platformPageIds: string[] | undefined;
+      if (input.platform) {
+        const db = await getDb();
+        if (db) {
+          const rows = await db
+            .selectDistinct({ pageId: facebookForms.pageId })
+            .from(facebookForms)
+            .where(
+              and(
+                eq(facebookForms.userId, userId),
+                eq(facebookForms.platform, input.platform)
+              )
+            );
+          platformPageIds = rows.map((r) => r.pageId);
+          // If no pages match the platform, return empty immediately
+          if (platformPageIds.length === 0) return { items: [], total: 0 };
+        }
+      }
+
       const [items, total] = await Promise.all([
-        getLeads(userId, input.limit, input.offset, input.search, input.status, input.pageId, input.formId),
-        getLeadsCount(userId, input.search, input.status, input.pageId, input.formId),
+        getLeads(userId, input.limit, input.offset, input.search, input.status, input.pageId, input.formId, platformPageIds),
+        getLeadsCount(userId, input.search, input.status, input.pageId, input.formId, platformPageIds),
       ]);
+
       // Enrich each lead with pageName, formName, platform from facebook_forms
       const itemsEnriched = await Promise.all(
         items.map(async (lead) => {
@@ -47,8 +69,6 @@ export const leadsRouter = router({
             getLeadSourceInfo({ userId, pageId: lead.pageId, formId: lead.formId }),
             getOrdersByLeadId(lead.id),
           ]);
-          // Filter by platform if requested
-          if (input.platform && sourceInfo.platform !== input.platform) return null;
           return {
             ...lead,
             pageName: sourceInfo.pageName,
@@ -58,8 +78,7 @@ export const leadsRouter = router({
           };
         })
       );
-      const filteredItems = itemsEnriched.filter(Boolean) as NonNullable<typeof itemsEnriched[number]>[];
-      return { items: filteredItems, total };
+      return { items: itemsEnriched, total };
     }),
 
   // ── Get all pages+forms for filter dropdowns ────────────────────────────────
