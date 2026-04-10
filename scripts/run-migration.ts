@@ -24,11 +24,16 @@ if (!url) {
 const sqlPath = join(__dirname, "../drizzle/migrations/0001_leads_denormalize.sql");
 const rawSql = readFileSync(sqlPath, "utf8");
 
-// Split on semicolons, skip comments and empty lines
-const statements = rawSql
+// Strip comment lines, then split on semicolons
+const stripped = rawSql
+  .split("\n")
+  .filter((line) => !line.trim().startsWith("--"))
+  .join("\n");
+
+const statements = stripped
   .split(";")
   .map((s) => s.trim())
-  .filter((s) => s.length > 0 && !s.startsWith("--"));
+  .filter((s) => s.length > 0);
 
 const connection = await mysql.createConnection(url);
 
