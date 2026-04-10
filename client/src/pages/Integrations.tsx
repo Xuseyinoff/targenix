@@ -409,13 +409,63 @@ export default function Integrations() {
                             {/* Compact summary line */}
                             <p className="text-xs text-muted-foreground truncate mt-0.5">
                               {isTelegram && `Chat: ${String(config.chatId ?? "—")}`}
-                              {isRouting && `${String(integration.pageName ?? "—")} → ${String((integration as {targetWebsiteName?: string}).targetWebsiteName ?? config.targetWebsiteName ?? "—")}`}
+                              {isRouting && (
+                                <>
+                                  {integration.formName && (
+                                    <span className="font-medium text-foreground/70">{integration.formName}</span>
+                                  )}
+                                  {integration.formName && " · "}
+                                  {"→ "}
+                                  {String((integration as {targetWebsiteName?: string}).targetWebsiteName ?? config.targetWebsiteName ?? "—")}
+                                </>
+                              )}
                               {!isTelegram && !isRouting && String(config.url ?? "—")}
                             </p>
                           </div>
 
-                          {/* Switch + chevron */}
-                          <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          {/* Quick actions (routing only) + Switch + chevron */}
+                          <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+                            {isRouting && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                  title="Edit routing"
+                                  onClick={() => navigate(`/integrations/edit-routing/${integration.id}`)}
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                  title="Test lead"
+                                  disabled={testLeadMutation.isPending && testLeadMutation.variables?.id === integration.id}
+                                  onClick={() => testLeadMutation.mutate({ id: integration.id })}
+                                >
+                                  {testLeadMutation.isPending && testLeadMutation.variables?.id === integration.id
+                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    : <FlaskConical className="h-3.5 w-3.5" />
+                                  }
+                                </Button>
+                              </>
+                            )}
+                            {isTelegram && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                                title="Send test notification"
+                                disabled={testMutation.isPending}
+                                onClick={() => testMutation.mutate({ id: integration.id })}
+                              >
+                                {testMutation.isPending
+                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  : <Send className="h-3.5 w-3.5" />
+                                }
+                              </Button>
+                            )}
                             <Switch
                               checked={integration.isActive}
                               onCheckedChange={(checked) =>
