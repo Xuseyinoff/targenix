@@ -89,6 +89,12 @@ export default function Connections() {
   });
 
   // ── Listen for postMessage from OAuth popup ────────────────────────────────
+  // Keep utils in a ref so the effect never re-runs (and never tears down the
+  // listener) while a popup is open. Re-mounting the listener mid-flight would
+  // cause the postMessage to arrive with no handler attached.
+  const utilsRef = useRef(utils);
+  useEffect(() => { utilsRef.current = utils; }, [utils]);
+
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
       // Only handle messages from our own origin
@@ -98,40 +104,39 @@ export default function Connections() {
       if (!data || typeof data !== "object") return;
 
       if (data.type === "fb_oauth_success") {
+        // Cancel the popup-closed polling so it never fires the "cancelled" toast
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current);
+          pollIntervalRef.current = null;
+        }
+
         setConnecting(false);
         setConnectResult({
           fbUserName: data.fbUserName,
           warnings: data.warnings ?? [],
           pages: data.pages ?? [],
         });
-        utils.facebookAccounts.getAccountsWithPages.invalidate();
-        utils.facebookAccounts.listConnectedPages.invalidate();
+        utilsRef.current.facebookAccounts.getAccountsWithPages.invalidate();
+        utilsRef.current.facebookAccounts.listConnectedPages.invalidate();
 
         const subscribed = (data.pages ?? []).filter((p: { subscribed: boolean }) => p.subscribed).length;
         const newPages = (data.pages ?? []).filter((p: { isNew: boolean }) => p.isNew).length;
         toast.success(
           `Connected as ${data.fbUserName} — ${subscribed}/${(data.pages ?? []).length} pages subscribed${newPages > 0 ? `, ${newPages} new` : ""}.`
         );
-
-        // Clean up popup polling
+      } else if (data.type === "fb_oauth_error") {
         if (pollIntervalRef.current) {
           clearInterval(pollIntervalRef.current);
           pollIntervalRef.current = null;
         }
-      } else if (data.type === "fb_oauth_error") {
         setConnecting(false);
         toast.error(data.error ?? "Facebook connection failed.");
-
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-        }
       }
     }
 
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, [utils]);
+  }, []); // empty deps — listener lives for the full lifetime of this component
 
   // ── Cleanup on unmount ─────────────────────────────────────────────────────
   useEffect(() => {
