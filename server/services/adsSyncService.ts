@@ -30,8 +30,8 @@ import { generateAppSecretProof } from "./adAccountsService";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
-// Date presets to sync — only sync the most common one by default
-const SYNC_DATE_PRESETS = ["last_30d", "last_7d"] as const;
+// Date presets to sync — all 4 are cached so every UI option has data
+const SYNC_DATE_PRESETS = ["last_30d", "last_7d", "today", "yesterday"] as const;
 type SyncDatePreset = typeof SYNC_DATE_PRESETS[number];
 
 // Stale threshold: data older than this triggers a re-sync
@@ -94,6 +94,8 @@ const STATUS_MAP: Record<number, string> = {
 const FB_PRESET_MAP: Record<SyncDatePreset, string> = {
   last_30d: "last_30d",
   last_7d: "last_7_days",
+  today: "today",
+  yesterday: "yesterday",
 };
 
 // ─── isStale helper ───────────────────────────────────────────────────────────

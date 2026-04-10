@@ -281,22 +281,39 @@ export const adAnalyticsRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
 
-      await getVerifiedToken(ctx.user.id, input.fbAccountId);
+      const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
       const cacheKey = CACHE_PRESET_MAP[input.datePreset];
 
-      // Check if this preset is cached
-      const cachedInsights = await db
-        .select()
-        .from(campaignInsightsCache)
-        .where(and(
-          eq(campaignInsightsCache.userId, ctx.user.id),
-          eq(campaignInsightsCache.fbAdAccountId, input.adAccountId),
-          eq(campaignInsightsCache.datePreset, cacheKey)
-        ));
+      const readInsights = () =>
+        db!
+          .select()
+          .from(campaignInsightsCache)
+          .where(and(
+            eq(campaignInsightsCache.userId, ctx.user.id),
+            eq(campaignInsightsCache.fbAdAccountId, input.adAccountId),
+            eq(campaignInsightsCache.datePreset, cacheKey)
+          ));
 
-      // Check if campaigns are cached (to get currency)
+      let cachedInsights = await readInsights();
+
+      // ── Cache miss: sync synchronously so user sees data on first switch ──────
+      if (cachedInsights.length === 0) {
+        try {
+          await syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken);
+          cachedInsights = await readInsights();
+        } catch (err) {
+          console.error("[adAnalytics] sync failed for insights:", err instanceof Error ? err.message : err);
+        }
+      } else if (cachedInsights.some((r) => isStale(r.syncedAt))) {
+        // ── Stale: return cached immediately + background refresh ──────────────
+        void syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken).catch((e: unknown) =>
+          console.error("[adAnalytics] bg insights sync failed:", e instanceof Error ? e.message : e)
+        );
+      }
+
+      // Get currency from ad accounts cache
       const [accountMeta] = await db
-        .select({ currency: adAccountsCache.currency, lastSyncedAt: adAccountsCache.lastSyncedAt })
+        .select({ currency: adAccountsCache.currency })
         .from(adAccountsCache)
         .where(and(
           eq(adAccountsCache.userId, ctx.user.id),
@@ -305,19 +322,6 @@ export const adAnalyticsRouter = router({
         .limit(1);
 
       const currency = accountMeta?.currency ?? "USD";
-
-      // Trigger bg sync if stale or missing
-      const anyStale = cachedInsights.length === 0 || cachedInsights.some(
-        (r) => isStale(r.syncedAt)
-      );
-      if (anyStale) {
-        try {
-          const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
-          void syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken).catch((e: unknown) =>
-            console.error("[adAnalytics] bg insights sync failed:", e instanceof Error ? e.message : e)
-          );
-        } catch { /* ignore */ }
-      }
 
       // Build response from cache
       const campaigns = cachedInsights.map((row) => ({
