@@ -13,13 +13,21 @@
 import DashboardLayout from "@/components/DashboardLayout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -38,6 +46,7 @@ import {
   Plus,
   Search,
   Tag,
+  Trash2,
   User,
   X,
   Zap,
@@ -47,13 +56,18 @@ import { toast } from "sonner";
 import { useLocation } from "wouter";
 import type { RouteComponentProps } from "wouter";
 
-
 // ─── ScrollableList component ────────────────────────────────────────────────
 // Each item is ~64px (p-3 + border + gap-2). 5 items ≈ 5 × 64 = 320px visible.
 const ITEM_HEIGHT = 64; // px per item (approx)
 const VISIBLE_ITEMS = 5;
 
-function ScrollableList({ children, count }: { children: React.ReactNode; count: number }) {
+function ScrollableList({
+  children,
+  count,
+}: {
+  children: React.ReactNode;
+  count: number;
+}) {
   const listRef = useRef<HTMLDivElement>(null);
   const [showTopShadow, setShowTopShadow] = useState(false);
   const [showBottomShadow, setShowBottomShadow] = useState(false);
@@ -70,7 +84,9 @@ function ScrollableList({ children, count }: { children: React.ReactNode; count:
   });
 
   const needsScroll = count > VISIBLE_ITEMS;
-  const maxHeight = needsScroll ? ITEM_HEIGHT * VISIBLE_ITEMS + (VISIBLE_ITEMS - 1) * 8 : undefined;
+  const maxHeight = needsScroll
+    ? ITEM_HEIGHT * VISIBLE_ITEMS + (VISIBLE_ITEMS - 1) * 8
+    : undefined;
 
   return (
     <div className="relative">
@@ -101,10 +117,13 @@ function ScrollableList({ children, count }: { children: React.ReactNode; count:
   );
 }
 
-
 // ─── Step search input ────────────────────────────────────────────────────────
 
-function StepSearch({ value, onChange, placeholder }: {
+function StepSearch({
+  value,
+  onChange,
+  placeholder,
+}: {
   value: string;
   onChange: (v: string) => void;
   placeholder: string;
@@ -116,7 +135,7 @@ function StepSearch({ value, onChange, placeholder }: {
         className="pl-8 pr-8 h-8 text-sm"
         placeholder={placeholder}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={e => onChange(e.target.value)}
         autoComplete="off"
       />
       {value && (
@@ -134,21 +153,107 @@ function StepSearch({ value, onChange, placeholder }: {
 // ─── Auto-match helpers ───────────────────────────────────────────────────────
 
 const NAME_PATTERNS = [
-  "full_name", "fullname", "name", "first_name", "firstname",
-  "имя", "фио", "ismi", "ism", "полное_имя", "полное имя",
+  "full_name",
+  "fullname",
+  "name",
+  "first_name",
+  "firstname",
+  "имя",
+  "фио",
+  "ismi",
+  "ism",
+  "полное_имя",
+  "полное имя",
 ];
 
 const PHONE_PATTERNS = [
-  "phone", "phone_number", "phonenumber", "telefon", "телефон",
-  "mobile", "номер_телефона", "номер телефона", "raqam",
+  "phone",
+  "phone_number",
+  "phonenumber",
+  "telefon",
+  "телефон",
+  "mobile",
+  "номер_телефона",
+  "номер телефона",
+  "raqam",
 ];
 
 function autoMatchField(fields: { key: string }[], patterns: string[]): string {
   for (const f of fields) {
     const key = f.key.toLowerCase();
-    if (patterns.some((p) => key.includes(p))) return f.key;
+    if (patterns.some(p => key.includes(p))) return f.key;
   }
   return "";
+}
+
+type ExtraFieldDraft = {
+  destKey: string;
+  sourceType: "form" | "static";
+  sourceField?: string;
+  staticValue?: string;
+};
+
+const FB_METADATA_FIELDS = [
+  { key: "lead_id", label: "Lead ID" },
+  { key: "form_id", label: "Form ID" },
+  { key: "ad_id", label: "Ad ID" },
+  { key: "ad_name", label: "Ad Name" },
+  { key: "adset_id", label: "Ad Set ID" },
+  { key: "adset_name", label: "Ad Set Name" },
+  { key: "campaign_id", label: "Campaign ID" },
+  { key: "campaign_name", label: "Campaign Name" },
+] as const;
+
+const FB_METADATA_LABELS = Object.fromEntries(
+  FB_METADATA_FIELDS.map(field => [field.key, field.label])
+) as Record<string, string>;
+
+function createEmptyExtraField(): ExtraFieldDraft {
+  return {
+    destKey: "",
+    sourceType: "form",
+    sourceField: "",
+    staticValue: "",
+  };
+}
+
+function serializeExtraFields(extraFields: ExtraFieldDraft[]) {
+  return extraFields
+    .filter(field => field.destKey.trim())
+    .map(field => ({
+      destKey: field.destKey.trim(),
+      sourceField: field.sourceType === "form" ? field.sourceField : undefined,
+      staticValue:
+        field.sourceType === "static" ? field.staticValue?.trim() : undefined,
+    }));
+}
+
+function hydrateExtraFields(value: unknown): ExtraFieldDraft[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.map(raw => {
+    const item = (raw ?? {}) as Record<string, unknown>;
+    return {
+      destKey: typeof item.destKey === "string" ? item.destKey : "",
+      sourceType: item.staticValue !== undefined ? "static" : "form",
+      sourceField: typeof item.sourceField === "string" ? item.sourceField : "",
+      staticValue: typeof item.staticValue === "string" ? item.staticValue : "",
+    };
+  });
+}
+
+function getSourceLabel(
+  sourceField: string,
+  formFields?: Array<{ key: string; label?: string }>
+): string {
+  const formField = formFields?.find(field => field.key === sourceField);
+  if (formField) {
+    return formField.label
+      ? `${formField.label} (${formField.key})`
+      : formField.key;
+  }
+
+  return FB_METADATA_LABELS[sourceField] ?? sourceField;
 }
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -166,6 +271,7 @@ interface WizardState {
   // Step 4
   nameField: string;
   phoneField: string;
+  extraFields: ExtraFieldDraft[];
   // Step 5
   targetWebsiteId: number | null;
   targetWebsiteName: string;
@@ -185,6 +291,7 @@ const INITIAL: WizardState = {
   formName: "",
   nameField: "",
   phoneField: "",
+  extraFields: [],
   targetWebsiteId: null,
   targetWebsiteName: "",
   targetTemplateType: "",
@@ -193,13 +300,31 @@ const INITIAL: WizardState = {
 };
 
 // ─── Template variable field definitions (client-side) ────────────────────────
-const TEMPLATE_VARIABLE_FIELDS: Record<string, Array<{ key: string; label: string; placeholder: string; required: boolean }>> = {
+const TEMPLATE_VARIABLE_FIELDS: Record<
+  string,
+  Array<{ key: string; label: string; placeholder: string; required: boolean }>
+> = {
   sotuvchi: [
-    { key: "offer_id", label: "Offer ID", placeholder: "e.g. 123", required: true },
-    { key: "stream", label: "Stream", placeholder: "e.g. main", required: true },
+    {
+      key: "offer_id",
+      label: "Offer ID",
+      placeholder: "e.g. 123",
+      required: true,
+    },
+    {
+      key: "stream",
+      label: "Stream",
+      placeholder: "e.g. main",
+      required: true,
+    },
   ],
   "100k": [
-    { key: "stream_id", label: "Stream ID", placeholder: "e.g. 456", required: true },
+    {
+      key: "stream_id",
+      label: "Stream ID",
+      placeholder: "e.g. 456",
+      required: true,
+    },
   ],
   custom: [],
 };
@@ -215,7 +340,9 @@ const STEPS = [
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?: string }>) {
+export default function LeadRoutingWizard({
+  params,
+}: RouteComponentProps<{ id?: string }>) {
   const editIntegrationId = params?.id ? parseInt(params.id, 10) : null;
   const isEditMode = !!editIntegrationId && !isNaN(editIntegrationId);
   const [, navigate] = useLocation();
@@ -237,44 +364,95 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
   }, [step]);
   const utils = trpc.useUtils();
 
-  const set = (patch: Partial<WizardState>) => setState((s) => ({ ...s, ...patch }));
+  const set = (patch: Partial<WizardState>) =>
+    setState(s => ({ ...s, ...patch }));
+  const updateExtraField = (index: number, patch: Partial<ExtraFieldDraft>) => {
+    setState(current => {
+      const next = [...current.extraFields];
+      const existing = next[index];
+      if (!existing) return current;
+
+      const updated: ExtraFieldDraft = { ...existing, ...patch };
+      if (patch.sourceType === "form") {
+        updated.sourceField = updated.sourceField ?? "";
+        updated.staticValue = "";
+      }
+      if (patch.sourceType === "static") {
+        updated.staticValue = updated.staticValue ?? "";
+        updated.sourceField = "";
+      }
+      if (patch.sourceField && !updated.destKey.trim()) {
+        updated.destKey = patch.sourceField;
+      }
+
+      next[index] = updated;
+      return { ...current, extraFields: next };
+    });
+  };
+  const addExtraField = () =>
+    setState(current => ({
+      ...current,
+      extraFields: [...current.extraFields, createEmptyExtraField()],
+    }));
+  const removeExtraField = (index: number) =>
+    setState(current => ({
+      ...current,
+      extraFields: current.extraFields.filter(
+        (_, currentIndex) => currentIndex !== index
+      ),
+    }));
 
   // ── Data queries ─────────────────────────────────────────────────────────
-  const { data: accounts, isLoading: loadingAccounts } = trpc.facebookAccounts.list.useQuery();
-  const { data: pages, isLoading: loadingPages } = trpc.facebookAccounts.listPages.useQuery(
-    { accountId: state.accountId! },
-    { enabled: !!state.accountId && step >= 2 }
-  );
-  const { data: forms, isLoading: loadingForms } = trpc.facebookAccounts.listForms.useQuery(
-    { accountId: state.accountId!, pageId: state.pageId },
-    { enabled: !!state.accountId && !!state.pageId && step >= 3 }
-  );
-  const { data: formFields, isLoading: loadingFields } = trpc.facebookAccounts.listFormFields.useQuery(
-    { accountId: state.accountId!, pageId: state.pageId, formId: state.formId },
-    { enabled: !!state.accountId && !!state.pageId && !!state.formId && step >= 4 }
-  );
+  const { data: accounts, isLoading: loadingAccounts } =
+    trpc.facebookAccounts.list.useQuery();
+  const { data: pages, isLoading: loadingPages } =
+    trpc.facebookAccounts.listPages.useQuery(
+      { accountId: state.accountId! },
+      { enabled: !!state.accountId && step >= 2 }
+    );
+  const { data: forms, isLoading: loadingForms } =
+    trpc.facebookAccounts.listForms.useQuery(
+      { accountId: state.accountId!, pageId: state.pageId },
+      { enabled: !!state.accountId && !!state.pageId && step >= 3 }
+    );
+  const { data: formFields, isLoading: loadingFields } =
+    trpc.facebookAccounts.listFormFields.useQuery(
+      {
+        accountId: state.accountId!,
+        pageId: state.pageId,
+        formId: state.formId,
+      },
+      {
+        enabled:
+          !!state.accountId && !!state.pageId && !!state.formId && step >= 4,
+      }
+    );
 
   // Auto-select name/phone fields when formFields load
   useEffect(() => {
     if (!formFields?.length) return;
     const autoName = autoMatchField(formFields, NAME_PATTERNS);
     const autoPhone = autoMatchField(formFields, PHONE_PATTERNS);
-    set({
-      nameField: autoName || state.nameField,
-      phoneField: autoPhone || state.phoneField,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setState(current => ({
+      ...current,
+      nameField: current.nameField || autoName,
+      phoneField: current.phoneField || autoPhone,
+    }));
   }, [formFields]);
-  const { data: targetWebsites, isLoading: loadingTargets } = trpc.targetWebsites.list.useQuery(
-    undefined,
-    { enabled: step >= 5 }
-  );
+  const { data: targetWebsites, isLoading: loadingTargets } =
+    trpc.targetWebsites.list.useQuery(undefined, { enabled: step >= 5 });
 
   // Auto-detect custom variables from the selected custom template's body
-  const { data: customVarNames = [] } = trpc.targetWebsites.getCustomVariables.useQuery(
-    { id: state.targetWebsiteId! },
-    { enabled: step >= 5 && !!state.targetWebsiteId && state.targetTemplateType === "custom" }
-  );
+  const { data: customVarNames = [] } =
+    trpc.targetWebsites.getCustomVariables.useQuery(
+      { id: state.targetWebsiteId! },
+      {
+        enabled:
+          step >= 5 &&
+          !!state.targetWebsiteId &&
+          state.targetTemplateType === "custom",
+      }
+    );
 
   // ── Load existing integration for edit mode ──────────────────────────────
   const { data: allIntegrations } = trpc.integrations.list.useQuery();
@@ -282,13 +460,34 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
   const duplicates = useMemo(() => {
     if (!allIntegrations || !state.formId || !state.pageId) return [];
     return allIntegrations.filter(
-      (i) =>
+      i =>
         i.type === "LEAD_ROUTING" &&
         i.formId === state.formId &&
         i.pageId === state.pageId &&
-        i.id !== editIntegrationId,
+        i.id !== editIntegrationId
     );
   }, [allIntegrations, state.formId, state.pageId, editIntegrationId]);
+
+  const duplicateExtraDestKeys = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const field of state.extraFields) {
+      const key = field.destKey.trim();
+      if (!key) continue;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+
+    return new Set(
+      Array.from(counts.entries())
+        .filter(([, count]) => count > 1)
+        .map(([key]) => key)
+    );
+  }, [state.extraFields]);
+
+  const mappedExtraFields = useMemo(
+    () => serializeExtraFields(state.extraFields),
+    [state.extraFields]
+  );
 
   // Reset ignoreDuplicate when form changes
   useEffect(() => {
@@ -297,7 +496,7 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
 
   useEffect(() => {
     if (!isEditMode || editLoaded || !allIntegrations) return;
-    const found = allIntegrations.find((i) => i.id === editIntegrationId);
+    const found = allIntegrations.find(i => i.id === editIntegrationId);
     if (!found) return;
     const cfg = (found.config ?? {}) as Record<string, unknown>;
     setState({
@@ -310,14 +509,16 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
       formName: found.formName ?? (cfg.formName as string) ?? "",
       nameField: (cfg.nameField as string) ?? "",
       phoneField: (cfg.phoneField as string) ?? "",
-      targetWebsiteId: found.targetWebsiteId ?? (cfg.targetWebsiteId as number) ?? null,
+      extraFields: hydrateExtraFields(cfg.extraFields),
+      targetWebsiteId:
+        found.targetWebsiteId ?? (cfg.targetWebsiteId as number) ?? null,
       targetWebsiteName: (cfg.targetWebsiteName as string) ?? "",
       targetTemplateType: (cfg.targetTemplateType as string) ?? "",
       variableFields: (cfg.variableFields as Record<string, string>) ?? {},
       integrationName: found.name ?? "",
     });
     setEditLoaded(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allIntegrations, isEditMode, editIntegrationId, editLoaded]);
 
   // ── Mutations ─────────────────────────────────────────────────────────────
@@ -328,7 +529,7 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
       utils.integrations.list.invalidate();
       navigate("/integrations");
     },
-    onError: (err) => toast.error(err.message),
+    onError: err => toast.error(err.message),
   });
   const createIntegration = trpc.integrations.create.useMutation({
     onSuccess: () => {
@@ -336,11 +537,17 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
       utils.integrations.list.invalidate();
       navigate("/integrations");
     },
-    onError: (err) => toast.error(err.message),
+    onError: err => toast.error(err.message),
   });
 
   const handleSave = async () => {
-    if (!state.accountId || !state.pageId || !state.formId || !state.targetWebsiteId) return;
+    if (
+      !state.accountId ||
+      !state.pageId ||
+      !state.formId ||
+      !state.targetWebsiteId
+    )
+      return;
     const integrationConfig = {
       facebookAccountId: state.accountId,
       pageId: state.pageId,
@@ -349,12 +556,14 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
       formName: state.formName,
       nameField: state.nameField,
       phoneField: state.phoneField,
+      extraFields: mappedExtraFields,
       targetWebsiteId: state.targetWebsiteId,
       targetWebsiteName: state.targetWebsiteName,
       targetTemplateType: state.targetTemplateType,
       variableFields: state.variableFields,
     };
-    const integrationName = state.integrationName || `${state.pageName} → ${state.targetWebsiteName}`;
+    const integrationName =
+      state.integrationName || `${state.pageName} → ${state.targetWebsiteName}`;
     try {
       // Subscribe page to receive webhooks
       await subscribeMutation.mutateAsync({
@@ -375,41 +584,74 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
         });
       }
     } catch (err: any) {
-      toast.error(err.message ?? (isEditMode ? "Failed to update integration" : "Failed to create integration"));
+      toast.error(
+        err.message ??
+          (isEditMode
+            ? "Failed to update integration"
+            : "Failed to create integration")
+      );
     }
   };
 
   const canNext = () => {
     if (step === 1) return !!state.accountId;
     if (step === 2) return !!state.pageId;
-    if (step === 3) return !!state.formId && (duplicates.length === 0 || ignoreDuplicate);
-    if (step === 4) return !!state.nameField && !!state.phoneField;
+    if (step === 3)
+      return !!state.formId && (duplicates.length === 0 || ignoreDuplicate);
+    if (step === 4) {
+      return (
+        !!state.nameField &&
+        !!state.phoneField &&
+        duplicateExtraDestKeys.size === 0 &&
+        state.extraFields.every(
+          field =>
+            !field.destKey.trim() ||
+            (field.sourceType === "form"
+              ? !!field.sourceField
+              : !!field.staticValue?.trim())
+        )
+      );
+    }
     if (step === 5) {
       if (!state.targetWebsiteId) return false;
       if (state.targetTemplateType === "custom") {
         // For custom templates, all auto-detected variables must be filled
-        return customVarNames.every((k) => !!state.variableFields[k]?.trim());
+        return customVarNames.every(k => !!state.variableFields[k]?.trim());
       }
       const vfDefs = TEMPLATE_VARIABLE_FIELDS[state.targetTemplateType] ?? [];
-      return vfDefs.every((vf) => !vf.required || !!state.variableFields[vf.key]?.trim());
+      return vfDefs.every(
+        vf => !vf.required || !!state.variableFields[vf.key]?.trim()
+      );
     }
     return true;
   };
 
-  const isSaving = subscribeMutation.isPending || createIntegration.isPending || updateIntegration.isPending;
+  const isSaving =
+    subscribeMutation.isPending ||
+    createIntegration.isPending ||
+    updateIntegration.isPending;
 
   return (
     <DashboardLayout>
       <div className="max-w-2xl space-y-6">
         {/* Header */}
         <div>
-          <Button variant="ghost" size="sm" className="-ml-2 mb-2" onClick={() => navigate("/integrations")}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-2 mb-2"
+            onClick={() => navigate("/integrations")}
+          >
             <ArrowLeft className="h-4 w-4 mr-1" />
             Back to Integrations
           </Button>
-          <h1 className="text-2xl font-bold tracking-tight">{isEditMode ? "Edit Lead Routing" : "New Lead Routing"}</h1>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {isEditMode ? "Edit Lead Routing" : "New Lead Routing"}
+          </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {isEditMode ? "Update your routing configuration" : "Connect a Facebook lead form to a target website in 6 steps"}
+            {isEditMode
+              ? "Update your routing configuration"
+              : "Connect a Facebook lead form to a target website in 6 steps"}
           </p>
         </div>
 
@@ -426,11 +668,15 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                     done
                       ? "bg-primary/10 text-primary"
                       : active
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground"
                   }`}
                 >
-                  {done ? <CheckCircle2 className="h-3 w-3" /> : <Icon className="h-3 w-3" />}
+                  {done ? (
+                    <CheckCircle2 className="h-3 w-3" />
+                  ) : (
+                    <Icon className="h-3 w-3" />
+                  )}
                   <span className="hidden sm:inline">{s.label}</span>
                 </div>
                 {i < STEPS.length - 1 && (
@@ -448,7 +694,7 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
               {step === 1 && "Step 1: Select Facebook Account"}
               {step === 2 && "Step 2: Select Facebook Page"}
               {step === 3 && "Step 3: Select Lead Form"}
-              {step === 4 && "Step 4: Map Form Fields"}
+              {step === 4 && "Step 4: Map Payload Fields"}
               {step === 5 && "Step 5: Target Website & Offer"}
               {step === 6 && "Step 6: Review & Save"}
             </CardTitle>
@@ -456,8 +702,10 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
               {step === 1 && "Choose which Facebook account to use"}
               {step === 2 && "Pick the page that has the lead form"}
               {step === 3 && "Select the lead form to capture from"}
-              {step === 4 && "Tell us which form fields contain name and phone"}
-              {step === 5 && "Where should leads be sent, and with which offer?"}
+              {step === 4 &&
+                "Choose required fields and add optional metadata or static values"}
+              {step === 5 &&
+                "Where should leads be sent, and with which offer?"}
               {step === 6 && "Review your configuration before saving"}
             </CardDescription>
           </CardHeader>
@@ -472,7 +720,9 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                   </div>
                 ) : !accounts?.length ? (
                   <div className="text-center py-6">
-                    <p className="text-muted-foreground text-sm">No Facebook accounts connected.</p>
+                    <p className="text-muted-foreground text-sm">
+                      No Facebook accounts connected.
+                    </p>
                     <Button
                       variant="outline"
                       size="sm"
@@ -485,15 +735,37 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                 ) : (
                   <>
                     {accounts.length > 3 && (
-                      <StepSearch value={searchAccount} onChange={setSearchAccount} placeholder="Search accounts..." />
+                      <StepSearch
+                        value={searchAccount}
+                        onChange={setSearchAccount}
+                        placeholder="Search accounts..."
+                      />
                     )}
                     <div className="grid gap-2">
                       {accounts
-                        .filter((a) => !searchAccount || a.fbUserName.toLowerCase().includes(searchAccount.toLowerCase()))
-                        .map((acct) => (
+                        .filter(
+                          a =>
+                            !searchAccount ||
+                            a.fbUserName
+                              .toLowerCase()
+                              .includes(searchAccount.toLowerCase())
+                        )
+                        .map(acct => (
                           <button
                             key={acct.id}
-                            onClick={() => set({ accountId: acct.id, accountName: acct.fbUserName })}
+                            onClick={() =>
+                              set({
+                                accountId: acct.id,
+                                accountName: acct.fbUserName,
+                                pageId: "",
+                                pageName: "",
+                                formId: "",
+                                formName: "",
+                                nameField: "",
+                                phoneField: "",
+                                extraFields: [],
+                              })
+                            }
                             className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
                               state.accountId === acct.id
                                 ? "border-primary bg-primary/5"
@@ -504,17 +776,28 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                               <User className="h-4 w-4 text-blue-600" />
                             </div>
                             <div>
-                              <p className="font-medium text-sm">{acct.fbUserName}</p>
-                              <p className="text-xs text-muted-foreground">ID: {acct.fbUserId}</p>
+                              <p className="font-medium text-sm">
+                                {acct.fbUserName}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                ID: {acct.fbUserId}
+                              </p>
                             </div>
                             {state.accountId === acct.id && (
                               <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
                             )}
                           </button>
                         ))}
-                      {searchAccount && !accounts.some((a) => a.fbUserName.toLowerCase().includes(searchAccount.toLowerCase())) && (
-                        <p className="text-xs text-muted-foreground text-center py-3">No accounts match "{searchAccount}"</p>
-                      )}
+                      {searchAccount &&
+                        !accounts.some(a =>
+                          a.fbUserName
+                            .toLowerCase()
+                            .includes(searchAccount.toLowerCase())
+                        ) && (
+                          <p className="text-xs text-muted-foreground text-center py-3">
+                            No accounts match "{searchAccount}"
+                          </p>
+                        )}
                     </div>
                   </>
                 )}
@@ -531,47 +814,70 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                   </div>
                 ) : !pages?.length ? (
                   <p className="text-muted-foreground text-sm">
-                    No pages found for this account. Make sure the account has pages_show_list permission.
+                    No pages found for this account. Make sure the account has
+                    pages_show_list permission.
                   </p>
-                ) : (() => {
-                  const filtered = pages.filter((p) =>
-                    !searchPage || p.name.toLowerCase().includes(searchPage.toLowerCase())
-                  );
-                  return (
-                    <>
-                      <StepSearch value={searchPage} onChange={setSearchPage} placeholder="Search pages..." />
-                      <ScrollableList count={filtered.length}>
-                        {filtered.map((page) => (
-                          <button
-                            key={page.id}
-                            onClick={() => set({ pageId: page.id, pageName: page.name })}
-                            className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
-                              state.pageId === page.id
-                                ? "border-primary bg-primary/5"
-                                : "border-border hover:bg-muted/50"
-                            }`}
-                          >
-                            <div className="h-9 w-9 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
-                              <Facebook className="h-4 w-4 text-blue-600" />
-                            </div>
-                            <div>
-                              <p className="font-medium text-sm">{page.name}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {page.category} · ID: {page.id}
-                              </p>
-                            </div>
-                            {state.pageId === page.id && (
-                              <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
-                            )}
-                          </button>
-                        ))}
-                        {filtered.length === 0 && (
-                          <p className="text-xs text-muted-foreground text-center py-3">No pages match "{searchPage}"</p>
-                        )}
-                      </ScrollableList>
-                    </>
-                  );
-                })()}
+                ) : (
+                  (() => {
+                    const filtered = pages.filter(
+                      p =>
+                        !searchPage ||
+                        p.name.toLowerCase().includes(searchPage.toLowerCase())
+                    );
+                    return (
+                      <>
+                        <StepSearch
+                          value={searchPage}
+                          onChange={setSearchPage}
+                          placeholder="Search pages..."
+                        />
+                        <ScrollableList count={filtered.length}>
+                          {filtered.map(page => (
+                            <button
+                              key={page.id}
+                              onClick={() =>
+                                set({
+                                  pageId: page.id,
+                                  pageName: page.name,
+                                  formId: "",
+                                  formName: "",
+                                  nameField: "",
+                                  phoneField: "",
+                                  extraFields: [],
+                                })
+                              }
+                              className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
+                                state.pageId === page.id
+                                  ? "border-primary bg-primary/5"
+                                  : "border-border hover:bg-muted/50"
+                              }`}
+                            >
+                              <div className="h-9 w-9 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
+                                <Facebook className="h-4 w-4 text-blue-600" />
+                              </div>
+                              <div>
+                                <p className="font-medium text-sm">
+                                  {page.name}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {page.category} · ID: {page.id}
+                                </p>
+                              </div>
+                              {state.pageId === page.id && (
+                                <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
+                              )}
+                            </button>
+                          ))}
+                          {filtered.length === 0 && (
+                            <p className="text-xs text-muted-foreground text-center py-3">
+                              No pages match "{searchPage}"
+                            </p>
+                          )}
+                        </ScrollableList>
+                      </>
+                    );
+                  })()
+                )}
               </>
             )}
 
@@ -585,46 +891,67 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                   </div>
                 ) : !forms?.length ? (
                   <p className="text-muted-foreground text-sm">
-                    No lead forms found on this page. Create a lead gen form in Facebook Ads Manager first.
+                    No lead forms found on this page. Create a lead gen form in
+                    Facebook Ads Manager first.
                   </p>
-                ) : (() => {
-                  const filtered = forms.filter((f) =>
-                    !searchForm || f.name.toLowerCase().includes(searchForm.toLowerCase())
-                  );
-                  return (
-                    <>
-                      <StepSearch value={searchForm} onChange={setSearchForm} placeholder={`Search ${forms.length} forms...`} />
-                      <ScrollableList count={filtered.length}>
-                        {filtered.map((form) => (
-                          <button
-                            key={form.id}
-                            onClick={() => set({ formId: form.id, formName: form.name })}
-                            className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
-                              state.formId === form.id
-                                ? "border-primary bg-primary/5"
-                                : "border-border hover:bg-muted/50"
-                            }`}
-                          >
-                            <FileText className="h-5 w-5 text-muted-foreground shrink-0" />
-                            <div>
-                              <p className="font-medium text-sm">{form.name}</p>
-                              <p className="text-xs text-muted-foreground">
-                                ID: {form.id}
-                                {form.status && ` · ${form.status}`}
-                              </p>
-                            </div>
-                            {state.formId === form.id && (
-                              <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
-                            )}
-                          </button>
-                        ))}
-                        {filtered.length === 0 && (
-                          <p className="text-xs text-muted-foreground text-center py-3">No forms match "{searchForm}"</p>
-                        )}
-                      </ScrollableList>
-                    </>
-                  );
-                })()}
+                ) : (
+                  (() => {
+                    const filtered = forms.filter(
+                      f =>
+                        !searchForm ||
+                        f.name.toLowerCase().includes(searchForm.toLowerCase())
+                    );
+                    return (
+                      <>
+                        <StepSearch
+                          value={searchForm}
+                          onChange={setSearchForm}
+                          placeholder={`Search ${forms.length} forms...`}
+                        />
+                        <ScrollableList count={filtered.length}>
+                          {filtered.map(form => (
+                            <button
+                              key={form.id}
+                              onClick={() =>
+                                set({
+                                  formId: form.id,
+                                  formName: form.name,
+                                  nameField: "",
+                                  phoneField: "",
+                                  extraFields: [],
+                                })
+                              }
+                              className={`flex items-center gap-3 p-3 rounded-lg border text-left transition-colors ${
+                                state.formId === form.id
+                                  ? "border-primary bg-primary/5"
+                                  : "border-border hover:bg-muted/50"
+                              }`}
+                            >
+                              <FileText className="h-5 w-5 text-muted-foreground shrink-0" />
+                              <div>
+                                <p className="font-medium text-sm">
+                                  {form.name}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  ID: {form.id}
+                                  {form.status && ` · ${form.status}`}
+                                </p>
+                              </div>
+                              {state.formId === form.id && (
+                                <CheckCircle2 className="h-4 w-4 text-primary ml-auto" />
+                              )}
+                            </button>
+                          ))}
+                          {filtered.length === 0 && (
+                            <p className="text-xs text-muted-foreground text-center py-3">
+                              No forms match "{searchForm}"
+                            </p>
+                          )}
+                        </ScrollableList>
+                      </>
+                    );
+                  })()
+                )}
 
                 {/* Duplicate warning */}
                 {duplicates.length > 0 && !ignoreDuplicate && (
@@ -633,17 +960,21 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                       <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
                       <div>
                         <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-                          This form already has {duplicates.length === 1 ? "an active routing" : `${duplicates.length} active routings`}
+                          This form already has{" "}
+                          {duplicates.length === 1
+                            ? "an active routing"
+                            : `${duplicates.length} active routings`}
                         </p>
                         <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
-                          Creating another routing for the same form will send each lead to multiple destinations.
+                          Creating another routing for the same form will send
+                          each lead to multiple destinations.
                         </p>
                       </div>
                     </div>
 
                     {/* Existing duplicates list */}
                     <div className="space-y-1.5">
-                      {duplicates.map((dup) => {
+                      {duplicates.map(dup => {
                         const cfg = dup.config as Record<string, unknown>;
                         return (
                           <div
@@ -655,7 +986,13 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                                 {dup.name}
                               </p>
                               <p className="text-[11px] text-amber-700 dark:text-amber-400 truncate">
-                                → {String((dup as { targetWebsiteName?: string }).targetWebsiteName ?? cfg.targetWebsiteName ?? "—")}
+                                →{" "}
+                                {String(
+                                  (dup as { targetWebsiteName?: string })
+                                    .targetWebsiteName ??
+                                    cfg.targetWebsiteName ??
+                                    "—"
+                                )}
                                 {!dup.isActive && " · Inactive"}
                               </p>
                             </div>
@@ -663,7 +1000,9 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                               variant="outline"
                               size="sm"
                               className="h-7 text-xs shrink-0 border-amber-300 bg-amber-50 hover:bg-amber-100 dark:bg-amber-900/30 dark:border-amber-700 dark:text-amber-200"
-                              onClick={() => navigate(`/integrations/edit-routing/${dup.id}`)}
+                              onClick={() =>
+                                navigate(`/integrations/edit-routing/${dup.id}`)
+                              }
                             >
                               <Pencil className="h-3 w-3 mr-1" />
                               Edit existing
@@ -689,7 +1028,9 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                   <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
                     <CheckCircle2 className="h-4 w-4 text-muted-foreground shrink-0" />
                     <p className="text-xs text-muted-foreground flex-1">
-                      Creating an additional routing alongside {duplicates.length} existing one{duplicates.length > 1 ? "s" : ""}
+                      Creating an additional routing alongside{" "}
+                      {duplicates.length} existing one
+                      {duplicates.length > 1 ? "s" : ""}
                     </p>
                     <button
                       className="text-[11px] underline text-muted-foreground hover:text-foreground"
@@ -716,30 +1057,29 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                   </p>
                 ) : (
                   <div className="space-y-4">
-                    <div className="rounded-md bg-muted/50 p-3 text-sm">
-                      <p className="font-medium mb-1">Form fields available:</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {formFields.map((f) => (
-                          <Badge key={f.key} variant="outline" className="font-mono text-xs">
-                            {f.key}
-                          </Badge>
-                        ))}
-                      </div>
+                    <div className="rounded-lg border bg-muted/30 p-4 text-sm space-y-1">
+                      <p className="font-semibold">Required fields</p>
+                      <p className="text-xs text-muted-foreground">
+                        We auto-detected the most likely Full Name and Phone
+                        Number fields. Adjust them if this form uses different
+                        keys.
+                      </p>
                     </div>
                     <div className="space-y-3">
                       <div className="space-y-1.5">
                         <Label>Full Name field</Label>
                         <Select
                           value={state.nameField}
-                          onValueChange={(v) => set({ nameField: v })}
+                          onValueChange={value => set({ nameField: value })}
                         >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select field for name..." />
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Select field for full name..." />
                           </SelectTrigger>
                           <SelectContent>
-                            {formFields.map((f) => (
+                            {formFields.map(f => (
                               <SelectItem key={f.key} value={f.key}>
-                                {f.key}{f.label ? ` — ${f.label}` : ""}
+                                {f.key}
+                                {f.label ? ` — ${f.label}` : ""}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -749,19 +1089,260 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                         <Label>Phone Number field</Label>
                         <Select
                           value={state.phoneField}
-                          onValueChange={(v) => set({ phoneField: v })}
+                          onValueChange={value => set({ phoneField: value })}
                         >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select field for phone..." />
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Select field for phone number..." />
                           </SelectTrigger>
                           <SelectContent>
-                            {formFields.map((f) => (
+                            {formFields.map(f => (
                               <SelectItem key={f.key} value={f.key}>
-                                {f.key}{f.label ? ` — ${f.label}` : ""}
+                                {f.key}
+                                {f.label ? ` — ${f.label}` : ""}
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
+                      </div>
+                    </div>
+                    <div className="rounded-lg border p-4 space-y-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <p className="text-sm font-semibold">Extra fields</p>
+                          <p className="text-xs text-muted-foreground">
+                            Add optional payload fields only if your destination
+                            needs them, like campaign metadata or fixed tags.
+                          </p>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={addExtraField}
+                        >
+                          <Plus className="h-4 w-4 mr-1" />
+                          Add Field
+                        </Button>
+                      </div>
+
+                      {state.extraFields.length === 0 ? (
+                        <div className="rounded-md border border-dashed bg-muted/20 px-4 py-5 text-sm text-muted-foreground">
+                          No optional fields yet. Add one if you want to send
+                          Facebook metadata like campaign name, ad ID, or a
+                          static value such as a source tag.
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {state.extraFields.map((field, index) => {
+                            const trimmedDestKey = field.destKey.trim();
+                            const isDuplicate =
+                              !!trimmedDestKey &&
+                              duplicateExtraDestKeys.has(trimmedDestKey);
+                            const isMissingSource =
+                              !!trimmedDestKey &&
+                              (field.sourceType === "form"
+                                ? !field.sourceField
+                                : !field.staticValue?.trim());
+
+                            return (
+                              <div
+                                key={`${index}-${trimmedDestKey || "new"}`}
+                                className="rounded-lg border p-4 space-y-3"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex-1 space-y-1.5">
+                                    <Label>Destination key</Label>
+                                    <Input
+                                      placeholder="e.g. campaign_name"
+                                      value={field.destKey}
+                                      onChange={e =>
+                                        updateExtraField(index, {
+                                          destKey: e.target.value,
+                                        })
+                                      }
+                                    />
+                                    <p className="text-[11px] text-muted-foreground">
+                                      This key is sent to the target API exactly
+                                      as written.
+                                    </p>
+                                  </div>
+
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    className="mt-6 h-9 w-9 text-muted-foreground hover:text-destructive"
+                                    onClick={() => removeExtraField(index)}
+                                    aria-label="Remove extra field"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  <Label>Source</Label>
+                                  <div className="inline-flex rounded-md border bg-muted/20 p-1">
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        updateExtraField(index, {
+                                          sourceType: "form",
+                                        })
+                                      }
+                                      className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                                        field.sourceType === "form"
+                                          ? "bg-background text-foreground shadow-sm"
+                                          : "text-muted-foreground hover:text-foreground"
+                                      }`}
+                                    >
+                                      From form
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        updateExtraField(index, {
+                                          sourceType: "static",
+                                        })
+                                      }
+                                      className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                                        field.sourceType === "static"
+                                          ? "bg-background text-foreground shadow-sm"
+                                          : "text-muted-foreground hover:text-foreground"
+                                      }`}
+                                    >
+                                      Static value
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {field.sourceType === "form" ? (
+                                  <div className="space-y-1.5">
+                                    <Label>Form field or metadata</Label>
+                                    <Select
+                                      value={field.sourceField || undefined}
+                                      onValueChange={value =>
+                                        updateExtraField(index, {
+                                          sourceField: value,
+                                        })
+                                      }
+                                    >
+                                      <SelectTrigger className="w-full">
+                                        <SelectValue placeholder="Choose a source..." />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectGroup>
+                                          <SelectLabel>Form fields</SelectLabel>
+                                          {formFields.map(option => (
+                                            <SelectItem
+                                              key={option.key}
+                                              value={option.key}
+                                            >
+                                              {option.label
+                                                ? `${option.label} (${option.key})`
+                                                : option.key}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectGroup>
+                                        <SelectGroup>
+                                          <SelectLabel>
+                                            Facebook metadata
+                                          </SelectLabel>
+                                          {FB_METADATA_FIELDS.map(option => (
+                                            <SelectItem
+                                              key={option.key}
+                                              value={option.key}
+                                            >
+                                              {option.label}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectGroup>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-1.5">
+                                    <Label>Static value</Label>
+                                    <Input
+                                      placeholder="e.g. facebook_leads"
+                                      value={field.staticValue ?? ""}
+                                      onChange={e =>
+                                        updateExtraField(index, {
+                                          staticValue: e.target.value,
+                                        })
+                                      }
+                                    />
+                                  </div>
+                                )}
+
+                                {isDuplicate && (
+                                  <p className="text-xs text-destructive">
+                                    This destination key is duplicated. Each
+                                    extra field key must be unique.
+                                  </p>
+                                )}
+                                {!isDuplicate && isMissingSource && (
+                                  <p className="text-xs text-destructive">
+                                    Fill in the source before moving to the next
+                                    step.
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-md bg-muted/50 p-4 text-sm space-y-3">
+                      <div>
+                        <p className="font-medium">Payload mapping preview</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          This is the mapping Targenix will use when building
+                          the outbound payload.
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-muted-foreground">
+                            Full Name
+                          </span>
+                          <span className="font-medium text-right">
+                            {getSourceLabel(state.nameField, formFields)}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-muted-foreground">
+                            Phone Number
+                          </span>
+                          <span className="font-medium text-right">
+                            {getSourceLabel(state.phoneField, formFields)}
+                          </span>
+                        </div>
+
+                        {mappedExtraFields.length > 0 ? (
+                          mappedExtraFields.map(field => (
+                            <div
+                              key={field.destKey}
+                              className="flex items-center justify-between gap-3"
+                            >
+                              <span className="text-muted-foreground">
+                                {field.destKey}
+                              </span>
+                              <span className="font-medium text-right">
+                                {field.staticValue !== undefined
+                                  ? `"${field.staticValue}"`
+                                  : getSourceLabel(
+                                      field.sourceField ?? "",
+                                      formFields
+                                    )}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-xs text-muted-foreground">
+                            No optional fields added.
+                          </p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -780,7 +1361,9 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                 ) : !targetWebsites?.length ? (
                   <div className="text-center py-6 space-y-3">
                     <Globe className="h-10 w-10 text-muted-foreground mx-auto" />
-                    <p className="text-muted-foreground text-sm">No destinations configured yet.</p>
+                    <p className="text-muted-foreground text-sm">
+                      No destinations configured yet.
+                    </p>
                     <Button
                       variant="outline"
                       size="sm"
@@ -806,16 +1389,29 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                     </div>
                     {/* Card list of target websites */}
                     {targetWebsites.length > 3 && (
-                      <StepSearch value={searchTarget} onChange={setSearchTarget} placeholder={`Search ${targetWebsites.length} destinations...`} />
+                      <StepSearch
+                        value={searchTarget}
+                        onChange={setSearchTarget}
+                        placeholder={`Search ${targetWebsites.length} destinations...`}
+                      />
                     )}
                     <div className="grid gap-2">
                       {targetWebsites
-                        .filter((s) => !searchTarget || s.name.toLowerCase().includes(searchTarget.toLowerCase()))
-                        .map((site) => {
+                        .filter(
+                          s =>
+                            !searchTarget ||
+                            s.name
+                              .toLowerCase()
+                              .includes(searchTarget.toLowerCase())
+                        )
+                        .map(site => {
                           const isSelected = state.targetWebsiteId === site.id;
-                          const tplLabel = site.templateType === "sotuvchi" ? "sotuvchi.com"
-                            : site.templateType === "100k" ? "100k.uz"
-                            : "Custom";
+                          const tplLabel =
+                            site.templateType === "sotuvchi"
+                              ? "sotuvchi.com"
+                              : site.templateType === "100k"
+                                ? "100k.uz"
+                                : "Custom";
                           return (
                             <button
                               key={site.id}
@@ -823,57 +1419,121 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                                 set({
                                   targetWebsiteId: site.id,
                                   targetWebsiteName: site.name,
-                                  targetTemplateType: site.templateType ?? "custom",
+                                  targetTemplateType:
+                                    site.templateType ?? "custom",
                                   variableFields: {},
                                 });
                               }}
-                              style={isSelected ? { borderColor: site.color, backgroundColor: `${site.color}10` } : {}}
+                              style={
+                                isSelected
+                                  ? {
+                                      borderColor: site.color,
+                                      backgroundColor: `${site.color}10`,
+                                    }
+                                  : {}
+                              }
                               className={`w-full flex items-center gap-3 rounded-lg border p-3 text-left transition-colors ${
                                 isSelected
                                   ? ""
                                   : "hover:border-muted-foreground/40 hover:bg-muted/30"
                               }`}
                             >
-                              <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: site.color }}>
+                              <div
+                                className="w-8 h-8 rounded-md flex items-center justify-center shrink-0"
+                                style={{ backgroundColor: site.color }}
+                              >
                                 <Globe className="w-4 h-4 text-white" />
                               </div>
                               <div className="flex-1 min-w-0">
-                                <p className="font-medium text-sm">{site.name}</p>
-                                <p className="text-xs text-muted-foreground">{tplLabel}</p>
+                                <p className="font-medium text-sm">
+                                  {site.name}
+                                </p>
+                                <p className="text-xs text-muted-foreground">
+                                  {tplLabel}
+                                </p>
                               </div>
-                              {isSelected && <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />}
+                              {isSelected && (
+                                <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
+                              )}
                             </button>
                           );
                         })}
-                      {searchTarget && !targetWebsites.some((s) => s.name.toLowerCase().includes(searchTarget.toLowerCase())) && (
-                        <p className="text-xs text-muted-foreground text-center py-3">No destinations match "{searchTarget}"</p>
-                      )}
+                      {searchTarget &&
+                        !targetWebsites.some(s =>
+                          s.name
+                            .toLowerCase()
+                            .includes(searchTarget.toLowerCase())
+                        ) && (
+                          <p className="text-xs text-muted-foreground text-center py-3">
+                            No destinations match "{searchTarget}"
+                          </p>
+                        )}
                     </div>
 
                     {/* Variable fields for selected template */}
-                    {state.targetWebsiteId && (() => {
-                      // For custom templates: auto-detected variables from body template
-                      if (state.targetTemplateType === "custom") {
-                        if (customVarNames.length === 0) return null;
+                    {state.targetWebsiteId &&
+                      (() => {
+                        // For custom templates: auto-detected variables from body template
+                        if (state.targetTemplateType === "custom") {
+                          if (customVarNames.length === 0) return null;
+                          return (
+                            <div className="space-y-3 pt-2 border-t">
+                              <p className="text-xs font-medium text-muted-foreground">
+                                Custom variables detected in body template:
+                              </p>
+                              {customVarNames.map(varName => (
+                                <div key={varName} className="space-y-1.5">
+                                  <Label>
+                                    <code className="bg-muted px-1 rounded text-xs">{`{{${varName}}}`}</code>
+                                    <span className="text-destructive ml-1">
+                                      *
+                                    </span>
+                                  </Label>
+                                  <Input
+                                    placeholder={`Value for {{${varName}}}`}
+                                    value={state.variableFields[varName] ?? ""}
+                                    onChange={e =>
+                                      set({
+                                        variableFields: {
+                                          ...state.variableFields,
+                                          [varName]: e.target.value,
+                                        },
+                                      })
+                                    }
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        }
+                        // For known templates: static variable field definitions
+                        const vfDefs =
+                          TEMPLATE_VARIABLE_FIELDS[state.targetTemplateType] ??
+                          [];
+                        if (vfDefs.length === 0) return null;
                         return (
                           <div className="space-y-3 pt-2 border-t">
                             <p className="text-xs font-medium text-muted-foreground">
-                              Custom variables detected in body template:
+                              Routing-specific fields for this integration:
                             </p>
-                            {customVarNames.map((varName) => (
-                              <div key={varName} className="space-y-1.5">
+                            {vfDefs.map(vf => (
+                              <div key={vf.key} className="space-y-1.5">
                                 <Label>
-                                  <code className="bg-muted px-1 rounded text-xs">{`{{${varName}}}`}</code>
-                                  <span className="text-destructive ml-1">*</span>
+                                  {vf.label}
+                                  {vf.required && (
+                                    <span className="text-destructive ml-1">
+                                      *
+                                    </span>
+                                  )}
                                 </Label>
                                 <Input
-                                  placeholder={`Value for {{${varName}}}`}
-                                  value={state.variableFields[varName] ?? ""}
-                                  onChange={(e) =>
+                                  placeholder={vf.placeholder}
+                                  value={state.variableFields[vf.key] ?? ""}
+                                  onChange={e =>
                                     set({
                                       variableFields: {
                                         ...state.variableFields,
-                                        [varName]: e.target.value,
+                                        [vf.key]: e.target.value,
                                       },
                                     })
                                   }
@@ -882,38 +1542,7 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                             ))}
                           </div>
                         );
-                      }
-                      // For known templates: static variable field definitions
-                      const vfDefs = TEMPLATE_VARIABLE_FIELDS[state.targetTemplateType] ?? [];
-                      if (vfDefs.length === 0) return null;
-                      return (
-                        <div className="space-y-3 pt-2 border-t">
-                          <p className="text-xs font-medium text-muted-foreground">
-                            Routing-specific fields for this integration:
-                          </p>
-                          {vfDefs.map((vf) => (
-                            <div key={vf.key} className="space-y-1.5">
-                              <Label>
-                                {vf.label}
-                                {vf.required && <span className="text-destructive ml-1">*</span>}
-                              </Label>
-                              <Input
-                                placeholder={vf.placeholder}
-                                value={state.variableFields[vf.key] ?? ""}
-                                onChange={(e) =>
-                                  set({
-                                    variableFields: {
-                                      ...state.variableFields,
-                                      [vf.key]: e.target.value,
-                                    },
-                                  })
-                                }
-                              />
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
+                      })()}
                   </div>
                 )}
               </div>
@@ -927,31 +1556,69 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
                   <Input
                     placeholder={`${state.pageName} → ${state.targetWebsiteName}`}
                     value={state.integrationName}
-                    onChange={(e) => set({ integrationName: e.target.value })}
+                    onChange={e => set({ integrationName: e.target.value })}
                   />
                 </div>
                 <div className="rounded-lg border divide-y text-sm">
                   {[
                     { label: "Facebook Account", value: state.accountName },
-                    { label: "Page", value: `${state.pageName} (${state.pageId})` },
-                    { label: "Lead Form", value: `${state.formName} (${state.formId})` },
-                    { label: "Name Field", value: state.nameField },
-                    { label: "Phone Field", value: state.phoneField },
-                    { label: "Target Website", value: `${state.targetWebsiteName} (${state.targetTemplateType || "custom"})` },
-                    ...Object.entries(state.variableFields).map(([k, v]) => ({ label: k, value: v })),
-                  ].map((row) => (
-                    <div key={row.label} className="flex justify-between px-3 py-2">
+                    {
+                      label: "Page",
+                      value: `${state.pageName} (${state.pageId})`,
+                    },
+                    {
+                      label: "Lead Form",
+                      value: `${state.formName} (${state.formId})`,
+                    },
+                    {
+                      label: "Full Name Source",
+                      value: getSourceLabel(state.nameField, formFields),
+                    },
+                    {
+                      label: "Phone Source",
+                      value: getSourceLabel(state.phoneField, formFields),
+                    },
+                    ...mappedExtraFields.map(field => ({
+                      label: `Extra • ${field.destKey}`,
+                      value:
+                        field.staticValue !== undefined
+                          ? `"${field.staticValue}"`
+                          : getSourceLabel(field.sourceField ?? "", formFields),
+                    })),
+                    {
+                      label: "Target Website",
+                      value: `${state.targetWebsiteName} (${state.targetTemplateType || "custom"})`,
+                    },
+                    ...Object.entries(state.variableFields).map(([k, v]) => ({
+                      label: k,
+                      value: v,
+                    })),
+                  ].map(row => (
+                    <div
+                      key={row.label}
+                      className="flex justify-between px-3 py-2"
+                    >
                       <span className="text-muted-foreground">{row.label}</span>
-                      <span className="font-medium text-right max-w-[60%] truncate">{row.value}</span>
+                      <span className="font-medium text-right max-w-[60%] truncate">
+                        {row.value}
+                      </span>
                     </div>
                   ))}
                 </div>
                 <div className="rounded-md bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 p-3 text-sm text-amber-800 dark:text-amber-300">
                   <p className="font-medium">What happens when you save:</p>
                   <ul className="list-disc list-inside mt-1 space-y-0.5 text-amber-700 dark:text-amber-400">
-                    <li>The page will be subscribed to receive lead webhook events</li>
-                    <li>New leads will be routed to the target website automatically</li>
-                    <li>Name and phone will be extracted using your field mapping</li>
+                    <li>
+                      The page will be subscribed to receive lead webhook events
+                    </li>
+                    <li>
+                      New leads will be routed to the target website
+                      automatically
+                    </li>
+                    <li>
+                      Name, phone, and any extra fields will be resolved using
+                      your mapping rules
+                    </li>
                   </ul>
                 </div>
               </div>
@@ -963,7 +1630,9 @@ export default function LeadRoutingWizard({ params }: RouteComponentProps<{ id?:
         <div className="flex justify-between">
           <Button
             variant="outline"
-            onClick={() => (step === 1 ? navigate("/integrations") : setStep(step - 1))}
+            onClick={() =>
+              step === 1 ? navigate("/integrations") : setStep(step - 1)
+            }
             disabled={isSaving}
           >
             <ArrowLeft className="h-4 w-4 mr-1" />
