@@ -115,30 +115,38 @@ function renderPopupBridgeHtml(payload: unknown, message: string, title: string)
   const safeMessage = escapeHtml(message);
   const safeTitle = escapeHtml(title);
 
-  return `
-    <html>
-      <head><title>${safeTitle}</title></head>
-      <body>
-        <script>
-          (function () {
-            try {
-              if (window.opener && !window.opener.closed) {
-                let targetOrigin = window.location.origin;
-                try {
-                  if (window.opener.location && typeof window.opener.location.origin === "string") {
-                    targetOrigin = window.opener.location.origin;
-                  }
-                } catch (e) {}
-                window.opener.postMessage(${payloadJson}, targetOrigin);
-              }
-            } catch (e) {}
-            window.close();
-          })();
-        </script>
-        <p>${safeMessage}</p>
-      </body>
-    </html>
-  `;
+  // Two-channel strategy:
+  //  1. BroadcastChannel  — primary, immune to Facebook's COOP header which nullifies
+  //                         window.opener when the popup navigates to facebook.com
+  //  2. window.opener.postMessage — backup for environments without BroadcastChannel
+  return `<!DOCTYPE html>
+<html>
+  <head><title>${safeTitle}</title><meta charset="utf-8"></head>
+  <body>
+    <p>${safeMessage}</p>
+    <script>
+      (function () {
+        var payload = ${payloadJson};
+
+        // 1. BroadcastChannel — works even when COOP breaks window.opener
+        try {
+          var bc = new BroadcastChannel("targenix_fb_oauth");
+          bc.postMessage(payload);
+          bc.close();
+        } catch (e) {}
+
+        // 2. window.opener.postMessage — fallback (may be null due to COOP)
+        try {
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage(payload, window.location.origin);
+          }
+        } catch (e) {}
+
+        window.close();
+      })();
+    </script>
+  </body>
+</html>`;
 }
 
 export function registerFacebookOAuthRoutes(app: Express): void {

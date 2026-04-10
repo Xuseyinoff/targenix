@@ -54,6 +54,10 @@ export default function Connections() {
   const [expandedAccounts, setExpandedAccounts] = useState<Set<number>>(new Set());
   const popupRef = useRef<Window | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const bcRef = useRef<BroadcastChannel | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Prevents double-processing when both BroadcastChannel and window.message deliver the same event
+  const oauthCompletedRef = useRef(false);
 
   const utils = trpc.useUtils();
 
@@ -88,60 +92,66 @@ export default function Connections() {
     },
   });
 
-  // ── Listen for postMessage from OAuth popup ────────────────────────────────
-  // Keep utils in a ref so the effect never re-runs (and never tears down the
-  // listener) while a popup is open. Re-mounting the listener mid-flight would
-  // cause the postMessage to arrive with no handler attached.
+  // ── Keep utils in a ref so OAuth handlers always see the latest instance ────
   const utilsRef = useRef(utils);
   useEffect(() => { utilsRef.current = utils; }, [utils]);
 
+  // ── Shared OAuth result handler ───────────────────────────────────────────
+  // Stored in a ref so it can be called from both BroadcastChannel and
+  // window.message without stale closures or re-registering listeners.
+  const processOAuthResultRef = useRef<((data: unknown) => void) | null>(null);
+  processOAuthResultRef.current = (data: unknown) => {
+    if (!data || typeof data !== "object") return;
+    const msg = data as Record<string, unknown>;
+    if (msg.type !== "fb_oauth_success" && msg.type !== "fb_oauth_error") return;
+
+    // Guard against double-processing (both channels may deliver the same event)
+    if (oauthCompletedRef.current) return;
+    oauthCompletedRef.current = true;
+
+    // Cancel all pending timers and channels
+    if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
+    if (bcRef.current) { bcRef.current.close(); bcRef.current = null; }
+
+    if (msg.type === "fb_oauth_success") {
+      setConnecting(false);
+      setConnectResult({
+        fbUserName: msg.fbUserName as string,
+        warnings: (msg.warnings ?? []) as string[],
+        pages: (msg.pages ?? []) as Array<{ pageId: string; pageName: string; subscribed: boolean; isNew?: boolean; error?: string }>,
+      });
+      utilsRef.current.facebookAccounts.getAccountsWithPages.invalidate();
+      utilsRef.current.facebookAccounts.listConnectedPages.invalidate();
+
+      const pages = (msg.pages ?? []) as Array<{ subscribed: boolean; isNew?: boolean }>;
+      const subscribed = pages.filter((p) => p.subscribed).length;
+      const newPages = pages.filter((p) => p.isNew).length;
+      toast.success(
+        `Connected as ${msg.fbUserName as string} — ${subscribed}/${pages.length} pages subscribed${newPages > 0 ? `, ${newPages} new` : ""}.`
+      );
+    } else {
+      setConnecting(false);
+      toast.error((msg.error as string) ?? "Facebook connection failed.");
+    }
+  };
+
+  // ── window.message listener — backup path (BroadcastChannel is primary) ───
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
-      // Only handle messages from our own origin
       if (event.origin !== window.location.origin) return;
-
-      const data = event.data;
-      if (!data || typeof data !== "object") return;
-
-      if (data.type === "fb_oauth_success") {
-        // Cancel the popup-closed polling so it never fires the "cancelled" toast
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-        }
-
-        setConnecting(false);
-        setConnectResult({
-          fbUserName: data.fbUserName,
-          warnings: data.warnings ?? [],
-          pages: data.pages ?? [],
-        });
-        utilsRef.current.facebookAccounts.getAccountsWithPages.invalidate();
-        utilsRef.current.facebookAccounts.listConnectedPages.invalidate();
-
-        const subscribed = (data.pages ?? []).filter((p: { subscribed: boolean }) => p.subscribed).length;
-        const newPages = (data.pages ?? []).filter((p: { isNew: boolean }) => p.isNew).length;
-        toast.success(
-          `Connected as ${data.fbUserName} — ${subscribed}/${(data.pages ?? []).length} pages subscribed${newPages > 0 ? `, ${newPages} new` : ""}.`
-        );
-      } else if (data.type === "fb_oauth_error") {
-        if (pollIntervalRef.current) {
-          clearInterval(pollIntervalRef.current);
-          pollIntervalRef.current = null;
-        }
-        setConnecting(false);
-        toast.error(data.error ?? "Facebook connection failed.");
-      }
+      processOAuthResultRef.current?.(event.data);
     }
-
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, []); // empty deps — listener lives for the full lifetime of this component
+  }, []); // empty deps — listener lives for the full component lifetime
 
   // ── Cleanup on unmount ─────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (bcRef.current) { bcRef.current.close(); bcRef.current = null; }
       if (popupRef.current && !popupRef.current.closed) popupRef.current.close();
     };
   }, []);
@@ -182,26 +192,29 @@ export default function Connections() {
       }
 
       popupRef.current = popup;
+      oauthCompletedRef.current = false;
 
-      // Step 3: Poll for popup closure (detect user cancellation).
-      // We wait 1500ms after the popup closes before showing a "cancelled" error.
-      // This gives any in-flight postMessage (sent just before window.close())
-      // time to arrive and be processed first. If fb_oauth_success arrives
-      // during that window, setConnecting(false) is called and the error is suppressed.
-      pollIntervalRef.current = setInterval(() => {
-        if (popup.closed) {
-          clearInterval(pollIntervalRef.current!);
-          pollIntervalRef.current = null;
-          setTimeout(() => {
-            setConnecting((prev) => {
-              if (prev) {
-                toast.error("Facebook connection cancelled.");
-              }
-              return false;
-            });
-          }, 1500);
-        }
-      }, 500);
+      // Step 3: BroadcastChannel — primary success/error signal.
+      // This is immune to Facebook's Cross-Origin-Opener-Policy header, which
+      // nullifies window.opener (and breaks window.opener.postMessage) when the
+      // popup navigates to facebook.com, also making popup.closed unreliable.
+      try {
+        const bc = new BroadcastChannel("targenix_fb_oauth");
+        bcRef.current = bc;
+        bc.onmessage = (event) => processOAuthResultRef.current?.(event.data);
+      } catch {
+        // BroadcastChannel unavailable — window.message listener (always active) is the fallback
+      }
+
+      // Step 4: 30-second timeout — fires if user closes the popup without completing OAuth,
+      // or if something goes wrong and no message is ever received.
+      timeoutRef.current = setTimeout(() => {
+        if (bcRef.current) { bcRef.current.close(); bcRef.current = null; }
+        setConnecting((prev) => {
+          if (prev) toast.error("Facebook connection timed out. Please try again.");
+          return false;
+        });
+      }, 30_000);
     } catch (error) {
       setConnecting(false);
       toast.error(error instanceof Error ? error.message : "Failed to connect Facebook account.");
