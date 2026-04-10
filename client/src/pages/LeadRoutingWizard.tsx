@@ -1076,8 +1076,7 @@ export default function LeadRoutingWizard({
                         <SelectContent>
                           {formFields.map(f => (
                             <SelectItem key={f.key} value={f.key}>
-                              {f.key}
-                              {f.label ? ` — ${f.label}` : ""}
+                              {f.label || f.key}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1096,8 +1095,7 @@ export default function LeadRoutingWizard({
                         <SelectContent>
                           {formFields.map(f => (
                             <SelectItem key={f.key} value={f.key}>
-                              {f.key}
-                              {f.label ? ` — ${f.label}` : ""}
+                              {f.label || f.key}
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1135,10 +1133,7 @@ export default function LeadRoutingWizard({
                                       key={option.key}
                                       value={option.key}
                                     >
-                                      {option.key}
-                                      {option.label
-                                        ? ` — ${option.label}`
-                                        : ""}
+                                      {option.label || option.key}
                                     </SelectItem>
                                   ))}
                                 </SelectGroup>
@@ -1149,7 +1144,7 @@ export default function LeadRoutingWizard({
                                       key={option.key}
                                       value={option.key}
                                     >
-                                      {option.key} — {option.label}
+                                      {option.label}
                                     </SelectItem>
                                   ))}
                                 </SelectGroup>
@@ -1225,8 +1220,7 @@ export default function LeadRoutingWizard({
                                     }))
                                   }
                                 >
-                                  {f.key}
-                                  {f.label ? ` — ${f.label}` : ""}
+                                  {f.label || f.key}
                                 </DropdownMenuItem>
                               ))}
                               <DropdownMenuSeparator />
@@ -1254,7 +1248,7 @@ export default function LeadRoutingWizard({
                                 }))
                               }
                             >
-                              {f.key} — {f.label}
+                              {f.label}
                             </DropdownMenuItem>
                           ))}
                           <DropdownMenuSeparator />
