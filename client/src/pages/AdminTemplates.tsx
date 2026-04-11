@@ -56,11 +56,15 @@ interface TemplateForm {
   method: "POST" | "GET";
   contentType: string;
   bodyFields: BodyField[];
+  /** Used only when contentType is application/json — raw JSON template with {{variables}} */
+  jsonBodyTemplate: string;
   userVisibleFields: string[];
   variableFields: string[];
   autoMappedFields: AutoMappedField[];
   isActive: boolean;
 }
+
+const JSON_TEMPLATE_KEY = "__json_template__";
 
 const PRESET_COLORS = [
   "#3B82F6", "#10B981", "#8B5CF6", "#F59E0B",
@@ -77,6 +81,12 @@ const BUILTIN_VAR_HINTS = [
   "{{name}}", "{{phone}}", "{{email}}", "{{lead_id}}", "{{page_id}}", "{{form_id}}",
 ];
 
+const DEFAULT_JSON_TEMPLATE = `{
+  "name": "{{name}}",
+  "phone": "{{phone}}",
+  "api_key": "{{SECRET:api_key}}"
+}`;
+
 function defaultForm(): TemplateForm {
   return {
     name: "",
@@ -90,6 +100,7 @@ function defaultForm(): TemplateForm {
       { key: "phone", value: "{{phone}}", isSecret: false },
       { key: "name", value: "{{name}}", isSecret: false },
     ],
+    jsonBodyTemplate: DEFAULT_JSON_TEMPLATE,
     userVisibleFields: ["api_key"],
     variableFields: [],
     autoMappedFields: [
@@ -98,6 +109,19 @@ function defaultForm(): TemplateForm {
     ],
     isActive: true,
   };
+}
+
+/** True when contentType is JSON mode */
+function isJsonMode(ct: string) {
+  return ct.toLowerCase().includes("json");
+}
+
+/** Convert bodyFields ↔ jsonBodyTemplate when switching modes */
+function getEffectiveBodyFields(form: TemplateForm): BodyField[] {
+  if (isJsonMode(form.contentType)) {
+    return [{ key: JSON_TEMPLATE_KEY, value: form.jsonBodyTemplate, isSecret: false }];
+  }
+  return form.bodyFields;
 }
 
 // ─── Tag input component ───────────────────────────────────────────────────────
@@ -272,14 +296,19 @@ export default function AdminTemplates() {
 
   function openEdit(t: typeof templates[0]) {
     setEditId(t.id);
+    const ct = t.contentType ?? "application/x-www-form-urlencoded";
+    const rawFields = (t.bodyFields as BodyField[]) ?? [];
+    // Restore JSON template text if this was saved in JSON mode
+    const jsonEntry = rawFields.find(f => f.key === JSON_TEMPLATE_KEY);
     setForm({
       name: t.name,
       description: t.description ?? "",
       color: t.color,
       endpointUrl: t.endpointUrl,
       method: (t.method ?? "POST") as "POST" | "GET",
-      contentType: t.contentType ?? "application/x-www-form-urlencoded",
-      bodyFields: (t.bodyFields as BodyField[]) ?? [],
+      contentType: ct,
+      bodyFields: jsonEntry ? [] : rawFields,
+      jsonBodyTemplate: jsonEntry ? jsonEntry.value : DEFAULT_JSON_TEMPLATE,
       userVisibleFields: (t.userVisibleFields as string[]) ?? [],
       variableFields: (t.variableFields as string[]) ?? [],
       autoMappedFields: (t.autoMappedFields as AutoMappedField[]) ?? [],
@@ -323,7 +352,12 @@ export default function AdminTemplates() {
   function handleSave() {
     if (!form.name.trim()) { toast.error("Name is required"); return; }
     if (!form.endpointUrl.trim()) { toast.error("Endpoint URL is required"); return; }
-    if (form.bodyFields.length === 0) { toast.error("At least one body field is required"); return; }
+    const effectiveFields = getEffectiveBodyFields(form);
+    if (isJsonMode(form.contentType)) {
+      if (!form.jsonBodyTemplate.trim()) { toast.error("JSON body template is required"); return; }
+    } else {
+      if (form.bodyFields.length === 0) { toast.error("At least one body field is required"); return; }
+    }
 
     const payload = {
       name: form.name.trim(),
@@ -332,7 +366,9 @@ export default function AdminTemplates() {
       endpointUrl: form.endpointUrl.trim(),
       method: form.method,
       contentType: form.contentType,
-      bodyFields: form.bodyFields.filter(f => f.key.trim()),
+      bodyFields: isJsonMode(form.contentType)
+        ? effectiveFields
+        : form.bodyFields.filter(f => f.key.trim()),
       userVisibleFields: form.userVisibleFields,
       variableFields: form.variableFields,
       autoMappedFields: form.autoMappedFields.filter(f => f.key.trim() && f.label.trim()),
@@ -517,31 +553,52 @@ export default function AdminTemplates() {
             {/* Body fields */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label>Body Fields</Label>
+                <Label>{isJsonMode(form.contentType) ? "JSON Body Template" : "Body Fields"}</Label>
                 <div className="flex items-center gap-1 text-xs text-muted-foreground">
                   <Info className="w-3 h-3" />
                   Built-ins: {BUILTIN_VAR_HINTS.join(", ")}
                 </div>
               </div>
-              <div className="space-y-2">
-                {form.bodyFields.map((field, i) => (
-                  <BodyFieldRow
-                    key={i}
-                    field={field}
-                    onChange={patch => updateBodyField(i, patch)}
-                    onRemove={() => removeBodyField(i)}
+
+              {isJsonMode(form.contentType) ? (
+                /* JSON mode — textarea template */
+                <div className="space-y-1">
+                  <textarea
+                    className="w-full font-mono text-xs min-h-[140px] resize-y rounded-md border border-input bg-background px-3 py-2 focus:outline-none focus:ring-1 focus:ring-ring"
+                    placeholder={DEFAULT_JSON_TEMPLATE}
+                    value={form.jsonBodyTemplate}
+                    onChange={e => setField("jsonBodyTemplate", e.target.value)}
                   />
-                ))}
-              </div>
-              <Button variant="outline" size="sm" onClick={addBodyField} className="mt-1 h-7 text-xs">
-                <Plus className="w-3 h-3 mr-1" />
-                Add Field
-              </Button>
-              {form.bodyFields.some(f => f.isSecret) && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 mt-1">
-                  <Lock className="w-3 h-3" />
-                  Secret fields ({form.userVisibleFields.join(", ")}) will be shown to users at destination creation.
-                </p>
+                  <p className="text-xs text-muted-foreground">
+                    Use <code className="bg-muted px-1 rounded">{"{{variable}}"}</code> for lead data,{" "}
+                    <code className="bg-muted px-1 rounded">{"{{SECRET:key}}"}</code> for encrypted secrets.
+                    Must be valid JSON.
+                  </p>
+                </div>
+              ) : (
+                /* Form-urlencoded / multipart mode — key-value rows */
+                <>
+                  <div className="space-y-2">
+                    {form.bodyFields.map((field, i) => (
+                      <BodyFieldRow
+                        key={i}
+                        field={field}
+                        onChange={patch => updateBodyField(i, patch)}
+                        onRemove={() => removeBodyField(i)}
+                      />
+                    ))}
+                  </div>
+                  <Button variant="outline" size="sm" onClick={addBodyField} className="mt-1 h-7 text-xs">
+                    <Plus className="w-3 h-3 mr-1" />
+                    Add Field
+                  </Button>
+                  {form.bodyFields.some(f => f.isSecret) && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 mt-1">
+                      <Lock className="w-3 h-3" />
+                      Secret fields ({form.userVisibleFields.join(", ")}) will be shown to users at destination creation.
+                    </p>
+                  )}
+                </>
               )}
             </div>
 

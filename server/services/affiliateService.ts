@@ -489,9 +489,25 @@ export async function sendLeadViaTemplate(
     let formData: FormData | undefined;
 
     const normalizedCt = template.contentType.toLowerCase();
+    const bodyFieldsArr = template.bodyFields as Array<{ key: string; value: string }>;
 
     if (normalizedCt.includes("json")) {
-      body = resolvedFields;
+      // Raw JSON template mode (stored as single __json_template__ entry)
+      if (bodyFieldsArr.length === 1 && bodyFieldsArr[0].key === "__json_template__") {
+        const secrets = (cfg.secrets as Record<string, string> | undefined) ?? {};
+        let tpl = bodyFieldsArr[0].value;
+        // Resolve {{SECRET:key}} substitutions
+        tpl = tpl.replace(/\{\{SECRET:([^}]+)\}\}/g, (_, key: string) => {
+          const encrypted = secrets[key.trim()];
+          if (!encrypted) return "";
+          try { return decrypt(encrypted); } catch { return ""; }
+        });
+        // Resolve {{variable}} substitutions
+        tpl = injectVariables(tpl, varCtx);
+        body = tpl; // raw JSON string — axios sends as-is
+      } else {
+        body = resolvedFields; // flat object → axios JSON.stringifies
+      }
       contentTypeHeader = "application/json";
     } else if (normalizedCt.includes("form-urlencoded") || normalizedCt.includes("urlencoded")) {
       const params = new URLSearchParams();
