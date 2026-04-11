@@ -8,9 +8,9 @@ import {
   getDb,
 } from "../db";
 import { validateTelegramToken, sendTelegramNotification } from "../services/telegramService";
-import { sendAffiliateOrderByTemplate, type TemplateType, type TemplateConfig } from "../services/affiliateService";
+import { sendAffiliateOrderByTemplate, sendLeadViaTemplate, type TemplateType, type TemplateConfig } from "../services/affiliateService";
 import { sendLeadTelegramNotification } from "../services/leadService";
-import { targetWebsites } from "../../drizzle/schema";  
+import { targetWebsites, destinationTemplates } from "../../drizzle/schema";
 import { eq } from "drizzle-orm";
 
 export const integrationsRouter = router({
@@ -141,13 +141,27 @@ export const integrationsRouter = router({
             .where(eq(targetWebsites.id, twId))
             .limit(1);
           if (!tw) throw new Error("Target website not found");
-          const result = await sendAffiliateOrderByTemplate(
-            tw.templateType as TemplateType,
-            tw.templateConfig as TemplateConfig,
-            testLead,
-            variableFields,
-            tw.url
-          );
+
+          let result: { success: boolean; responseData?: unknown; error?: string };
+          if (tw.templateId) {
+            // Admin template-based destination → use sendLeadViaTemplate
+            const [dynTpl] = await db
+              .select()
+              .from(destinationTemplates)
+              .where(eq(destinationTemplates.id, tw.templateId))
+              .limit(1);
+            if (!dynTpl) throw new Error(`Destination template #${tw.templateId} not found`);
+            result = await sendLeadViaTemplate(dynTpl, tw.templateConfig, testLead, variableFields);
+          } else {
+            // Legacy custom/sotuvchi/100k destination
+            result = await sendAffiliateOrderByTemplate(
+              tw.templateType as TemplateType,
+              tw.templateConfig as TemplateConfig,
+              testLead,
+              variableFields,
+              tw.url
+            );
+          }
           success = result.success;
           responseData = result.responseData;
           errorMsg = result.error;
