@@ -190,6 +190,13 @@
       "when": 1775794761015,
       "tag": "0026_hesitant_radioactive_man",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "5",
+      "when": 1775934583037,
+      "tag": "0027_flippant_garia",
+      "breakpoints": true
     }
   ]
 }

@@ -21,21 +21,17 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { DialogFooter } from "@/components/ui/dialog";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-  DialogDescription,
-} from "@/components/ui/dialog";
+  WebsiteFlowDialog,
+  AddWebsiteSelectStep,
+} from "@/components/AddWebsiteModal";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import {
   Plus,
   Trash2,
   Globe,
-  ChevronRight,
   ArrowLeft,
   Loader2,
   Eye,
@@ -709,80 +705,75 @@ export default function TargetWebsites() {
         )}
       </div>
 
-      {/* Dialog */}
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>
-              {mode === "select-template"
-                ? "Choose Template"
-                : mode === "configure-dynamic"
-                ? `New ${selectedDynTemplate?.name ?? "Website"}`
-                : mode === "edit-dynamic"
+      <WebsiteFlowDialog
+        open={open}
+        onOpenChange={setOpen}
+        mode={mode}
+        wideDesktop={mode !== "select-template"}
+        headerTitle={
+          mode === "select-template"
+            ? "Add Website"
+            : mode === "configure-dynamic"
+              ? `New ${selectedDynTemplate?.name ?? "Website"}`
+              : mode === "edit-dynamic"
                 ? `Edit: ${dynName || "Website"}`
                 : editId
-                ? `Edit: ${form.name || "Website"}`
-                : `New ${selectedTemplate?.label ?? "Website"}`}
-            </DialogTitle>
-            <DialogDescription>
-              {mode === "select-template"
-                ? "Select a template to get started"
-                : mode === "configure-dynamic"
-                ? selectedDynTemplate?.endpointUrl ?? "Configure your destination"
-                : mode === "edit-dynamic"
+                  ? `Edit: ${form.name || "Website"}`
+                  : `New ${selectedTemplate?.label ?? "Website"}`
+        }
+        headerDescription={
+          mode === "select-template"
+            ? "Select how you want to connect"
+            : mode === "configure-dynamic"
+              ? selectedDynTemplate?.endpointUrl ?? "Configure your destination"
+              : mode === "edit-dynamic"
                 ? editDynUrl || "Update name and API secrets"
                 : editId
-                ? "Update your target website configuration"
-                : "Configure a new target website for lead routing"}
-            </DialogDescription>
-          </DialogHeader>
-
-          {/* Step 1: Template selector */}
-          {mode === "select-template" && (
-            <div className="space-y-4 py-2">
-              {/* Dynamic admin-managed templates */}
-              {dynTemplates.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Affiliate Platforms</p>
-                  {dynTemplates.map((tpl) => (
-                    <button
-                      key={tpl.id}
-                      onClick={() => selectDynTemplate(tpl)}
-                      className="w-full flex items-center gap-4 p-4 rounded-lg border hover:border-primary hover:bg-muted/30 transition-all text-left group"
-                    >
-                      <div className="w-3 h-10 rounded-full shrink-0" style={{ backgroundColor: tpl.color }} />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-sm">{tpl.name}</div>
-                        {tpl.description && (
-                          <div className="text-xs text-muted-foreground mt-0.5">{tpl.description}</div>
-                        )}
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Legacy hardcoded templates — only Custom remains; sotuvchi/100k replaced by admin templates */}
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Other</p>
-                {TEMPLATES.filter((tpl) => tpl.id === "custom").map((tpl) => (
-                  <button
-                    key={tpl.id}
-                    onClick={() => handleTemplateSelect(tpl.id)}
-                    className="w-full flex items-center gap-4 p-4 rounded-lg border hover:border-primary hover:bg-muted/30 transition-all text-left group"
-                  >
-                    <div className={`w-3 h-10 rounded-full shrink-0 ${tpl.color}`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-sm">{tpl.label}</div>
-                      <div className="text-xs text-muted-foreground mt-0.5">{tpl.description}</div>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+                  ? "Update your target website configuration"
+                  : "Configure a new target website for lead routing"
+        }
+        footer={
+          mode === "configure-dynamic" ? (
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button variant="outline" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleDynSubmit} disabled={isSaving}>
+                {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Save Website
+              </Button>
+            </DialogFooter>
+          ) : mode === "edit-dynamic" ? (
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button variant="outline" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleEditDynSubmit} disabled={isSaving}>
+                {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Save Changes
+              </Button>
+            </DialogFooter>
+          ) : mode === "configure" ? (
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button variant="outline" onClick={() => setOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSubmit} disabled={isSaving}>
+                {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {editId ? "Save Changes" : "Save Website"}
+              </Button>
+            </DialogFooter>
+          ) : undefined
+        }
+      >
+        {mode === "select-template" && (
+          <AddWebsiteSelectStep
+            open={open}
+            templates={dynTemplates}
+            onSelectAffiliate={selectDynTemplate}
+            onSelectCustom={() => handleTemplateSelect("custom")}
+          />
+        )}
 
           {/* Step 2a: Configure dynamic template */}
           {mode === "configure-dynamic" && selectedDynTemplate && (
@@ -1223,40 +1214,7 @@ export default function TargetWebsites() {
               )}
             </div>
           )}
-
-          {mode === "configure-dynamic" && (
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={handleDynSubmit} disabled={isSaving}>
-                {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Save Website
-              </Button>
-            </DialogFooter>
-          )}
-
-          {mode === "edit-dynamic" && (
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-              <Button onClick={handleEditDynSubmit} disabled={isSaving}>
-                {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Save Changes
-              </Button>
-            </DialogFooter>
-          )}
-
-          {mode === "configure" && (
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setOpen(false)}>
-                Cancel
-              </Button>
-              <Button onClick={handleSubmit} disabled={isSaving}>
-                {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                {editId ? "Save Changes" : "Save Website"}
-              </Button>
-            </DialogFooter>
-          )}
-        </DialogContent>
-      </Dialog>
+      </WebsiteFlowDialog>
     </DashboardLayout>
   );
 }
