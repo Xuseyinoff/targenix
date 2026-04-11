@@ -12,7 +12,7 @@
  *  - Test button: sends sample lead, shows request + response
  */
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,6 @@ import {
   EyeOff,
   Info,
   Pencil,
-  CheckCircle2,
   FlaskConical,
   ChevronDown,
   ChevronUp,
@@ -202,10 +201,6 @@ function templateBadgeVariant(type: string | null): "default" | "secondary" | "o
 
 function templateLabel(type: string | null): string {
   return TEMPLATES.find((t) => t.id === type)?.label ?? "Custom";
-}
-
-function templateColor(type: string | null): string {
-  return TEMPLATES.find((t) => t.id === type)?.color ?? "bg-purple-500";
 }
 
 // ─── Test Result Panel ────────────────────────────────────────────────────────
@@ -719,12 +714,10 @@ export default function TargetWebsites() {
                 </div>
               )}
 
-              {/* Legacy hardcoded templates */}
+              {/* Legacy hardcoded templates — only Custom remains; sotuvchi/100k replaced by admin templates */}
               <div className="space-y-2">
-                {dynTemplates.length > 0 && (
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Other</p>
-                )}
-                {TEMPLATES.map((tpl) => (
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Other</p>
+                {TEMPLATES.filter((tpl) => tpl.id === "custom").map((tpl) => (
                   <button
                     key={tpl.id}
                     onClick={() => handleTemplateSelect(tpl.id)}
