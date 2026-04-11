@@ -46,6 +46,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  X,
 } from "lucide-react";
 
 // ─── Template definitions (client-side display only) ─────────────────────────
@@ -315,6 +316,55 @@ function TestResultPanel({ result, onClose }: { result: TestResult; onClose: () 
   );
 }
 
+// ─── TagInput — chip-style tag field (Enter or comma to add) ─────────────────
+function TagInput({
+  label,
+  hint,
+  values,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  hint?: string;
+  values: string[];
+  onChange: (v: string[]) => void;
+  placeholder: string;
+}) {
+  const [draft, setDraft] = useState("");
+  function addTag() {
+    const v = draft.trim();
+    if (!v || values.includes(v)) { setDraft(""); return; }
+    onChange([...values, v]);
+    setDraft("");
+  }
+  return (
+    <div className="space-y-1.5">
+      <div>
+        <Label>{label}</Label>
+        {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
+      </div>
+      <div className="flex flex-wrap gap-1.5 min-h-[36px] rounded-md border bg-background px-2 py-1.5">
+        {values.map((v) => (
+          <span key={v} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-xs font-mono">
+            {v}
+            <button type="button" onClick={() => onChange(values.filter((x) => x !== v))} className="text-muted-foreground hover:text-foreground">
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+        <input
+          className="flex-1 min-w-[80px] bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          placeholder={values.length === 0 ? placeholder : "+ add"}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(); } }}
+          onBlur={addTag}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function TargetWebsites() {
   const [open, setOpen] = useState(false);
@@ -322,7 +372,6 @@ export default function TargetWebsites() {
   const [mode, setMode] = useState<FormMode>("select-template");
   const [form, setForm] = useState<FormState>(defaultForm());
   const [testResult, setTestResult] = useState<TestResult | null>(null);
-  const [showVarRef, setShowVarRef] = useState(false);
   // Dynamic template state (create flow)
   const [selectedDynTemplate, setSelectedDynTemplate] = useState<DynTemplate | null>(null);
   const [dynName, setDynName] = useState("");
@@ -970,41 +1019,24 @@ export default function TargetWebsites() {
                     </div>
                   </div>
 
-                  {/* Variable reference */}
-                  <div className="rounded-lg border bg-muted/20">
-                    <button
-                      className="w-full flex items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors"
-                      onClick={() => setShowVarRef((v) => !v)}
-                    >
-                      <span className="flex items-center gap-1.5">
-                        <Info className="w-3 h-3" />
-                        Available variables (click to expand)
-                      </span>
-                      {showVarRef ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                    </button>
-                    {showVarRef && (
-                      <div className="px-3 pb-3 grid grid-cols-2 gap-1.5">
-                        {BUILTIN_VARS.map((v) => (
-                          <div key={v.key} className="flex items-center gap-2">
-                            <code
-                              className="text-xs bg-background border rounded px-1.5 py-0.5 cursor-pointer hover:bg-primary/10 transition-colors"
-                              onClick={() => {
-                                navigator.clipboard.writeText(v.key);
-                                toast.success(`Copied ${v.key}`);
-                              }}
-                            >
-                              {v.key}
-                            </code>
-                            <span className="text-xs text-muted-foreground">{v.desc}</span>
-                          </div>
-                        ))}
-                        <div className="col-span-2 mt-1 text-xs text-muted-foreground">
-                          Custom: <code className="bg-background border rounded px-1 py-0.5">{"{{offer_id}}"}</code>{" "}
-                          <code className="bg-background border rounded px-1 py-0.5">{"{{stream}}"}</code>{" "}
-                          <code className="bg-background border rounded px-1 py-0.5">{"{{any_field}}"}</code>
-                        </div>
-                      </div>
-                    )}
+                  {/* Variable reference — always visible, click to copy */}
+                  <div className="rounded-lg border bg-muted/20 p-2.5 space-y-1.5">
+                    <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                      <Info className="w-3 h-3" /> Variables <span className="font-normal">(click to copy)</span>
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {BUILTIN_VARS.map((v) => (
+                        <code
+                          key={v.key}
+                          title={v.desc}
+                          className="text-xs bg-background border rounded px-1.5 py-0.5 cursor-pointer hover:bg-primary/10 transition-colors"
+                          onClick={() => { navigator.clipboard.writeText(v.key); toast.success(`Copied ${v.key}`); }}
+                        >
+                          {v.key}
+                        </code>
+                      ))}
+                      <code className="text-xs bg-background border border-dashed rounded px-1.5 py-0.5 text-muted-foreground">{"{{any_field}}"}</code>
+                    </div>
                   </div>
 
                   {/* Body builder */}
@@ -1030,44 +1062,40 @@ export default function TargetWebsites() {
                         {form.bodyFields.map((bf, i) => (
                           <div key={i} className="flex gap-2 items-center">
                             <Input
-                              placeholder="Key (e.g. name)"
+                              placeholder="key"
                               value={bf.key}
-                              className="font-mono text-xs"
+                              className="w-32 font-mono text-xs h-8"
                               onChange={(e) => {
                                 const fs = [...form.bodyFields];
                                 fs[i] = { ...fs[i], key: e.target.value };
                                 setForm((f) => ({ ...f, bodyFields: fs }));
                               }}
                             />
-                            <span className="text-muted-foreground text-sm shrink-0">→</span>
+                            <span className="text-muted-foreground text-xs shrink-0">→</span>
                             <Input
-                              placeholder="Value (e.g. {{name}})"
+                              placeholder="{{name}} or static"
                               value={bf.value}
-                              className="font-mono text-xs"
+                              className="flex-1 font-mono text-xs h-8"
                               onChange={(e) => {
                                 const fs = [...form.bodyFields];
                                 fs[i] = { ...fs[i], value: e.target.value };
                                 setForm((f) => ({ ...f, bodyFields: fs }));
                               }}
                             />
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="shrink-0"
-                              onClick={() =>
-                                setForm((f) => ({ ...f, bodyFields: f.bodyFields.filter((_, j) => j !== i) }))
-                              }
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-destructive shrink-0"
+                              onClick={() => setForm((f) => ({ ...f, bodyFields: f.bodyFields.filter((_, j) => j !== i) }))}
                             >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         ))}
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() =>
-                            setForm((f) => ({ ...f, bodyFields: [...f.bodyFields, { key: "", value: "" }] }))
-                          }
+                          className="h-7 text-xs mt-1"
+                          onClick={() => setForm((f) => ({ ...f, bodyFields: [...f.bodyFields, { key: "", value: "" }] }))}
                         >
                           <Plus className="w-3 h-3 mr-1" /> Add Field
                         </Button>
@@ -1076,110 +1104,69 @@ export default function TargetWebsites() {
                   </div>
 
                   {/* Headers */}
-                  <div className="space-y-2">
-                    <Label className="text-muted-foreground">Headers <span className="text-xs font-normal">(optional, supports variables)</span></Label>
+                  <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-sm">Headers <span className="text-xs font-normal text-muted-foreground">(optional · supports variables)</span></Label>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setForm((f) => ({ ...f, customHeaders: [...f.customHeaders, { key: "", value: "" }] }))}
+                      >
+                        <Plus className="w-3 h-3 mr-1" /> Add
+                      </Button>
+                    </div>
+                    {form.customHeaders.length === 0 && (
+                      <p className="text-xs text-muted-foreground italic">No custom headers. Content-Type is set automatically.</p>
+                    )}
                     {form.customHeaders.map((h, i) => (
-                      <div key={i} className="flex gap-2">
+                      <div key={i} className="flex gap-2 items-center">
                         <Input
-                          placeholder="Header name (e.g. Authorization)"
+                          placeholder="Header-Name"
                           value={h.key}
-                          className="text-xs"
+                          className="w-44 text-xs h-8"
                           onChange={(e) => {
                             const hs = [...form.customHeaders];
                             hs[i] = { ...hs[i], key: e.target.value };
                             setForm((f) => ({ ...f, customHeaders: hs }));
                           }}
                         />
+                        <span className="text-muted-foreground text-xs shrink-0">:</span>
                         <Input
-                          placeholder="Value (e.g. Bearer {{api_key}})"
+                          placeholder="Bearer {{api_key}}"
                           value={h.value}
-                          className="text-xs font-mono"
+                          className="flex-1 font-mono text-xs h-8"
                           onChange={(e) => {
                             const hs = [...form.customHeaders];
                             hs[i] = { ...hs[i], value: e.target.value };
                             setForm((f) => ({ ...f, customHeaders: hs }));
                           }}
                         />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="shrink-0"
-                          onClick={() =>
-                            setForm((f) => ({ ...f, customHeaders: f.customHeaders.filter((_, j) => j !== i) }))
-                          }
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-destructive shrink-0"
+                          onClick={() => setForm((f) => ({ ...f, customHeaders: f.customHeaders.filter((_, j) => j !== i) }))}
                         >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     ))}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        setForm((f) => ({ ...f, customHeaders: [...f.customHeaders, { key: "", value: "" }] }))
-                      }
-                    >
-                      <Plus className="w-3 h-3 mr-1" /> Add Header
-                    </Button>
                   </div>
 
                   {/* Variable Fields */}
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <Label>Variable Fields</Label>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Names of fields the user fills in Step 5 when creating a routing rule (e.g. <code className="font-mono">stream</code>, <code className="font-mono">offer_id</code>)
-                        </p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="shrink-0 text-xs"
-                        onClick={() => setForm((f) => ({ ...f, customVariableFields: [...f.customVariableFields, ""] }))}
-                      >
-                        + Add Field
-                      </Button>
-                    </div>
-                    {form.customVariableFields.length === 0 && (
-                      <p className="text-xs text-muted-foreground italic">
-                        No variable fields defined. Add fields that should be filled per routing rule.
-                      </p>
-                    )}
-                    {form.customVariableFields.map((vf, idx) => (
-                      <div key={idx} className="flex gap-2 items-center">
-                        <Input
-                          placeholder={`e.g. stream, offer_id, campaign`}
-                          value={vf}
-                          className="text-xs font-mono"
-                          onChange={(e) => {
-                            const next = [...form.customVariableFields];
-                            next[idx] = e.target.value;
-                            setForm((f) => ({ ...f, customVariableFields: next }));
-                          }}
-                        />
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="shrink-0 text-muted-foreground hover:text-destructive px-2"
-                          onClick={() => {
-                            const next = form.customVariableFields.filter((_, i) => i !== idx);
-                            setForm((f) => ({ ...f, customVariableFields: next }));
-                          }}
-                        >
-                          ✕
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
+                  <TagInput
+                    label="Variable Fields"
+                    hint="Fields users fill per routing rule in Step 5 (e.g. offer_id, stream). Press Enter or comma to add."
+                    values={form.customVariableFields}
+                    onChange={(vals) => setForm((f) => ({ ...f, customVariableFields: vals }))}
+                    placeholder="offer_id, stream..."
+                  />
 
                   {/* Success Condition */}
-                  <div className="space-y-2">
-                    <Label>Success Condition</Label>
+                  <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+                    <Label className="text-sm">Success Condition</Label>
                     <select
-                      className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                      className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
                       value={form.successCondition}
                       onChange={(e) => setForm((f) => ({ ...f, successCondition: e.target.value as "http_2xx" | "json_field" }))}
                     >
@@ -1191,14 +1178,14 @@ export default function TargetWebsites() {
                         <Input
                           placeholder="Field name (e.g. status)"
                           value={form.jsonField}
-                          className="text-xs font-mono"
+                          className="text-xs font-mono h-8"
                           onChange={(e) => setForm((f) => ({ ...f, jsonField: e.target.value }))}
                         />
-                        <span className="text-muted-foreground text-sm shrink-0">==</span>
+                        <span className="text-muted-foreground text-xs shrink-0">=</span>
                         <Input
                           placeholder="Expected value (e.g. ok)"
                           value={form.jsonValue}
-                          className="text-xs font-mono"
+                          className="text-xs font-mono h-8"
                           onChange={(e) => setForm((f) => ({ ...f, jsonValue: e.target.value }))}
                         />
                       </div>
