@@ -148,7 +148,8 @@ interface DynTemplate {
 }
 
 // ─── Form state ──────────────────────────────────────────────────────────────
-type FormMode = "select-template" | "configure" | "configure-dynamic";
+// "edit-dynamic" = editing a template-based destination (name + secrets only)
+type FormMode = "select-template" | "configure" | "configure-dynamic" | "edit-dynamic";
 
 interface BodyField { key: string; value: string }
 interface HeaderField { key: string; value: string }
@@ -327,11 +328,14 @@ export default function TargetWebsites() {
   const [form, setForm] = useState<FormState>(defaultForm());
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [showVarRef, setShowVarRef] = useState(false);
-  // Dynamic template state
+  // Dynamic template state (create flow)
   const [selectedDynTemplate, setSelectedDynTemplate] = useState<DynTemplate | null>(null);
   const [dynName, setDynName] = useState("");
   const [dynSecrets, setDynSecrets] = useState<Record<string, string>>({});
   const [dynShowSecret, setDynShowSecret] = useState<Record<string, boolean>>({});
+  // Edit-dynamic state (edit flow — simplified: name + secrets only)
+  const [editDynSecretKeys, setEditDynSecretKeys] = useState<string[]>([]);
+  const [editDynUrl, setEditDynUrl] = useState("");
 
   const utils = trpc.useUtils();
   const { data: sites = [], isLoading } = trpc.targetWebsites.list.useQuery();
@@ -384,6 +388,15 @@ export default function TargetWebsites() {
     onError: (e) => toast.error(e.message),
   });
 
+  const updateFromTemplateMutation = trpc.targetWebsites.updateFromTemplate.useMutation({
+    onSuccess: () => {
+      utils.targetWebsites.list.invalidate();
+      setOpen(false);
+      toast.success("Updated");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const selectedTemplate = TEMPLATES.find((t) => t.id === form.templateType)!;
   const isCustom = form.templateType === "custom";
 
@@ -426,11 +439,27 @@ export default function TargetWebsites() {
 
   function openEdit(site: (typeof sites)[0]) {
     setEditId(site.id);
+    setTestResult(null);
+
+    // Dynamic template-based destination → simplified edit (name + secrets only)
+    const siteTemplateId = (site as { templateId?: number | null }).templateId;
+    if (siteTemplateId) {
+      const config = (site.templateConfig ?? {}) as Record<string, unknown>;
+      const secretKeys = Object.keys((config.secrets ?? {}) as Record<string, unknown>);
+      setDynName(site.name);
+      setDynSecrets({});
+      setDynShowSecret({});
+      setEditDynSecretKeys(secretKeys);
+      setEditDynUrl(site.url ?? "");
+      setMode("edit-dynamic");
+      setOpen(true);
+      return;
+    }
+
+    // Legacy template (sotuvchi / 100k / custom) → full form
     const tpl = TEMPLATES.find((t) => t.id === site.templateType) ?? TEMPLATES[2];
     const config = (site.templateConfig ?? {}) as Record<string, unknown>;
-    const fields: Record<string, string> = {};
 
-    // Restore bodyFields from config
     const bodyFields: BodyField[] = Array.isArray(config.bodyFields)
       ? (config.bodyFields as BodyField[])
       : [{ key: "name", value: "{{name}}" }, { key: "phone", value: "{{phone}}" }];
@@ -439,7 +468,7 @@ export default function TargetWebsites() {
       ...defaultForm(),
       name: site.name,
       templateType: tpl.id,
-      fields,
+      fields: {},
       url: (config.url as string) ?? site.url ?? "",
       method: "POST",
       contentType: (config.contentType as ContentType) ?? "json",
@@ -456,8 +485,17 @@ export default function TargetWebsites() {
         : [],
     });
     setMode("configure");
-    setTestResult(null);
     setOpen(true);
+  }
+
+  function handleEditDynSubmit() {
+    if (!dynName.trim()) { toast.error("Name is required"); return; }
+    if (!editId) return;
+    updateFromTemplateMutation.mutate({
+      id: editId,
+      name: dynName.trim(),
+      secrets: dynSecrets,
+    });
   }
 
   function setField(key: string, value: string) {
@@ -534,7 +572,7 @@ export default function TargetWebsites() {
     testMutation.mutate({ id: editId });
   }
 
-  const isSaving = createMutation.isPending || updateMutation.isPending || createFromTemplateMutation.isPending;
+  const isSaving = createMutation.isPending || updateMutation.isPending || createFromTemplateMutation.isPending || updateFromTemplateMutation.isPending;
   const isTesting = testMutation.isPending;
 
   return (
@@ -636,6 +674,8 @@ export default function TargetWebsites() {
                 ? "Choose Template"
                 : mode === "configure-dynamic"
                 ? `New ${selectedDynTemplate?.name ?? "Website"}`
+                : mode === "edit-dynamic"
+                ? `Edit: ${dynName || "Website"}`
                 : editId
                 ? `Edit: ${form.name || "Website"}`
                 : `New ${selectedTemplate?.label ?? "Website"}`}
@@ -645,6 +685,8 @@ export default function TargetWebsites() {
                 ? "Select a template to get started"
                 : mode === "configure-dynamic"
                 ? selectedDynTemplate?.endpointUrl ?? "Configure your destination"
+                : mode === "edit-dynamic"
+                ? editDynUrl || "Update name and API secrets"
                 : editId
                 ? "Update your target website configuration"
                 : "Configure a new target website for lead routing"}
@@ -771,6 +813,52 @@ export default function TargetWebsites() {
                     </p>
                   ))}
                 </div>
+              )}
+            </div>
+          )}
+
+          {/* Edit: simplified form for template-based destination */}
+          {mode === "edit-dynamic" && (
+            <div className="space-y-5 py-2">
+              {/* Name */}
+              <div className="space-y-1.5">
+                <Label>Affiliate Name <span className="text-destructive">*</span></Label>
+                <Input
+                  placeholder="e.g. Sotuvchi — Main Campaign"
+                  value={dynName}
+                  onChange={(e) => setDynName(e.target.value)}
+                />
+              </div>
+
+              {/* Secret fields — leave blank to keep existing */}
+              {editDynSecretKeys.map((key) => (
+                <div key={key} className="space-y-1.5">
+                  <Label>
+                    {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+                    <span className="text-muted-foreground text-xs ml-1">(leave blank to keep existing)</span>
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      placeholder="••••••••  (unchanged)"
+                      value={dynSecrets[key] ?? ""}
+                      onChange={(e) => setDynSecrets((s) => ({ ...s, [key]: e.target.value }))}
+                      type={dynShowSecret[key] ? "text" : "password"}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setDynShowSecret((s) => ({ ...s, [key]: !s[key] }))}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {dynShowSecret[key] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {/* Endpoint info */}
+              {editDynUrl && (
+                <p className="text-xs text-muted-foreground truncate font-mono">{editDynUrl}</p>
               )}
             </div>
           )}
@@ -1162,6 +1250,16 @@ export default function TargetWebsites() {
               <Button onClick={handleDynSubmit} disabled={isSaving}>
                 {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Save Website
+              </Button>
+            </DialogFooter>
+          )}
+
+          {mode === "edit-dynamic" && (
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button onClick={handleEditDynSubmit} disabled={isSaving}>
+                {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Save Changes
               </Button>
             </DialogFooter>
           )}
