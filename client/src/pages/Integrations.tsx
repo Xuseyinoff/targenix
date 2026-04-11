@@ -72,16 +72,30 @@ function typeIcon(type: string) {
   return <Globe className="h-4 w-4" />;
 }
 
-function typeBadgeClass(type: string) {
+/** Colored badge when integration is on; neutral when off (switch already shows off). */
+function typeBadgeClass(type: string, isActive: boolean) {
+  if (!isActive) {
+    return "border-border bg-muted/70 text-muted-foreground";
+  }
   if (type === "TELEGRAM") return "bg-sky-50 text-sky-600 border-sky-200 dark:bg-sky-950 dark:text-sky-400";
   if (type === "LEAD_ROUTING") return "bg-orange-50 text-orange-600 border-orange-200 dark:bg-orange-950 dark:text-orange-400";
   return "bg-violet-50 text-violet-600 border-violet-200 dark:bg-violet-950 dark:text-violet-400";
 }
 
-function typeIconBg(type: string) {
+function typeIconBg(type: string, isActive: boolean) {
+  if (!isActive) {
+    return "bg-muted text-muted-foreground";
+  }
   if (type === "TELEGRAM") return "bg-sky-100 text-sky-600 dark:bg-sky-950 dark:text-sky-400";
   if (type === "LEAD_ROUTING") return "bg-orange-100 text-orange-600 dark:bg-orange-950 dark:text-orange-400";
   return "bg-violet-100 text-violet-600 dark:bg-violet-950 dark:text-violet-400";
+}
+
+/** Short label in the dense list row to leave room for the name. */
+function typeLabelCompact(type: string) {
+  if (type === "LEAD_ROUTING") return "Routing";
+  if (type === "TELEGRAM") return "Telegram";
+  return "Affiliate";
 }
 
 export default function Integrations() {
@@ -407,9 +421,20 @@ export default function Integrations() {
                       : String(config.url ?? "—");
 
                 return (
-                  <Card key={integration.id} className="overflow-hidden">
+                  <Card
+                    key={integration.id}
+                    className={cn(
+                      "overflow-hidden transition-colors",
+                      !integration.isActive && "bg-muted/25 border-muted-foreground/15"
+                    )}
+                  >
                     <CardContent className="p-0">
-                      <div className="flex min-h-[3.25rem] items-stretch">
+                      <div
+                        className={cn(
+                          "flex min-h-[3.25rem] items-stretch",
+                          !integration.isActive && "opacity-[0.92]"
+                        )}
+                      >
                         <button
                           type="button"
                           id={`integration-trigger-${integration.id}`}
@@ -417,35 +442,45 @@ export default function Integrations() {
                           onClick={() => toggleExpand(integration.id)}
                           aria-expanded={isExpanded}
                           aria-controls={`integration-panel-${integration.id}`}
+                          aria-label={`${integration.name}, ${typeLabelCompact(integration.type)}${
+                            integration.isActive ? ", active" : ", turned off"
+                          }. Show details.`}
                         >
                           <div
                             className={cn(
                               "flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
-                              typeIconBg(integration.type)
+                              typeIconBg(integration.type, integration.isActive)
                             )}
                           >
                             {typeIcon(integration.type)}
                           </div>
                           <div className="min-w-0 flex-1 py-0.5">
                             <div className="flex min-w-0 items-center gap-1.5">
-                              <p className="min-w-0 flex-1 truncate text-sm font-semibold leading-tight">
+                              <p
+                                className={cn(
+                                  "min-w-0 flex-1 truncate text-sm font-semibold leading-tight",
+                                  !integration.isActive && "text-foreground/75"
+                                )}
+                              >
                                 {integration.name}
                               </p>
                               <span
                                 className={cn(
                                   "inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
-                                  typeBadgeClass(integration.type)
+                                  typeBadgeClass(integration.type, integration.isActive)
                                 )}
                               >
-                                {integration.type === "LEAD_ROUTING" ? "Lead Routing" : integration.type}
+                                {typeLabelCompact(integration.type)}
                               </span>
-                              {!integration.isActive && (
-                                <span className="text-muted-foreground inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium">
-                                  Inactive
-                                </span>
-                              )}
                             </div>
-                            <p className="text-muted-foreground mt-0.5 truncate text-[11px] leading-tight sm:text-xs">
+                            <p
+                              className={cn(
+                                "mt-0.5 truncate text-[11px] leading-tight sm:text-xs",
+                                integration.isActive
+                                  ? "text-muted-foreground"
+                                  : "text-muted-foreground/80"
+                              )}
+                            >
                               {summaryLine}
                             </p>
                           </div>
