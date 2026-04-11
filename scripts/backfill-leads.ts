@@ -110,12 +110,12 @@ async function main() {
 
   // Load facebook_forms cache once (tenant-safe: keyed by userId:pageId:formId)
   const formsRows = await db
-    .select({ userId: facebookForms.userId, pageId: facebookForms.pageId, formId: facebookForms.formId, pageName: facebookForms.pageName, formName: facebookForms.formName })
+    .select({ userId: facebookForms.userId, pageId: facebookForms.pageId, formId: facebookForms.formId, pageName: facebookForms.pageName, formName: facebookForms.formName, platform: facebookForms.platform })
     .from(facebookForms);
 
-  const formsCache = new Map<string, { pageName: string; formName: string }>();
+  const formsCache = new Map<string, { pageName: string; formName: string; platform: "fb" | "ig" }>();
   for (const f of formsRows) {
-    formsCache.set(`${f.userId}:${f.pageId}:${f.formId}`, { pageName: f.pageName, formName: f.formName });
+    formsCache.set(`${f.userId}:${f.pageId}:${f.formId}`, { pageName: f.pageName, formName: f.formName, platform: f.platform as "fb" | "ig" });
   }
   console.log(`[Backfill] ${formsCache.size} facebook_forms loaded into cache.`);
 
@@ -136,6 +136,8 @@ async function main() {
             db.update(leads).set({
               pageName:     formInfo?.pageName  ?? null,
               formName:     formInfo?.formName  ?? null,
+              // Use facebook_forms platform as authoritative source (corrects wrong "fb" defaults)
+              ...(formInfo?.platform ? { platform: formInfo.platform } : {}),
               campaignId:   parsed.campaignId,
               campaignName: parsed.campaignName,
               adsetId:      parsed.adsetId,

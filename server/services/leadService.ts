@@ -536,12 +536,13 @@ export async function processLead(params: {
     await log.warn("LEAD", `No access token found — lead data cannot be fetched`, { pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
   }
 
-  // Resolve pageName/formName for denormalized columns (tenant-safe)
+  // Resolve pageName/formName/platform from facebook_forms (tenant-safe, authoritative source)
   let pageName: string | null = null;
   let formName: string | null = null;
+  let resolvedPlatform: "fb" | "ig" | null = null;
   try {
     const [formRow] = await db
-      .select({ pageName: facebookForms.pageName, formName: facebookForms.formName })
+      .select({ pageName: facebookForms.pageName, formName: facebookForms.formName, platform: facebookForms.platform })
       .from(facebookForms)
       .where(
         and(
@@ -553,7 +554,8 @@ export async function processLead(params: {
       .limit(1);
     pageName = formRow?.pageName ?? null;
     formName = formRow?.formName ?? null;
-  } catch { /* non-critical — lead still processed without page/form name */ }
+    resolvedPlatform = (formRow?.platform as "fb" | "ig" | null) ?? null;
+  } catch { /* non-critical */ }
 
   // Extract extra field_data values (everything except full_name + phone_number)
   const rawDataForFields = rawData as Record<string, unknown> | null;
@@ -564,6 +566,10 @@ export async function processLead(params: {
 
   // Step 3: Update lead with all enriched data (single write, no further updates)
   const rawDataRecord = rawData as Record<string, unknown> | null;
+  // Platform priority: Graph API rawData → facebook_forms → keep existing
+  const graphPlatform = rawDataRecord?.platform === "ig" ? "ig" : rawDataRecord?.platform === "fb" ? "fb" : null;
+  const platformToWrite = graphPlatform ?? resolvedPlatform ?? undefined;
+
   await db
     .update(leads)
     .set({
@@ -572,6 +578,7 @@ export async function processLead(params: {
       email,
       rawData:      rawData ?? undefined,
       status:       "RECEIVED",
+      ...(platformToWrite ? { platform: platformToWrite } : {}),
       pageName,
       formName,
       campaignId:   rawDataRecord?.campaign_id   as string | null ?? null,
