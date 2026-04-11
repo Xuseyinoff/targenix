@@ -23,6 +23,7 @@ import { encrypt, decrypt } from "../encryption";
 import {
   sendAffiliateOrderByTemplate,
   sendLeadViaTemplate,
+  buildBody,
   buildVariableContext,
   buildCustomBody as _buildCustomBody,
   injectVariables,
@@ -532,10 +533,10 @@ export const targetWebsitesRouter = router({
         if (!dynTpl) throw new Error("Destination template not found");
 
         const varFields = (dynTpl.variableFields as string[]) ?? [];
-        // Fill missing variable fields with "test_[key]" placeholder
+        const existingVariables = ((site.templateConfig as Record<string, unknown>)?.variables as Record<string, string>) ?? {};
         const varOverridesWithFallback: Record<string, string> = {};
         for (const key of varFields) {
-          varOverridesWithFallback[key] = varOverrides[key] ?? `test_${key}`;
+          varOverridesWithFallback[key] = varOverrides[key] ?? existingVariables[key] ?? `test_${key}`;
         }
 
         const result = await sendLeadViaTemplate(
@@ -546,16 +547,11 @@ export const targetWebsitesRouter = router({
         );
         const durationMs = Date.now() - t0;
 
-        // Build preview: iterate bodyFields, mask secrets
-        const bodyFields = (dynTpl.bodyFields as Array<{ key: string; value: string; isSecret: boolean }>) ?? [];
-        const varCtx = buildVariableContext(sampleLead, varOverridesWithFallback);
-        const previewFields: Record<string, string> = {};
-        for (const field of bodyFields) {
-          const secretMatch = field.value.match(/^\{\{SECRET:([^}]+)\}\}$/);
-          if (secretMatch) {
-            previewFields[field.key] = "••••••••"; // never expose decrypted secret in preview
-          } else {
-            previewFields[field.key] = injectVariables(field.value, varCtx);
+        // Build preview using the same body builder and mask any secret fields.
+        const previewFields = buildBody(dynTpl, site, sampleLead, varOverridesWithFallback);
+        for (const field of (dynTpl.bodyFields as Array<{ key: string; value: string; isSecret: boolean }>) ?? []) {
+          if (field.value.startsWith("{{SECRET:") && field.value.endsWith("}}")) {
+            previewFields[field.key] = "••••••••";
           }
         }
 

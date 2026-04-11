@@ -293,6 +293,56 @@ export function buildCustomBody(
   return { body: varCtx, contentTypeHeader: "application/json" };
 }
 
+/**
+ * Build the request body for a destination template configured with bodyFields.
+ * Supports secret fields, lead fields, routing variables, and static values.
+ */
+export function buildBody(
+  template: DestinationTemplate,
+  targetWebsite: { templateConfig?: unknown },
+  lead: LeadPayload,
+  variables: Record<string, string> = {}
+): Record<string, string> {
+  const body: Record<string, string> = {};
+  const cfg = (targetWebsite.templateConfig ?? {}) as Record<string, unknown>;
+  const secrets = (cfg.secrets as Record<string, string> | undefined) ?? {};
+
+  for (const field of template.bodyFields as Array<{ key: string; value: string }>) {
+    if (!field.key) continue;
+    const value = field.value ?? "";
+
+    if (value.startsWith("{{SECRET:") && value.endsWith("}}")) {
+      const secretKey = value.replace("{{SECRET:", "").replace("}}", "").trim();
+      const encrypted = secrets[secretKey];
+      if (encrypted) {
+        try {
+          body[field.key] = decrypt(encrypted);
+        } catch {
+          body[field.key] = "";
+        }
+      } else {
+        body[field.key] = "";
+      }
+      continue;
+    }
+
+    if (value === "{{name}}") {
+      body[field.key] = lead.fullName ?? "";
+    } else if (value === "{{phone}}") {
+      body[field.key] = lead.phone ?? "";
+    } else if (value === "{{email}}") {
+      body[field.key] = lead.email ?? "";
+    } else if (value.startsWith("{{") && value.endsWith("}}")) {
+      const varKey = value.replace("{{", "").replace("}}", "").trim();
+      body[field.key] = variables[varKey] ?? "";
+    } else {
+      body[field.key] = value;
+    }
+  }
+
+  return body;
+}
+
 // ─── Inject variables into headers ───────────────────────────────────────────
 function buildHeaders(
   cfg: Record<string, unknown>,
@@ -422,9 +472,6 @@ export async function sendLeadViaTemplate(
   variableValues: Record<string, string> = {}
 ): Promise<AffiliateResult> {
   const cfg = (templateConfig ?? {}) as Record<string, unknown>;
-  const secrets = (cfg.secrets ?? {}) as Record<string, string>;
-
-  const bodyFields = template.bodyFields as Array<{ key: string; value: string; isSecret: boolean }>;
 
   try {
     assertSafeOutboundUrl(template.endpointUrl);
@@ -432,31 +479,8 @@ export async function sendLeadViaTemplate(
     // Build variable context from lead
     const varCtx = buildVariableContext(lead, variableValues);
 
-    // Build the request body by resolving each bodyField's value
-    const resolvedFields: Record<string, string> = {};
-    for (const field of bodyFields) {
-      const rawValue = field.value;
-
-      // Pattern 1: {{SECRET:key}} → decrypt stored secret
-      const secretMatch = rawValue.match(/^\{\{SECRET:([^}]+)\}\}$/);
-      if (secretMatch) {
-        const secretKey = secretMatch[1].trim();
-        const encryptedValue = secrets[secretKey];
-        if (encryptedValue) {
-          try {
-            resolvedFields[field.key] = decrypt(encryptedValue);
-          } catch {
-            resolvedFields[field.key] = "";
-          }
-        } else {
-          resolvedFields[field.key] = "";
-        }
-        continue;
-      }
-
-      // Pattern 2: {{variable}} → replace from context (built-ins + variableValues)
-      resolvedFields[field.key] = injectVariables(rawValue, varCtx);
-    }
+    // Build the request body from template bodyFields
+    const resolvedFields = buildBody(template, { templateConfig: cfg }, lead, variableValues);
 
     // Build request based on contentType
     const method = template.method ?? "POST";
