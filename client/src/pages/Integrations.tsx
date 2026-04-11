@@ -42,6 +42,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
+import { cn } from "@/lib/utils";
 
 type IntegrationType = "TELEGRAM" | "AFFILIATE";
 
@@ -205,16 +206,15 @@ export default function Integrations() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-4 max-w-4xl">
-        {/* Header — compact */}
+      <div className="max-w-4xl space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <h1 className="text-xl font-bold tracking-tight">Integrations</h1>
-            <p className="text-muted-foreground text-xs mt-0.5 hidden sm:block">
+            <p className="text-muted-foreground mt-0.5 hidden text-xs sm:block">
               Route leads to Telegram, affiliate endpoints, or target websites
             </p>
           </div>
-          <div className="flex gap-1.5 shrink-0">
+          <div className="flex shrink-0 gap-1.5">
             <Button
               variant="outline"
               size="sm"
@@ -223,7 +223,7 @@ export default function Integrations() {
               title="Add Telegram / Affiliate"
             >
               <Plus className="h-4 w-4" />
-              <span className="hidden sm:inline ml-1.5">Telegram / Affiliate</span>
+              <span className="ml-1.5 hidden sm:inline">Telegram / Affiliate</span>
             </Button>
             <Button
               size="sm"
@@ -232,7 +232,7 @@ export default function Integrations() {
               title="New Lead Routing"
             >
               <Zap className="h-4 w-4" />
-              <span className="hidden sm:inline ml-1.5">Lead Routing</span>
+              <span className="ml-1.5 hidden sm:inline">Lead Routing</span>
             </Button>
           </div>
         </div>
@@ -259,44 +259,48 @@ export default function Integrations() {
               )}
             </div>
 
-            {/* Filter chips row */}
-            <div className="flex items-center gap-2 flex-wrap">
-              {/* Type chips */}
-              <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-lg bg-muted/50 p-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {(["ALL", "LEAD_ROUTING", "TELEGRAM", "AFFILIATE"] as const).map((t) => (
                   <button
                     key={t}
+                    type="button"
                     onClick={() => setFilterType(t)}
-                    className={`text-xs px-2.5 py-1 rounded-md font-medium transition-all ${
+                    className={cn(
+                      "shrink-0 rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-all",
                       filterType === t
-                        ? "bg-background shadow-sm text-foreground"
+                        ? "bg-background text-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground"
-                    }`}
+                    )}
                   >
-                    {t === "ALL" ? "All" : t === "LEAD_ROUTING" ? "Lead Routing" : t === "TELEGRAM" ? "Telegram" : "Affiliate"}
+                    {t === "ALL"
+                      ? "All"
+                      : t === "LEAD_ROUTING"
+                        ? "Lead Routing"
+                        : t === "TELEGRAM"
+                          ? "Telegram"
+                          : "Affiliate"}
                   </button>
                 ))}
               </div>
-
-              {/* Status chips */}
-              <div className="flex items-center gap-1 bg-muted/50 rounded-lg p-0.5">
+              <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-lg bg-muted/50 p-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {(["ALL", "ACTIVE", "INACTIVE"] as const).map((s) => (
                   <button
                     key={s}
+                    type="button"
                     onClick={() => setFilterStatus(s)}
-                    className={`text-xs px-2.5 py-1 rounded-md font-medium transition-all ${
+                    className={cn(
+                      "shrink-0 rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-all",
                       filterStatus === s
-                        ? "bg-background shadow-sm text-foreground"
+                        ? "bg-background text-foreground shadow-sm"
                         : "text-muted-foreground hover:text-foreground"
-                    }`}
+                    )}
                   >
                     {s === "ALL" ? "All Status" : s === "ACTIVE" ? "Active" : "Inactive"}
                   </button>
                 ))}
               </div>
-
-              {/* Results count */}
-              <span className="text-xs text-muted-foreground ml-auto">
+              <span className="text-muted-foreground ml-auto shrink-0 text-xs">
                 {filteredIntegrations.length === integrations.length
                   ? `${integrations.length} integrations`
                   : `${filteredIntegrations.length} of ${integrations.length}`}
@@ -307,7 +311,7 @@ export default function Integrations() {
 
         {/* Quick-start cards when empty */}
         {!isLoading && !integrations?.length && (
-          <div className="grid sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Card
               className="border-dashed cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors"
               onClick={() => navigate("/integrations/new-routing")}
@@ -390,110 +394,138 @@ export default function Integrations() {
                 const varFields = isRouting ? (config.variableFields as Record<string, string> | undefined) : undefined;
                 const varEntries = varFields ? Object.entries(varFields).filter(([, v]) => v) : [];
 
+                const summaryLine =
+                  isTelegram
+                    ? `Chat: ${String(config.chatId ?? "—")}`
+                    : isRouting
+                      ? [
+                          integration.formName,
+                          `→ ${String((integration as { targetWebsiteName?: string }).targetWebsiteName ?? config.targetWebsiteName ?? "—")}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")
+                      : String(config.url ?? "—");
+
                 return (
                   <Card key={integration.id} className="overflow-hidden">
-                    {/* Collapsed header — always visible */}
                     <CardContent className="p-0">
-                      <button
-                        className="w-full text-left"
-                        onClick={() => toggleExpand(integration.id)}
-                        aria-expanded={isExpanded}
-                      >
-                        <div className="flex items-center gap-3 px-3 py-3 hover:bg-muted/30 transition-colors">
-                          {/* Icon */}
-                          <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${typeIconBg(integration.type)}`}>
+                      <div className="flex min-h-[3.25rem] items-stretch">
+                        <button
+                          type="button"
+                          id={`integration-trigger-${integration.id}`}
+                          className="hover:bg-muted/30 flex min-w-0 flex-1 items-center gap-2.5 py-2 pr-1 pl-2.5 text-left transition-colors sm:gap-3 sm:px-3"
+                          onClick={() => toggleExpand(integration.id)}
+                          aria-expanded={isExpanded}
+                          aria-controls={`integration-panel-${integration.id}`}
+                        >
+                          <div
+                            className={cn(
+                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+                              typeIconBg(integration.type)
+                            )}
+                          >
                             {typeIcon(integration.type)}
                           </div>
-
-                          {/* Name + badge */}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="font-semibold text-sm truncate">{integration.name}</p>
-                              <span className={`text-[11px] px-1.5 py-0.5 rounded-full border font-medium shrink-0 ${typeBadgeClass(integration.type)}`}>
+                          <div className="min-w-0 flex-1 py-0.5">
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <p className="min-w-0 flex-1 truncate text-sm font-semibold leading-tight">
+                                {integration.name}
+                              </p>
+                              <span
+                                className={cn(
+                                  "inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
+                                  typeBadgeClass(integration.type)
+                                )}
+                              >
                                 {integration.type === "LEAD_ROUTING" ? "Lead Routing" : integration.type}
                               </span>
                               {!integration.isActive && (
-                                <span className="text-[11px] px-1.5 py-0.5 rounded-full border font-medium text-muted-foreground shrink-0">
+                                <span className="text-muted-foreground inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium">
                                   Inactive
                                 </span>
                               )}
                             </div>
-                            {/* Compact summary line */}
-                            <p className="text-xs text-muted-foreground truncate mt-0.5">
-                              {isTelegram && `Chat: ${String(config.chatId ?? "—")}`}
-                              {isRouting && (
-                                <>
-                                  {integration.formName && (
-                                    <span className="font-medium text-foreground/70">{integration.formName}</span>
-                                  )}
-                                  {integration.formName && " · "}
-                                  {"→ "}
-                                  {String((integration as {targetWebsiteName?: string}).targetWebsiteName ?? config.targetWebsiteName ?? "—")}
-                                </>
-                              )}
-                              {!isTelegram && !isRouting && String(config.url ?? "—")}
+                            <p className="text-muted-foreground mt-0.5 truncate text-[11px] leading-tight sm:text-xs">
+                              {summaryLine}
                             </p>
                           </div>
-
-                          {/* Quick actions (routing only) + Switch + chevron */}
-                          <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-                            {isRouting && (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                                  title="Edit routing"
-                                  onClick={() => navigate(`/integrations/edit-routing/${integration.id}`)}
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                                  title="Test lead"
-                                  disabled={testLeadMutation.isPending && testLeadMutation.variables?.id === integration.id}
-                                  onClick={() => testLeadMutation.mutate({ id: integration.id })}
-                                >
-                                  {testLeadMutation.isPending && testLeadMutation.variables?.id === integration.id
-                                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                    : <FlaskConical className="h-3.5 w-3.5" />
-                                  }
-                                </Button>
-                              </>
+                          <ChevronDown
+                            className={cn(
+                              "text-muted-foreground h-4 w-4 shrink-0 transition-transform",
+                              isExpanded && "rotate-180"
                             )}
-                            {isTelegram && (
+                          />
+                        </button>
+
+                        <div
+                          className="bg-muted/20 flex shrink-0 items-center gap-0.5 border-l px-1 py-1.5 sm:gap-1 sm:px-1.5"
+                          onClick={(e) => e.stopPropagation()}
+                          role="presentation"
+                        >
+                          {isRouting && (
+                            <>
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                                title="Send test notification"
-                                disabled={testMutation.isPending}
-                                onClick={() => testMutation.mutate({ id: integration.id })}
+                                className="text-muted-foreground hover:text-foreground h-8 w-8"
+                                title="Edit routing"
+                                onClick={() => navigate(`/integrations/edit-routing/${integration.id}`)}
                               >
-                                {testMutation.isPending
-                                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                  : <Send className="h-3.5 w-3.5" />
-                                }
+                                <Pencil className="h-3.5 w-3.5" />
                               </Button>
-                            )}
-                            <Switch
-                              checked={integration.isActive}
-                              onCheckedChange={(checked) =>
-                                toggleMutation.mutate({ id: integration.id, isActive: checked })
-                              }
-                            />
-                          </div>
-                          <ChevronDown
-                            className={`h-4 w-4 text-muted-foreground transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-muted-foreground hover:text-foreground h-8 w-8"
+                                title="Test lead"
+                                disabled={
+                                  testLeadMutation.isPending &&
+                                  testLeadMutation.variables?.id === integration.id
+                                }
+                                onClick={() => testLeadMutation.mutate({ id: integration.id })}
+                              >
+                                {testLeadMutation.isPending &&
+                                testLeadMutation.variables?.id === integration.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                ) : (
+                                  <FlaskConical className="h-3.5 w-3.5" />
+                                )}
+                              </Button>
+                            </>
+                          )}
+                          {isTelegram && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-muted-foreground hover:text-foreground h-8 w-8"
+                              title="Send test notification"
+                              disabled={testMutation.isPending}
+                              onClick={() => testMutation.mutate({ id: integration.id })}
+                            >
+                              {testMutation.isPending ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Send className="h-3.5 w-3.5" />
+                              )}
+                            </Button>
+                          )}
+                          <Switch
+                            className="mx-0.5 shrink-0 scale-90 data-[state=checked]:bg-primary sm:scale-100"
+                            checked={integration.isActive}
+                            onCheckedChange={(checked) =>
+                              toggleMutation.mutate({ id: integration.id, isActive: checked })
+                            }
                           />
                         </div>
-                      </button>
+                      </div>
 
-                      {/* Expanded detail */}
                       {isExpanded && (
-                        <div className="px-3 pb-3 border-t bg-muted/20">
+                        <div
+                          id={`integration-panel-${integration.id}`}
+                          role="region"
+                          aria-labelledby={`integration-trigger-${integration.id}`}
+                          className="bg-muted/15 border-t px-2.5 pb-2.5 sm:px-3 sm:pb-3"
+                        >
                           <div className="pt-3 space-y-2">
                             {/* Detail rows */}
                             {isTelegram && (
@@ -607,7 +639,7 @@ export default function Integrations() {
               {/* Pagination */}
               {totalPages > 1 && (
                 <div className="flex items-center justify-between pt-1">
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-muted-foreground text-xs">
                     {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredIntegrations.length)} / {filteredIntegrations.length}
                   </p>
                   <div className="flex items-center gap-1">
