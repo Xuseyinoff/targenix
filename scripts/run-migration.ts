@@ -1,7 +1,8 @@
 /**
  * scripts/run-migration.ts
- * Runs 0001_leads_denormalize.sql against the configured database.
- * Usage: railway run npx tsx scripts/run-migration.ts
+ * Runs a SQL migration file against the configured database.
+ * Usage: railway run npx tsx scripts/run-migration.ts drizzle/0027_destination_templates.sql
+ *        railway run npx tsx scripts/run-migration.ts drizzle/migrations/0001_leads_denormalize.sql
  */
 import "dotenv/config";
 import mysql from "mysql2/promise";
@@ -21,7 +22,11 @@ if (!url) {
   process.exit(1);
 }
 
-const sqlPath = join(__dirname, "../drizzle/migrations/0001_leads_denormalize.sql");
+// Accept file path as CLI arg, fallback to legacy default
+const fileArg = process.argv[2];
+const sqlPath = fileArg
+  ? join(process.cwd(), fileArg)
+  : join(__dirname, "../drizzle/migrations/0001_leads_denormalize.sql");
 const rawSql = readFileSync(sqlPath, "utf8");
 
 // Strip comment lines, then split on semicolons

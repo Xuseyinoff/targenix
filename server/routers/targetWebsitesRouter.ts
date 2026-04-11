@@ -116,7 +116,7 @@ export const targetWebsitesRouter = router({
       .orderBy(desc(targetWebsites.createdAt));
 
     // Enrich with template name for dynamic-template destinations
-    const templateIds = [...new Set(rows.map(r => r.templateId).filter(Boolean))] as number[];
+    const templateIds = Array.from(new Set(rows.map(r => r.templateId).filter((id): id is number => id !== null && id !== undefined)));
     let templateMap: Map<number, string> = new Map();
     if (templateIds.length > 0) {
       const templates = await db

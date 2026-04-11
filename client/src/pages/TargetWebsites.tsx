@@ -595,7 +595,7 @@ export default function TargetWebsites() {
                       {Boolean(config.apiKeyMasked) && (
                         <p className="text-xs text-muted-foreground mt-0.5">API Key: ••••••••</p>
                       )}
-                      {isDynamic && config.secrets && Object.keys(config.secrets as object).length > 0 && (
+                      {isDynamic && config.secrets && Object.keys(config.secrets as Record<string, unknown>).length > 0 && (
                         <p className="text-xs text-muted-foreground mt-0.5">Secrets: ••••••••</p>
                       )}
                     </div>
