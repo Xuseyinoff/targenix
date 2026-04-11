@@ -22,6 +22,7 @@ import { eq, desc, and } from "drizzle-orm";
 import { encrypt, decrypt } from "../encryption";
 import {
   sendAffiliateOrderByTemplate,
+  sendLeadViaTemplate,
   buildVariableContext,
   buildCustomBody as _buildCustomBody,
   injectVariables,
@@ -366,6 +367,58 @@ export const targetWebsitesRouter = router({
     }),
 
   /**
+   * Update a dynamic (template-based) destination.
+   * Only allows changing name and secret fields.
+   * Never overwrites bodyFields, variableFields, endpointUrl, or template structure.
+   */
+  updateFromTemplate: protectedProcedure
+    .input(
+      z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        /** New secret values keyed by field key. Empty string = keep existing. */
+        secrets: z.record(z.string(), z.string()).optional(),
+        isActive: z.boolean().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB not available");
+
+      // Multi-tenant: verify ownership
+      const [site] = await db
+        .select()
+        .from(targetWebsites)
+        .where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)))
+        .limit(1);
+      if (!site) throw new Error("Website not found");
+      if (!site.templateId) throw new Error("Not a template-based destination");
+
+      const updates: Record<string, unknown> = {};
+      if (input.name !== undefined) updates.name = input.name;
+      if (input.isActive !== undefined) updates.isActive = input.isActive;
+
+      // Re-encrypt only the secrets that were actually changed (non-empty)
+      if (input.secrets && Object.keys(input.secrets).length > 0) {
+        const existingConfig = (site.templateConfig ?? {}) as Record<string, unknown>;
+        const existingSecrets = (existingConfig.secrets ?? {}) as Record<string, string>;
+        const updatedSecrets = { ...existingSecrets };
+
+        for (const [key, value] of Object.entries(input.secrets)) {
+          if (value.trim()) {
+            updatedSecrets[key] = encrypt(value);
+          }
+          // Empty string → keep existing encrypted value (user left field blank = no change)
+        }
+
+        updates.templateConfig = { ...existingConfig, secrets: updatedSecrets };
+      }
+
+      await db.update(targetWebsites).set(updates).where(eq(targetWebsites.id, input.id));
+      return { success: true };
+    }),
+
+  /**
    * Return all active admin-managed destination templates.
    * Used by TargetWebsites page to show a template picker to the user.
    */
@@ -428,14 +481,21 @@ export const targetWebsitesRouter = router({
     }),
 
   /**
-   * Test a custom integration by sending a sample lead and returning the full request/response.
-   * Returns: requestPreview (headers + body), rawResponse, parsedResponse, success, durationMs.
+   * Test an integration by sending a sample lead and returning the full request/response.
+   *
+   * For dynamic (admin-managed) templates:
+   *   - Builds body ONLY from template.bodyFields
+   *   - Decrypts secrets from templateConfig.secrets
+   *   - Falls back to "test_[key]" for missing variable fields
+   *
+   * For legacy custom templates:
+   *   - Uses existing sendAffiliateOrderByTemplate logic
    */
   testIntegration: protectedProcedure
     .input(
       z.object({
         id: z.number(),
-        /** Optional custom variable overrides for the test (e.g. offer_id, stream) */
+        /** Optional variable overrides for the test (e.g. offer_id, stream) */
         variableOverrides: z.record(z.string(), z.string()).optional(),
       })
     )
@@ -450,7 +510,6 @@ export const targetWebsitesRouter = router({
         .limit(1);
       if (!site) throw new Error("Website not found");
 
-      // Sample lead for testing
       const sampleLead = {
         leadgenId: "test_lead_12345",
         fullName: "Test User",
@@ -463,17 +522,75 @@ export const targetWebsitesRouter = router({
       const varOverrides = input.variableOverrides ?? {};
       const t0 = Date.now();
 
+      // ── Dynamic admin-managed template ────────────────────────────────────────
+      if (site.templateId) {
+        const [dynTpl] = await db
+          .select()
+          .from(destinationTemplates)
+          .where(eq(destinationTemplates.id, site.templateId))
+          .limit(1);
+        if (!dynTpl) throw new Error("Destination template not found");
+
+        const varFields = (dynTpl.variableFields as string[]) ?? [];
+        // Fill missing variable fields with "test_[key]" placeholder
+        const varOverridesWithFallback: Record<string, string> = {};
+        for (const key of varFields) {
+          varOverridesWithFallback[key] = varOverrides[key] ?? `test_${key}`;
+        }
+
+        const result = await sendLeadViaTemplate(
+          dynTpl,
+          site.templateConfig,
+          sampleLead,
+          varOverridesWithFallback
+        );
+        const durationMs = Date.now() - t0;
+
+        // Build preview: iterate bodyFields, mask secrets
+        const bodyFields = (dynTpl.bodyFields as Array<{ key: string; value: string; isSecret: boolean }>) ?? [];
+        const varCtx = buildVariableContext(sampleLead, varOverridesWithFallback);
+        const previewFields: Record<string, string> = {};
+        for (const field of bodyFields) {
+          const secretMatch = field.value.match(/^\{\{SECRET:([^}]+)\}\}$/);
+          if (secretMatch) {
+            previewFields[field.key] = "••••••••"; // never expose decrypted secret in preview
+          } else {
+            previewFields[field.key] = injectVariables(field.value, varCtx);
+          }
+        }
+
+        const normalizedCt = dynTpl.contentType.toLowerCase();
+        let previewBody: unknown = previewFields;
+        if (normalizedCt.includes("form-urlencoded") || normalizedCt.includes("urlencoded")) {
+          const p = new URLSearchParams();
+          for (const [k, v] of Object.entries(previewFields)) p.append(k, v);
+          previewBody = p.toString();
+        }
+
+        return {
+          success: result.success,
+          responseData: result.responseData,
+          error: result.error,
+          durationMs,
+          requestPreview: {
+            url: dynTpl.endpointUrl,
+            method: dynTpl.method ?? "POST",
+            headers: { "Content-Type": dynTpl.contentType },
+            body: previewBody,
+          },
+        };
+      }
+
+      // ── Legacy custom template ─────────────────────────────────────────────────
       const result = await sendAffiliateOrderByTemplate(
         site.templateType as TemplateType,
         site.templateConfig as TemplateConfig,
         sampleLead,
         varOverrides,
-        site.url  // pass site.url for custom templates
+        site.url
       );
-
       const durationMs = Date.now() - t0;
 
-      // Build request preview (what was sent)
       const cfg = (site.templateConfig ?? {}) as Record<string, unknown>;
       let requestPreview: {
         url: string;
