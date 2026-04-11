@@ -81,6 +81,7 @@ const adminMenuItems = [
   { icon: Webhook, label: "Webhook Health", path: "/webhook" },
   { icon: Shield, label: "Admin Logs", path: "/admin/logs" },
   { icon: SendHorizonal, label: "Lead Backfill", path: "/admin/backfill" },
+  { icon: Globe, label: "Dest. Templates", path: "/admin/destination-templates" },
 ];
 
 // Business Tools sub-menu items

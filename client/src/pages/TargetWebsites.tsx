@@ -132,8 +132,23 @@ const DEFAULT_JSON_TEMPLATE = `{
   "stream": "{{stream}}"
 }`;
 
+// ─── Dynamic template types ───────────────────────────────────────────────────
+interface DynBodyField { key: string; value: string; isSecret: boolean }
+interface DynAutoMapped { key: string; label: string }
+interface DynTemplate {
+  id: number;
+  name: string;
+  description?: string | null;
+  color: string;
+  endpointUrl: string;
+  userVisibleFields: string[];
+  variableFields: string[];
+  autoMappedFields: DynAutoMapped[];
+  bodyFields: DynBodyField[];
+}
+
 // ─── Form state ──────────────────────────────────────────────────────────────
-type FormMode = "select-template" | "configure";
+type FormMode = "select-template" | "configure" | "configure-dynamic";
 
 interface BodyField { key: string; value: string }
 interface HeaderField { key: string; value: string }
@@ -312,9 +327,15 @@ export default function TargetWebsites() {
   const [form, setForm] = useState<FormState>(defaultForm());
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [showVarRef, setShowVarRef] = useState(false);
+  // Dynamic template state
+  const [selectedDynTemplate, setSelectedDynTemplate] = useState<DynTemplate | null>(null);
+  const [dynName, setDynName] = useState("");
+  const [dynSecrets, setDynSecrets] = useState<Record<string, string>>({});
+  const [dynShowSecret, setDynShowSecret] = useState<Record<string, boolean>>({});
 
   const utils = trpc.useUtils();
   const { data: sites = [], isLoading } = trpc.targetWebsites.list.useQuery();
+  const { data: dynTemplates = [] } = trpc.targetWebsites.getTemplates.useQuery();
 
   const createMutation = trpc.targetWebsites.create.useMutation({
     onSuccess: () => {
@@ -354,6 +375,15 @@ export default function TargetWebsites() {
     onError: (e) => toast.error(`Test failed: ${e.message}`),
   });
 
+  const createFromTemplateMutation = trpc.targetWebsites.createFromTemplate.useMutation({
+    onSuccess: () => {
+      utils.targetWebsites.list.invalidate();
+      setOpen(false);
+      toast.success("Destination saved");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const selectedTemplate = TEMPLATES.find((t) => t.id === form.templateType)!;
   const isCustom = form.templateType === "custom";
 
@@ -362,7 +392,36 @@ export default function TargetWebsites() {
     setForm(defaultForm());
     setMode("select-template");
     setTestResult(null);
+    setSelectedDynTemplate(null);
+    setDynName("");
+    setDynSecrets({});
+    setDynShowSecret({});
     setOpen(true);
+  }
+
+  function selectDynTemplate(tpl: typeof dynTemplates[0]) {
+    const bodyFields = (tpl.bodyFields as DynBodyField[]) ?? [];
+    const userVisibleFields = (tpl.userVisibleFields as string[]) ?? [];
+    const variableFields = (tpl.variableFields as string[]) ?? [];
+    const autoMappedFields = (tpl.autoMappedFields as DynAutoMapped[]) ?? [];
+    setSelectedDynTemplate({ ...tpl, bodyFields, userVisibleFields, variableFields, autoMappedFields });
+    setDynName("");
+    setDynSecrets({});
+    setDynShowSecret({});
+    setMode("configure-dynamic");
+  }
+
+  function handleDynSubmit() {
+    if (!dynName.trim()) { toast.error("Name is required"); return; }
+    if (!selectedDynTemplate) return;
+    for (const key of selectedDynTemplate.userVisibleFields) {
+      if (!dynSecrets[key]?.trim()) { toast.error(`"${key}" is required`); return; }
+    }
+    createFromTemplateMutation.mutate({
+      templateId: selectedDynTemplate.id,
+      name: dynName.trim(),
+      secrets: dynSecrets,
+    });
   }
 
   function openEdit(site: (typeof sites)[0]) {
@@ -475,7 +534,7 @@ export default function TargetWebsites() {
     testMutation.mutate({ id: editId });
   }
 
-  const isSaving = createMutation.isPending || updateMutation.isPending;
+  const isSaving = createMutation.isPending || updateMutation.isPending || createFromTemplateMutation.isPending;
   const isTesting = testMutation.isPending;
 
   return (
@@ -516,6 +575,8 @@ export default function TargetWebsites() {
             {sites.map((site) => {
               const config = (site.templateConfig ?? {}) as Record<string, unknown>;
               const tpl = TEMPLATES.find((t) => t.id === site.templateType);
+              const isDynamic = !!(site as { templateId?: number | null }).templateId;
+              const dynName = (site as { templateName?: string | null }).templateName;
               return (
                 <Card key={site.id} className="hover:shadow-sm transition-shadow">
                   <CardContent className="p-3 flex items-center gap-3">
@@ -523,8 +584,8 @@ export default function TargetWebsites() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                         <span className="font-semibold text-sm">{site.name}</span>
-                        <Badge variant={templateBadgeVariant(site.templateType)} className="text-xs shrink-0">
-                          {templateLabel(site.templateType)}
+                        <Badge variant={isDynamic ? "secondary" : templateBadgeVariant(site.templateType)} className="text-xs shrink-0">
+                          {isDynamic ? (dynName ?? "Template") : templateLabel(site.templateType)}
                         </Badge>
                         {!site.isActive && <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">Inactive</Badge>}
                       </div>
@@ -533,6 +594,9 @@ export default function TargetWebsites() {
                       </p>
                       {Boolean(config.apiKeyMasked) && (
                         <p className="text-xs text-muted-foreground mt-0.5">API Key: ••••••••</p>
+                      )}
+                      {isDynamic && config.secrets && Object.keys(config.secrets as object).length > 0 && (
+                        <p className="text-xs text-muted-foreground mt-0.5">Secrets: ••••••••</p>
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -570,6 +634,8 @@ export default function TargetWebsites() {
             <DialogTitle>
               {mode === "select-template"
                 ? "Choose Template"
+                : mode === "configure-dynamic"
+                ? `New ${selectedDynTemplate?.name ?? "Website"}`
                 : editId
                 ? `Edit: ${form.name || "Website"}`
                 : `New ${selectedTemplate?.label ?? "Website"}`}
@@ -577,6 +643,8 @@ export default function TargetWebsites() {
             <DialogDescription>
               {mode === "select-template"
                 ? "Select a template to get started"
+                : mode === "configure-dynamic"
+                ? selectedDynTemplate?.endpointUrl ?? "Configure your destination"
                 : editId
                 ? "Update your target website configuration"
                 : "Configure a new target website for lead routing"}
@@ -585,21 +653,125 @@ export default function TargetWebsites() {
 
           {/* Step 1: Template selector */}
           {mode === "select-template" && (
-            <div className="grid gap-3 py-2">
-              {TEMPLATES.map((tpl) => (
-                <button
-                  key={tpl.id}
-                  onClick={() => handleTemplateSelect(tpl.id)}
-                  className="flex items-center gap-4 p-4 rounded-lg border hover:border-primary hover:bg-muted/30 transition-all text-left group"
-                >
-                  <div className={`w-3 h-10 rounded-full shrink-0 ${tpl.color}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="font-semibold text-sm">{tpl.label}</div>
-                    <div className="text-xs text-muted-foreground mt-0.5">{tpl.description}</div>
+            <div className="space-y-4 py-2">
+              {/* Dynamic admin-managed templates */}
+              {dynTemplates.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Affiliate Platforms</p>
+                  {dynTemplates.map((tpl) => (
+                    <button
+                      key={tpl.id}
+                      onClick={() => selectDynTemplate(tpl)}
+                      className="w-full flex items-center gap-4 p-4 rounded-lg border hover:border-primary hover:bg-muted/30 transition-all text-left group"
+                    >
+                      <div className="w-3 h-10 rounded-full shrink-0" style={{ backgroundColor: tpl.color }} />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-semibold text-sm">{tpl.name}</div>
+                        {tpl.description && (
+                          <div className="text-xs text-muted-foreground mt-0.5">{tpl.description}</div>
+                        )}
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Legacy hardcoded templates */}
+              <div className="space-y-2">
+                {dynTemplates.length > 0 && (
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Other</p>
+                )}
+                {TEMPLATES.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    onClick={() => handleTemplateSelect(tpl.id)}
+                    className="w-full flex items-center gap-4 p-4 rounded-lg border hover:border-primary hover:bg-muted/30 transition-all text-left group"
+                  >
+                    <div className={`w-3 h-10 rounded-full shrink-0 ${tpl.color}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-sm">{tpl.label}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">{tpl.description}</div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Step 2a: Configure dynamic template */}
+          {mode === "configure-dynamic" && selectedDynTemplate && (
+            <div className="space-y-5 py-2">
+              <button
+                onClick={() => setMode("select-template")}
+                className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back to templates
+              </button>
+
+              {/* Name */}
+              <div className="space-y-1.5">
+                <Label>Name <span className="text-destructive">*</span></Label>
+                <Input
+                  placeholder={`e.g. ${selectedDynTemplate.name} — Main Campaign`}
+                  value={dynName}
+                  onChange={(e) => setDynName(e.target.value)}
+                />
+              </div>
+
+              {/* Secret fields (user fills once) */}
+              {selectedDynTemplate.userVisibleFields.map((key) => (
+                <div key={key} className="space-y-1.5">
+                  <Label>
+                    {key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                    <span className="text-destructive"> *</span>
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      placeholder={`Your ${selectedDynTemplate.name} ${key.replace(/_/g, " ")}`}
+                      value={dynSecrets[key] ?? ""}
+                      onChange={(e) => setDynSecrets(s => ({ ...s, [key]: e.target.value }))}
+                      type={dynShowSecret[key] ? "text" : "password"}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setDynShowSecret(s => ({ ...s, [key]: !s[key] }))}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {dynShowSecret[key] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-primary transition-colors" />
-                </button>
+                </div>
               ))}
+
+              {/* Variable fields info */}
+              {selectedDynTemplate.variableFields.length > 0 && (
+                <div className="rounded-lg bg-muted/40 border p-3 space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                    <Info className="w-3 h-3" /> Per-routing fields
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    You'll fill <code className="bg-background px-1 rounded">{selectedDynTemplate.variableFields.join(", ")}</code> when setting up each Lead Routing rule.
+                  </p>
+                </div>
+              )}
+
+              {/* Auto-mapped info */}
+              {selectedDynTemplate.autoMappedFields.length > 0 && (
+                <div className="rounded-lg bg-muted/40 border p-3 space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                    <Info className="w-3 h-3" /> Auto-mapped from lead
+                  </p>
+                  {selectedDynTemplate.autoMappedFields.map((f) => (
+                    <p key={f.key} className="text-xs text-muted-foreground">
+                      <code className="bg-background px-1 rounded">{f.key}</code> ← {f.label}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
@@ -982,6 +1154,16 @@ export default function TargetWebsites() {
                 </>
               )}
             </div>
+          )}
+
+          {mode === "configure-dynamic" && (
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button onClick={handleDynSubmit} disabled={isSaving}>
+                {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Save Website
+              </Button>
+            </DialogFooter>
           )}
 
           {mode === "configure" && (

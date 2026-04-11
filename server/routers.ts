@@ -9,6 +9,7 @@ import { webhookRouter } from "./routers/webhookRouter";
 import { logsRouter } from "./routers/logsRouter";
 import { telegramRouter } from "./routers/telegramRouter";
 import { adminBackfillRouter } from "./routers/adminBackfillRouter";
+import { adminTemplatesRouter } from "./routers/adminTemplatesRouter";
 import { adAnalyticsRouter } from "./routers/adAnalyticsRouter";
 import { systemRouter } from "./_core/systemRouter";
 
@@ -24,6 +25,7 @@ export const appRouter = router({
   logs: logsRouter,
   telegram: telegramRouter,
   adminBackfill: adminBackfillRouter,
+  adminTemplates: adminTemplatesRouter,
   adAnalytics: adAnalyticsRouter,
 });
 

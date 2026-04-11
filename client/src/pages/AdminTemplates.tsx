@@ -1,0 +1,601 @@
+/**
+ * AdminTemplates — Admin page for managing destination templates.
+ *
+ * Admins define affiliate endpoint templates here.
+ * Users pick these templates when creating destinations — no code change needed for new affiliates.
+ *
+ * Route: /admin/destination-templates
+ */
+
+import { useState } from "react";
+import { trpc } from "@/lib/trpc";
+import DashboardLayout from "@/components/DashboardLayout";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { toast } from "sonner";
+import {
+  Plus,
+  Trash2,
+  Pencil,
+  Globe,
+  Loader2,
+  Lock,
+  X,
+  Info,
+} from "lucide-react";
+
+// ─── Types ─────────────────────────────────────────────────────────────────────
+
+interface BodyField {
+  key: string;
+  value: string;
+  isSecret: boolean;
+}
+
+interface AutoMappedField {
+  key: string;
+  label: string;
+}
+
+interface TemplateForm {
+  name: string;
+  description: string;
+  color: string;
+  endpointUrl: string;
+  method: "POST" | "GET";
+  contentType: string;
+  bodyFields: BodyField[];
+  userVisibleFields: string[];
+  variableFields: string[];
+  autoMappedFields: AutoMappedField[];
+  isActive: boolean;
+}
+
+const PRESET_COLORS = [
+  "#3B82F6", "#10B981", "#8B5CF6", "#F59E0B",
+  "#EF4444", "#06B6D4", "#84CC16", "#EC4899",
+];
+
+const CONTENT_TYPES = [
+  "application/x-www-form-urlencoded",
+  "application/json",
+  "multipart/form-data",
+];
+
+const BUILTIN_VAR_HINTS = [
+  "{{name}}", "{{phone}}", "{{email}}", "{{lead_id}}", "{{page_id}}", "{{form_id}}",
+];
+
+function defaultForm(): TemplateForm {
+  return {
+    name: "",
+    description: "",
+    color: "#3B82F6",
+    endpointUrl: "",
+    method: "POST",
+    contentType: "application/x-www-form-urlencoded",
+    bodyFields: [
+      { key: "api_key", value: "{{SECRET:api_key}}", isSecret: true },
+      { key: "phone", value: "{{phone}}", isSecret: false },
+      { key: "name", value: "{{name}}", isSecret: false },
+    ],
+    userVisibleFields: ["api_key"],
+    variableFields: [],
+    autoMappedFields: [
+      { key: "name", label: "Full Name" },
+      { key: "phone", label: "Phone" },
+    ],
+    isActive: true,
+  };
+}
+
+// ─── Tag input component ───────────────────────────────────────────────────────
+
+function TagInput({
+  label,
+  values,
+  onChange,
+  placeholder,
+}: {
+  label: string;
+  values: string[];
+  onChange: (v: string[]) => void;
+  placeholder: string;
+}) {
+  const [draft, setDraft] = useState("");
+
+  function addTag() {
+    const v = draft.trim();
+    if (!v || values.includes(v)) { setDraft(""); return; }
+    onChange([...values, v]);
+    setDraft("");
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      <div className="flex flex-wrap gap-1.5 min-h-[36px] rounded-md border bg-background px-2 py-1.5">
+        {values.map((v) => (
+          <span key={v} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-muted text-xs font-mono">
+            {v}
+            <button onClick={() => onChange(values.filter(x => x !== v))} className="text-muted-foreground hover:text-foreground">
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+        <input
+          className="flex-1 min-w-[80px] bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+          placeholder={values.length === 0 ? placeholder : "+ add"}
+          value={draft}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(); } }}
+          onBlur={addTag}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Auto-mapped field row ─────────────────────────────────────────────────────
+
+function AutoMappedRow({
+  field,
+  onChange,
+  onRemove,
+}: {
+  field: AutoMappedField;
+  onChange: (f: AutoMappedField) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        className="w-32 font-mono text-xs h-8"
+        placeholder="key"
+        value={field.key}
+        onChange={e => onChange({ ...field, key: e.target.value })}
+      />
+      <span className="text-muted-foreground text-xs">←</span>
+      <Input
+        className="flex-1 text-xs h-8"
+        placeholder="label (e.g. Full Name)"
+        value={field.label}
+        onChange={e => onChange({ ...field, label: e.target.value })}
+      />
+      <button onClick={onRemove} className="text-muted-foreground hover:text-destructive">
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}
+
+// ─── Body field row ────────────────────────────────────────────────────────────
+
+function BodyFieldRow({
+  field,
+  onChange,
+  onRemove,
+}: {
+  field: BodyField;
+  onChange: (f: BodyField) => void;
+  onRemove: () => void;
+}) {
+  function toggleSecret() {
+    const isSecret = !field.isSecret;
+    const value = isSecret
+      ? `{{SECRET:${field.key || "key"}}}`
+      : field.value.startsWith("{{SECRET:") ? "" : field.value;
+    onChange({ ...field, isSecret, value });
+  }
+
+  function handleKeyChange(newKey: string) {
+    const value = field.isSecret ? `{{SECRET:${newKey}}}` : field.value;
+    onChange({ ...field, key: newKey, value });
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <Input
+        className="w-32 font-mono text-xs h-8"
+        placeholder="field_key"
+        value={field.key}
+        onChange={e => handleKeyChange(e.target.value)}
+      />
+      <span className="text-muted-foreground text-xs shrink-0">→</span>
+      <Input
+        className="flex-1 font-mono text-xs h-8"
+        placeholder="{{variable}} or static value"
+        value={field.value}
+        disabled={field.isSecret}
+        onChange={e => onChange({ ...field, value: e.target.value })}
+      />
+      <button
+        onClick={toggleSecret}
+        title={field.isSecret ? "Secret (click to unset)" : "Mark as secret"}
+        className={`shrink-0 rounded p-1 transition-colors ${field.isSecret ? "text-amber-500 bg-amber-500/10" : "text-muted-foreground hover:text-amber-500"}`}
+      >
+        <Lock className="w-3.5 h-3.5" />
+      </button>
+      <button onClick={onRemove} className="text-muted-foreground hover:text-destructive shrink-0">
+        <Trash2 className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export default function AdminTemplates() {
+  const [open, setOpen] = useState(false);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [form, setForm] = useState<TemplateForm>(defaultForm());
+
+  const utils = trpc.useUtils();
+  const { data: templates = [], isLoading } = trpc.adminTemplates.list.useQuery();
+
+  const createMutation = trpc.adminTemplates.create.useMutation({
+    onSuccess: () => { utils.adminTemplates.list.invalidate(); setOpen(false); toast.success("Template created"); },
+    onError: e => toast.error(e.message),
+  });
+
+  const updateMutation = trpc.adminTemplates.update.useMutation({
+    onSuccess: () => { utils.adminTemplates.list.invalidate(); setOpen(false); toast.success("Template updated"); },
+    onError: e => toast.error(e.message),
+  });
+
+  const deleteMutation = trpc.adminTemplates.delete.useMutation({
+    onSuccess: () => { utils.adminTemplates.list.invalidate(); toast.success("Template deleted"); },
+    onError: e => toast.error(e.message),
+  });
+
+  const toggleMutation = trpc.adminTemplates.update.useMutation({
+    onSuccess: () => utils.adminTemplates.list.invalidate(),
+    onError: e => toast.error(e.message),
+  });
+
+  function openNew() {
+    setEditId(null);
+    setForm(defaultForm());
+    setOpen(true);
+  }
+
+  function openEdit(t: typeof templates[0]) {
+    setEditId(t.id);
+    setForm({
+      name: t.name,
+      description: t.description ?? "",
+      color: t.color,
+      endpointUrl: t.endpointUrl,
+      method: (t.method ?? "POST") as "POST" | "GET",
+      contentType: t.contentType ?? "application/x-www-form-urlencoded",
+      bodyFields: (t.bodyFields as BodyField[]) ?? [],
+      userVisibleFields: (t.userVisibleFields as string[]) ?? [],
+      variableFields: (t.variableFields as string[]) ?? [],
+      autoMappedFields: (t.autoMappedFields as AutoMappedField[]) ?? [],
+      isActive: t.isActive,
+    });
+    setOpen(true);
+  }
+
+  function setField<K extends keyof TemplateForm>(k: K, v: TemplateForm[K]) {
+    setForm(f => ({ ...f, [k]: v }));
+  }
+
+  function updateBodyField(i: number, patch: BodyField) {
+    const next = [...form.bodyFields];
+    next[i] = patch;
+    // Sync userVisibleFields: secret fields → always in userVisibleFields
+    const secrets = next.filter(f => f.isSecret).map(f => f.key);
+    setForm(f => ({ ...f, bodyFields: next, userVisibleFields: secrets }));
+  }
+
+  function removeBodyField(i: number) {
+    const next = form.bodyFields.filter((_, idx) => idx !== i);
+    const secrets = next.filter(f => f.isSecret).map(f => f.key);
+    setForm(f => ({ ...f, bodyFields: next, userVisibleFields: secrets }));
+  }
+
+  function addBodyField() {
+    setForm(f => ({ ...f, bodyFields: [...f.bodyFields, { key: "", value: "", isSecret: false }] }));
+  }
+
+  function updateAutoMapped(i: number, patch: AutoMappedField) {
+    const next = [...form.autoMappedFields];
+    next[i] = patch;
+    setField("autoMappedFields", next);
+  }
+
+  function removeAutoMapped(i: number) {
+    setField("autoMappedFields", form.autoMappedFields.filter((_, idx) => idx !== i));
+  }
+
+  function handleSave() {
+    if (!form.name.trim()) { toast.error("Name is required"); return; }
+    if (!form.endpointUrl.trim()) { toast.error("Endpoint URL is required"); return; }
+    if (form.bodyFields.length === 0) { toast.error("At least one body field is required"); return; }
+
+    const payload = {
+      name: form.name.trim(),
+      description: form.description.trim() || undefined,
+      color: form.color,
+      endpointUrl: form.endpointUrl.trim(),
+      method: form.method,
+      contentType: form.contentType,
+      bodyFields: form.bodyFields.filter(f => f.key.trim()),
+      userVisibleFields: form.userVisibleFields,
+      variableFields: form.variableFields,
+      autoMappedFields: form.autoMappedFields.filter(f => f.key.trim() && f.label.trim()),
+      isActive: form.isActive,
+    };
+
+    if (editId !== null) {
+      updateMutation.mutate({ id: editId, ...payload });
+    } else {
+      createMutation.mutate(payload);
+    }
+  }
+
+  const isSaving = createMutation.isPending || updateMutation.isPending;
+
+  return (
+    <DashboardLayout>
+      <div className="max-w-5xl mx-auto space-y-6 p-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Destination Templates</h1>
+            <p className="text-muted-foreground text-sm mt-0.5">
+              Manage affiliate endpoint templates. Users pick these when creating destinations.
+            </p>
+          </div>
+          <Button onClick={openNew}>
+            <Plus className="w-4 h-4 mr-2" />
+            New Template
+          </Button>
+        </div>
+
+        {/* Template list */}
+        {isLoading ? (
+          <div className="flex items-center gap-2 text-muted-foreground text-sm py-8 justify-center">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading templates...
+          </div>
+        ) : templates.length === 0 ? (
+          <div className="text-center py-16 border rounded-lg">
+            <Globe className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+            <p className="text-muted-foreground">No templates yet. Create one to get started.</p>
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {templates.map(t => {
+              const bodyFields = (t.bodyFields as BodyField[]) ?? [];
+              const secrets = bodyFields.filter(f => f.isSecret).length;
+              const varFields = (t.variableFields as string[]) ?? [];
+              return (
+                <div key={t.id} className="flex items-center gap-4 border rounded-lg p-4 bg-card hover:bg-accent/5 transition-colors">
+                  {/* Color bar */}
+                  <div className="w-1 self-stretch rounded-full shrink-0" style={{ backgroundColor: t.color }} />
+                  {/* Info */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold">{t.name}</span>
+                      {!t.isActive && <Badge variant="outline" className="text-xs">Inactive</Badge>}
+                    </div>
+                    {t.description && (
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{t.description}</p>
+                    )}
+                    <p className="text-xs text-muted-foreground mt-1 font-mono truncate">{t.endpointUrl}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {bodyFields.length} fields
+                      {secrets > 0 && ` · ${secrets} secret`}
+                      {varFields.length > 0 && ` · ${varFields.length} variable`}
+                    </p>
+                  </div>
+                  {/* Toggle */}
+                  <Switch
+                    checked={t.isActive}
+                    onCheckedChange={v => toggleMutation.mutate({ id: t.id, isActive: v })}
+                  />
+                  {/* Actions */}
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(t)}>
+                      <Pencil className="w-3.5 h-3.5" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => {
+                        if (confirm(`Delete template "${t.name}"?`)) {
+                          deleteMutation.mutate({ id: t.id });
+                        }
+                      }}
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Create / Edit modal */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editId !== null ? "Edit Template" : "New Destination Template"}</DialogTitle>
+            <DialogDescription>
+              Define how leads are sent to this affiliate endpoint.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+            {/* Basic info */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Name *</Label>
+                <Input placeholder="e.g. Sotuvchi.com" value={form.name} onChange={e => setField("name", e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Description</Label>
+                <Input placeholder="Short description" value={form.description} onChange={e => setField("description", e.target.value)} />
+              </div>
+            </div>
+
+            {/* Color */}
+            <div className="space-y-1.5">
+              <Label>Color</Label>
+              <div className="flex gap-2 flex-wrap">
+                {PRESET_COLORS.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => setField("color", c)}
+                    className={`w-7 h-7 rounded-full border-2 transition-all ${form.color === c ? "border-foreground scale-110" : "border-transparent"}`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+                <input
+                  type="color"
+                  value={form.color}
+                  onChange={e => setField("color", e.target.value)}
+                  className="w-7 h-7 rounded-full border cursor-pointer bg-transparent"
+                  title="Custom color"
+                />
+              </div>
+            </div>
+
+            {/* Endpoint */}
+            <div className="space-y-1.5">
+              <Label>Endpoint URL *</Label>
+              <Input
+                placeholder="https://api.example.com/leads"
+                value={form.endpointUrl}
+                onChange={e => setField("endpointUrl", e.target.value)}
+              />
+            </div>
+
+            {/* Method + Content-Type */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Method</Label>
+                <select
+                  className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                  value={form.method}
+                  onChange={e => setField("method", e.target.value as "POST" | "GET")}
+                >
+                  <option value="POST">POST</option>
+                  <option value="GET">GET</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Content Type</Label>
+                <select
+                  className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                  value={form.contentType}
+                  onChange={e => setField("contentType", e.target.value)}
+                >
+                  {CONTENT_TYPES.map(ct => (
+                    <option key={ct} value={ct}>{ct}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Body fields */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Body Fields</Label>
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Info className="w-3 h-3" />
+                  Built-ins: {BUILTIN_VAR_HINTS.join(", ")}
+                </div>
+              </div>
+              <div className="space-y-2">
+                {form.bodyFields.map((field, i) => (
+                  <BodyFieldRow
+                    key={i}
+                    field={field}
+                    onChange={patch => updateBodyField(i, patch)}
+                    onRemove={() => removeBodyField(i)}
+                  />
+                ))}
+              </div>
+              <Button variant="outline" size="sm" onClick={addBodyField} className="mt-1 h-7 text-xs">
+                <Plus className="w-3 h-3 mr-1" />
+                Add Field
+              </Button>
+              {form.bodyFields.some(f => f.isSecret) && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 mt-1">
+                  <Lock className="w-3 h-3" />
+                  Secret fields ({form.userVisibleFields.join(", ")}) will be shown to users at destination creation.
+                </p>
+              )}
+            </div>
+
+            {/* Variable fields */}
+            <TagInput
+              label="Variable Fields (per routing rule)"
+              values={form.variableFields}
+              onChange={v => setField("variableFields", v)}
+              placeholder="offer_id, stream..."
+            />
+            <p className="text-xs text-muted-foreground -mt-3">
+              Users fill these per routing rule in Lead Routing Step 5.
+            </p>
+
+            {/* Auto-mapped fields */}
+            <div className="space-y-2">
+              <Label>Auto-mapped Fields (from lead data)</Label>
+              <div className="space-y-2">
+                {form.autoMappedFields.map((f, i) => (
+                  <AutoMappedRow
+                    key={i}
+                    field={f}
+                    onChange={patch => updateAutoMapped(i, patch)}
+                    onRemove={() => removeAutoMapped(i)}
+                  />
+                ))}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setField("autoMappedFields", [...form.autoMappedFields, { key: "", label: "" }])}
+                className="h-7 text-xs"
+              >
+                <Plus className="w-3 h-3 mr-1" />
+                Add
+              </Button>
+            </div>
+
+            {/* Active toggle */}
+            <div className="flex items-center gap-3">
+              <Switch checked={form.isActive} onCheckedChange={v => setField("isActive", v)} />
+              <Label>Active (visible to users)</Label>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button onClick={handleSave} disabled={isSaving}>
+              {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              {editId !== null ? "Save Changes" : "Create Template"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </DashboardLayout>
+  );
+}

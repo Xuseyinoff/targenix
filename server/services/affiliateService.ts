@@ -1,6 +1,7 @@
 import axios from "axios";
 import FormData from "form-data";
 import { decrypt } from "../encryption";
+import type { DestinationTemplate } from "../../drizzle/schema";
 
 // ─── Shared lead payload ────────────────────────────────────────────────────
 export interface LeadPayload {
@@ -397,6 +398,112 @@ export async function sendAffiliateOrderByTemplate(
     const e = err as { response?: { data?: unknown }; message?: string };
     const error = e?.response?.data ?? e?.message ?? "Unknown error";
     console.error(`[Affiliate] Template ${templateType} failed:`, error);
+    return { success: false, error: JSON.stringify(error) };
+  }
+}
+
+// ─── Dynamic template lead delivery ──────────────────────────────────────────
+/**
+ * Send a lead to a destination configured from an admin-managed template.
+ *
+ * Template bodyFields value patterns:
+ *   "{{SECRET:key}}"  → decrypt from targetWebsite.templateConfig.secrets[key]
+ *   "{{name}}"        → use lead.fullName
+ *   "{{phone}}"       → use lead.phone
+ *   "{{offer_id}}"    → use integration variableValues[offer_id]
+ *   "static value"    → use as-is (no {{ }})
+ *
+ * Multi-tenant safety: caller must ensure targetWebsite.userId === lead.userId.
+ */
+export async function sendLeadViaTemplate(
+  template: DestinationTemplate,
+  templateConfig: unknown,
+  lead: LeadPayload,
+  variableValues: Record<string, string> = {}
+): Promise<AffiliateResult> {
+  const cfg = (templateConfig ?? {}) as Record<string, unknown>;
+  const secrets = (cfg.secrets ?? {}) as Record<string, string>;
+
+  const bodyFields = template.bodyFields as Array<{ key: string; value: string; isSecret: boolean }>;
+
+  try {
+    assertSafeOutboundUrl(template.endpointUrl);
+
+    // Build variable context from lead
+    const varCtx = buildVariableContext(lead, variableValues);
+
+    // Build the request body by resolving each bodyField's value
+    const resolvedFields: Record<string, string> = {};
+    for (const field of bodyFields) {
+      const rawValue = field.value;
+
+      // Pattern 1: {{SECRET:key}} → decrypt stored secret
+      const secretMatch = rawValue.match(/^\{\{SECRET:([^}]+)\}\}$/);
+      if (secretMatch) {
+        const secretKey = secretMatch[1].trim();
+        const encryptedValue = secrets[secretKey];
+        if (encryptedValue) {
+          try {
+            resolvedFields[field.key] = decrypt(encryptedValue);
+          } catch {
+            resolvedFields[field.key] = "";
+          }
+        } else {
+          resolvedFields[field.key] = "";
+        }
+        continue;
+      }
+
+      // Pattern 2: {{variable}} → replace from context (built-ins + variableValues)
+      resolvedFields[field.key] = injectVariables(rawValue, varCtx);
+    }
+
+    // Build request based on contentType
+    const method = template.method ?? "POST";
+    let body: string | Record<string, unknown> | null = null;
+    let contentTypeHeader = template.contentType;
+    let formData: FormData | undefined;
+
+    const normalizedCt = template.contentType.toLowerCase();
+
+    if (normalizedCt.includes("json")) {
+      body = resolvedFields;
+      contentTypeHeader = "application/json";
+    } else if (normalizedCt.includes("form-urlencoded") || normalizedCt.includes("urlencoded")) {
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(resolvedFields)) params.append(k, v);
+      body = params.toString();
+      contentTypeHeader = "application/x-www-form-urlencoded";
+    } else if (normalizedCt.includes("multipart")) {
+      const fd = new FormData();
+      for (const [k, v] of Object.entries(resolvedFields)) fd.append(k, v);
+      formData = fd;
+      contentTypeHeader = "multipart/form-data";
+    } else {
+      // Default: form-urlencoded
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(resolvedFields)) params.append(k, v);
+      body = params.toString();
+      contentTypeHeader = "application/x-www-form-urlencoded";
+    }
+
+    const headers: Record<string, string> = { "Content-Type": contentTypeHeader };
+
+    const response = await axios.request({
+      url: template.endpointUrl,
+      method,
+      data: formData ?? body,
+      headers: formData ? { ...headers, ...formData.getHeaders() } : headers,
+      timeout: 15000,
+      validateStatus: () => true,
+    });
+
+    const success = response.status >= 200 && response.status < 300;
+    return { success, responseData: response.data };
+  } catch (err: unknown) {
+    const e = err as { response?: { data?: unknown }; message?: string };
+    const error = e?.response?.data ?? e?.message ?? "Unknown error";
+    console.error(`[Affiliate] Dynamic template "${template.name}" failed:`, error);
     return { success: false, error: JSON.stringify(error) };
   }
 }

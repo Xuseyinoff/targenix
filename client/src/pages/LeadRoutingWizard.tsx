@@ -450,6 +450,10 @@ export default function LeadRoutingWizard({
   const { data: targetWebsites, isLoading: loadingTargets } =
     trpc.targetWebsites.list.useQuery(undefined, { enabled: step >= 5 });
 
+  // Admin-managed destination templates (for dynamic variableFields)
+  const { data: destinationTemplates = [] } =
+    trpc.targetWebsites.getTemplates.useQuery(undefined, { enabled: step >= 5 });
+
   // Auto-detect custom variables from the selected custom template's body
   const { data: customVarNames = [] } =
     trpc.targetWebsites.getCustomVariables.useQuery(
@@ -1406,6 +1410,38 @@ export default function LeadRoutingWizard({
                     {/* Variable fields for selected template */}
                     {state.targetWebsiteId &&
                       (() => {
+                        const selectedSite = targetWebsites?.find(s => s.id === state.targetWebsiteId);
+                        const dynTemplateId = (selectedSite as { templateId?: number | null } | undefined)?.templateId;
+
+                        // Dynamic admin-managed template: show its variableFields
+                        if (dynTemplateId) {
+                          const dynTpl = destinationTemplates.find(t => t.id === dynTemplateId);
+                          const varFields = (dynTpl?.variableFields as string[] | undefined) ?? [];
+                          if (varFields.length === 0) return null;
+                          return (
+                            <div className="space-y-3 pt-2 border-t">
+                              <p className="text-xs font-medium text-muted-foreground">
+                                Routing-specific fields for this integration:
+                              </p>
+                              {varFields.map(key => (
+                                <div key={key} className="space-y-1.5">
+                                  <Label>
+                                    {key.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())}
+                                    <span className="text-destructive ml-1">*</span>
+                                  </Label>
+                                  <Input
+                                    placeholder={`Enter ${key}`}
+                                    value={state.variableFields[key] ?? ""}
+                                    onChange={e =>
+                                      set({ variableFields: { ...state.variableFields, [key]: e.target.value } })
+                                    }
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        }
+
                         // For custom templates: auto-detected variables from body template
                         if (state.targetTemplateType === "custom") {
                           if (customVarNames.length === 0) return null;
@@ -1439,7 +1475,7 @@ export default function LeadRoutingWizard({
                             </div>
                           );
                         }
-                        // For known templates: static variable field definitions
+                        // For known legacy templates: static variable field definitions
                         const vfDefs =
                           TEMPLATE_VARIABLE_FIELDS[state.targetTemplateType] ??
                           [];

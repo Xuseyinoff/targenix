@@ -121,15 +121,46 @@ export const facebookForms = mysqlTable("facebook_forms", {
 export type FacebookForm = typeof facebookForms.$inferSelect;
 export type InsertFacebookForm = typeof facebookForms.$inferInsert;
 
+// ─── Destination Templates (Admin-managed) ─────────────────────────────────────
+// Admin-defined affiliate endpoint templates.
+// Users pick a template when creating a destination — no code changes needed for new affiliates.
+//
+// bodyFields: all fields sent to endpoint, e.g.:
+//   [{ key: "api_key", value: "{{SECRET:api_key}}", isSecret: true }, ...]
+// userVisibleFields: fields user fills once (e.g. ["api_key"])
+// variableFields:    fields user fills per routing rule (e.g. ["offer_id", "stream"])
+// autoMappedFields:  fields auto-filled from lead data (e.g. [{ key: "name", label: "Full Name" }])
+export const destinationTemplates = mysqlTable("destination_templates", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  description: varchar("description", { length: 500 }),
+  color: varchar("color", { length: 7 }).default("#3B82F6").notNull(),
+  endpointUrl: varchar("endpointUrl", { length: 500 }).notNull(),
+  method: varchar("method", { length: 10 }).default("POST").notNull(),
+  contentType: varchar("contentType", { length: 100 }).default("application/x-www-form-urlencoded").notNull(),
+  /** All fields sent to endpoint. Format: [{ key, value, isSecret }] */
+  bodyFields: json("bodyFields").notNull(),
+  /** Keys of fields user fills once at destination creation (e.g. ["api_key"]) */
+  userVisibleFields: json("userVisibleFields").notNull(),
+  /** Keys of fields user fills per routing rule (e.g. ["offer_id", "stream"]) */
+  variableFields: json("variableFields").notNull(),
+  /** Fields auto-filled from lead (shown as info). Format: [{ key, label }] */
+  autoMappedFields: json("autoMappedFields").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type DestinationTemplate = typeof destinationTemplates.$inferSelect;
+export type InsertDestinationTemplate = typeof destinationTemplates.$inferInsert;
+
 // ─── Target Websites ──────────────────────────────────────────────────────────
 // A list of affiliate/CRM websites that leads are routed to.
 //
-// templateType: 'sotuvchi' | '100k' | 'albato' | 'custom'
+// templateType: 'sotuvchi' | '100k' | 'albato' | 'custom' (legacy hardcoded)
+// templateId:   FK to destinationTemplates (dynamic admin-managed templates)
 // templateConfig: template-specific config JSON, e.g.:
-//   sotuvchi: { apiKey, offerId, stream, regionId? }
-//   100k:     { apiKey, streamId, regionId? }
-//   albato:   { url, fieldMap, headers? }
-//   custom:   { url, method, headers?, fieldMap?, successCondition? }
+//   legacy:  { apiKeyEncrypted, ... }
+//   dynamic: { secrets: { api_key: "encrypted:..." }, variables: {} }
 export const targetWebsites = mysqlTable("target_websites", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
@@ -138,8 +169,10 @@ export const targetWebsites = mysqlTable("target_websites", {
   url: text("url").notNull(),
   /** Optional static headers as JSON object */
   headers: json("headers"),
-  /** Template type: sotuvchi | 100k | albato | custom */
+  /** Template type: sotuvchi | 100k | albato | custom (legacy; null when using templateId) */
   templateType: varchar("templateType", { length: 32 }).default("custom").notNull(),
+  /** FK to destinationTemplates — set when created from admin-managed template */
+  templateId: int("templateId"),
   /** Template-specific config (api keys, field mappings, success conditions) */
   templateConfig: json("templateConfig"),
   isActive: boolean("isActive").default(true).notNull(),

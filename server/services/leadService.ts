@@ -666,20 +666,34 @@ export async function processLead(params: {
       // If targetWebsiteId is set, look up the target website and use template-based dispatch
       const twId = integration.targetWebsiteId ?? (config.targetWebsiteId ? Number(config.targetWebsiteId) : null);
       if (twId) {
-        const { targetWebsites } = await import("../../drizzle/schema");
+        const { targetWebsites, destinationTemplates } = await import("../../drizzle/schema");
         const [tw] = await db.select().from(targetWebsites).where(eq(targetWebsites.id, twId)).limit(1);
-        // Extract variable fields from integration config (set per routing rule)
-        const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
-        if (tw && tw.templateType) {
-          result = await sendAffiliateOrderByTemplate(
-            tw.templateType as TemplateType,
-            tw.templateConfig as TemplateConfig,
-            leadPayload,
-            variableFields,
-            tw.url  // pass site.url for custom templates
-          );
+        // Multi-tenant safety: verify the target website belongs to this user
+        if (tw && tw.userId !== params.userId) {
+          result = { success: false, error: "Target website owner mismatch" };
         } else {
-          result = await sendLeadToTargetWebsite(config, leadPayload);
+          // Extract variable fields from integration config (set per routing rule)
+          const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
+          if (tw && tw.templateId) {
+            // Dynamic admin-managed template path
+            const { sendLeadViaTemplate } = await import("./affiliateService");
+            const [dynTpl] = await db.select().from(destinationTemplates).where(eq(destinationTemplates.id, tw.templateId)).limit(1);
+            if (dynTpl) {
+              result = await sendLeadViaTemplate(dynTpl, tw.templateConfig, leadPayload, variableFields);
+            } else {
+              result = { success: false, error: `Template ${tw.templateId} not found` };
+            }
+          } else if (tw && tw.templateType) {
+            result = await sendAffiliateOrderByTemplate(
+              tw.templateType as TemplateType,
+              tw.templateConfig as TemplateConfig,
+              leadPayload,
+              variableFields,
+              tw.url  // pass site.url for custom templates
+            );
+          } else {
+            result = await sendLeadToTargetWebsite(config, leadPayload);
+          }
         }
       } else {
         result = await sendLeadToTargetWebsite(config, leadPayload);

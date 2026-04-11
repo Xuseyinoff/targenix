@@ -17,7 +17,7 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { targetWebsites } from "../../drizzle/schema";
+import { targetWebsites, destinationTemplates } from "../../drizzle/schema";
 import { eq, desc, and } from "drizzle-orm";
 import { encrypt, decrypt } from "../encryption";
 import {
@@ -70,13 +70,22 @@ export const TEMPLATE_VARIABLE_FIELDS: Record<string, Array<{ key: string; label
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Mask apiKey in templateConfig before sending to client */
+/** Mask secrets in templateConfig before sending to client */
 function maskConfig(config: unknown): unknown {
   if (!config || typeof config !== "object") return config;
   const c = { ...(config as Record<string, unknown>) };
+  // Legacy: sotuvchi/100k apiKeyEncrypted
   if (c.apiKeyEncrypted) {
     delete c.apiKeyEncrypted;
     c.apiKeyMasked = "••••••••";
+  }
+  // Dynamic template: secrets map — mask all values
+  if (c.secrets && typeof c.secrets === "object") {
+    const masked: Record<string, string> = {};
+    for (const key of Object.keys(c.secrets as Record<string, unknown>)) {
+      masked[key] = "••••••••";
+    }
+    c.secrets = masked;
   }
   return c;
 }
@@ -96,7 +105,7 @@ export function decryptApiKey(config: unknown): string | null {
 const templateConfigSchema = z.record(z.string(), z.any());
 
 export const targetWebsitesRouter = router({
-  /** List all target websites for the authenticated user (apiKey masked). */
+  /** List all target websites for the authenticated user (secrets masked). */
   list: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) return [];
@@ -105,7 +114,23 @@ export const targetWebsitesRouter = router({
       .from(targetWebsites)
       .where(eq(targetWebsites.userId, ctx.user.id))
       .orderBy(desc(targetWebsites.createdAt));
-    return rows.map((r) => ({ ...r, templateConfig: maskConfig(r.templateConfig) }));
+
+    // Enrich with template name for dynamic-template destinations
+    const templateIds = [...new Set(rows.map(r => r.templateId).filter(Boolean))] as number[];
+    let templateMap: Map<number, string> = new Map();
+    if (templateIds.length > 0) {
+      const templates = await db
+        .select({ id: destinationTemplates.id, name: destinationTemplates.name })
+        .from(destinationTemplates)
+        .where(eq(destinationTemplates.isActive, true));
+      templateMap = new Map(templates.map(t => [t.id, t.name]));
+    }
+
+    return rows.map((r) => ({
+      ...r,
+      templateConfig: maskConfig(r.templateConfig),
+      templateName: r.templateId ? (templateMap.get(r.templateId) ?? null) : null,
+    }));
   }),
 
   /** Create a new target website. apiKey is encrypted before saving. */
@@ -338,6 +363,68 @@ export const targetWebsitesRouter = router({
       }
 
       return Array.from(detected);
+    }),
+
+  /**
+   * Return all active admin-managed destination templates.
+   * Used by TargetWebsites page to show a template picker to the user.
+   */
+  getTemplates: protectedProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) return [];
+    return db
+      .select()
+      .from(destinationTemplates)
+      .where(eq(destinationTemplates.isActive, true))
+      .orderBy(destinationTemplates.name);
+  }),
+
+  /**
+   * Create a destination from an admin-managed template.
+   * Encrypts all secret fields (those whose bodyFields value starts with {{SECRET:...}}).
+   */
+  createFromTemplate: protectedProcedure
+    .input(
+      z.object({
+        templateId: z.number(),
+        name: z.string().min(1),
+        /** User-filled secret values keyed by field key (e.g. { api_key: "xxx" }) */
+        secrets: z.record(z.string(), z.string()),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB not available");
+
+      const [template] = await db
+        .select()
+        .from(destinationTemplates)
+        .where(and(eq(destinationTemplates.id, input.templateId), eq(destinationTemplates.isActive, true)))
+        .limit(1);
+      if (!template) throw new Error("Template not found");
+
+      // Encrypt each secret field provided by the user
+      const encryptedSecrets: Record<string, string> = {};
+      for (const [key, value] of Object.entries(input.secrets)) {
+        if (value.trim()) {
+          encryptedSecrets[key] = encrypt(value);
+        }
+      }
+
+      await db.insert(targetWebsites).values({
+        userId: ctx.user.id,
+        name: input.name,
+        url: template.endpointUrl,
+        templateType: "custom",   // backwards-compat fallback
+        templateId: template.id,
+        color: template.color,
+        templateConfig: {
+          secrets: encryptedSecrets,
+          variables: {},
+        },
+        isActive: true,
+      });
+      return { success: true };
     }),
 
   /**
