@@ -78,9 +78,6 @@ export default function Home() {
           <p className="text-muted-foreground text-sm mt-1">
             Real-time Facebook Lead Ads processing dashboard
           </p>
-          <p className="text-muted-foreground text-xs mt-1">
-            Daily stats use midnight to midnight in Asia/Tashkent (Uzbekistan, UTC+5).
-          </p>
         </div>
 
         {/* Delivery & setup — first */}
@@ -88,7 +85,7 @@ export default function Home() {
           <StatCard
             title="Orders sent today"
             value={isLoading ? "—" : (stats?.orders.sentToday ?? 0)}
-            description="Successful SENT orders (Tashkent calendar day)"
+            description="Successful deliveries today"
             icon={Calendar}
             variant="success"
           />
@@ -120,14 +117,14 @@ export default function Home() {
           <StatCard
             title="Leads with a delivery today"
             value={isLoading ? "—" : (stats?.todayIntegrationLeads?.leadsWithDeliveryToday ?? 0)}
-            description="Unique leads with ≥1 integration send (Tashkent day)"
+            description="Unique leads with ≥1 integration send today"
             icon={Send}
             variant="success"
           />
           <StatCard
             title="Leads with a failed delivery today"
             value={isLoading ? "—" : (stats?.todayIntegrationLeads?.leadsWithFailedDeliveryToday ?? 0)}
-            description="Unique leads with ≥1 failed attempt (Tashkent day)"
+            description="Unique leads with ≥1 failed integration attempt today"
             icon={AlertTriangle}
             variant="danger"
           />
