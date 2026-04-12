@@ -307,7 +307,11 @@ export const orders = mysqlTable("orders", {
   userId: int("userId").notNull(),
   integrationId: int("integrationId").notNull(),
   status: mysqlEnum("status", ["PENDING", "SENT", "FAILED"]).default("PENDING").notNull(),
-  retryCount: int("retryCount").default(0).notNull(),
+  /** Completed delivery attempts (each HTTP/send to integration). Max 3 then auto-retry stops. */
+  attempts: int("attempts").default(0).notNull(),
+  lastAttemptAt: timestamp("lastAttemptAt"),
+  /** After a failed delivery, set to now+1h until attempts reach max; hourly job selects due rows */
+  nextRetryAt: timestamp("nextRetryAt"),
   responseData: json("responseData"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -323,6 +327,8 @@ export const orders = mysqlTable("orders", {
   idxIntegrationStatus: index("idx_orders_integration_status").on(t.integrationId, t.status),
   // Speeds up: time-series order analytics and archival
   idxCreatedAt: index("idx_orders_created_at").on(t.createdAt),
+  // Hourly job: FAILED + due nextRetryAt
+  idxRetryDue: index("idx_orders_retry_due").on(t.status, t.nextRetryAt),
 }));
 
 export type Order = typeof orders.$inferSelect;

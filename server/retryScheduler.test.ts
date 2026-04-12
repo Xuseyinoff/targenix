@@ -1,7 +1,7 @@
 /**
  * retryScheduler.test.ts
  *
- * Tests for the automatic FAILED lead retry scheduler.
+ * Tests for the hourly retry scheduler (Graph errors + order-level retries).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -40,6 +40,7 @@ describe("retryScheduler", () => {
 
   afterEach(() => {
     stopRetryScheduler();
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -83,7 +84,8 @@ describe("retryAllFailedLeads", () => {
   });
 
   afterEach(() => {
-    vi.runAllTimers();
+    stopRetryScheduler();
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -91,6 +93,9 @@ describe("retryAllFailedLeads", () => {
   it("returns { retried: 0 } when DB is unavailable", async () => {
     vi.doMock("./db", () => ({
       getDb: vi.fn().mockResolvedValue(null),
+    }));
+    vi.doMock("./services/orderRetryScheduler", () => ({
+      retryDueFailedOrders: () => Promise.resolve({ retried: 0 }),
     }));
     vi.doMock("./services/leadService", () => ({
       processLead: vi.fn(),
@@ -101,7 +106,7 @@ describe("retryAllFailedLeads", () => {
     expect(result).toEqual({ retried: 0 });
   });
 
-  it("returns { retried: 0 } when there are no FAILED leads", async () => {
+  it("returns { retried: 0 } when there are no leads with Graph errors", async () => {
     const selectChain = {
       select: vi.fn(),
       from: vi.fn(),
@@ -113,6 +118,9 @@ describe("retryAllFailedLeads", () => {
     vi.doMock("./db", () => ({
       getDb: vi.fn().mockResolvedValue(selectChain),
     }));
+    vi.doMock("./services/orderRetryScheduler", () => ({
+      retryDueFailedOrders: () => Promise.resolve({ retried: 0 }),
+    }));
     vi.doMock("./services/leadDispatch", () => ({
       dispatchLeadProcessing: vi.fn().mockResolvedValue(undefined),
     }));
@@ -122,10 +130,10 @@ describe("retryAllFailedLeads", () => {
     expect(result).toEqual({ retried: 0 });
   });
 
-  it("resets FAILED leads and calls dispatchLeadProcessing for each", async () => {
+  it("resets Graph-error leads and calls dispatchLeadProcessing for each", async () => {
     const failedLeads = [
-      { id: 1, leadgenId: "lg1", pageId: "p1", formId: "f1", userId: 1, dataStatus: "ENRICHED", deliveryStatus: "FAILED" },
-      { id: 2, leadgenId: "lg2", pageId: "p2", formId: "f2", userId: 1, dataStatus: "ENRICHED", deliveryStatus: "FAILED" },
+      { id: 1, leadgenId: "lg1", pageId: "p1", formId: "f1", userId: 1, dataStatus: "ERROR", deliveryStatus: "PENDING" },
+      { id: 2, leadgenId: "lg2", pageId: "p2", formId: "f2", userId: 1, dataStatus: "ERROR", deliveryStatus: "PENDING" },
     ];
 
     const updateChain = {
@@ -153,6 +161,9 @@ describe("retryAllFailedLeads", () => {
 
     vi.doMock("./db", () => ({
       getDb: vi.fn().mockResolvedValue(fakeDb),
+    }));
+    vi.doMock("./services/orderRetryScheduler", () => ({
+      retryDueFailedOrders: () => Promise.resolve({ retried: 0 }),
     }));
     vi.doMock("./services/leadDispatch", () => ({
       dispatchLeadProcessing: dispatchMock,

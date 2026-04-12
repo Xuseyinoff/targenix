@@ -16,3 +16,22 @@ export function aggregateDeliveryStatus(outcomes: OrderDeliveryOutcome[]): "SUCC
   if (failed === outcomes.length) return "FAILED";
   return "PARTIAL";
 }
+
+export type OrderRowStatus = "PENDING" | "SENT" | "FAILED";
+
+/**
+ * Aggregate persisted order rows → lead.deliveryStatus.
+ * Any PENDING row means routing is still in flight (PROCESSING).
+ */
+export function aggregateLeadDeliveryFromOrderStatuses(
+  statuses: OrderRowStatus[],
+): "PENDING" | "PROCESSING" | "SUCCESS" | "FAILED" | "PARTIAL" {
+  if (statuses.length === 0) return "SUCCESS";
+  const pending = statuses.filter((s) => s === "PENDING").length;
+  const sent = statuses.filter((s) => s === "SENT").length;
+  const failed = statuses.filter((s) => s === "FAILED").length;
+  if (pending > 0) return "PROCESSING";
+  if (sent === statuses.length) return "SUCCESS";
+  if (failed === statuses.length) return "FAILED";
+  return "PARTIAL";
+}

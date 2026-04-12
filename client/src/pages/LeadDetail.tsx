@@ -482,9 +482,9 @@ export default function LeadDetail() {
                           {String(order.integrationType)}
                         </span>
                       )}
-                      {(order.retryCount as number) > 0 && (
+                      {(order.attempts as number) > 0 && (
                         <span className="text-amber-600">
-                          Retried {order.retryCount as number}×
+                          Attempts {order.attempts as number}×
                         </span>
                       )}
                     </div>

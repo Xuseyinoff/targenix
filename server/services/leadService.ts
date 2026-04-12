@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNotNull, lt, lte } from "drizzle-orm";
 import { facebookConnections, facebookAccounts, facebookForms, leads, orders, integrations, users, targetWebsites } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { decrypt } from "../encryption";
@@ -8,7 +8,8 @@ import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 import { sendAffiliateOrder, sendAffiliateOrderByTemplate, type AffiliateConfig, type TemplateType, type TemplateConfig } from "./affiliateService";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
-import { aggregateDeliveryStatus, type OrderDeliveryOutcome } from "../lib/leadPipeline";
+import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
+import { ORDER_MAX_DELIVERY_ATTEMPTS, ORDER_RETRY_INTERVAL_MS } from "../lib/orderRetryPolicy";
 
 // ─── Field extraction helpers ─────────────────────────────────────────────────
 
@@ -446,6 +447,203 @@ export async function sendLeadTelegramNotification(params: {
   await sendTelegramMessage(chatId, html, "HTML");
 }
 
+type DbClient = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+
+type IntegrationDeliveryResult = {
+  success: boolean;
+  responseData?: unknown;
+  error?: string;
+  durationMs?: number;
+};
+
+async function persistOrderDeliveryAttemptResult(
+  db: DbClient,
+  params: { orderId: number; prevAttempts: number; result: IntegrationDeliveryResult },
+): Promise<boolean> {
+  const { orderId, prevAttempts, result } = params;
+  const now = new Date();
+  const newAttempts = prevAttempts + 1;
+  const nextRetry =
+    result.success || newAttempts >= ORDER_MAX_DELIVERY_ATTEMPTS
+      ? null
+      : new Date(now.getTime() + ORDER_RETRY_INTERVAL_MS);
+
+  const common = {
+    attempts: newAttempts,
+    lastAttemptAt: now,
+    responseData: (result.responseData ?? { error: result.error }) as Record<string, unknown>,
+  };
+
+  const setPayload = result.success
+    ? { ...common, status: "SENT" as const, nextRetryAt: null as null }
+    : { ...common, status: "FAILED" as const, nextRetryAt: nextRetry };
+
+  const up = await db
+    .update(orders)
+    .set(setPayload)
+    .where(and(eq(orders.id, orderId), eq(orders.attempts, prevAttempts)));
+
+  const raw = up as unknown;
+  const n =
+    Array.isArray(raw) && raw[0] && typeof (raw[0] as { affectedRows?: number }).affectedRows === "number"
+      ? (raw[0] as { affectedRows: number }).affectedRows
+      : typeof (raw as { affectedRows?: number })?.affectedRows === "number"
+        ? (raw as { affectedRows: number }).affectedRows
+        : 0;
+  return n === 1;
+}
+
+/**
+ * Send one order to its integration (Graph already done — routing only).
+ * Shared by processLead and the hourly order retry job.
+ */
+async function runOrderIntegrationSend(params: {
+  db: DbClient;
+  integration: typeof integrations.$inferSelect;
+  lead: typeof leads.$inferSelect;
+  leadPayload: {
+    leadgenId: string;
+    fullName: string | null;
+    phone: string | null;
+    email: string | null;
+    pageId: string;
+    formId: string;
+    extraFields: Record<string, string>;
+  };
+  userId: number;
+  isAdmin?: boolean;
+}): Promise<IntegrationDeliveryResult> {
+  const { db, integration, lead, leadPayload, userId, isAdmin } = params;
+  let result: IntegrationDeliveryResult;
+
+  if (integration.type === "TELEGRAM") {
+    const config = integration.config as TelegramConfig;
+    result = await sendTelegramNotification(config, {
+      ...leadPayload,
+      formId: lead.formId ?? "",
+      createdAt: lead.createdAt ?? new Date(),
+    });
+    await log[result.success ? "info" : "warn"](
+      "TELEGRAM",
+      result.success ? `Telegram notification sent for leadId=${lead.id}` : `Telegram notification failed for leadId=${lead.id}`,
+      { integrationId: integration.id, error: result.error },
+      lead.id,
+      leadPayload.pageId,
+      userId,
+      "sent_to_telegram",
+      "facebook",
+    );
+  } else if (integration.type === "AFFILIATE") {
+    const config = integration.config as AffiliateConfig;
+    const _t0Affiliate = Date.now();
+    result = await sendAffiliateOrder(config, leadPayload);
+    result.durationMs = Date.now() - _t0Affiliate;
+    await log[result.success ? "info" : "warn"](
+      "AFFILIATE",
+      result.success ? `Affiliate order sent for leadId=${lead.id}` : `Affiliate order failed for leadId=${lead.id}`,
+      { integrationId: integration.id, error: result.error },
+      lead.id,
+      leadPayload.pageId,
+      userId,
+      "sent_to_affiliate",
+      "facebook",
+      result.durationMs,
+    );
+    await sendLeadTelegramNotification({
+      integration,
+      userId,
+      lead: {
+        fullName: leadPayload.fullName,
+        phone: leadPayload.phone,
+        email: leadPayload.email,
+        pageId: leadPayload.pageId,
+        formId: leadPayload.formId,
+        leadgenId: leadPayload.leadgenId,
+      },
+      result,
+      isAdmin: isAdmin ?? false,
+    });
+  } else if (integration.type === "LEAD_ROUTING") {
+    const config = integration.config as Record<string, unknown>;
+    const _t0Routing = Date.now();
+    const twId = integration.targetWebsiteId ?? (config.targetWebsiteId ? Number(config.targetWebsiteId) : null);
+    if (twId) {
+      const { targetWebsites, destinationTemplates } = await import("../../drizzle/schema");
+      const [tw] = await db.select().from(targetWebsites).where(eq(targetWebsites.id, twId)).limit(1);
+      if (tw && tw.userId !== userId) {
+        result = { success: false, error: "Target website owner mismatch" };
+      } else {
+        const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
+        if (tw && tw.templateId) {
+          const { sendLeadViaTemplate } = await import("./affiliateService");
+          const [dynTpl] = await db
+            .select()
+            .from(destinationTemplates)
+            .where(eq(destinationTemplates.id, tw.templateId))
+            .limit(1);
+          if (dynTpl) {
+            result = await sendLeadViaTemplate(dynTpl, tw.templateConfig, leadPayload, variableFields);
+          } else {
+            result = { success: false, error: `Template ${tw.templateId} not found` };
+          }
+        } else if (tw && tw.templateType) {
+          result = await sendAffiliateOrderByTemplate(
+            tw.templateType as TemplateType,
+            tw.templateConfig as TemplateConfig,
+            leadPayload,
+            variableFields,
+            tw.url,
+          );
+        } else {
+          result = await sendLeadToTargetWebsite(config, leadPayload);
+        }
+      }
+    } else {
+      result = await sendLeadToTargetWebsite(config, leadPayload);
+    }
+    result.durationMs = Date.now() - _t0Routing;
+    await log[result.success ? "info" : "warn"](
+      "ORDER",
+      result.success ? `Lead routed to target website for leadId=${lead.id}` : `Lead routing failed for leadId=${lead.id}`,
+      { integrationId: integration.id, targetUrl: (config as Record<string, unknown>).targetUrl, error: result.error },
+      lead.id,
+      leadPayload.pageId,
+      userId,
+      "sent_to_target_website",
+      "facebook",
+      result.durationMs,
+    );
+    await sendLeadTelegramNotification({
+      integration,
+      userId,
+      lead: {
+        fullName: leadPayload.fullName,
+        phone: leadPayload.phone,
+        email: leadPayload.email,
+        pageId: leadPayload.pageId,
+        formId: leadPayload.formId,
+        leadgenId: leadPayload.leadgenId,
+      },
+      result,
+      isAdmin: isAdmin ?? false,
+    });
+  } else {
+    result = { success: false, error: `Unsupported integration type: ${integration.type}` };
+  }
+
+  return result;
+}
+
+export async function recalculateLeadDeliveryStatus(leadId: number): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
+  const rows = await db.select({ status: orders.status }).from(orders).where(eq(orders.leadId, leadId));
+  const deliveryStatus = aggregateLeadDeliveryFromOrderStatuses(
+    rows.map((r) => r.status as "PENDING" | "SENT" | "FAILED"),
+  );
+  await db.update(leads).set({ deliveryStatus }).where(eq(leads.id, leadId));
+}
+
 /**
  * Full lead processing pipeline:
  * 1. Resolve page access token → Graph API enrichment (dataStatus)
@@ -600,6 +798,9 @@ export async function processLead(params: {
     })
     .where(eq(leads.id, params.leadId));
 
+  const [leadRow] = await db.select().from(leads).where(eq(leads.id, params.leadId)).limit(1);
+  if (!leadRow) throw new Error("Lead row missing after enrichment");
+
   const activeIntegrations = await db
     .select()
     .from(integrations)
@@ -615,8 +816,6 @@ export async function processLead(params: {
     extraFields: extraFieldsResolved,
   };
 
-  const routingOutcomes: OrderDeliveryOutcome[] = [];
-
   for (const integration of activeIntegrations) {
     if (integration.type === "LEAD_ROUTING") {
       const intPageId = integration.pageId ?? "";
@@ -624,130 +823,173 @@ export async function processLead(params: {
       if (intPageId !== params.pageId || intFormId !== params.formId) continue;
     }
 
+    if (integration.type !== "TELEGRAM" && integration.type !== "AFFILIATE" && integration.type !== "LEAD_ROUTING") {
+      continue;
+    }
+
     const [existingOrder] = await db
-      .select({ id: orders.id, status: orders.status, retryCount: orders.retryCount })
+      .select({
+        id: orders.id,
+        status: orders.status,
+        attempts: orders.attempts,
+        nextRetryAt: orders.nextRetryAt,
+      })
       .from(orders)
       .where(and(eq(orders.leadId, params.leadId), eq(orders.integrationId, integration.id)))
       .limit(1);
 
-    if (existingOrder?.status === "SENT") {
-      routingOutcomes.push("SENT");
-      continue;
+    if (existingOrder?.status === "SENT") continue;
+
+    if (existingOrder?.status === "FAILED") {
+      if (existingOrder.attempts >= ORDER_MAX_DELIVERY_ATTEMPTS) continue;
+      if (existingOrder.nextRetryAt && existingOrder.nextRetryAt > new Date()) continue;
     }
 
     let orderId: number;
+    let prevAttempts: number;
+
     if (!existingOrder) {
       await db.insert(orders).values({
         leadId: params.leadId,
         userId: params.userId,
         integrationId: integration.id,
         status: "PENDING",
-        retryCount: 0,
+        attempts: 0,
       });
       const [row] = await db
-        .select({ id: orders.id })
+        .select({ id: orders.id, attempts: orders.attempts })
         .from(orders)
         .where(and(eq(orders.leadId, params.leadId), eq(orders.integrationId, integration.id)))
         .limit(1);
       if (!row) continue;
       orderId = row.id;
+      prevAttempts = row.attempts;
     } else {
       orderId = existingOrder.id;
-      await db
-        .update(orders)
-        .set({
-          status: "PENDING",
-          retryCount: existingOrder.retryCount + 1,
-        })
-        .where(eq(orders.id, orderId));
+      prevAttempts = existingOrder.attempts;
     }
 
-    let result: { success: boolean; responseData?: unknown; error?: string; durationMs?: number };
-    if (integration.type === "TELEGRAM") {
-      const config = integration.config as TelegramConfig;
-      const [lead] = await db.select().from(leads).where(eq(leads.id, params.leadId)).limit(1);
-      result = await sendTelegramNotification(config, {
-        ...leadPayload,
-        formId: lead?.formId ?? "",
-        createdAt: lead?.createdAt ?? new Date(),
-      });
-      await log[result.success ? "info" : "warn"]("TELEGRAM", result.success ? `Telegram notification sent for leadId=${params.leadId}` : `Telegram notification failed for leadId=${params.leadId}`, { integrationId: integration.id, error: result.error }, params.leadId, params.pageId, params.userId, "sent_to_telegram", "facebook");
-    } else if (integration.type === "AFFILIATE") {
-      const config = integration.config as AffiliateConfig;
-      const _t0Affiliate = Date.now();
-      result = await sendAffiliateOrder(config, leadPayload);
-      result.durationMs = Date.now() - _t0Affiliate;
-      await log[result.success ? "info" : "warn"]("AFFILIATE", result.success ? `Affiliate order sent for leadId=${params.leadId}` : `Affiliate order failed for leadId=${params.leadId}`, { integrationId: integration.id, error: result.error }, params.leadId, params.pageId, params.userId, "sent_to_affiliate", "facebook", result.durationMs);
-      await sendLeadTelegramNotification({
-        integration,
-        userId: params.userId,
-        lead: { fullName, phone, email, pageId: params.pageId, formId: params.formId, leadgenId: params.leadgenId },
-        result,
-        isAdmin: params.isAdmin ?? false,
-      });
-    } else if (integration.type === "LEAD_ROUTING") {
-      const config = integration.config as Record<string, unknown>;
-      const _t0Routing = Date.now();
-      const twId = integration.targetWebsiteId ?? (config.targetWebsiteId ? Number(config.targetWebsiteId) : null);
-      if (twId) {
-        const { targetWebsites, destinationTemplates } = await import("../../drizzle/schema");
-        const [tw] = await db.select().from(targetWebsites).where(eq(targetWebsites.id, twId)).limit(1);
-        if (tw && tw.userId !== params.userId) {
-          result = { success: false, error: "Target website owner mismatch" };
-        } else {
-          const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
-          if (tw && tw.templateId) {
-            const { sendLeadViaTemplate } = await import("./affiliateService");
-            const [dynTpl] = await db.select().from(destinationTemplates).where(eq(destinationTemplates.id, tw.templateId)).limit(1);
-            if (dynTpl) {
-              result = await sendLeadViaTemplate(dynTpl, tw.templateConfig, leadPayload, variableFields);
-            } else {
-              result = { success: false, error: `Template ${tw.templateId} not found` };
-            }
-          } else if (tw && tw.templateType) {
-            result = await sendAffiliateOrderByTemplate(
-              tw.templateType as TemplateType,
-              tw.templateConfig as TemplateConfig,
-              leadPayload,
-              variableFields,
-              tw.url
-            );
-          } else {
-            result = await sendLeadToTargetWebsite(config, leadPayload);
-          }
-        }
-      } else {
-        result = await sendLeadToTargetWebsite(config, leadPayload);
-      }
-      result.durationMs = Date.now() - _t0Routing;
-      await log[result.success ? "info" : "warn"]("ORDER", result.success ? `Lead routed to target website for leadId=${params.leadId}` : `Lead routing failed for leadId=${params.leadId}`, { integrationId: integration.id, targetUrl: (config as Record<string, unknown>).targetUrl, error: result.error }, params.leadId, params.pageId, params.userId, "sent_to_target_website", "facebook", result.durationMs);
-      await sendLeadTelegramNotification({
-        integration,
-        userId: params.userId,
-        lead: { fullName, phone, email, pageId: params.pageId, formId: params.formId, leadgenId: params.leadgenId },
-        result,
-        isAdmin: params.isAdmin ?? false,
-      });
-    } else {
-      continue;
+    const result = await runOrderIntegrationSend({
+      db,
+      integration,
+      lead: leadRow,
+      leadPayload,
+      userId: params.userId,
+      isAdmin: params.isAdmin,
+    });
+
+    const persisted = await persistOrderDeliveryAttemptResult(db, { orderId, prevAttempts, result });
+    if (!persisted) {
+      await log.warn(
+        "ORDER",
+        `Order ${orderId} delivery result not persisted (concurrent update)`,
+        { orderId, prevAttempts },
+        params.leadId,
+        params.pageId,
+        params.userId,
+        "order_delivery_race",
+        "facebook",
+      );
     }
-
-    await db
-      .update(orders)
-      .set({
-        status: result.success ? "SENT" : "FAILED",
-        responseData: result.responseData ?? { error: result.error },
-      })
-      .where(eq(orders.id, orderId));
-
-    routingOutcomes.push(result.success ? "SENT" : "FAILED");
   }
 
-  const finalDelivery = aggregateDeliveryStatus(routingOutcomes);
-  await db
-    .update(leads)
-    .set({ deliveryStatus: finalDelivery })
-    .where(eq(leads.id, params.leadId));
+  await recalculateLeadDeliveryStatus(params.leadId);
 
   await log.info("LEAD", `Processing complete — leadId=${params.leadId} fullName=${fullName ?? "unknown"} phone=${phone ?? "none"}`, { leadId: params.leadId, fullName, phone, email, pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
+}
+
+/**
+ * Re-deliver a single FAILED order whose nextRetryAt is due (Graph already ENRICHED).
+ * Does not call Facebook Graph or processLead — routing only.
+ * Uses optimistic locking on orders.attempts to avoid duplicate sends under concurrency.
+ */
+export async function retryFailedOrderDelivery(orderId: number): Promise<{
+  outcome: "sent" | "failed_exhausted" | "failed_will_retry" | "skipped" | "lost_race";
+}> {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const now = new Date();
+
+  const [order] = await db
+    .select()
+    .from(orders)
+    .where(
+      and(
+        eq(orders.id, orderId),
+        eq(orders.status, "FAILED"),
+        lt(orders.attempts, ORDER_MAX_DELIVERY_ATTEMPTS),
+        isNotNull(orders.nextRetryAt),
+        lte(orders.nextRetryAt, now),
+      ),
+    )
+    .limit(1);
+
+  if (!order) return { outcome: "skipped" };
+
+  const [lead] = await db.select().from(leads).where(eq(leads.id, order.leadId)).limit(1);
+  if (!lead || lead.dataStatus !== "ENRICHED") return { outcome: "skipped" };
+
+  const [integration] = await db
+    .select()
+    .from(integrations)
+    .where(and(eq(integrations.id, order.integrationId), eq(integrations.userId, order.userId)))
+    .limit(1);
+
+  if (!integration) return { outcome: "skipped" };
+
+  if (!integration.isActive) {
+    await db.update(orders).set({ nextRetryAt: null }).where(eq(orders.id, order.id));
+    await log.warn(
+      "ORDER",
+      `Order ${orderId} auto-retry paused — integration disabled`,
+      { integrationId: integration.id },
+      order.leadId,
+      lead.pageId,
+      order.userId,
+      "order_retry_skipped",
+      "system",
+    );
+    return { outcome: "skipped" };
+  }
+
+  if (integration.type === "LEAD_ROUTING") {
+    const intPageId = integration.pageId ?? "";
+    const intFormId = integration.formId ?? "";
+    if (intPageId !== lead.pageId || intFormId !== lead.formId) return { outcome: "skipped" };
+  }
+
+  if (integration.type !== "TELEGRAM" && integration.type !== "AFFILIATE" && integration.type !== "LEAD_ROUTING") {
+    return { outcome: "skipped" };
+  }
+
+  const extraFieldsResolved = (lead.extraFields as Record<string, string> | null) ?? {};
+  const leadPayload = {
+    leadgenId: lead.leadgenId,
+    fullName: lead.fullName,
+    phone: lead.phone,
+    email: lead.email,
+    pageId: lead.pageId,
+    formId: lead.formId,
+    extraFields: extraFieldsResolved,
+  };
+
+  const prevAttempts = order.attempts;
+  const result = await runOrderIntegrationSend({
+    db,
+    integration,
+    lead,
+    leadPayload,
+    userId: order.userId,
+    isAdmin: false,
+  });
+
+  const persisted = await persistOrderDeliveryAttemptResult(db, { orderId: order.id, prevAttempts, result });
+  if (!persisted) return { outcome: "lost_race" };
+
+  await recalculateLeadDeliveryStatus(lead.id);
+
+  if (result.success) return { outcome: "sent" };
+  const [after] = await db.select({ attempts: orders.attempts }).from(orders).where(eq(orders.id, order.id)).limit(1);
+  if (after && after.attempts >= ORDER_MAX_DELIVERY_ATTEMPTS) return { outcome: "failed_exhausted" };
+  return { outcome: "failed_will_retry" };
 }

@@ -58,7 +58,9 @@ export const leadsRouter = router({
           leadId:        orders.leadId,
           integrationId: orders.integrationId,
           status:        orders.status,
-          retryCount:    orders.retryCount,
+          attempts:      orders.attempts,
+          lastAttemptAt: orders.lastAttemptAt,
+          nextRetryAt:   orders.nextRetryAt,
           createdAt:     orders.createdAt,
         })
         .from(orders)
@@ -263,7 +265,9 @@ export const leadsRouter = router({
             userId: order.userId,
             integrationId: order.integrationId,
             status: order.status,
-            retryCount: order.retryCount,
+            attempts:      order.attempts,
+            lastAttemptAt: order.lastAttemptAt,
+            nextRetryAt:   order.nextRetryAt,
             responseData: order.responseData as Record<string, unknown> | null,
             createdAt: order.createdAt,
             updatedAt: order.updatedAt,

@@ -1,55 +1,48 @@
 /**
- * retryScheduler.ts
+ * Hourly background jobs (in-process timer, aligned to clock hour):
  *
- * Automatically retries leads with Graph errors or failed/partial delivery every hour
- * (e.g., 08:00, 09:00, 10:00, …).
+ * 1. **Graph errors** — leads with dataStatus = ERROR still need a full processLead
+ *    (token / Graph fetch). Capped batch + staggered dispatch.
  *
- * Uses a simple setInterval-based scheduler — no external dependencies required.
- * The scheduler runs in-process alongside the Express server.
+ * 2. **Failed orders** — integration routing only, max 3 attempts, 1h spacing
+ *    (see orderRetryScheduler + leadService.retryFailedOrderDelivery).
+ *
+ * For Kubernetes / Railway, you can instead run `curl` against an admin
+ * endpoint or a dedicated worker on the same schedule — example at bottom of file.
  */
 
-import { eq, inArray, or } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "../db";
 import { leads } from "../../drizzle/schema";
 import { dispatchLeadProcessing } from "./leadDispatch";
+import { retryDueFailedOrders } from "./orderRetryScheduler";
 
-/** How often to retry (ms). Default: every hour. */
-const RETRY_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+/** How often to run (ms). Default: every hour, aligned to top-of-hour. */
+const RETRY_INTERVAL_MS = 60 * 60 * 1000;
 
 /**
- * Retry leads where dataStatus = ERROR or delivery is FAILED / PARTIAL.
- * Called automatically by the scheduler and can also be called manually in tests.
+ * Re-queue leads that failed Facebook Graph enrichment (full pipeline).
+ * Delivery-only failures are handled by {@link retryDueFailedOrders}, not here.
  */
-export async function retryAllFailedLeads(): Promise<{ retried: number }> {
+export async function retryGraphErrorLeads(): Promise<{ retried: number }> {
   const db = await getDb();
   if (!db) {
-    console.warn("[RetryScheduler] DB not available, skipping retry run");
+    console.warn("[RetryScheduler] DB not available, skipping graph-error retry run");
     return { retried: 0 };
   }
 
-  const failedLeads = await db
-    .select()
-    .from(leads)
-    .where(
-      or(
-        eq(leads.dataStatus, "ERROR"),
-        inArray(leads.deliveryStatus, ["FAILED", "PARTIAL"])
-      )
-    );
+  const graphErrorLeads = await db.select().from(leads).where(eq(leads.dataStatus, "ERROR"));
 
-  if (failedLeads.length === 0) {
-    console.log("[RetryScheduler] No leads to auto-retry");
+  if (graphErrorLeads.length === 0) {
+    console.log("[RetryScheduler] No leads with Graph errors to auto-retry");
     return { retried: 0 };
   }
 
-  // Safety cap: never blast more than 500 at once. If backlog > 500,
-  // something systemic broke — fix root cause, not symptoms.
-  const toRetry = failedLeads.slice(0, 500);
-  if (failedLeads.length > 500) {
-    console.warn(`[RetryScheduler] Backlog too large (${failedLeads.length}), capping retry at 500`);
+  const toRetry = graphErrorLeads.slice(0, 500);
+  if (graphErrorLeads.length > 500) {
+    console.warn(`[RetryScheduler] Graph-error backlog (${graphErrorLeads.length}), capping at 500`);
   }
 
-  // Reset → full pipeline re-run (enrichment + routing)
   const ids = toRetry.map((l) => l.id);
   for (const id of ids) {
     await db
@@ -58,7 +51,6 @@ export async function retryAllFailedLeads(): Promise<{ retried: number }> {
       .where(eq(leads.id, id));
   }
 
-  // Dispatch in batches of 10, with 2s between batches — prevents API rate-limit spikes
   const BATCH_SIZE = 10;
   const BATCH_DELAY_MS = 2000;
 
@@ -75,22 +67,34 @@ export async function retryAllFailedLeads(): Promise<{ retried: number }> {
           formId: lead.formId,
           userId: lead.userId,
         }).catch((err: unknown) =>
-          console.error(`[RetryScheduler] dispatch failed for lead ${lead.id}:`, err)
+          console.error(`[RetryScheduler] dispatch failed for lead ${lead.id}:`, err),
         );
       }
     }, delayMs);
   }
 
   console.log(
-    `[RetryScheduler] ${new Date().toISOString()} — queued ${toRetry.length} lead(s) for retry in batches of ${BATCH_SIZE}`
+    `[RetryScheduler] ${new Date().toISOString()} — queued ${toRetry.length} lead(s) with Graph errors for full reprocessing`,
   );
   return { retried: toRetry.length };
 }
 
 /**
- * Calculate milliseconds until the next top-of-the-hour.
- * e.g., if it's 09:47:30, returns ms until 10:00:00.
+ * Runs graph-error lead retries + due order retries. Used by the hourly timer
+ * and by admin "retry all" tooling.
  */
+export async function retryAllFailedLeads(): Promise<{ retried: number }> {
+  const graph = await retryGraphErrorLeads();
+  const ordersResult = await retryDueFailedOrders();
+  const retried = graph.retried + ordersResult.retried;
+  if (retried > 0) {
+    console.log(
+      `[RetryScheduler] Hourly job summary — graph leads: ${graph.retried}, order deliveries: ${ordersResult.retried}`,
+    );
+  }
+  return { retried };
+}
+
 function msUntilNextHour(): number {
   const now = new Date();
   const next = new Date(now);
@@ -102,23 +106,22 @@ function msUntilNextHour(): number {
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
- * Start the hourly retry scheduler.
- * Fires at the top of each hour (08:00, 09:00, 10:00, …).
- * Safe to call multiple times — subsequent calls are no-ops.
+ * Start the hourly scheduler (top of each hour). Safe to call once at process boot.
  */
 export function startRetryScheduler(): void {
-  if (schedulerTimer !== null) return; // already running
+  if (schedulerTimer !== null) return;
 
   const scheduleNext = () => {
     const delay = msUntilNextHour();
     const nextRun = new Date(Date.now() + delay);
     console.log(
-      `[RetryScheduler] Next auto-retry scheduled at ${nextRun.toISOString()} (in ${Math.round(delay / 60000)} min)`
+      `[RetryScheduler] Next hourly job at ${nextRun.toISOString()} (in ${Math.round(delay / 60000)} min)`,
     );
 
     schedulerTimer = setTimeout(() => {
-      void retryAllFailedLeads();
-      // After firing, schedule the next hour
+      void retryAllFailedLeads().catch((err: unknown) =>
+        console.error("[RetryScheduler] Hourly retry job failed:", err),
+      );
       schedulerTimer = null;
       scheduleNext();
     }, delay);
@@ -127,12 +130,37 @@ export function startRetryScheduler(): void {
   scheduleNext();
 }
 
-/**
- * Stop the scheduler (useful in tests).
- */
 export function stopRetryScheduler(): void {
   if (schedulerTimer !== null) {
     clearTimeout(schedulerTimer);
     schedulerTimer = null;
   }
 }
+
+/*
+ * ── External CRON (e.g. GitHub Actions, k8s CronJob) ─────────────────────────
+ * POST /api/admin/.../retry-all  (with auth) — or invoke worker:
+ *
+ * ```yaml
+ * apiVersion: batch/v1
+ * kind: CronJob
+ * metadata:
+ *   name: targenix-order-retry
+ * spec:
+ *   schedule: "0 * * * *"   # every hour at :00
+ *   jobTemplate:
+ *     spec:
+ *       template:
+ *         spec:
+ *           containers:
+ *           - name: curl
+ *             image: curlimages/curl:latest
+ *             command:
+ *             - curl
+ *             - -X
+ *             - POST
+ *             - -H
+ *             - "Authorization: Bearer $CRON_SECRET"
+ *             - https://app.example.com/api/internal/retry-due
+ * ```
+ */
