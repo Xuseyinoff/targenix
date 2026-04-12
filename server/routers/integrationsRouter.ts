@@ -7,7 +7,6 @@ import {
   deleteIntegration,
   getDb,
 } from "../db";
-import { validateTelegramToken, sendTelegramNotification } from "../services/telegramService";
 import { sendAffiliateOrderByTemplate, sendLeadViaTemplate, type TemplateType, type TemplateConfig } from "../services/affiliateService";
 import { sendLeadTelegramNotification } from "../services/leadService";
 import { targetWebsites, destinationTemplates } from "../../drizzle/schema";
@@ -35,10 +34,14 @@ export const integrationsRouter = router({
     );
   }),
 
+  /**
+   * Lead Routing wizard only. Standalone Telegram / Affiliate integrations were removed from the product UI;
+   * delivery code still supports legacy TELEGRAM/AFFILIATE rows in the database.
+   */
   create: protectedProcedure
     .input(
       z.object({
-        type: z.enum(["TELEGRAM", "AFFILIATE", "LEAD_ROUTING"]),
+        type: z.literal("LEAD_ROUTING"),
         name: z.string().min(1).max(255),
         config: z.record(z.string(), z.any()),
         telegramChatId: z.string().max(64).optional(),
@@ -91,13 +94,6 @@ export const integrationsRouter = router({
       if (!owned) throw new Error("Integration not found");
       await updateIntegration(input.id, { isActive: input.isActive });
       return { success: true };
-    }),
-
-  validateTelegram: protectedProcedure
-    .input(z.object({ token: z.string() }))
-    .mutation(async ({ input }) => {
-      const valid = await validateTelegramToken(input.token);
-      return { valid };
     }),
 
   testLead: protectedProcedure
@@ -176,7 +172,12 @@ export const integrationsRouter = router({
 
       // Send Telegram notification with [TEST] badge — same format as real leads
       void sendLeadTelegramNotification({
-        integration: { telegramChatId: null, name: integration.name, type: integration.type },
+        integration: {
+          userId: integration.userId,
+          telegramChatId: null,
+          name: integration.name,
+          type: integration.type,
+        },
         userId: ctx.user.id,
         lead: {
           fullName: testLead.fullName,
@@ -191,36 +192,5 @@ export const integrationsRouter = router({
       }).catch(() => { /* non-critical */ });
 
       return { success, responseData, error: errorMsg, durationMs };
-    }),
-
-  testNotification: protectedProcedure
-    .input(z.object({ id: z.number() }))
-    .mutation(async ({ ctx, input }) => {
-      const list = await getIntegrations(ctx.user.id);
-      const integration = list.find((i) => i.id === input.id);
-      if (!integration) throw new Error("Integration not found");
-      if (integration.type !== "TELEGRAM") {
-        throw new Error("Test notification is only supported for Telegram integrations");
-      }
-      const config = integration.config as { token?: string; chatId?: string };
-      if (!config.token || !config.chatId) {
-        throw new Error("Telegram token or chat ID is missing in config");
-      }
-      const result = await sendTelegramNotification(
-        { token: config.token, chatId: config.chatId },
-        {
-          leadgenId: "test-lead-001",
-          fullName: "Test User",
-          phone: "+1234567890",
-          email: "test@example.com",
-          pageId: "test-page-id",
-          formId: "test-form-id",
-          createdAt: new Date(),
-        }
-      );
-      if (!result.success) {
-        throw new Error(result.error ?? "Failed to send test notification");
-      }
-      return { success: true };
     }),
 });

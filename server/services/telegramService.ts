@@ -15,12 +15,20 @@ export interface LeadNotificationData {
   createdAt: Date;
 }
 
+export type SendTelegramNotificationOptions = {
+  /** Timed auto-retry delivery (same integration Telegram as first try) */
+  isAutoRetry?: boolean;
+};
+
 /**
- * Format a lead into a readable Telegram message.
+ * Format a lead into a readable Telegram message (integration-owned bot; Markdown).
  */
-function formatLeadMessage(lead: LeadNotificationData): string {
+function formatIntegrationTelegramMarkdown(lead: LeadNotificationData, opts?: SendTelegramNotificationOptions): string {
+  const header = opts?.isAutoRetry
+    ? "📋 *[RETRY]* — *New Facebook Lead*"
+    : "📋 *New Facebook Lead*";
   const lines: string[] = [
-    "📋 *New Facebook Lead*",
+    header,
     "",
     `👤 *Name:* ${lead.fullName || "N/A"}`,
     `📞 *Phone:* ${lead.phone || "N/A"}`,
@@ -40,9 +48,10 @@ function formatLeadMessage(lead: LeadNotificationData): string {
  */
 export async function sendTelegramNotification(
   config: TelegramConfig,
-  lead: LeadNotificationData
+  lead: LeadNotificationData,
+  options?: SendTelegramNotificationOptions,
 ): Promise<{ success: boolean; error?: string }> {
-  const text = formatLeadMessage(lead);
+  const text = formatIntegrationTelegramMarkdown(lead, options);
   const url = `https://api.telegram.org/bot${config.token}/sendMessage`;
 
   try {

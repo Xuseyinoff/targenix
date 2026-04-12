@@ -46,6 +46,10 @@ export interface FormatLeadMessageOptions {
   isTest?: boolean;
   /** When true, adds a [ADMIN] badge to the header (admin-triggered backfill) */
   isAdmin?: boolean;
+  /** When true, adds a [RETRY] badge (timed order auto-retry, not initial webhook delivery) */
+  isAutoRetry?: boolean;
+  /** Shown in the status block when {@link isAutoRetry} — 1-based attempt index / max tries */
+  deliveryAttempt?: { current: number; max: number };
 }
 
 // ─── HTML escaping ────────────────────────────────────────────────────────────
@@ -253,7 +257,7 @@ function truncate(text: string, max: number): string {
  * await bot.sendMessage(chatId, html, { parse_mode: "HTML" });
  */
 export function formatLeadMessage(opts: FormatLeadMessageOptions): string {
-  const { lead, routing, isTest = false, isAdmin = false } = opts;
+  const { lead, routing, isTest = false, isAdmin = false, isAutoRetry = false, deliveryAttempt } = opts;
 
   const name = esc(lead.fullName?.trim() || "—");
   const phone = esc(lead.phone?.trim() || "—");
@@ -283,7 +287,11 @@ export function formatLeadMessage(opts: FormatLeadMessageOptions): string {
 
   // ── 1. HEADER ─────────────────────────────────────────────────────────────
   const parts: string[] = [];
-  const headerSuffix = isTest ? ` <code>[TEST]</code>` : isAdmin ? ` <code>[ADMIN]</code>` : "";
+  const headerBadges: string[] = [];
+  if (isTest) headerBadges.push(`<code>[TEST]</code>`);
+  if (isAdmin) headerBadges.push(`<code>[ADMIN]</code>`);
+  if (isAutoRetry) headerBadges.push(`<code>[RETRY]</code>`);
+  const headerSuffix = headerBadges.length ? ` ${headerBadges.join(" ")}` : "";
   parts.push(`🚀 <b>TARGENIX • NEW LEAD</b>${headerSuffix}`);
 
   // ── 2. CLIENT BLOCK (blockquote #1) ───────────────────────────────────────
@@ -307,10 +315,21 @@ export function formatLeadMessage(opts: FormatLeadMessageOptions): string {
   parts.push(`🔗 <i>ROUTING</i>\n${routingLine}`);
 
   // ── 5. STATUS ─────────────────────────────────────────────────────────────
-  const statusLines = [
+  const statusLines: string[] = [];
+  if (
+    isAutoRetry &&
+    deliveryAttempt &&
+    deliveryAttempt.current >= 1 &&
+    deliveryAttempt.max >= 1
+  ) {
+    const cur = Math.min(deliveryAttempt.current, deliveryAttempt.max);
+    const max = deliveryAttempt.max;
+    statusLines.push(`🔁 <b>Urinish:</b> ${cur}/${max} <i>(avtomatik qayta yuborish)</i>`);
+  }
+  statusLines.push(
     `📡 <b>Integration:</b> Active`,
     `📤 <b>Delivery:</b> ${deliveryStatus}`,
-  ];
+  );
   if (routing.durationMs !== undefined) {
     statusLines.push(`⚡ <b>Time:</b> ${responseTime}`);
   }

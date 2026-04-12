@@ -18,6 +18,13 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -43,6 +50,10 @@ import {
   ChevronUp,
   Copy,
   X,
+  Link2,
+  Braces,
+  Sparkles,
+  Layers,
 } from "lucide-react";
 
 // ─── Template definitions (client-side display only) ─────────────────────────
@@ -754,12 +765,12 @@ export default function TargetWebsites() {
               </Button>
             </DialogFooter>
           ) : mode === "configure" ? (
-            <DialogFooter className="gap-2 sm:justify-end">
-              <Button variant="outline" onClick={() => setOpen(false)}>
+            <DialogFooter className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button variant="outline" className="h-10 w-full sm:w-auto" onClick={() => setOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleSubmit} disabled={isSaving}>
-                {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              <Button className="h-10 w-full shadow-sm sm:w-auto sm:min-w-[9rem]" onClick={handleSubmit} disabled={isSaving}>
+                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {editId ? "Save Changes" : "Save Website"}
               </Button>
             </DialogFooter>
@@ -778,13 +789,16 @@ export default function TargetWebsites() {
           {/* Step 2a: Configure dynamic template */}
           {mode === "configure-dynamic" && selectedDynTemplate && (
             <div className="space-y-5 py-2">
-              <button
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="-ml-2 h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
                 onClick={() => setMode("select-template")}
-                className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
               >
-                <ArrowLeft className="w-4 h-4" />
+                <ArrowLeft className="h-4 w-4" />
                 Back to templates
-              </button>
+              </Button>
 
               {/* Name */}
               <div className="space-y-1.5">
@@ -899,30 +913,52 @@ export default function TargetWebsites() {
           {/* Step 2: Configure */}
           {mode === "configure" && (
             <div className="space-y-5 py-2">
-              {/* Back button */}
               {!editId && (
-                <button
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="-ml-2 h-8 gap-1.5 px-2 text-muted-foreground hover:text-foreground"
                   onClick={() => setMode("select-template")}
-                  className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  <ArrowLeft className="w-4 h-4" />
+                  <ArrowLeft className="h-4 w-4" />
                   Back to templates
-                </button>
+                </Button>
               )}
 
-              {/* Template badge */}
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-6 rounded-full ${selectedTemplate.color}`} />
-                <span className="font-medium text-sm">{selectedTemplate.label}</span>
-                {selectedTemplate.endpoint && (
-                  <span className="text-xs text-muted-foreground truncate">{selectedTemplate.endpoint}</span>
-                )}
-              </div>
+              {isCustom ? (
+                <div className="flex gap-3 rounded-2xl border border-violet-200/70 bg-gradient-to-br from-violet-500/[0.07] via-background to-fuchsia-500/[0.05] p-3.5 shadow-sm dark:border-violet-900/50 dark:from-violet-950/40 dark:to-background">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-md shadow-violet-500/20">
+                    <Braces className="h-5 w-5" aria-hidden />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold tracking-tight text-foreground">Custom HTTP endpoint</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                      POST with JSON, <code className="font-mono text-[11px]">application/x-www-form-urlencoded</code>, or{" "}
+                      <code className="font-mono text-[11px]">multipart/form-data</code>. Use{" "}
+                      <span className="font-mono text-[11px] text-foreground/80">{"{{ }}"}</span> placeholders in the body and
+                      headers.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2.5 rounded-xl border bg-muted/25 px-3 py-2">
+                  <div className={`h-8 w-1 shrink-0 rounded-full ${selectedTemplate.color}`} />
+                  <div className="min-w-0">
+                    <span className="text-sm font-medium">{selectedTemplate.label}</span>
+                    {selectedTemplate.endpoint && (
+                      <p className="truncate font-mono text-[11px] text-muted-foreground">{selectedTemplate.endpoint}</p>
+                    )}
+                  </div>
+                </div>
+              )}
 
-              {/* Name */}
               <div className="space-y-1.5">
-                <Label>Name <span className="text-destructive">*</span></Label>
+                <Label className="text-sm font-medium">
+                  Name <span className="text-destructive">*</span>
+                </Label>
                 <Input
+                  className="h-10 rounded-lg shadow-xs"
                   placeholder={`e.g. ${selectedTemplate.label} — My Campaign`}
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
@@ -975,242 +1011,290 @@ export default function TargetWebsites() {
                 </div>
               )}
 
-              {/* ── CUSTOM TEMPLATE FIELDS ── */}
               {isCustom && (
-                <>
-                  {/* Endpoint URL */}
-                  <div className="space-y-1.5">
-                    <Label>Endpoint URL <span className="text-destructive">*</span></Label>
-                    <Input
-                      placeholder="https://your-crm.com/api/leads"
-                      value={form.url}
-                      onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-                    />
+                <div className="space-y-6 rounded-2xl border border-border/60 bg-card/40 p-4 shadow-sm ring-1 ring-black/[0.02] dark:bg-card/20 dark:ring-white/[0.04] sm:p-5">
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium">
+                      Endpoint URL <span className="text-destructive">*</span>
+                    </Label>
+                    <div className="relative">
+                      <Link2
+                        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                        aria-hidden
+                      />
+                      <Input
+                        className="h-10 rounded-lg pl-9 font-mono text-sm shadow-xs"
+                        placeholder="https://your-crm.com/api/leads"
+                        value={form.url}
+                        onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+                      />
+                    </div>
                   </div>
 
-                  {/* Method + Content Type */}
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-3 rounded-xl border border-border/80 bg-muted/15 p-3 sm:grid-cols-2 sm:gap-4">
                     <div className="space-y-1.5">
-                      <Label>Method</Label>
-                      <div className="h-9 flex items-center px-3 rounded-md border bg-muted/30 text-sm text-muted-foreground">
+                      <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Method</Label>
+                      <div className="flex h-10 items-center rounded-lg border border-dashed border-muted-foreground/25 bg-background/80 px-3 font-mono text-xs font-semibold tracking-wide text-muted-foreground">
                         POST
                       </div>
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Content Type</Label>
-                      <select
-                        className="w-full h-9 rounded-md border border-input bg-transparent px-3 py-1 text-sm"
+                      <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Content-Type</Label>
+                      <Select
                         value={form.contentType}
-                        onChange={(e) => setForm((f) => ({ ...f, contentType: e.target.value as ContentType }))}
+                        onValueChange={(v) => setForm((f) => ({ ...f, contentType: v as ContentType }))}
                       >
-                        <option value="json">application/json</option>
-                        <option value="form-urlencoded">application/x-www-form-urlencoded</option>
-                        <option value="multipart">multipart/form-data</option>
-                      </select>
+                        <SelectTrigger className="h-10 w-full rounded-lg shadow-xs">
+                          <SelectValue placeholder="Format" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="json">application/json</SelectItem>
+                          <SelectItem value="form-urlencoded">application/x-www-form-urlencoded</SelectItem>
+                          <SelectItem value="multipart">multipart/form-data</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                   </div>
 
-                  {/* Variable reference — always visible, click to copy */}
-                  <div className="rounded-lg border bg-muted/20 p-2.5 space-y-1.5">
-                    <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                      <Info className="w-3 h-3" /> Variables <span className="font-normal">(click to copy)</span>
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
+                  <div className="rounded-xl border border-primary/15 bg-gradient-to-b from-primary/[0.06] to-muted/15 p-4 dark:from-primary/10 dark:to-muted/10">
+                    <div className="mb-3 flex gap-2.5">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background/90 shadow-sm ring-1 ring-border/60">
+                        <Sparkles className="h-4 w-4 text-violet-600 dark:text-violet-400" aria-hidden />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground">Template variables</p>
+                        <p className="text-xs leading-snug text-muted-foreground">
+                          Click a tag to copy. Paste into the JSON body, form fields, or headers.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
                       {BUILTIN_VARS.map((v) => (
-                        <code
+                        <button
                           key={v.key}
+                          type="button"
                           title={v.desc}
-                          className="text-xs bg-background border rounded px-1.5 py-0.5 cursor-pointer hover:bg-primary/10 transition-colors"
-                          onClick={() => { navigator.clipboard.writeText(v.key); toast.success(`Copied ${v.key}`); }}
+                          className="inline-flex items-center gap-1 rounded-full border border-border/90 bg-background px-3 py-1.5 font-mono text-[11px] font-medium shadow-sm transition hover:border-primary/35 hover:bg-primary/5 hover:shadow-md active:scale-[0.98]"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(v.key);
+                            toast.success(`Copied ${v.key}`);
+                          }}
                         >
                           {v.key}
-                        </code>
+                          <Copy className="h-3 w-3 opacity-50" aria-hidden />
+                        </button>
                       ))}
-                      <code className="text-xs bg-background border border-dashed rounded px-1.5 py-0.5 text-muted-foreground">{"{{any_field}}"}</code>
+                      <span className="inline-flex items-center rounded-full border border-dashed border-muted-foreground/35 bg-muted/30 px-3 py-1.5 font-mono text-[11px] text-muted-foreground">
+                        {"{{any_field}}"}
+                      </span>
                     </div>
                   </div>
 
-                  {/* Body builder */}
                   <div className="space-y-2">
-                    <Label>
-                      {form.contentType === "json" ? "Body Template (JSON)" : "Body Fields"}
-                    </Label>
+                    <div className="flex items-center gap-2">
+                      <Braces className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+                      <Label className="text-sm font-medium">
+                        {form.contentType === "json" ? "Body (JSON)" : "Body fields"}
+                      </Label>
+                    </div>
 
                     {form.contentType === "json" ? (
-                      <div className="space-y-1">
+                      <div className="space-y-1.5">
                         <Textarea
-                          className="font-mono text-xs min-h-[140px] resize-y"
+                          className="min-h-[160px] resize-y rounded-lg border-border/80 font-mono text-xs leading-relaxed shadow-xs"
                           placeholder={DEFAULT_JSON_TEMPLATE}
                           value={form.bodyTemplate}
                           onChange={(e) => setForm((f) => ({ ...f, bodyTemplate: e.target.value }))}
                         />
                         <p className="text-xs text-muted-foreground">
-                          Use <code className="bg-muted px-1 rounded">{"{{variable}}"}</code> for dynamic values. Must be valid JSON.
+                          Use <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{"{{variable}}"}</code> for
+                          dynamic values. Body must be valid JSON.
                         </p>
                       </div>
                     ) : (
-                      <div className="space-y-2">
+                      <div className="space-y-2 rounded-lg border border-border/60 bg-background/50 p-2">
                         {form.bodyFields.map((bf, i) => (
-                          <div key={i} className="flex gap-2 items-center">
+                          <div key={i} className="flex items-center gap-2">
                             <Input
                               placeholder="key"
                               value={bf.key}
-                              className="w-32 font-mono text-xs h-8"
+                              className="h-9 w-28 rounded-md font-mono text-xs sm:w-32"
                               onChange={(e) => {
                                 const fs = [...form.bodyFields];
                                 fs[i] = { ...fs[i], key: e.target.value };
                                 setForm((f) => ({ ...f, bodyFields: fs }));
                               }}
                             />
-                            <span className="text-muted-foreground text-xs shrink-0">→</span>
+                            <span className="shrink-0 text-xs text-muted-foreground">→</span>
                             <Input
-                              placeholder="{{name}} or static"
+                              placeholder="{{name}} or static value"
                               value={bf.value}
-                              className="flex-1 font-mono text-xs h-8"
+                              className="h-9 min-w-0 flex-1 rounded-md font-mono text-xs"
                               onChange={(e) => {
                                 const fs = [...form.bodyFields];
                                 fs[i] = { ...fs[i], value: e.target.value };
                                 setForm((f) => ({ ...f, bodyFields: fs }));
                               }}
                             />
-                            <button
+                            <Button
                               type="button"
-                              className="text-muted-foreground hover:text-destructive shrink-0"
-                              onClick={() => setForm((f) => ({ ...f, bodyFields: f.bodyFields.filter((_, j) => j !== i) }))}
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                              onClick={() =>
+                                setForm((f) => ({ ...f, bodyFields: f.bodyFields.filter((_, j) => j !== i) }))
+                              }
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
                           </div>
                         ))}
                         <Button
                           variant="outline"
                           size="sm"
-                          className="h-7 text-xs mt-1"
+                          className="mt-1 h-8 text-xs"
                           onClick={() => setForm((f) => ({ ...f, bodyFields: [...f.bodyFields, { key: "", value: "" }] }))}
                         >
-                          <Plus className="w-3 h-3 mr-1" /> Add Field
+                          <Plus className="mr-1 h-3 w-3" /> Add field
                         </Button>
                       </div>
                     )}
                   </div>
 
-                  {/* Headers */}
-                  <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label className="text-sm">Headers <span className="text-xs font-normal text-muted-foreground">(optional · supports variables)</span></Label>
+                  <div className="rounded-xl border border-border/70 bg-muted/10 p-3.5 shadow-xs">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Layers className="h-4 w-4 text-muted-foreground" aria-hidden />
+                        <Label className="text-sm font-medium">
+                          Headers <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+                        </Label>
+                      </div>
                       <Button
-                        variant="outline"
+                        variant="secondary"
                         size="sm"
-                        className="h-7 text-xs"
+                        className="h-8 shrink-0 text-xs"
                         onClick={() => setForm((f) => ({ ...f, customHeaders: [...f.customHeaders, { key: "", value: "" }] }))}
                       >
-                        <Plus className="w-3 h-3 mr-1" /> Add
+                        <Plus className="mr-1 h-3 w-3" /> Add
                       </Button>
                     </div>
                     {form.customHeaders.length === 0 && (
-                      <p className="text-xs text-muted-foreground italic">No custom headers. Content-Type is set automatically.</p>
+                      <p className="text-xs italic text-muted-foreground">
+                        Content-Type is set from your selection above. Add Authorization or other headers here if needed.
+                      </p>
                     )}
-                    {form.customHeaders.map((h, i) => (
-                      <div key={i} className="flex gap-2 items-center">
-                        <Input
-                          placeholder="Header-Name"
-                          value={h.key}
-                          className="w-44 text-xs h-8"
-                          onChange={(e) => {
-                            const hs = [...form.customHeaders];
-                            hs[i] = { ...hs[i], key: e.target.value };
-                            setForm((f) => ({ ...f, customHeaders: hs }));
-                          }}
-                        />
-                        <span className="text-muted-foreground text-xs shrink-0">:</span>
-                        <Input
-                          placeholder="Bearer {{api_key}}"
-                          value={h.value}
-                          className="flex-1 font-mono text-xs h-8"
-                          onChange={(e) => {
-                            const hs = [...form.customHeaders];
-                            hs[i] = { ...hs[i], value: e.target.value };
-                            setForm((f) => ({ ...f, customHeaders: hs }));
-                          }}
-                        />
-                        <button
-                          type="button"
-                          className="text-muted-foreground hover:text-destructive shrink-0"
-                          onClick={() => setForm((f) => ({ ...f, customHeaders: f.customHeaders.filter((_, j) => j !== i) }))}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    ))}
+                    <div className="space-y-2 pt-1">
+                      {form.customHeaders.map((h, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <Input
+                            placeholder="Header-Name"
+                            value={h.key}
+                            className="h-9 w-36 rounded-md text-xs sm:w-44"
+                            onChange={(e) => {
+                              const hs = [...form.customHeaders];
+                              hs[i] = { ...hs[i], key: e.target.value };
+                              setForm((f) => ({ ...f, customHeaders: hs }));
+                            }}
+                          />
+                          <span className="shrink-0 text-muted-foreground">:</span>
+                          <Input
+                            placeholder="Bearer {{api_key}}"
+                            value={h.value}
+                            className="h-9 min-w-0 flex-1 rounded-md font-mono text-xs"
+                            onChange={(e) => {
+                              const hs = [...form.customHeaders];
+                              hs[i] = { ...hs[i], value: e.target.value };
+                              setForm((f) => ({ ...f, customHeaders: hs }));
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                            onClick={() =>
+                              setForm((f) => ({ ...f, customHeaders: f.customHeaders.filter((_, j) => j !== i) }))
+                            }
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
-                  {/* Variable Fields */}
                   <TagInput
-                    label="Variable Fields"
-                    hint="Fields users fill per routing rule in Step 5 (e.g. offer_id, stream). Press Enter or comma to add."
+                    label="Variable fields"
+                    hint="Filled per Lead Routing rule (e.g. offer_id, stream). Press Enter or comma to add."
                     values={form.customVariableFields}
                     onChange={(vals) => setForm((f) => ({ ...f, customVariableFields: vals }))}
                     placeholder="offer_id, stream..."
                   />
 
-                  {/* Success Condition */}
-                  <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
-                    <Label className="text-sm">Success Condition</Label>
-                    <select
-                      className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  <div className="space-y-2 rounded-xl border border-border/70 bg-muted/10 p-3.5">
+                    <Label className="text-sm font-medium">Success condition</Label>
+                    <Select
                       value={form.successCondition}
-                      onChange={(e) => setForm((f) => ({ ...f, successCondition: e.target.value as "http_2xx" | "json_field" }))}
+                      onValueChange={(v) =>
+                        setForm((f) => ({ ...f, successCondition: v as "http_2xx" | "json_field" }))
+                      }
                     >
-                      <option value="http_2xx">HTTP 2xx response (default)</option>
-                      <option value="json_field">JSON field equals value</option>
-                    </select>
+                      <SelectTrigger className="h-10 w-full rounded-lg shadow-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="http_2xx">HTTP 2xx response (default)</SelectItem>
+                        <SelectItem value="json_field">JSON field equals value</SelectItem>
+                      </SelectContent>
+                    </Select>
                     {form.successCondition === "json_field" && (
-                      <div className="flex gap-2 items-center">
+                      <div className="flex flex-wrap items-center gap-2 pt-1">
                         <Input
                           placeholder="Field name (e.g. status)"
                           value={form.jsonField}
-                          className="text-xs font-mono h-8"
+                          className="h-9 min-w-[8rem] flex-1 rounded-md font-mono text-xs"
                           onChange={(e) => setForm((f) => ({ ...f, jsonField: e.target.value }))}
                         />
-                        <span className="text-muted-foreground text-xs shrink-0">=</span>
+                        <span className="text-xs font-medium text-muted-foreground">=</span>
                         <Input
                           placeholder="Expected value (e.g. ok)"
                           value={form.jsonValue}
-                          className="text-xs font-mono h-8"
+                          className="h-9 min-w-[8rem] flex-1 rounded-md font-mono text-xs"
                           onChange={(e) => setForm((f) => ({ ...f, jsonValue: e.target.value }))}
                         />
                       </div>
                     )}
                   </div>
 
-                  {/* Test button + result */}
-                  {editId && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleTest}
-                          disabled={isTesting}
-                          className="flex items-center gap-2"
-                        >
-                          {isTesting ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <FlaskConical className="w-4 h-4" />
-                          )}
-                          {isTesting ? "Testing…" : "Test Integration"}
-                        </Button>
-                        <p className="text-xs text-muted-foreground">
-                          Sends a sample lead to your endpoint
-                        </p>
-                      </div>
-                      {testResult && (
-                        <TestResultPanel result={testResult} onClose={() => setTestResult(null)} />
-                      )}
+                  <div className="space-y-2 border-t border-border/50 pt-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        onClick={handleTest}
+                        disabled={isTesting || !editId}
+                        className="h-9 gap-2"
+                        title={!editId ? "Save this destination first to run a test" : undefined}
+                      >
+                        {isTesting ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <FlaskConical className="h-4 w-4" />
+                        )}
+                        {isTesting ? "Testing…" : "Test integration"}
+                      </Button>
+                      <p className="text-xs text-muted-foreground sm:pl-1">
+                        {editId
+                          ? "Sends a sample lead payload to your endpoint and shows the response."
+                          : "Save this destination first, then you can send a sample request to verify the integration."}
+                      </p>
                     </div>
-                  )}
-                </>
+                    {testResult && editId ? (
+                      <TestResultPanel result={testResult} onClose={() => setTestResult(null)} />
+                    ) : null}
+                  </div>
+                </div>
               )}
             </div>
           )}

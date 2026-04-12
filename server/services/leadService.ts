@@ -343,7 +343,8 @@ async function sendLeadToTargetWebsite(
  * Uses the system bot (TELEGRAM_BOT_TOKEN) for both.
  */
 export async function sendLeadTelegramNotification(params: {
-  integration: { telegramChatId?: string | null; name: string; type: string };
+  /** Must include userId so we only use telegramChatId when the row belongs to this tenant (SaaS). */
+  integration: { userId: number; telegramChatId?: string | null; name: string; type: string };
   userId: number;
   lead: {
     fullName: string | null;
@@ -356,17 +357,44 @@ export async function sendLeadTelegramNotification(params: {
   result: { success: boolean; responseData?: unknown; error?: string; durationMs?: number };
   isTest?: boolean;
   isAdmin?: boolean;
+  /** Timed order auto-retry vs initial webhook delivery */
+  deliverySource?: "initial" | "auto_retry";
+  /** 1-based attempt / max; only used when deliverySource is auto_retry */
+  deliveryAttempt?: { current: number; max: number };
 }): Promise<void> {
   const db = await getDb();
   if (!db) return;
 
-  // Determine destination chat ID
-  let chatId: string | null = params.integration.telegramChatId ?? null;
-  if (!chatId) {
-    const [user] = await db.select({ telegramChatId: users.telegramChatId }).from(users).where(eq(users.id, params.userId)).limit(1);
-    chatId = user?.telegramChatId ?? null;
+  const deliverySource = params.deliverySource ?? "initial";
+  const isAutoRetry = deliverySource === "auto_retry";
+
+  // Destination: integration chat only if this integration row belongs to the same user (tenant isolation).
+  let chatId: string | null = null;
+  const integrationOwned = params.integration.userId === params.userId;
+  if (!integrationOwned && params.integration.telegramChatId?.trim()) {
+    await log.warn(
+      "TELEGRAM",
+      "Ignored integration.telegramChatId — integration.userId does not match notification userId",
+      { integrationUserId: params.integration.userId, userId: params.userId },
+      null,
+      params.lead.pageId,
+      params.userId,
+      "telegram_chat_guard",
+      "system",
+    );
   }
-  if (!chatId) return; // No Telegram configured for this user
+  if (integrationOwned && params.integration.telegramChatId?.trim()) {
+    chatId = params.integration.telegramChatId.trim();
+  }
+  if (!chatId) {
+    const [user] = await db
+      .select({ telegramChatId: users.telegramChatId })
+      .from(users)
+      .where(eq(users.id, params.userId))
+      .limit(1);
+    chatId = user?.telegramChatId?.trim() ?? null;
+  }
+  if (!chatId) return; // No Telegram configured for this user / integration
 
   // Resolve page name and account name for richer context
   let pageName: string | null = null;
@@ -442,6 +470,8 @@ export async function sendLeadTelegramNotification(params: {
     },
     isTest: params.isTest ?? false,
     isAdmin: params.isAdmin ?? false,
+    isAutoRetry,
+    deliveryAttempt: isAutoRetry ? params.deliveryAttempt : undefined,
   });
 
   await sendTelegramMessage(chatId, html, "HTML");
@@ -512,17 +542,26 @@ async function runOrderIntegrationSend(params: {
   };
   userId: number;
   isAdmin?: boolean;
+  /** Hourly auto-retry uses auto_retry so Telegram shows [RETRY]; webhook/processLead uses initial */
+  deliverySource?: "initial" | "auto_retry";
+  /** Set for auto_retry: this delivery is attempt `current` of `max` */
+  deliveryAttempt?: { current: number; max: number };
 }): Promise<IntegrationDeliveryResult> {
   const { db, integration, lead, leadPayload, userId, isAdmin } = params;
+  const deliverySource = params.deliverySource ?? "initial";
   let result: IntegrationDeliveryResult;
 
   if (integration.type === "TELEGRAM") {
     const config = integration.config as TelegramConfig;
-    result = await sendTelegramNotification(config, {
-      ...leadPayload,
-      formId: lead.formId ?? "",
-      createdAt: lead.createdAt ?? new Date(),
-    });
+    result = await sendTelegramNotification(
+      config,
+      {
+        ...leadPayload,
+        formId: lead.formId ?? "",
+        createdAt: lead.createdAt ?? new Date(),
+      },
+      { isAutoRetry: deliverySource === "auto_retry" },
+    );
     await log[result.success ? "info" : "warn"](
       "TELEGRAM",
       result.success ? `Telegram notification sent for leadId=${lead.id}` : `Telegram notification failed for leadId=${lead.id}`,
@@ -550,7 +589,12 @@ async function runOrderIntegrationSend(params: {
       result.durationMs,
     );
     await sendLeadTelegramNotification({
-      integration,
+      integration: {
+        userId: integration.userId,
+        telegramChatId: integration.telegramChatId,
+        name: integration.name,
+        type: integration.type,
+      },
       userId,
       lead: {
         fullName: leadPayload.fullName,
@@ -562,6 +606,8 @@ async function runOrderIntegrationSend(params: {
       },
       result,
       isAdmin: isAdmin ?? false,
+      deliverySource,
+      deliveryAttempt: deliverySource === "auto_retry" ? params.deliveryAttempt : undefined,
     });
   } else if (integration.type === "LEAD_ROUTING") {
     const config = integration.config as Record<string, unknown>;
@@ -614,7 +660,12 @@ async function runOrderIntegrationSend(params: {
       result.durationMs,
     );
     await sendLeadTelegramNotification({
-      integration,
+      integration: {
+        userId: integration.userId,
+        telegramChatId: integration.telegramChatId,
+        name: integration.name,
+        type: integration.type,
+      },
       userId,
       lead: {
         fullName: leadPayload.fullName,
@@ -626,6 +677,8 @@ async function runOrderIntegrationSend(params: {
       },
       result,
       isAdmin: isAdmin ?? false,
+      deliverySource,
+      deliveryAttempt: deliverySource === "auto_retry" ? params.deliveryAttempt : undefined,
     });
   } else {
     result = { success: false, error: `Unsupported integration type: ${integration.type}` };
@@ -981,6 +1034,8 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
     leadPayload,
     userId: order.userId,
     isAdmin: false,
+    deliverySource: "auto_retry",
+    deliveryAttempt: { current: prevAttempts + 1, max: ORDER_MAX_DELIVERY_ATTEMPTS },
   });
 
   const persisted = await persistOrderDeliveryAttemptResult(db, { orderId: order.id, prevAttempts, result });

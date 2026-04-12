@@ -181,9 +181,38 @@ describe("formatLeadMessage", () => {
     expect(html).toContain("TARGENIX • NEW LEAD");
   });
 
+  it("shows [RETRY] badge and attempt line when isAutoRetry with deliveryAttempt", () => {
+    const html = formatLeadMessage({
+      ...baseOpts,
+      isAutoRetry: true,
+      deliveryAttempt: { current: 2, max: 3 },
+    });
+    expect(html).toContain("[RETRY]");
+    expect(html).toContain("TARGENIX • NEW LEAD");
+    expect(html).toContain("Urinish:");
+    expect(html).toContain("2/3");
+    expect(html).toContain("avtomatik qayta yuborish");
+  });
+
+  it("shows [TEST] and [RETRY] together when both flags set", () => {
+    const html = formatLeadMessage({
+      ...baseOpts,
+      isTest: true,
+      isAutoRetry: true,
+      deliveryAttempt: { current: 3, max: 3 },
+    });
+    expect(html).toContain("[TEST]");
+    expect(html).toContain("[RETRY]");
+  });
+
   it("does not show [TEST] badge when isTest=false (default)", () => {
     const html = formatLeadMessage(baseOpts);
     expect(html).not.toContain("[TEST]");
+  });
+
+  it("does not show [RETRY] when isAutoRetry is false (default)", () => {
+    const html = formatLeadMessage(baseOpts);
+    expect(html).not.toContain("[RETRY]");
   });
 
   it("escapes HTML special characters in name", () => {
