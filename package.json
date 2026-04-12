@@ -13,7 +13,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
-    "db:railway:migrate": "railway run node tooling/drizzle/backfill-migration-journal-0026-0027.mjs && railway run pnpm exec drizzle-kit migrate"
+    "db:railway:migrate": "railway run node tooling/drizzle/backfill-migration-journal-0026-0027.mjs && railway run pnpm exec drizzle-kit migrate",
+    "db:sync:railway-to-local": "node tooling/mysql/full-sync.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.12",
@@ -110,11 +111,11 @@
     "@types/react": "^19.2.1",
     "@types/react-dom": "^19.2.1",
     "@vitejs/plugin-react": "^5.0.4",
-    "add": "^2.0.6",
     "autoprefixer": "^10.4.20",
     "cross-env": "^10.1.0",
     "drizzle-kit": "^0.31.4",
     "esbuild": "^0.25.0",
+    "mysqldump": "^3.2.0",
     "pnpm": "^10.15.1",
     "postcss": "^8.4.47",
     "prettier": "^3.6.2",

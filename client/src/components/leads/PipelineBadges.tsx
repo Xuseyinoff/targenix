@@ -34,9 +34,10 @@ const LEAD_TONE: Record<
     "bg-muted/80 text-foreground/90 border-border/80 dark:bg-muted/50 dark:text-foreground dark:border-border",
 };
 
+/** Order row: avoid emerald (same as lead “Delivered”) — sky = “dispatched to integration”. */
 const ORDER_TONE: Record<"success" | "danger" | "warning" | "neutral", string> = {
   success:
-    "bg-emerald-500/[0.07] text-emerald-800/90 border-emerald-300/40 dark:bg-emerald-950/25 dark:text-emerald-300/90 dark:border-emerald-800/40",
+    "bg-sky-500/[0.14] text-sky-950 border-sky-500/35 shadow-sm shadow-sky-500/5 dark:bg-sky-950/40 dark:text-sky-100 dark:border-sky-600/45",
   danger:
     "bg-red-500/[0.07] text-red-900/85 border-red-300/40 dark:bg-red-950/25 dark:text-red-300/90 dark:border-red-900/35",
   warning:
@@ -79,13 +80,22 @@ export function LeadPipelineBadge({ lead, size = "default", className }: LeadPip
     <span
       title={cfg.description}
       className={cn(
-        "inline-flex min-h-7 max-w-full items-center gap-1.5 rounded-full border font-semibold tracking-tight",
-        size === "compact" ? "px-2 py-0.5 text-[11px] sm:text-xs" : "px-2.5 py-1 text-xs sm:text-sm",
+        "inline-flex max-w-full items-center rounded-full border font-semibold tracking-tight",
+        size === "compact"
+          ? "min-h-5 gap-0.5 px-1.5 py-px text-[10px] sm:text-[11px] leading-none"
+          : "min-h-7 gap-1.5 px-2.5 py-1 text-xs sm:text-sm",
         LEAD_TONE[cfg.tone],
         className
       )}
     >
-      <Icon className={cn("h-3.5 w-3.5 shrink-0 opacity-95", isSpin && "animate-spin")} aria-hidden />
+      <Icon
+        className={cn(
+          "shrink-0 opacity-95",
+          size === "compact" ? "h-2.5 w-2.5" : "h-3.5 w-3.5",
+          isSpin && "animate-spin",
+        )}
+        aria-hidden
+      />
       <span className="truncate">{cfg.label}</span>
     </span>
   );
@@ -93,25 +103,27 @@ export function LeadPipelineBadge({ lead, size = "default", className }: LeadPip
 
 type OrderIntegrationBadgeProps = {
   status: string;
+  size?: "default" | "compact";
   className?: string;
 };
 
 /** Lighter visual weight than {@link LeadPipelineBadge} — per-integration outcome. */
-export function OrderIntegrationBadge({ status, className }: OrderIntegrationBadgeProps) {
+export function OrderIntegrationBadge({ status, size = "default", className }: OrderIntegrationBadgeProps) {
   const cfg = getOrderBadgeConfig(status);
   const Icon = cfg.key === "sent" ? Send : cfg.key === "failed" ? AlertCircle : Clock;
 
   return (
     <span
       className={cn(
-        "inline-flex min-h-6 max-w-full items-center gap-1 rounded-md border font-medium tracking-tight",
-        "text-[11px] sm:text-xs opacity-95",
-        "px-2 py-0.5 sm:px-2 sm:py-0.5",
+        "inline-flex max-w-full items-center rounded-md border font-medium tracking-tight opacity-95",
+        size === "compact"
+          ? "min-h-5 gap-0.5 px-1.5 py-px text-[10px] sm:text-[11px] leading-none"
+          : "min-h-6 gap-1 px-2 py-0.5 text-[11px] sm:text-xs",
         ORDER_TONE[cfg.tone],
         className
       )}
     >
-      <Icon className="h-3 w-3 shrink-0 opacity-80" aria-hidden />
+      <Icon className={cn("shrink-0 opacity-80", size === "compact" ? "h-2.5 w-2.5" : "h-3 w-3")} aria-hidden />
       <span className="truncate">{cfg.label}</span>
     </span>
   );

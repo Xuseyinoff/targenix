@@ -36,20 +36,14 @@ export interface LeadTableData extends LeadPipelineFields {
   orders?: Order[];
 }
 
-function LeadAvatar({ name, platform, size = "sm" }: { name?: string | null; platform?: string; size?: "sm" | "md" }) {
+function LeadAvatar({ name, size = "sm" }: { name?: string | null; size?: "sm" | "md" }) {
   const initials = name?.trim() ? name.trim()[0].toUpperCase() : "?";
-  const colorClass =
-    platform === "ig"
-      ? "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300"
-      : platform === "fb"
-      ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-      : "bg-primary/10 text-primary";
   return (
     <div
       className={cn(
-        "rounded-xl flex items-center justify-center font-semibold shrink-0",
+        "flex shrink-0 items-center justify-center rounded-xl font-semibold",
+        "bg-sky-100 text-sky-800 dark:bg-sky-950/55 dark:text-sky-200",
         size === "sm" ? "h-8 w-8 text-sm" : "h-9 w-9 text-sm",
-        colorClass
       )}
     >
       {initials}
@@ -175,7 +169,7 @@ export function LeadsTable({
                     {/* Name + (phone on tablet) */}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2.5">
-                        <LeadAvatar name={lead.fullName} platform={lead.platform} />
+                        <LeadAvatar name={lead.fullName} />
                         <div className="min-w-0">
                           <p className="font-medium truncate max-w-[140px]">
                             {lead.fullName || "Unknown"}

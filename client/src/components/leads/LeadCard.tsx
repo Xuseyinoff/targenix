@@ -25,16 +25,15 @@ export interface LeadCardData extends LeadPipelineFields {
   orders?: Order[];
 }
 
-function LeadAvatar({ name, platform }: { name?: string | null; platform?: string }) {
+function LeadAvatar({ name }: { name?: string | null }) {
   const initials = name?.trim() ? name.trim()[0].toUpperCase() : "?";
-  const colorClass =
-    platform === "ig"
-      ? "bg-pink-100 text-pink-700 dark:bg-pink-950 dark:text-pink-300"
-      : platform === "fb"
-      ? "bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-      : "bg-primary/10 text-primary";
   return (
-    <div className={cn("h-10 w-10 rounded-xl flex items-center justify-center font-semibold text-sm shrink-0", colorClass)}>
+    <div
+      className={cn(
+        "flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[11px] font-semibold leading-none",
+        "bg-sky-100 text-sky-800 dark:bg-sky-950/55 dark:text-sky-200",
+      )}
+    >
       {initials}
     </div>
   );
@@ -71,94 +70,95 @@ export function LeadCard({ lead, onClick, onRetry, isRetrying }: LeadCardProps) 
 
   return (
     <Card
-      className="cursor-pointer hover:shadow-sm transition-all active:scale-[0.99] rounded-2xl"
+      className={cn(
+        "cursor-pointer rounded-lg border border-border/70 bg-card shadow-sm shadow-black/[0.03] transition-colors touch-manipulation",
+        "hover:border-border hover:shadow-md hover:shadow-black/[0.04] active:bg-muted/35 dark:shadow-black/20 dark:hover:shadow-black/25",
+      )}
       onClick={onClick}
     >
-      <CardContent className="p-3.5 space-y-2.5">
-        {/* Row 1: Avatar + Name + Phone + Status */}
-        <div className="flex items-center gap-3">
-          <LeadAvatar name={lead.fullName} platform={lead.platform} />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between gap-2">
-              <p className="font-semibold text-sm truncate min-w-0">{lead.fullName || "Unknown"}</p>
-              <div className="flex flex-col items-end gap-1 shrink-0 max-w-[min(100%,11rem)] sm:max-w-[13rem]">
-                <LeadPipelineBadge lead={lead} />
-                {firstOrder ? <OrderIntegrationBadge status={firstOrder.status} /> : null}
-              </div>
-            </div>
-            {lead.phone && (
-              <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Phone className="h-3 w-3" />
-                  {lead.phone}
-                </span>
-                <button
-                  onClick={handleCopy}
-                  className="text-muted-foreground hover:text-foreground transition-colors"
-                  title="Copy phone"
-                >
-                  {copied
-                    ? <Check className="h-3 w-3 text-emerald-500" />
-                    : <Copy className="h-3 w-3" />}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Row 2: Source block */}
-        <div className="flex items-center gap-2 rounded-lg bg-muted/50 px-2.5 py-1.5">
-          {lead.platform === "ig" ? (
-            <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 shrink-0">
-              <Instagram className="h-3 w-3 text-white" />
-            </span>
-          ) : (
-            <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-blue-600 shrink-0">
-              <Facebook className="h-3 w-3 text-white" />
-            </span>
-          )}
-          <div className="min-w-0 flex-1">
-            <p
-              className={cn(
-                "text-xs font-medium truncate",
-                lead.platform === "ig"
-                  ? "text-pink-600 dark:text-pink-400"
-                  : "text-blue-600 dark:text-blue-400"
-              )}
-              title={pageName}
-            >
-              {pageName}
-            </p>
-            {formName && (
-              <p
-                className="text-[11px] text-muted-foreground truncate flex items-center gap-1"
-                title={formName}
-              >
-                <FileText className="h-2.5 w-2.5 shrink-0" />
-                {formName}
+      <CardContent className="space-y-1 p-2 sm:p-2.5">
+        <div className="flex gap-2">
+          <LeadAvatar name={lead.fullName} />
+          <div className="flex min-w-0 flex-1 items-start justify-between gap-1.5">
+            <div className="min-w-0 flex-1 space-y-px">
+              <p className="truncate text-[13px] font-semibold leading-tight tracking-tight sm:text-sm">
+                {lead.fullName || "Unknown"}
               </p>
-            )}
+              {lead.phone ? (
+                <div className="flex items-center gap-0.5 text-[11px] leading-none text-muted-foreground">
+                  <Phone className="h-2.5 w-2.5 shrink-0 opacity-80" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate tabular-nums">{lead.phone}</span>
+                  <button
+                    type="button"
+                    onClick={handleCopy}
+                    className={cn(
+                      "flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground",
+                      "hover:bg-muted hover:text-foreground active:bg-muted/80",
+                    )}
+                    title="Copy phone"
+                  >
+                    {copied ? (
+                      <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 flex-row flex-wrap items-center justify-end gap-0.5">
+              <LeadPipelineBadge lead={lead} size="compact" />
+              {firstOrder ? <OrderIntegrationBadge status={firstOrder.status} size="compact" /> : null}
+            </div>
           </div>
         </div>
 
-        {/* Row 3: Date */}
-        <div className="flex items-center justify-end">
-          <span className="text-[11px] text-muted-foreground tabular-nums">{formatDate(date)}</span>
+        <div className="flex items-center justify-between gap-2 border-t border-border/40 pt-1 text-[10px] leading-tight sm:text-[11px]">
+          <div className="flex min-w-0 flex-1 items-center gap-1 text-muted-foreground">
+            {lead.platform === "ig" ? (
+              <Instagram className="h-3 w-3 shrink-0 text-pink-600 dark:text-pink-400" />
+            ) : (
+              <Facebook className="h-3 w-3 shrink-0 text-blue-600 dark:text-blue-400" />
+            )}
+            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+              <span className="min-w-0 truncate font-medium text-foreground/90" title={pageName}>
+                {pageName}
+              </span>
+              {formName ? (
+                <>
+                  <span className="shrink-0 text-muted-foreground/80" aria-hidden>
+                    ·
+                  </span>
+                  <span
+                    className="flex min-w-0 flex-1 items-center gap-0.5 truncate text-muted-foreground"
+                    title={formName}
+                  >
+                    <FileText className="h-2.5 w-2.5 shrink-0 opacity-80" aria-hidden />
+                    <span className="truncate">{formName}</span>
+                  </span>
+                </>
+              ) : null}
+            </div>
+          </div>
+          <span className="shrink-0 tabular-nums text-[9px] text-muted-foreground sm:text-[10px]">
+            {formatDate(date)}
+          </span>
         </div>
 
-        {/* Retry button (failed only) */}
         {leadIsRetryable(lead) && onRetry && (
-          <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
+          <div className="flex justify-end pt-px" onClick={(e) => e.stopPropagation()}>
             <Button
               variant="outline"
               size="sm"
-              className="h-7 text-xs text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-950/30"
+              className="h-6 px-2 text-[11px] text-red-600 border-red-200 hover:bg-red-50 dark:text-red-400 dark:border-red-800 dark:hover:bg-red-950/30"
               disabled={isRetrying}
               onClick={onRetry}
             >
-              {isRetrying
-                ? <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                : <RotateCcw className="h-3 w-3 mr-1" />}
+              {isRetrying ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              ) : (
+                <RotateCcw className="h-3 w-3 mr-1" />
+              )}
               Retry
             </Button>
           </div>

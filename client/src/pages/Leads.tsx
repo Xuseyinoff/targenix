@@ -310,7 +310,7 @@ export default function Leads() {
         ) : (
           <>
             {/* Mobile: card list */}
-            <div className="grid gap-2 md:hidden">
+            <div className="grid gap-1.5 px-0.5 pb-1 md:hidden">
               {normalizedLeads.map((lead) => (
                 <LeadCard
                   key={lead.id}
