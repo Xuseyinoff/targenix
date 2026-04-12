@@ -1,13 +1,15 @@
 import DashboardLayout from "@/components/DashboardLayout";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { trpc } from "@/lib/trpc";
 import {
   Activity,
   AlertCircle,
+  AlertTriangle,
+  Calendar,
   CheckCircle2,
   Clock,
   Plug,
+  Send,
   TrendingUp,
   Webhook,
   Zap,
@@ -78,7 +80,57 @@ export default function Home() {
           </p>
         </div>
 
-        {/* Stats Grid */}
+        {/* Delivery & setup — first */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard
+            title="Orders sent today"
+            value={isLoading ? "—" : (stats?.orders.sentToday ?? 0)}
+            description="Successful deliveries today"
+            icon={Calendar}
+            variant="success"
+          />
+          <StatCard
+            title="Total orders sent"
+            value={isLoading ? "—" : (stats?.orders.sent ?? 0)}
+            description="All time, delivered to integrations"
+            icon={TrendingUp}
+            variant="success"
+          />
+          <StatCard
+            title="Active Integrations"
+            value={activeIntegrations}
+            description="Telegram + Affiliate"
+            icon={Plug}
+          />
+          {isAdmin && (
+            <StatCard
+              title="Webhook Events"
+              value={webhookStats?.total ?? 0}
+              description="Total received"
+              icon={Webhook}
+            />
+          )}
+        </div>
+
+        {/* Today: lead-level integration outcomes (distinct leads) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <StatCard
+            title="Leads with a delivery today"
+            value={isLoading ? "—" : (stats?.todayIntegrationLeads?.leadsWithDeliveryToday ?? 0)}
+            description="Unique leads with ≥1 integration send today"
+            icon={Send}
+            variant="success"
+          />
+          <StatCard
+            title="Leads with a failed delivery today"
+            value={isLoading ? "—" : (stats?.todayIntegrationLeads?.leadsWithFailedDeliveryToday ?? 0)}
+            description="Unique leads with ≥1 failed integration attempt today"
+            icon={AlertTriangle}
+            variant="danger"
+          />
+        </div>
+
+        {/* Lead pipeline */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             title="Total Leads"
@@ -107,31 +159,6 @@ export default function Home() {
             icon={AlertCircle}
             variant="danger"
           />
-        </div>
-
-        {/* Second row */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <StatCard
-            title="Orders Sent"
-            value={isLoading ? "—" : (stats?.orders.sent ?? 0)}
-            description="Delivered to integrations"
-            icon={TrendingUp}
-            variant="success"
-          />
-          <StatCard
-            title="Active Integrations"
-            value={activeIntegrations}
-            description="Telegram + Affiliate"
-            icon={Plug}
-          />
-          {isAdmin && (
-            <StatCard
-              title="Webhook Events"
-              value={webhookStats?.total ?? 0}
-              description="Total received"
-              icon={Webhook}
-            />
-          )}
         </div>
 
         {/* Recent Leads */}

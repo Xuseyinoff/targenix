@@ -190,17 +190,54 @@ export async function getOrdersByLeadId(leadId: number): Promise<Order[]> {
 
 export async function getOrderStats(userId: number) {
   const db = await getDb();
-  if (!db) return { total: 0, sent: 0, failed: 0, pending: 0 };
+  if (!db) return { total: 0, sent: 0, sentToday: 0, failed: 0, pending: 0 };
   const [row] = await db
     .select({
       total: count(),
       sent: sql<number>`SUM(CASE WHEN status = 'SENT' THEN 1 ELSE 0 END)`,
+      sentToday: sql<number>`SUM(CASE WHEN status = 'SENT' AND DATE(createdAt) = CURDATE() THEN 1 ELSE 0 END)`,
       failed: sql<number>`SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END)`,
       pending: sql<number>`SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END)`,
     })
     .from(orders)
     .where(eq(orders.userId, userId));
-  return row ?? { total: 0, sent: 0, failed: 0, pending: 0 };
+  return row ?? { total: 0, sent: 0, sentToday: 0, failed: 0, pending: 0 };
+}
+
+/** Distinct leads (per user) with integration activity today; uses order row dates (CURDATE). */
+export async function getTodayIntegrationLeadStats(userId: number) {
+  const db = await getDb();
+  if (!db) {
+    return { leadsWithDeliveryToday: 0, leadsWithFailedDeliveryToday: 0 };
+  }
+  const [sentRow] = await db
+    .select({
+      n: sql<number>`COUNT(DISTINCT ${orders.leadId})`,
+    })
+    .from(orders)
+    .where(
+      and(
+        eq(orders.userId, userId),
+        eq(orders.status, "SENT"),
+        sql`DATE(${orders.createdAt}) = CURDATE()`
+      )
+    );
+  const [failRow] = await db
+    .select({
+      n: sql<number>`COUNT(DISTINCT ${orders.leadId})`,
+    })
+    .from(orders)
+    .where(
+      and(
+        eq(orders.userId, userId),
+        eq(orders.status, "FAILED"),
+        sql`DATE(${orders.createdAt}) = CURDATE()`
+      )
+    );
+  return {
+    leadsWithDeliveryToday: Number(sentRow?.n ?? 0),
+    leadsWithFailedDeliveryToday: Number(failRow?.n ?? 0),
+  };
 }
 
 // ─── Integrations ─────────────────────────────────────────────────────────────

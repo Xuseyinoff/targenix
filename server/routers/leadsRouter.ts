@@ -8,6 +8,7 @@ import {
   getLeadsCount,
   getOrdersByLeadId,
   getOrderStats,
+  getTodayIntegrationLeadStats,
   getFacebookConnections,
   getDb,
 } from "../db";
@@ -99,11 +100,12 @@ export const leadsRouter = router({
 
   stats: protectedProcedure.query(async ({ ctx }) => {
     const userId = ctx.user.id;
-    const [leadStats, orderStats] = await Promise.all([
+    const [leadStats, orderStats, todayIntegrationLeads] = await Promise.all([
       getLeadStats(userId),
       getOrderStats(userId),
+      getTodayIntegrationLeadStats(userId),
     ]);
-    return { leads: leadStats, orders: orderStats };
+    return { leads: leadStats, orders: orderStats, todayIntegrationLeads };
   }),
 
   // ── Retry a single FAILED lead ──────────────────────────────────────────────
