@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Link } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
+import { DisconnectFacebookAccountDialog } from "@/components/DisconnectFacebookAccountDialog";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -50,8 +51,10 @@ import {
   Plus,
   ShieldCheck,
   MoreHorizontal,
+  MoreVertical,
   Fingerprint,
   LifeBuoy,
+  Unlink,
 } from "lucide-react";
 
 function formatShortDate(d: string | Date) {
@@ -99,6 +102,11 @@ export default function Connections() {
   } | null>(null);
   const [openAccounts, setOpenAccounts] = useState<Record<number, boolean>>({});
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [disconnectAccountTarget, setDisconnectAccountTarget] = useState<{
+    id: number;
+    name: string;
+    pageCount: number;
+  } | null>(null);
   const [howOpen, setHowOpen] = useState(false);
 
   const popupRef = useRef<Window | null>(null);
@@ -554,6 +562,45 @@ export default function Connections() {
                         </div>
                       </button>
                     </CollapsibleTrigger>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-auto min-h-[4.25rem] w-11 shrink-0 rounded-none border-l border-border/50 text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                          aria-label="Account options"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-52 rounded-xl">
+                        <DropdownMenuItem
+                          className="cursor-pointer md:hidden"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(account.fbUserId);
+                            toast.success("User ID copied");
+                          }}
+                        >
+                          <Fingerprint className="mr-2 h-4 w-4" />
+                          Copy user ID
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="cursor-pointer text-destructive focus:text-destructive"
+                          onClick={() =>
+                            setDisconnectAccountTarget({
+                              id: account.id,
+                              name: account.fbUserName,
+                              pageCount: account.pages.length,
+                            })
+                          }
+                        >
+                          <Unlink className="mr-2 h-4 w-4" />
+                          Disconnect account…
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     <div className="hidden md:flex">
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -707,6 +754,14 @@ export default function Connections() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        <DisconnectFacebookAccountDialog
+          open={!!disconnectAccountTarget}
+          onOpenChange={(o) => !o && setDisconnectAccountTarget(null)}
+          facebookAccountId={disconnectAccountTarget?.id ?? null}
+          accountName={disconnectAccountTarget?.name ?? ""}
+          pageCount={disconnectAccountTarget?.pageCount}
+        />
       </div>
     </DashboardLayout>
   );

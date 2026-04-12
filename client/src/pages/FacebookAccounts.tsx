@@ -1,18 +1,11 @@
 import DashboardLayout from "@/components/DashboardLayout";
+import { DisconnectFacebookAccountDialog } from "@/components/DisconnectFacebookAccountDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
 import { Facebook, Loader2, Trash2, User, AlertTriangle, RefreshCw } from "lucide-react";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { toast } from "sonner";
 
 // ─── Facebook JS SDK type declarations ────────────────────────────────────────
@@ -54,14 +47,10 @@ export default function FacebookAccounts() {
     },
   });
 
-  const disconnectMutation = trpc.facebookAccounts.disconnect.useMutation({
-    onSuccess: () => {
-      toast.success("Account disconnected");
-      utils.facebookAccounts.list.invalidate();
-      setDeleteId(null);
-    },
-    onError: (err) => toast.error(err.message),
-  });
+  const disconnectAccountName = useMemo(() => {
+    if (deleteId == null || !accounts?.length) return "";
+    return accounts.find((a) => a.id === deleteId)?.fbUserName ?? "";
+  }, [deleteId, accounts]);
 
   // ── Facebook Login popup ───────────────────────────────────────────────────
   const handleFacebookLogin = useCallback(() => {
@@ -299,33 +288,12 @@ export default function FacebookAccounts() {
         )}
       </div>
 
-      {/* Disconnect Confirm */}
-      <Dialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Disconnect Account</DialogTitle>
-            <DialogDescription>
-              This will remove the account connection. Existing integrations using this account
-              will stop receiving leads.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteId(null)}>
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => deleteId && disconnectMutation.mutate({ id: deleteId })}
-              disabled={disconnectMutation.isPending}
-            >
-              {disconnectMutation.isPending && (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              )}
-              Disconnect
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DisconnectFacebookAccountDialog
+        open={deleteId !== null}
+        onOpenChange={(o) => !o && setDeleteId(null)}
+        facebookAccountId={deleteId}
+        accountName={disconnectAccountName}
+      />
     </DashboardLayout>
   );
 }

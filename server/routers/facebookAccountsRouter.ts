@@ -14,10 +14,20 @@
  */
 
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { facebookAccounts, facebookConnections } from "../../drizzle/schema";
-import { eq, desc, and } from "drizzle-orm";
+import {
+  facebookAccounts,
+  facebookConnections,
+  facebookForms,
+  adAccountsCache,
+  campaignsCache,
+  adSetsCache,
+  campaignInsightsCache,
+} from "../../drizzle/schema";
+import { eq, desc, and, inArray, count } from "drizzle-orm";
+import { logEvent } from "../services/appLogger";
 import { encrypt, decrypt } from "../encryption";
 import {
   exchangeForLongLivedToken,
@@ -401,15 +411,107 @@ export const facebookAccountsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user.id;
       const db = await getDb();
-      if (!db) throw new Error("DB not available");
-      const [acct] = await db
-        .select()
-        .from(facebookAccounts)
-        .where(eq(facebookAccounts.id, input.id))
-        .limit(1);
-      if (!acct || acct.userId !== userId) throw new Error("Account not found");
-      await db.delete(facebookAccounts).where(eq(facebookAccounts.id, input.id));
-      return { success: true };
+      if (!db) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+      }
+
+      try {
+        const { pagesDisconnected, fbUserId, fbUserName } = await db.transaction(async (tx) => {
+          const [acct] = await tx
+            .select()
+            .from(facebookAccounts)
+            .where(and(eq(facebookAccounts.id, input.id), eq(facebookAccounts.userId, userId)))
+            .limit(1);
+
+          if (!acct) {
+            throw new TRPCError({ code: "NOT_FOUND", message: "Facebook account not found" });
+          }
+
+          const [countRow] = await tx
+            .select({ c: count() })
+            .from(facebookConnections)
+            .where(
+              and(eq(facebookConnections.userId, userId), eq(facebookConnections.facebookAccountId, input.id))
+            );
+          const pagesDisconnected = Number(countRow?.c ?? 0);
+
+          const connections = await tx
+            .select({ pageId: facebookConnections.pageId })
+            .from(facebookConnections)
+            .where(
+              and(eq(facebookConnections.userId, userId), eq(facebookConnections.facebookAccountId, input.id))
+            );
+          const pageIds = Array.from(new Set(connections.map((c) => c.pageId)));
+
+          await tx
+            .delete(campaignInsightsCache)
+            .where(
+              and(
+                eq(campaignInsightsCache.userId, userId),
+                eq(campaignInsightsCache.facebookAccountId, input.id)
+              )
+            );
+
+          await tx
+            .delete(adSetsCache)
+            .where(and(eq(adSetsCache.userId, userId), eq(adSetsCache.facebookAccountId, input.id)));
+
+          await tx
+            .delete(campaignsCache)
+            .where(and(eq(campaignsCache.userId, userId), eq(campaignsCache.facebookAccountId, input.id)));
+
+          await tx
+            .delete(adAccountsCache)
+            .where(and(eq(adAccountsCache.userId, userId), eq(adAccountsCache.facebookAccountId, input.id)));
+
+          await tx
+            .delete(facebookConnections)
+            .where(
+              and(eq(facebookConnections.userId, userId), eq(facebookConnections.facebookAccountId, input.id))
+            );
+
+          if (pageIds.length > 0) {
+            await tx
+              .delete(facebookForms)
+              .where(and(eq(facebookForms.userId, userId), inArray(facebookForms.pageId, pageIds)));
+          }
+
+          await tx
+            .delete(facebookAccounts)
+            .where(and(eq(facebookAccounts.id, input.id), eq(facebookAccounts.userId, userId)));
+
+          return {
+            pagesDisconnected,
+            fbUserId: acct.fbUserId,
+            fbUserName: acct.fbUserName,
+          };
+        });
+
+        await logEvent({
+          level: "INFO",
+          category: "FACEBOOK",
+          eventType: "FACEBOOK_ACCOUNT_DISCONNECTED",
+          source: "manual",
+          message: `FACEBOOK_ACCOUNT_DISCONNECTED: facebookAccountId=${input.id}, pages=${pagesDisconnected}`,
+          userId,
+          meta: {
+            action: "FACEBOOK_ACCOUNT_DISCONNECTED",
+            facebookAccountId: input.id,
+            fbUserId,
+            fbUserName,
+            pagesDisconnected,
+          },
+        });
+
+        return { success: true as const, pagesDisconnected };
+      } catch (err) {
+        if (err instanceof TRPCError) throw err;
+        console.error("[facebookAccounts.disconnect]", err);
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: err instanceof Error ? err.message : "Failed to disconnect Facebook account",
+        });
+      }
     }),
 
   // ── List pages for an account ─────────────────────────────────────────────
