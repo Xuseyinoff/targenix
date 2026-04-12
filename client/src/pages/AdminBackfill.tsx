@@ -21,6 +21,7 @@ import {
   CommandItem,
 } from "@/components/ui/command";
 import { toast } from "sonner";
+import { leadIsRetryable } from "@/lib/leadPipelineUi";
 
 type Step = 1 | 2 | 3 | 4;
 type Mode = "count" | "hours" | "manual";
@@ -494,10 +495,20 @@ export default function AdminBackfill() {
                             {new Date(lead.createdAt).toLocaleString()}
                           </p>
                           <Badge
-                            variant={lead.status === "FAILED" ? "destructive" : "secondary"}
-                            className="text-xs"
+                            variant={
+                              leadIsRetryable({
+                                dataStatus: (lead as { dataStatus?: string }).dataStatus ?? "",
+                                deliveryStatus: (lead as { deliveryStatus?: string }).deliveryStatus ?? "",
+                              })
+                                ? "destructive"
+                                : "secondary"
+                            }
+                            className="text-xs max-w-[140px] truncate"
+                            title={`${(lead as { dataStatus?: string }).dataStatus} / ${(lead as { deliveryStatus?: string }).deliveryStatus}`}
                           >
-                            {lead.status}
+                            {(lead as { dataStatus?: string }).dataStatus ?? "?"}
+                            {" / "}
+                            {(lead as { deliveryStatus?: string }).deliveryStatus ?? "?"}
                           </Badge>
                         </div>
                       </div>

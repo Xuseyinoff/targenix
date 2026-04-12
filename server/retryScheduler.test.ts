@@ -124,8 +124,8 @@ describe("retryAllFailedLeads", () => {
 
   it("resets FAILED leads and calls dispatchLeadProcessing for each", async () => {
     const failedLeads = [
-      { id: 1, leadgenId: "lg1", pageId: "p1", formId: "f1", userId: 1, status: "FAILED" },
-      { id: 2, leadgenId: "lg2", pageId: "p2", formId: "f2", userId: 1, status: "FAILED" },
+      { id: 1, leadgenId: "lg1", pageId: "p1", formId: "f1", userId: 1, dataStatus: "ENRICHED", deliveryStatus: "FAILED" },
+      { id: 2, leadgenId: "lg2", pageId: "p2", formId: "f2", userId: 1, dataStatus: "ENRICHED", deliveryStatus: "FAILED" },
     ];
 
     const updateChain = {

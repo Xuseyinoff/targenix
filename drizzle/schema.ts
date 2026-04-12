@@ -249,7 +249,12 @@ export const leads = mysqlTable("leads", {
   rawData: json("rawData"),
   /** 'fb' = Facebook, 'ig' = Instagram — extracted from Graph API platform field */
   platform: mysqlEnum("platform", ["fb", "ig"]).default("fb").notNull(),
-  status: mysqlEnum("status", ["PENDING", "RECEIVED", "FAILED"]).default("PENDING").notNull(),
+  /** Facebook Graph enrichment stage */
+  dataStatus: mysqlEnum("dataStatus", ["PENDING", "ENRICHED", "ERROR"]).default("PENDING").notNull(),
+  /** Integration routing aggregate outcome (independent of dataStatus) */
+  deliveryStatus: mysqlEnum("deliveryStatus", ["PENDING", "PROCESSING", "SUCCESS", "FAILED", "PARTIAL"]).default("PENDING").notNull(),
+  /** Set when dataStatus = ERROR (Graph/token failure) */
+  dataError: text("dataError"),
 
   // ── Denormalized source info (copied from facebook_forms on write) ─────────
   // Eliminates N+1 queries on leads list — no JOIN needed at read time.
@@ -275,12 +280,13 @@ export const leads = mysqlTable("leads", {
 }, (t) => ({
   // One lead record per (leadgenId, userId) pair — enables multi-tenant fan-out
   uqLeadgenUser: uniqueIndex("uq_leads_leadgen_user").on(t.leadgenId, t.userId),
-  // Speeds up retryAllFailedLeads and WHERE userId=? AND status=? queries
-  idxUserStatus: index("idx_leads_user_status").on(t.userId, t.status),
+  // Speeds up retry scheduler and WHERE userId=? AND deliveryStatus=? queries
+  idxUserDeliveryStatus: index("idx_leads_user_delivery_status").on(t.userId, t.deliveryStatus),
+  idxUserDataStatus: index("idx_leads_user_data_status").on(t.userId, t.dataStatus),
   // Speeds up paginated leads dashboard (WHERE userId=? ORDER BY createdAt DESC)
   idxUserCreatedAt: index("idx_leads_user_created_at").on(t.userId, t.createdAt),
-  // Speeds up per-page analytics (WHERE userId=? AND pageId=? AND status=?)
-  idxUserPageStatus: index("idx_leads_user_page_status").on(t.userId, t.pageId, t.status),
+  // Speeds up per-page analytics (WHERE userId=? AND pageId=? AND deliveryStatus=?)
+  idxUserPageDelivery: index("idx_leads_user_page_delivery").on(t.userId, t.pageId, t.deliveryStatus),
   // Speeds up platform filter (WHERE userId=? AND platform=? ORDER BY createdAt DESC)
   idxUserPlatformCreatedAt: index("idx_leads_user_platform_created_at").on(t.userId, t.platform, t.createdAt),
   // Speeds up formId filter (WHERE userId=? AND formId=?)
@@ -306,6 +312,8 @@ export const orders = mysqlTable("orders", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
+  // One order row per lead per integration — idempotent retries without duplicate rows
+  uqLeadIntegration: uniqueIndex("uq_orders_lead_integration").on(t.leadId, t.integrationId),
   // Speeds up: getOrdersByLead (WHERE leadId = ?) and processLead order lookup (WHERE leadId = ? AND integrationId = ?)
   idxLeadId: index("idx_orders_lead_id").on(t.leadId),
   // Speeds up: getOrderStats (WHERE userId = ?) and any filter by userId + status

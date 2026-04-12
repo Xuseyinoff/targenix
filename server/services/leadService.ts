@@ -8,6 +8,7 @@ import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 import { sendAffiliateOrder, sendAffiliateOrderByTemplate, type AffiliateConfig, type TemplateType, type TemplateConfig } from "./affiliateService";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
+import { aggregateDeliveryStatus, type OrderDeliveryOutcome } from "../lib/leadPipeline";
 
 // ─── Field extraction helpers ─────────────────────────────────────────────────
 
@@ -76,7 +77,8 @@ export async function saveIncomingLead(params: {
         platform,
         pageName: formRow?.pageName ?? null,
         formName: formRow?.formName ?? null,
-        status:   "PENDING",
+        dataStatus:     "PENDING",
+        deliveryStatus: "PENDING",
       })
       .onDuplicateKeyUpdate({
         set: {
@@ -446,12 +448,9 @@ export async function sendLeadTelegramNotification(params: {
 
 /**
  * Full lead processing pipeline:
- * 1. Resolve page access token (LEAD_ROUTING config → facebookAccounts → legacy facebookConnections)
- * 2. Fetch lead data from Facebook Graph API
- * 3. Extract fields using custom mapping if LEAD_ROUTING integration exists
- * 4. Update lead record with enriched data
- * 5. Create orders for all active integrations
- * 6. Dispatch to Telegram / Affiliate / LEAD_ROUTING target website
+ * 1. Resolve page access token → Graph API enrichment (dataStatus)
+ * 2. If enrichment fails → dataStatus ERROR, deliveryStatus PENDING, no routing
+ * 3. Else → dataStatus ENRICHED, run integrations (deliveryStatus PROCESSING → aggregate)
  */
 export async function processLead(params: {
   leadId: number;
@@ -465,78 +464,6 @@ export async function processLead(params: {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  // Step 1: Resolve access token
-  const accessToken = await resolvePageAccessToken(params.pageId, params.formId, params.userId);
-
-  let fullName: string | null = null;
-  let phone: string | null = null;
-  let email: string | null = null;
-  let rawData: unknown = null;
-  let extraFieldsResolved: Record<string, string> = {};
-
-  // Step 2: Fetch lead data from Graph API
-  if (accessToken) {
-    const leadData = await fetchLeadData(params.leadgenId, accessToken);
-    if (leadData) {
-      rawData = leadData;
-
-      // Find matching LEAD_ROUTING integration for custom field mapping
-      // Use dedicated columns (indexed) with config JSON fallback
-      const allIntegrations = await db
-        .select()
-        .from(integrations)
-        .where(and(eq(integrations.userId, params.userId), eq(integrations.isActive, true),
-          eq(integrations.pageId, params.pageId), eq(integrations.formId, params.formId)));
-
-      let nameField: string | undefined;
-      let phoneField: string | undefined;
-      let extraFields: Array<{ destKey: string; sourceField?: string; staticValue?: string }> | undefined;
-
-      for (const integration of allIntegrations) {
-        if (integration.type !== "LEAD_ROUTING") continue;
-        const config = integration.config as Record<string, unknown>;
-        const intPageId = integration.pageId ?? "";
-        const intFormId = integration.formId ?? "";
-        if (intPageId === params.pageId && intFormId === params.formId) {
-          nameField = config.nameField as string | undefined;
-          phoneField = config.phoneField as string | undefined;
-          extraFields = config.extraFields as typeof extraFields | undefined;
-          break;
-        }
-      }
-
-      const leadMeta = {
-        ad_id:         leadData.ad_id,
-        ad_name:       leadData.ad_name,
-        adset_id:      leadData.adset_id,
-        adset_name:    leadData.adset_name,
-        campaign_id:   leadData.campaign_id,
-        campaign_name: leadData.campaign_name,
-        form_id:       leadData.form_id,
-        leadgen_id:    params.leadgenId,
-      };
-
-      const fields = extractWithMapping(leadData.field_data, leadMeta, nameField, phoneField, extraFields);
-      fullName = fields.fullName;
-      phone = fields.phone;
-      email = fields.email;
-      extraFieldsResolved = fields.extra;
-
-      // If Graph API returned platform field, update facebook_forms for accuracy
-      if (leadData.platform === "fb" || leadData.platform === "ig") {
-        try {
-          await db
-            .update(facebookForms)
-            .set({ platform: leadData.platform })
-            .where(and(eq(facebookForms.userId, params.userId), eq(facebookForms.pageId, params.pageId), eq(facebookForms.formId, params.formId)));
-        } catch { /* non-critical */ }
-      }
-    }
-  } else {
-    await log.warn("LEAD", `No access token found — lead data cannot be fetched`, { pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
-  }
-
-  // Resolve pageName/formName/platform from facebook_forms (tenant-safe, authoritative source)
   let pageName: string | null = null;
   let formName: string | null = null;
   let resolvedPlatform: "fb" | "ig" | null = null;
@@ -557,16 +484,96 @@ export async function processLead(params: {
     resolvedPlatform = (formRow?.platform as "fb" | "ig" | null) ?? null;
   } catch { /* non-critical */ }
 
-  // Extract extra field_data values (everything except full_name + phone_number)
+  const accessToken = await resolvePageAccessToken(params.pageId, params.formId, params.userId);
+
+  if (!accessToken) {
+    await log.warn("LEAD", `No access token found — lead data cannot be fetched`, { pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
+    await db
+      .update(leads)
+      .set({
+        dataStatus: "ERROR",
+        deliveryStatus: "PENDING",
+        dataError: "No Facebook page access token — connect a page or LEAD_ROUTING integration with a valid account.",
+        pageName,
+        formName,
+      })
+      .where(eq(leads.id, params.leadId));
+    return;
+  }
+
+  const leadData = await fetchLeadData(params.leadgenId, accessToken);
+  if (!leadData) {
+    await db
+      .update(leads)
+      .set({
+        dataStatus: "ERROR",
+        deliveryStatus: "PENDING",
+        dataError: "Facebook Graph API returned no lead payload.",
+        pageName,
+        formName,
+      })
+      .where(eq(leads.id, params.leadId));
+    return;
+  }
+
+  const rawData: unknown = leadData;
+
+  const allIntegrations = await db
+    .select()
+    .from(integrations)
+    .where(and(eq(integrations.userId, params.userId), eq(integrations.isActive, true),
+      eq(integrations.pageId, params.pageId), eq(integrations.formId, params.formId)));
+
+  let nameField: string | undefined;
+  let phoneField: string | undefined;
+  let extraFields: Array<{ destKey: string; sourceField?: string; staticValue?: string }> | undefined;
+
+  for (const integration of allIntegrations) {
+    if (integration.type !== "LEAD_ROUTING") continue;
+    const config = integration.config as Record<string, unknown>;
+    const intPageId = integration.pageId ?? "";
+    const intFormId = integration.formId ?? "";
+    if (intPageId === params.pageId && intFormId === params.formId) {
+      nameField = config.nameField as string | undefined;
+      phoneField = config.phoneField as string | undefined;
+      extraFields = config.extraFields as typeof extraFields | undefined;
+      break;
+    }
+  }
+
+  const leadMeta = {
+    ad_id:         leadData.ad_id,
+    ad_name:       leadData.ad_name,
+    adset_id:      leadData.adset_id,
+    adset_name:    leadData.adset_name,
+    campaign_id:   leadData.campaign_id,
+    campaign_name: leadData.campaign_name,
+    form_id:       leadData.form_id,
+    leadgen_id:    params.leadgenId,
+  };
+
+  const fields = extractWithMapping(leadData.field_data, leadMeta, nameField, phoneField, extraFields);
+  const fullName = fields.fullName;
+  const phone = fields.phone;
+  const email = fields.email;
+  const extraFieldsResolved = fields.extra;
+
+  if (leadData.platform === "fb" || leadData.platform === "ig") {
+    try {
+      await db
+        .update(facebookForms)
+        .set({ platform: leadData.platform })
+        .where(and(eq(facebookForms.userId, params.userId), eq(facebookForms.pageId, params.pageId), eq(facebookForms.formId, params.formId)));
+    } catch { /* non-critical */ }
+  }
+
   const rawDataForFields = rawData as Record<string, unknown> | null;
   const fieldDataArr = Array.isArray(rawDataForFields?.field_data)
     ? (rawDataForFields!.field_data as Array<{ name: string; values: string[] }>)
     : [];
   const extraFieldsJson = buildExtraFields(fieldDataArr);
 
-  // Step 3: Update lead with all enriched data (single write, no further updates)
   const rawDataRecord = rawData as Record<string, unknown> | null;
-  // Platform priority: Graph API rawData → facebook_forms → keep existing
   const graphPlatform = rawDataRecord?.platform === "ig" ? "ig" : rawDataRecord?.platform === "fb" ? "fb" : null;
   const platformToWrite = graphPlatform ?? resolvedPlatform ?? undefined;
 
@@ -577,7 +584,9 @@ export async function processLead(params: {
       phone,
       email,
       rawData:      rawData ?? undefined,
-      status:       "RECEIVED",
+      dataStatus:   "ENRICHED",
+      deliveryStatus: "PROCESSING",
+      dataError:    null,
       ...(platformToWrite ? { platform: platformToWrite } : {}),
       pageName,
       formName,
@@ -591,9 +600,6 @@ export async function processLead(params: {
     })
     .where(eq(leads.id, params.leadId));
 
-  // Step 4: Get active integrations for this user
-  // For LEAD_ROUTING: filter directly by dedicated pageId/formId columns (uses index)
-  // For TELEGRAM/AFFILIATE: no page filter needed — they receive all leads
   const activeIntegrations = await db
     .select()
     .from(integrations)
@@ -609,32 +615,52 @@ export async function processLead(params: {
     extraFields: extraFieldsResolved,
   };
 
-  // Step 5: Process each integration
+  const routingOutcomes: OrderDeliveryOutcome[] = [];
+
   for (const integration of activeIntegrations) {
-    // For LEAD_ROUTING, only process if page+form matches
-    // Use dedicated columns (indexed)
     if (integration.type === "LEAD_ROUTING") {
       const intPageId = integration.pageId ?? "";
       const intFormId = integration.formId ?? "";
       if (intPageId !== params.pageId || intFormId !== params.formId) continue;
     }
 
-    // Create order record
-    await db.insert(orders).values({
-      leadId: params.leadId,
-      userId: params.userId,
-      integrationId: integration.id,
-      status: "PENDING",
-      retryCount: 0,
-    });
-
-    const [order] = await db
-      .select({ id: orders.id })
+    const [existingOrder] = await db
+      .select({ id: orders.id, status: orders.status, retryCount: orders.retryCount })
       .from(orders)
       .where(and(eq(orders.leadId, params.leadId), eq(orders.integrationId, integration.id)))
       .limit(1);
 
-    if (!order) continue;
+    if (existingOrder?.status === "SENT") {
+      routingOutcomes.push("SENT");
+      continue;
+    }
+
+    let orderId: number;
+    if (!existingOrder) {
+      await db.insert(orders).values({
+        leadId: params.leadId,
+        userId: params.userId,
+        integrationId: integration.id,
+        status: "PENDING",
+        retryCount: 0,
+      });
+      const [row] = await db
+        .select({ id: orders.id })
+        .from(orders)
+        .where(and(eq(orders.leadId, params.leadId), eq(orders.integrationId, integration.id)))
+        .limit(1);
+      if (!row) continue;
+      orderId = row.id;
+    } else {
+      orderId = existingOrder.id;
+      await db
+        .update(orders)
+        .set({
+          status: "PENDING",
+          retryCount: existingOrder.retryCount + 1,
+        })
+        .where(eq(orders.id, orderId));
+    }
 
     let result: { success: boolean; responseData?: unknown; error?: string; durationMs?: number };
     if (integration.type === "TELEGRAM") {
@@ -652,7 +678,6 @@ export async function processLead(params: {
       result = await sendAffiliateOrder(config, leadPayload);
       result.durationMs = Date.now() - _t0Affiliate;
       await log[result.success ? "info" : "warn"]("AFFILIATE", result.success ? `Affiliate order sent for leadId=${params.leadId}` : `Affiliate order failed for leadId=${params.leadId}`, { integrationId: integration.id, error: result.error }, params.leadId, params.pageId, params.userId, "sent_to_affiliate", "facebook", result.durationMs);
-      // Send Telegram notification after affiliate result
       await sendLeadTelegramNotification({
         integration,
         userId: params.userId,
@@ -663,19 +688,15 @@ export async function processLead(params: {
     } else if (integration.type === "LEAD_ROUTING") {
       const config = integration.config as Record<string, unknown>;
       const _t0Routing = Date.now();
-      // If targetWebsiteId is set, look up the target website and use template-based dispatch
       const twId = integration.targetWebsiteId ?? (config.targetWebsiteId ? Number(config.targetWebsiteId) : null);
       if (twId) {
         const { targetWebsites, destinationTemplates } = await import("../../drizzle/schema");
         const [tw] = await db.select().from(targetWebsites).where(eq(targetWebsites.id, twId)).limit(1);
-        // Multi-tenant safety: verify the target website belongs to this user
         if (tw && tw.userId !== params.userId) {
           result = { success: false, error: "Target website owner mismatch" };
         } else {
-          // Extract variable fields from integration config (set per routing rule)
           const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
           if (tw && tw.templateId) {
-            // Dynamic admin-managed template path
             const { sendLeadViaTemplate } = await import("./affiliateService");
             const [dynTpl] = await db.select().from(destinationTemplates).where(eq(destinationTemplates.id, tw.templateId)).limit(1);
             if (dynTpl) {
@@ -689,7 +710,7 @@ export async function processLead(params: {
               tw.templateConfig as TemplateConfig,
               leadPayload,
               variableFields,
-              tw.url  // pass site.url for custom templates
+              tw.url
             );
           } else {
             result = await sendLeadToTargetWebsite(config, leadPayload);
@@ -699,8 +720,7 @@ export async function processLead(params: {
         result = await sendLeadToTargetWebsite(config, leadPayload);
       }
       result.durationMs = Date.now() - _t0Routing;
-      await log[result.success ? "info" : "warn"]("ORDER", result.success ? `Lead routed to target website for leadId=${params.leadId}` : `Lead routing failed for leadId=${params.leadId}`, { integrationId: integration.id, targetUrl: (config as Record<string,unknown>).targetUrl, error: result.error }, params.leadId, params.pageId, params.userId, "sent_to_target_website", "facebook", result.durationMs);
-      // Send Telegram notification after lead routing result
+      await log[result.success ? "info" : "warn"]("ORDER", result.success ? `Lead routed to target website for leadId=${params.leadId}` : `Lead routing failed for leadId=${params.leadId}`, { integrationId: integration.id, targetUrl: (config as Record<string, unknown>).targetUrl, error: result.error }, params.leadId, params.pageId, params.userId, "sent_to_target_website", "facebook", result.durationMs);
       await sendLeadTelegramNotification({
         integration,
         userId: params.userId,
@@ -712,15 +732,22 @@ export async function processLead(params: {
       continue;
     }
 
-    // Update order status
     await db
       .update(orders)
       .set({
         status: result.success ? "SENT" : "FAILED",
         responseData: result.responseData ?? { error: result.error },
       })
-      .where(eq(orders.id, order.id));
+      .where(eq(orders.id, orderId));
+
+    routingOutcomes.push(result.success ? "SENT" : "FAILED");
   }
+
+  const finalDelivery = aggregateDeliveryStatus(routingOutcomes);
+  await db
+    .update(leads)
+    .set({ deliveryStatus: finalDelivery })
+    .where(eq(leads.id, params.leadId));
 
   await log.info("LEAD", `Processing complete — leadId=${params.leadId} fullName=${fullName ?? "unknown"} phone=${phone ?? "none"}`, { leadId: params.leadId, fullName, phone, email, pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
 }

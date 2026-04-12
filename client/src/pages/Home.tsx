@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { leadPipelineListBadge, type LeadPipelineFields } from "@/lib/leadPipelineUi";
 
 function StatCard({
   title,
@@ -139,23 +140,23 @@ export default function Home() {
             icon={Zap}
           />
           <StatCard
-            title="Received"
+            title="Delivered"
             value={isLoading ? "—" : (stats?.leads.received ?? 0)}
-            description="Successfully processed"
+            description="Graph OK and all integrations succeeded"
             icon={CheckCircle2}
             variant="success"
           />
           <StatCard
             title="Pending"
             value={isLoading ? "—" : (stats?.leads.pending ?? 0)}
-            description="In queue"
+            description="Queued or sending"
             icon={Clock}
             variant="warning"
           />
           <StatCard
-            title="Failed"
+            title="Issues"
             value={isLoading ? "—" : (stats?.leads.failed ?? 0)}
-            description="Processing errors"
+            description="Graph error or failed/partial delivery"
             icon={AlertCircle}
             variant="danger"
           />
@@ -202,7 +203,7 @@ export default function Home() {
                           {lead.phone || lead.email || lead.leadgenId}
                         </p>
                       </div>
-                      <StatusBadge status={lead.status} />
+                      <HomeLeadBadge lead={lead as LeadPipelineFields} />
                     </div>
                   ))}
                 </div>
@@ -259,13 +260,8 @@ export default function Home() {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { label: string; className: string }> = {
-    PENDING: { label: "Pending", className: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-400" },
-    RECEIVED: { label: "Received", className: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-400" },
-    FAILED: { label: "Failed", className: "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400" },
-  };
-  const s = map[status] ?? { label: status, className: "" };
+function HomeLeadBadge({ lead }: { lead: LeadPipelineFields }) {
+  const s = leadPipelineListBadge(lead);
   return (
     <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${s.className}`}>
       {s.label}

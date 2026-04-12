@@ -284,7 +284,7 @@ export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }
           active={statusFilter === "RECEIVED"}
           onClick={() => handleStatusChange(statusFilter === "RECEIVED" ? "ALL" : "RECEIVED")}
         >
-          Received
+          Delivered
         </Chip>
         <Chip
           active={statusFilter === "PENDING"}
@@ -296,7 +296,7 @@ export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }
           active={statusFilter === "FAILED"}
           onClick={() => handleStatusChange(statusFilter === "FAILED" ? "ALL" : "FAILED")}
         >
-          Failed
+          Issues
         </Chip>
         {hasActiveFilters && (
           <Chip active={false} onClick={clearFilters}>
@@ -354,8 +354,8 @@ export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }
           <SelectContent>
             <SelectItem value="ALL">All Status</SelectItem>
             <SelectItem value="PENDING">Pending</SelectItem>
-            <SelectItem value="RECEIVED">Received</SelectItem>
-            <SelectItem value="FAILED">Failed</SelectItem>
+            <SelectItem value="RECEIVED">Delivered</SelectItem>
+            <SelectItem value="FAILED">Issues</SelectItem>
           </SelectContent>
         </Select>
 

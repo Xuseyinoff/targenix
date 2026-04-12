@@ -37,8 +37,8 @@ export interface LeadsByForm {
   total: number;
 }
 
-export interface LeadsByStatus {
-  status: string;
+export interface LeadsByDeliveryStatus {
+  deliveryStatus: string;
   total: number;
 }
 
@@ -150,24 +150,24 @@ export async function getLeadsByForm(userId: number, limit = 20): Promise<LeadsB
 }
 
 /**
- * Leads count grouped by status (PENDING / RECEIVED / FAILED).
- * Uses: idx_leads_user_status
+ * Leads count grouped by deliveryStatus (SUCCESS / FAILED / PARTIAL / …).
+ * Uses: idx_leads_user_delivery_status
  */
-export async function getLeadsByStatus(userId: number): Promise<LeadsByStatus[]> {
+export async function getLeadsByDeliveryStatus(userId: number): Promise<LeadsByDeliveryStatus[]> {
   const db = await getDb();
   if (!db) return [];
 
   const rows = await db
     .select({
-      status: leads.status,
-      total:  count(),
+      deliveryStatus: leads.deliveryStatus,
+      total: count(),
     })
     .from(leads)
     .where(eq(leads.userId, userId))
-    .groupBy(leads.status)
+    .groupBy(leads.deliveryStatus)
     .orderBy(desc(count()));
 
-  return rows.map((r) => ({ status: r.status, total: Number(r.total) }));
+  return rows.map((r) => ({ deliveryStatus: r.deliveryStatus, total: Number(r.total) }));
 }
 
 /**
@@ -175,13 +175,13 @@ export async function getLeadsByStatus(userId: number): Promise<LeadsByStatus[]>
  * Runs all queries in parallel.
  */
 export async function getLeadsAnalytics(userId: number) {
-  const [byPlatform, byCampaign, byDay, byForm, byStatus] = await Promise.all([
+  const [byPlatform, byCampaign, byDay, byForm, byDeliveryStatus] = await Promise.all([
     getLeadsByPlatform(userId),
     getLeadsByCampaign(userId),
     getLeadsByDay(userId, 30),
     getLeadsByForm(userId),
-    getLeadsByStatus(userId),
+    getLeadsByDeliveryStatus(userId),
   ]);
 
-  return { byPlatform, byCampaign, byDay, byForm, byStatus };
+  return { byPlatform, byCampaign, byDay, byForm, byDeliveryStatus };
 }

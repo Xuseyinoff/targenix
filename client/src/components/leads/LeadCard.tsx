@@ -16,18 +16,18 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
+import { leadIsRetryable, leadPipelineListBadge, type LeadPipelineFields } from "@/lib/leadPipelineUi";
 
 interface Order {
   id: number;
   status: string;
 }
 
-export interface LeadCardData {
+export interface LeadCardData extends LeadPipelineFields {
   id: number;
   fullName?: string | null;
   phone?: string | null;
   email?: string | null;
-  status: string;
   createdAt: string | Date;
   pageId: string;
   formId: string;
@@ -52,18 +52,17 @@ function LeadAvatar({ name, platform }: { name?: string | null; platform?: strin
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { label: string; icon: React.ElementType; className: string }> = {
-    PENDING: { label: "Pending", icon: Clock, className: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-400" },
-    RECEIVED: { label: "Received", icon: CheckCircle2, className: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-400" },
-    FAILED: { label: "Failed", icon: AlertCircle, className: "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400" },
-  };
-  const s = map[status] ?? { label: status, icon: Clock, className: "" };
-  const Icon = s.icon;
+function PipelineStatusBadge({ lead }: { lead: LeadPipelineFields }) {
+  const b = leadPipelineListBadge(lead);
+  const Icon =
+    b.key === "DELIVERED" ? CheckCircle2
+    : b.key === "GRAPH_ERROR" || b.key === "FAILED" ? AlertCircle
+    : b.key === "PROCESSING" ? Send
+    : Clock;
   return (
-    <span className={cn("inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium", s.className)}>
+    <span className={cn("inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium", b.className)}>
       <Icon className="h-3 w-3" />
-      {s.label}
+      {b.label}
     </span>
   );
 }
@@ -131,7 +130,7 @@ export function LeadCard({ lead, onClick, onRetry, isRetrying }: LeadCardProps) 
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-2">
               <p className="font-semibold text-sm truncate">{lead.fullName || "Unknown"}</p>
-              <StatusBadge status={lead.status} />
+              <PipelineStatusBadge lead={lead} />
             </div>
             {lead.phone && (
               <div className="flex items-center gap-2 mt-0.5">
@@ -195,7 +194,7 @@ export function LeadCard({ lead, onClick, onRetry, isRetrying }: LeadCardProps) 
         </div>
 
         {/* Retry button (failed only) */}
-        {lead.status === "FAILED" && onRetry && (
+        {leadIsRetryable(lead) && onRetry && (
           <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
             <Button
               variant="outline"

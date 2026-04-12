@@ -1,4 +1,5 @@
-import { eq, desc, count, and, sql, inArray, gte, lt } from "drizzle-orm";
+import { eq, desc, count, and, sql, inArray, gte, lt, or, ne } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -113,7 +114,23 @@ export async function getLeads(
   const db = await getDb();
   if (!db) return [];
   const conditions = [eq(leads.userId, userId)];
-  if (status)   conditions.push(eq(leads.status,   status));
+  if (status === "PENDING") {
+    const enrichedPending = and(
+      eq(leads.dataStatus, "ENRICHED"),
+      inArray(leads.deliveryStatus, ["PENDING", "PROCESSING"])
+    );
+    const pendingPred: SQL = and(
+      ne(leads.dataStatus, "ERROR"),
+      or(eq(leads.dataStatus, "PENDING"), enrichedPending as SQL)
+    ) as SQL;
+    conditions.push(pendingPred);
+  } else if (status === "RECEIVED") {
+    conditions.push(and(eq(leads.dataStatus, "ENRICHED"), eq(leads.deliveryStatus, "SUCCESS")) as SQL);
+  } else if (status === "FAILED") {
+    conditions.push(
+      or(eq(leads.dataStatus, "ERROR"), inArray(leads.deliveryStatus, ["FAILED", "PARTIAL"])) as SQL
+    );
+  }
   if (pageId)   conditions.push(eq(leads.pageId,   pageId));
   if (formId)   conditions.push(eq(leads.formId,   formId));
   if (platform) conditions.push(eq(leads.platform, platform));
@@ -127,7 +144,7 @@ export async function getLeads(
   return db
     .select()
     .from(leads)
-    .where(and(...conditions))
+    .where(and(...(conditions as [SQL, ...SQL[]])))
     .orderBy(desc(leads.createdAt))
     .limit(limit)
     .offset(offset);
@@ -146,9 +163,9 @@ export async function getLeadStats(userId: number) {
   const [row] = await db
     .select({
       total: count(),
-      pending: sql<number>`SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END)`,
-      received: sql<number>`SUM(CASE WHEN status = 'RECEIVED' THEN 1 ELSE 0 END)`,
-      failed: sql<number>`SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END)`,
+      pending: sql<number>`SUM(CASE WHEN (${leads.dataStatus} != 'ERROR' AND (${leads.dataStatus} = 'PENDING' OR (${leads.dataStatus} = 'ENRICHED' AND ${leads.deliveryStatus} IN ('PENDING','PROCESSING')))) THEN 1 ELSE 0 END)`,
+      received: sql<number>`SUM(CASE WHEN ${leads.dataStatus} = 'ENRICHED' AND ${leads.deliveryStatus} = 'SUCCESS' THEN 1 ELSE 0 END)`,
+      failed: sql<number>`SUM(CASE WHEN ${leads.dataStatus} = 'ERROR' OR ${leads.deliveryStatus} IN ('FAILED','PARTIAL') THEN 1 ELSE 0 END)`,
     })
     .from(leads)
     .where(eq(leads.userId, userId));
@@ -167,7 +184,23 @@ export async function getLeadsCount(
   const db = await getDb();
   if (!db) return 0;
   const conditions = [eq(leads.userId, userId)];
-  if (status)   conditions.push(eq(leads.status,   status));
+  if (status === "PENDING") {
+    const enrichedPending = and(
+      eq(leads.dataStatus, "ENRICHED"),
+      inArray(leads.deliveryStatus, ["PENDING", "PROCESSING"])
+    );
+    const pendingPred: SQL = and(
+      ne(leads.dataStatus, "ERROR"),
+      or(eq(leads.dataStatus, "PENDING"), enrichedPending as SQL)
+    ) as SQL;
+    conditions.push(pendingPred);
+  } else if (status === "RECEIVED") {
+    conditions.push(and(eq(leads.dataStatus, "ENRICHED"), eq(leads.deliveryStatus, "SUCCESS")) as SQL);
+  } else if (status === "FAILED") {
+    conditions.push(
+      or(eq(leads.dataStatus, "ERROR"), inArray(leads.deliveryStatus, ["FAILED", "PARTIAL"])) as SQL
+    );
+  }
   if (pageId)   conditions.push(eq(leads.pageId,   pageId));
   if (formId)   conditions.push(eq(leads.formId,   formId));
   if (platform) conditions.push(eq(leads.platform, platform));
@@ -178,7 +211,7 @@ export async function getLeadsCount(
       sql`(${leads.fullName} LIKE ${like} OR ${leads.phone} LIKE ${like} OR ${leads.email} LIKE ${like} OR ${leads.leadgenId} LIKE ${like})`
     );
   }
-  const [row] = await db.select({ count: count() }).from(leads).where(and(...conditions));
+  const [row] = await db.select({ count: count() }).from(leads).where(and(...(conditions as [SQL, ...SQL[]])));
   return row?.count ?? 0;
 }
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, and, inArray, desc, sql, count } from "drizzle-orm";
+import { eq, and, inArray, desc, sql, count, or } from "drizzle-orm";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
   getLeads,
@@ -123,12 +123,15 @@ export const leadsRouter = router({
         .limit(1);
 
       if (!lead) throw new Error("Lead not found");
-      if (lead.status !== "FAILED") throw new Error("Only FAILED leads can be retried");
+      const retryable =
+        lead.dataStatus === "ERROR" ||
+        lead.deliveryStatus === "FAILED" ||
+        lead.deliveryStatus === "PARTIAL";
+      if (!retryable) throw new Error("Only leads with Graph errors or failed/partial delivery can be retried");
 
-      // Reset status to RECEIVED so processLead can re-run
       await db
         .update(leads)
-        .set({ status: "RECEIVED" })
+        .set({ dataStatus: "PENDING", deliveryStatus: "PENDING", dataError: null })
         .where(eq(leads.id, lead.id));
 
       // Re-run lead processing (non-blocking)
@@ -155,15 +158,30 @@ export const leadsRouter = router({
       const failedLeads = await db
         .select()
         .from(leads)
-        .where(and(eq(leads.userId, userId), eq(leads.status, "FAILED")));
+        .where(
+          and(
+            eq(leads.userId, userId),
+            or(
+              eq(leads.dataStatus, "ERROR"),
+              inArray(leads.deliveryStatus, ["FAILED", "PARTIAL"])
+            )
+          )
+        );
 
       if (failedLeads.length === 0) return { retried: 0 };
 
-      // Reset all FAILED → RECEIVED
       await db
         .update(leads)
-        .set({ status: "RECEIVED" })
-        .where(and(eq(leads.userId, userId), eq(leads.status, "FAILED")));
+        .set({ dataStatus: "PENDING", deliveryStatus: "PENDING", dataError: null })
+        .where(
+          and(
+            eq(leads.userId, userId),
+            or(
+              eq(leads.dataStatus, "ERROR"),
+              inArray(leads.deliveryStatus, ["FAILED", "PARTIAL"])
+            )
+          )
+        );
 
       // Re-process each lead
       for (const lead of failedLeads) {
@@ -336,7 +354,8 @@ export const leadsRouter = router({
           fullName: fields.fullName,
           phone: fields.phone,
           email: fields.email,
-          status: "RECEIVED",
+          dataStatus: "ENRICHED",
+          deliveryStatus: "PENDING",
         });
 
         const [saved] = await db

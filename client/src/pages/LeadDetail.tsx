@@ -274,6 +274,26 @@ export default function LeadDetail() {
 
           <div className="h-px bg-border mx-0" />
 
+          <Section label="Pipeline">
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground shrink-0">Data</span>
+                <Badge variant="secondary">{(lead as { dataStatus?: string }).dataStatus ?? "—"}</Badge>
+              </div>
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground shrink-0">Delivery</span>
+                <Badge variant="secondary">{(lead as { deliveryStatus?: string }).deliveryStatus ?? "—"}</Badge>
+              </div>
+              {(lead as { dataError?: string | null }).dataError ? (
+                <p className="text-xs text-destructive leading-relaxed break-words">
+                  {(lead as { dataError?: string | null }).dataError}
+                </p>
+              ) : null}
+            </div>
+          </Section>
+
+          <div className="h-px bg-border mx-0" />
+
           {/* Contact */}
           {lead.phone && (
             <>

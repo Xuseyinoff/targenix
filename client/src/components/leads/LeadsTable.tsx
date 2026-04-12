@@ -18,18 +18,18 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
+import { leadIsRetryable, leadPipelineListBadge, type LeadPipelineFields } from "@/lib/leadPipelineUi";
 
 interface Order {
   id: number;
   status: string;
 }
 
-export interface LeadTableData {
+export interface LeadTableData extends LeadPipelineFields {
   id: number;
   fullName?: string | null;
   phone?: string | null;
   email?: string | null;
-  status: string;
   createdAt: string | Date;
   pageId: string;
   formId: string;
@@ -60,18 +60,17 @@ function LeadAvatar({ name, platform, size = "sm" }: { name?: string | null; pla
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, { label: string; icon: React.ElementType; className: string }> = {
-    PENDING: { label: "Pending", icon: Clock, className: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-400" },
-    RECEIVED: { label: "Received", icon: CheckCircle2, className: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-400" },
-    FAILED: { label: "Failed", icon: AlertCircle, className: "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-400" },
-  };
-  const s = map[status] ?? { label: status, icon: Clock, className: "" };
-  const Icon = s.icon;
+function PipelineStatusBadge({ lead }: { lead: LeadPipelineFields }) {
+  const b = leadPipelineListBadge(lead);
+  const Icon =
+    b.key === "DELIVERED" ? CheckCircle2
+    : b.key === "GRAPH_ERROR" || b.key === "FAILED" ? AlertCircle
+    : b.key === "PROCESSING" ? Send
+    : Clock;
   return (
-    <span className={cn("inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium", s.className)}>
+    <span className={cn("inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium", b.className)}>
       <Icon className="h-3 w-3" />
-      {s.label}
+      {b.label}
     </span>
   );
 }
@@ -284,7 +283,7 @@ export function LeadsTable({
                     {/* Status */}
                     <td className="px-4 py-3">
                       <div className="flex flex-col gap-1">
-                        <StatusBadge status={lead.status} />
+                        <PipelineStatusBadge lead={lead} />
                         {firstOrder && <OrderBadge status={firstOrder.status} />}
                       </div>
                     </td>
@@ -320,7 +319,7 @@ export function LeadsTable({
                         >
                           <Eye className="h-3.5 w-3.5" />
                         </Button>
-                        {lead.status === "FAILED" && (
+                        {leadIsRetryable(lead) && (
                           <Button
                             variant="ghost"
                             size="icon"

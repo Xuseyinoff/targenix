@@ -128,14 +128,14 @@ export const adminBackfillRouter = router({
 
       if (input.mode === "manual" && input.leadIds?.length) {
         rows = await db
-          .select({ id: leads.id, fullName: leads.fullName, phone: leads.phone, createdAt: leads.createdAt, status: leads.status })
+          .select({ id: leads.id, fullName: leads.fullName, phone: leads.phone, createdAt: leads.createdAt, dataStatus: leads.dataStatus, deliveryStatus: leads.deliveryStatus })
           .from(leads)
           .where(and(eq(leads.userId, ownerId), eq(leads.pageId, pageId), eq(leads.formId, formId), inArray(leads.id, input.leadIds)))
           .orderBy(desc(leads.createdAt));
       } else if (input.mode === "hours" && input.hours) {
         const cutoff = new Date(createdAt.getTime() - input.hours * 3600 * 1000);
         rows = await db
-          .select({ id: leads.id, fullName: leads.fullName, phone: leads.phone, createdAt: leads.createdAt, status: leads.status })
+          .select({ id: leads.id, fullName: leads.fullName, phone: leads.phone, createdAt: leads.createdAt, dataStatus: leads.dataStatus, deliveryStatus: leads.deliveryStatus })
           .from(leads)
           .where(and(eq(leads.userId, ownerId), eq(leads.pageId, pageId), eq(leads.formId, formId), lt(leads.createdAt, createdAt), gte(leads.createdAt, cutoff)))
           .orderBy(desc(leads.createdAt));
@@ -143,7 +143,7 @@ export const adminBackfillRouter = router({
         // Default: count mode
         const limit = input.count ?? 15;
         rows = await db
-          .select({ id: leads.id, fullName: leads.fullName, phone: leads.phone, createdAt: leads.createdAt, status: leads.status })
+          .select({ id: leads.id, fullName: leads.fullName, phone: leads.phone, createdAt: leads.createdAt, dataStatus: leads.dataStatus, deliveryStatus: leads.deliveryStatus })
           .from(leads)
           .where(and(eq(leads.userId, ownerId), eq(leads.pageId, pageId), eq(leads.formId, formId), lt(leads.createdAt, createdAt)))
           .orderBy(desc(leads.createdAt))

@@ -139,7 +139,12 @@ export default function Leads() {
     onError: (err) => toast.error(err.message),
   });
 
-  const failedCount = leads.filter((l) => l.status === "FAILED").length;
+  const failedCount = leads.filter(
+    (l) =>
+      l.dataStatus === "ERROR" ||
+      l.deliveryStatus === "FAILED" ||
+      l.deliveryStatus === "PARTIAL"
+  ).length;
 
   const handleSync = () => {
     if (!syncFormId.trim()) { toast.error("Please enter a Form ID"); return; }
@@ -150,7 +155,7 @@ export default function Leads() {
 
   const handleExportCSV = () => {
     if (leads.length === 0) { toast.error("No leads to export"); return; }
-    const header = ["ID", "Name", "Phone", "Email", "Platform", "Page", "Form", "Lead ID", "Status", "Created At"];
+    const header = ["ID", "Name", "Phone", "Email", "Platform", "Page", "Form", "Lead ID", "Data status", "Delivery status", "Created At"];
     const rows = leads.map((l) => [
       l.id,
       l.fullName ?? "",
@@ -160,7 +165,8 @@ export default function Leads() {
       (l as any).pageName ?? l.pageId,
       (l as any).formName ?? l.formId,
       l.leadgenId,
-      l.status,
+      l.dataStatus,
+      l.deliveryStatus,
       new Date(l.createdAt).toLocaleString(),
     ]);
     const csv = [header, ...rows]

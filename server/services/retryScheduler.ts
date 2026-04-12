@@ -1,14 +1,14 @@
 /**
  * retryScheduler.ts
  *
- * Automatically retries all FAILED leads every hour at the top of the hour
+ * Automatically retries leads with Graph errors or failed/partial delivery every hour
  * (e.g., 08:00, 09:00, 10:00, …).
  *
  * Uses a simple setInterval-based scheduler — no external dependencies required.
  * The scheduler runs in-process alongside the Express server.
  */
 
-import { eq } from "drizzle-orm";
+import { eq, inArray, or } from "drizzle-orm";
 import { getDb } from "../db";
 import { leads } from "../../drizzle/schema";
 import { dispatchLeadProcessing } from "./leadDispatch";
@@ -17,7 +17,7 @@ import { dispatchLeadProcessing } from "./leadDispatch";
 const RETRY_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 /**
- * Retry all FAILED leads across all users.
+ * Retry leads where dataStatus = ERROR or delivery is FAILED / PARTIAL.
  * Called automatically by the scheduler and can also be called manually in tests.
  */
 export async function retryAllFailedLeads(): Promise<{ retried: number }> {
@@ -30,10 +30,15 @@ export async function retryAllFailedLeads(): Promise<{ retried: number }> {
   const failedLeads = await db
     .select()
     .from(leads)
-    .where(eq(leads.status, "FAILED"));
+    .where(
+      or(
+        eq(leads.dataStatus, "ERROR"),
+        inArray(leads.deliveryStatus, ["FAILED", "PARTIAL"])
+      )
+    );
 
   if (failedLeads.length === 0) {
-    console.log("[RetryScheduler] No FAILED leads to retry");
+    console.log("[RetryScheduler] No leads to auto-retry");
     return { retried: 0 };
   }
 
@@ -44,11 +49,13 @@ export async function retryAllFailedLeads(): Promise<{ retried: number }> {
     console.warn(`[RetryScheduler] Backlog too large (${failedLeads.length}), capping retry at 500`);
   }
 
-  // Reset selected FAILED leads → PENDING (not RECEIVED — PENDING means "queued, not yet processing")
-  // We do it per-lead to avoid a bulk update that races with new failures
+  // Reset → full pipeline re-run (enrichment + routing)
   const ids = toRetry.map((l) => l.id);
   for (const id of ids) {
-    await db.update(leads).set({ status: "PENDING" }).where(eq(leads.id, id));
+    await db
+      .update(leads)
+      .set({ dataStatus: "PENDING", deliveryStatus: "PENDING", dataError: null })
+      .where(eq(leads.id, id));
   }
 
   // Dispatch in batches of 10, with 2s between batches — prevents API rate-limit spikes
@@ -75,7 +82,7 @@ export async function retryAllFailedLeads(): Promise<{ retried: number }> {
   }
 
   console.log(
-    `[RetryScheduler] ${new Date().toISOString()} — queued ${toRetry.length} FAILED lead(s) in batches of ${BATCH_SIZE}`
+    `[RetryScheduler] ${new Date().toISOString()} — queued ${toRetry.length} lead(s) for retry in batches of ${BATCH_SIZE}`
   );
   return { retried: toRetry.length };
 }
