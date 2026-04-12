@@ -1,22 +1,10 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Clock,
-  CheckCircle2,
-  AlertCircle,
-  Phone,
-  Copy,
-  Check,
-  RotateCcw,
-  Loader2,
-  Facebook,
-  Instagram,
-  FileText,
-  Send,
-} from "lucide-react";
+import { Phone, Copy, Check, RotateCcw, Loader2, Facebook, Instagram, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
-import { leadIsRetryable, leadPipelineListBadge, type LeadPipelineFields } from "@/lib/leadPipelineUi";
+import { leadIsRetryable, type LeadPipelineFields } from "@/lib/leadPipelineBadgeModel";
+import { LeadPipelineBadge, OrderIntegrationBadge } from "@/components/leads/PipelineBadges";
 
 interface Order {
   id: number;
@@ -49,43 +37,6 @@ function LeadAvatar({ name, platform }: { name?: string | null; platform?: strin
     <div className={cn("h-10 w-10 rounded-xl flex items-center justify-center font-semibold text-sm shrink-0", colorClass)}>
       {initials}
     </div>
-  );
-}
-
-function PipelineStatusBadge({ lead }: { lead: LeadPipelineFields }) {
-  const b = leadPipelineListBadge(lead);
-  const Icon =
-    b.key === "DELIVERED" ? CheckCircle2
-    : b.key === "GRAPH_ERROR" || b.key === "FAILED" ? AlertCircle
-    : b.key === "PROCESSING" ? Send
-    : Clock;
-  return (
-    <span className={cn("inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium", b.className)}>
-      <Icon className="h-3 w-3" />
-      {b.label}
-    </span>
-  );
-}
-
-function OrderBadge({ status }: { status: string }) {
-  if (status === "SENT") {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 dark:bg-violet-950 dark:text-violet-400 font-medium">
-        <Send className="h-3 w-3" />SENT
-      </span>
-    );
-  }
-  if (status === "PENDING") {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-950 dark:text-amber-400 font-medium">
-        <Clock className="h-3 w-3" />PENDING
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground border font-medium">
-      {status}
-    </span>
   );
 }
 
@@ -128,9 +79,12 @@ export function LeadCard({ lead, onClick, onRetry, isRetrying }: LeadCardProps) 
         <div className="flex items-center gap-3">
           <LeadAvatar name={lead.fullName} platform={lead.platform} />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between gap-2">
-              <p className="font-semibold text-sm truncate">{lead.fullName || "Unknown"}</p>
-              <PipelineStatusBadge lead={lead} />
+            <div className="flex items-start justify-between gap-2">
+              <p className="font-semibold text-sm truncate min-w-0">{lead.fullName || "Unknown"}</p>
+              <div className="flex flex-col items-end gap-1 shrink-0 max-w-[min(100%,11rem)] sm:max-w-[13rem]">
+                <LeadPipelineBadge lead={lead} />
+                {firstOrder ? <OrderIntegrationBadge status={firstOrder.status} /> : null}
+              </div>
             </div>
             {lead.phone && (
               <div className="flex items-center gap-2 mt-0.5">
@@ -187,10 +141,9 @@ export function LeadCard({ lead, onClick, onRetry, isRetrying }: LeadCardProps) 
           </div>
         </div>
 
-        {/* Row 3: Order badge + Date */}
-        <div className="flex items-center justify-between">
-          <div>{firstOrder ? <OrderBadge status={firstOrder.status} /> : <span />}</div>
-          <span className="text-[11px] text-muted-foreground">{formatDate(date)}</span>
+        {/* Row 3: Date */}
+        <div className="flex items-center justify-end">
+          <span className="text-[11px] text-muted-foreground tabular-nums">{formatDate(date)}</span>
         </div>
 
         {/* Retry button (failed only) */}

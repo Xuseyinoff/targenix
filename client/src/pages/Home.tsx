@@ -16,7 +16,8 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { leadPipelineListBadge, type LeadPipelineFields } from "@/lib/leadPipelineUi";
+import type { LeadPipelineFields } from "@/lib/leadPipelineBadgeModel";
+import { LeadPipelineBadge } from "@/components/leads/PipelineBadges";
 
 function StatCard({
   title,
@@ -261,12 +262,7 @@ export default function Home() {
 }
 
 function HomeLeadBadge({ lead }: { lead: LeadPipelineFields }) {
-  const s = leadPipelineListBadge(lead);
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${s.className}`}>
-      {s.label}
-    </span>
-  );
+  return <LeadPipelineBadge lead={lead} size="compact" className="max-w-[9.5rem]" />;
 }
 
 function HealthRow({

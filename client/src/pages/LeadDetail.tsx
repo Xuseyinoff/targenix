@@ -1,7 +1,6 @@
 import { useParams, useLocation } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -24,6 +23,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { LeadPipelineBadge, OrderIntegrationBadge } from "@/components/leads/PipelineBadges";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -125,17 +125,6 @@ function IntegrationIcon({ type }: { type: string | null }) {
   if (type === "AFFILIATE") return <Link2 className="h-4 w-4 text-purple-500" />;
   if (type === "LEAD_ROUTING") return <Send className="h-4 w-4 text-orange-500" />;
   return <Zap className="h-4 w-4 text-muted-foreground" />;
-}
-
-function StatusBadge({ status }: { status: string }) {
-  if (status === "SENT")
-    return (
-      <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0">
-        {status}
-      </Badge>
-    );
-  if (status === "FAILED") return <Badge variant="destructive">{status}</Badge>;
-  return <Badge variant="secondary">{status}</Badge>;
 }
 
 // ─── Response block ───────────────────────────────────────────────────────────
@@ -275,15 +264,24 @@ export default function LeadDetail() {
           <div className="h-px bg-border mx-0" />
 
           <Section label="Pipeline">
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground shrink-0">Data</span>
-                <Badge variant="secondary">{(lead as { dataStatus?: string }).dataStatus ?? "—"}</Badge>
-              </div>
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground shrink-0">Delivery</span>
-                <Badge variant="secondary">{(lead as { deliveryStatus?: string }).deliveryStatus ?? "—"}</Badge>
-              </div>
+            <div className="space-y-3 text-sm">
+              <LeadPipelineBadge
+                lead={{
+                  dataStatus: (lead as { dataStatus?: string }).dataStatus ?? "PENDING",
+                  deliveryStatus: (lead as { deliveryStatus?: string }).deliveryStatus ?? "PENDING",
+                }}
+              />
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                <span className="font-medium text-foreground/80">Graph</span>{" "}
+                <span className="font-mono text-[10px] sm:text-[11px]">
+                  {(lead as { dataStatus?: string }).dataStatus ?? "—"}
+                </span>
+                <span className="mx-1.5 text-muted-foreground/50">·</span>
+                <span className="font-medium text-foreground/80">Routing</span>{" "}
+                <span className="font-mono text-[10px] sm:text-[11px]">
+                  {(lead as { deliveryStatus?: string }).deliveryStatus ?? "—"}
+                </span>
+              </p>
               {(lead as { dataError?: string | null }).dataError ? (
                 <p className="text-xs text-destructive leading-relaxed break-words">
                   {(lead as { dataError?: string | null }).dataError}
@@ -470,7 +468,7 @@ export default function LeadDetail() {
                           )}
                         </div>
                       </div>
-                      <StatusBadge status={order.status as string} />
+                      <OrderIntegrationBadge status={order.status as string} />
                     </div>
 
                     <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2.5 text-xs text-muted-foreground">

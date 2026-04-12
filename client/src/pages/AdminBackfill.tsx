@@ -21,7 +21,7 @@ import {
   CommandItem,
 } from "@/components/ui/command";
 import { toast } from "sonner";
-import { leadIsRetryable } from "@/lib/leadPipelineUi";
+import { leadIsRetryable } from "@/lib/leadPipelineBadgeModel";
 
 type Step = 1 | 2 | 3 | 4;
 type Mode = "count" | "hours" | "manual";

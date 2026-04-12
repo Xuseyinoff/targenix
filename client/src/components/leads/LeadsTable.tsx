@@ -1,9 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  Clock,
-  CheckCircle2,
-  AlertCircle,
   Phone,
   Mail,
   Copy,
@@ -14,11 +11,11 @@ import {
   Instagram,
   FileText,
   Eye,
-  Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
-import { leadIsRetryable, leadPipelineListBadge, type LeadPipelineFields } from "@/lib/leadPipelineUi";
+import { leadIsRetryable, type LeadPipelineFields } from "@/lib/leadPipelineBadgeModel";
+import { LeadPipelineBadge, OrderIntegrationBadge } from "@/components/leads/PipelineBadges";
 
 interface Order {
   id: number;
@@ -57,43 +54,6 @@ function LeadAvatar({ name, platform, size = "sm" }: { name?: string | null; pla
     >
       {initials}
     </div>
-  );
-}
-
-function PipelineStatusBadge({ lead }: { lead: LeadPipelineFields }) {
-  const b = leadPipelineListBadge(lead);
-  const Icon =
-    b.key === "DELIVERED" ? CheckCircle2
-    : b.key === "GRAPH_ERROR" || b.key === "FAILED" ? AlertCircle
-    : b.key === "PROCESSING" ? Send
-    : Clock;
-  return (
-    <span className={cn("inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border font-medium", b.className)}>
-      <Icon className="h-3 w-3" />
-      {b.label}
-    </span>
-  );
-}
-
-function OrderBadge({ status }: { status: string }) {
-  if (status === "SENT") {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 dark:bg-violet-950 dark:text-violet-400 font-medium">
-        <Send className="h-3 w-3" />SENT
-      </span>
-    );
-  }
-  if (status === "PENDING") {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-950 dark:text-amber-400 font-medium">
-        <Clock className="h-3 w-3" />PENDING
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground border font-medium">
-      {status}
-    </span>
   );
 }
 
@@ -282,9 +242,9 @@ export function LeadsTable({
 
                     {/* Status */}
                     <td className="px-4 py-3">
-                      <div className="flex flex-col gap-1">
-                        <PipelineStatusBadge lead={lead} />
-                        {firstOrder && <OrderBadge status={firstOrder.status} />}
+                      <div className="flex flex-col items-start gap-1 max-w-[11rem] sm:max-w-[14rem]">
+                        <LeadPipelineBadge lead={lead} size="compact" />
+                        {firstOrder ? <OrderIntegrationBadge status={firstOrder.status} /> : null}
                       </div>
                     </td>
 
