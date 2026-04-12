@@ -49,11 +49,10 @@ type NavGroup = {
   label?: string;
   items: NavItem[];
 };
-import { CSSProperties, useEffect, useRef, useState } from "react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
-import { toast } from "sonner";
 
 const navGroups: NavGroup[] = [
   {
@@ -110,9 +109,21 @@ const businessToolsItems = [
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
+const BUSINESS_TOOLS_EXPAND_KEY = "targenix.sidebar.businessToolsExpanded";
 const DEFAULT_WIDTH = 260;
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 400;
+
+function readBusinessToolsExpanded(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = localStorage.getItem(BUSINESS_TOOLS_EXPAND_KEY);
+    if (raw === null || raw === "") return true;
+    return raw === "1" || raw === "true";
+  } catch {
+    return true;
+  }
+}
 
 export default function DashboardLayout({
   children,
@@ -175,13 +186,43 @@ function DashboardLayoutContent({
   const activeMenuItem = allItems.find((item) => item.path === location);
   const isMobile = useIsMobile();
 
-  // Business Tools expand/collapse state — default expanded
-  const [businessToolsExpanded, setBusinessToolsExpanded] = useState(false);
+  /** Sidebar only lists shipped tools; placeholders stay in data for routes/flags. */
+  const visibleBusinessToolsItems = useMemo(
+    () => businessToolsItems.filter((item) => !item.placeholder),
+    []
+  );
+
+  const [businessToolsExpanded, setBusinessToolsExpanded] = useState(
+    readBusinessToolsExpanded
+  );
 
   const isBusinessToolsActive = businessToolsItems.some(
     (item) => location === item.path || location.startsWith("/business/")
   );
 
+  const prevLocationRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevLocationRef.current;
+    prevLocationRef.current = location;
+    if (isCollapsed) return;
+    if (!location.startsWith("/business/")) return;
+    const enteredFromOutside =
+      prev === null || !prev.startsWith("/business/");
+    if (enteredFromOutside) {
+      setBusinessToolsExpanded(true);
+    }
+  }, [location, isCollapsed]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        BUSINESS_TOOLS_EXPAND_KEY,
+        businessToolsExpanded ? "1" : "0"
+      );
+    } catch {
+      /* quota / private mode */
+    }
+  }, [businessToolsExpanded]);
 
   useEffect(() => {
     if (isCollapsed) setIsResizing(false);
@@ -270,117 +311,100 @@ function DashboardLayoutContent({
               </div>
             ))}
 
-            {/* Business Tools section */}
-            {!isCollapsed && <div className="mx-3 my-1 border-t border-sidebar-border/50" />}
-            <div className="px-2 mt-1">
-              {/* Section header — collapsible */}
-              <button
-                onClick={() => {
-                  if (!isCollapsed) setBusinessToolsExpanded((v) => !v);
-                }}
-                className={`
+            {/* Business Tools — admin-only until productized for all users */}
+            {user?.role === "admin" && (
+              <>
+                {!isCollapsed && (
+                  <div className="mx-3 my-1 border-t border-sidebar-border/50" />
+                )}
+                <div className="px-2 mt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isCollapsed) setBusinessToolsExpanded((v) => !v);
+                    }}
+                    className={`
                   w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left
                   transition-colors hover:bg-sidebar-accent/60
                   ${isBusinessToolsActive ? "text-sidebar-foreground" : "text-sidebar-foreground/70"}
                   ${isCollapsed ? "justify-center" : ""}
                 `}
-                title="Business Tools"
-              >
-                {/* Icon — shown in both collapsed and expanded */}
-                <BarChart3
-                  className={`h-4 w-4 shrink-0 ${isBusinessToolsActive ? "text-sidebar-primary" : "text-sidebar-foreground/60"}`}
-                />
-                {!isCollapsed && (
-                  <>
-                    <span className="flex-1 text-xs font-semibold uppercase tracking-widest text-sidebar-foreground/50 select-none">
-                      Business Tools
-                    </span>
-                    <ChevronDown
-                      className={`h-3.5 w-3.5 text-sidebar-foreground/40 transition-transform duration-200 ${businessToolsExpanded ? "rotate-0" : "-rotate-90"}`}
+                    title="Analytics and ad tools"
+                    aria-expanded={!isCollapsed ? businessToolsExpanded : undefined}
+                  >
+                    <BarChart3
+                      className={`h-4 w-4 shrink-0 ${isBusinessToolsActive ? "text-sidebar-primary" : "text-sidebar-foreground/60"}`}
                     />
-                  </>
-                )}
-              </button>
+                    {!isCollapsed && (
+                      <>
+                        <span className="flex-1 text-xs font-semibold uppercase tracking-widest text-sidebar-foreground/50 select-none">
+                          Business Tools
+                        </span>
+                        <ChevronDown
+                          className={`h-3.5 w-3.5 text-sidebar-foreground/40 transition-transform duration-200 ${businessToolsExpanded ? "rotate-0" : "-rotate-90"}`}
+                        />
+                      </>
+                    )}
+                  </button>
 
-              {/* Sub-menu items — animated expand/collapse */}
-              {!isCollapsed && (
-                <div
-                  className="overflow-hidden transition-all duration-200 ease-in-out"
-                  style={{
-                    maxHeight: businessToolsExpanded ? `${businessToolsItems.length * 44}px` : "0px",
-                    opacity: businessToolsExpanded ? 1 : 0,
-                  }}
-                >
-                  <SidebarMenu className="pl-3 pr-0 py-0.5">
-                    {businessToolsItems.map((item) => {
-                      const isActive = location === item.path || location.startsWith(item.path);
-                      return (
-                        <SidebarMenuItem key={item.path}>
-                          <SidebarMenuButton
-                            isActive={isActive}
-                            onClick={() => {
-                              if (item.placeholder) {
-                                toast.info(`${item.label} — coming soon`);
-                              } else {
-                                setLocation(item.path);
-                              }
-                              setBusinessToolsExpanded(false);
-                            }}
-                            tooltip={item.label}
-                            className={`
-                              h-8 transition-all font-normal text-sm
-                              ${item.placeholder
-                                ? "text-sidebar-foreground/40 cursor-default hover:text-sidebar-foreground/50 hover:bg-sidebar-accent/30"
-                                : "text-sidebar-foreground/80 hover:text-sidebar-foreground"
-                              }
-                            `}
-                          >
-                            <item.icon
-                              className={`h-3.5 w-3.5 ${isActive ? "text-sidebar-primary" : item.placeholder ? "text-sidebar-foreground/30" : ""}`}
-                            />
-                            <span className="flex items-center gap-1.5">
-                              {item.label}
-                              {item.placeholder && (
-                                <span className="text-[9px] font-medium uppercase tracking-wide text-sidebar-foreground/30 bg-sidebar-accent/50 px-1 py-0.5 rounded">
-                                  soon
-                                </span>
-                              )}
-                            </span>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      );
-                    })}
-                  </SidebarMenu>
+                  {!isCollapsed && (
+                    <div
+                      className="overflow-hidden transition-all duration-200 ease-in-out"
+                      style={{
+                        maxHeight: businessToolsExpanded
+                          ? `${visibleBusinessToolsItems.length * 44}px`
+                          : "0px",
+                        opacity: businessToolsExpanded ? 1 : 0,
+                      }}
+                    >
+                      <SidebarMenu className="pl-3 pr-0 py-0.5">
+                        {visibleBusinessToolsItems.map((item) => {
+                          const isActive =
+                            location === item.path || location.startsWith(item.path);
+                          return (
+                            <SidebarMenuItem key={item.path}>
+                              <SidebarMenuButton
+                                isActive={isActive}
+                                onClick={() => setLocation(item.path)}
+                                tooltip={item.label}
+                                className="text-sidebar-foreground/80 hover:text-sidebar-foreground h-8 text-sm font-normal transition-all"
+                              >
+                                <item.icon
+                                  className={`h-3.5 w-3.5 ${isActive ? "text-sidebar-primary" : ""}`}
+                                />
+                                <span>{item.label}</span>
+                              </SidebarMenuButton>
+                            </SidebarMenuItem>
+                          );
+                        })}
+                      </SidebarMenu>
+                    </div>
+                  )}
+
+                  {isCollapsed && (
+                    <SidebarMenu className="px-0 py-0.5">
+                      {visibleBusinessToolsItems.map((item) => {
+                        const isActive = location === item.path;
+                        return (
+                          <SidebarMenuItem key={item.path}>
+                            <SidebarMenuButton
+                              isActive={isActive}
+                              onClick={() => setLocation(item.path)}
+                              tooltip={item.label}
+                              className="h-8"
+                            >
+                              <item.icon
+                                className={`h-3.5 w-3.5 ${isActive ? "text-sidebar-primary" : ""}`}
+                              />
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        );
+                      })}
+                    </SidebarMenu>
+                  )}
                 </div>
-              )}
-
-              {/* Collapsed state: show sub-items as icon-only with tooltips */}
-              {isCollapsed && (
-                <SidebarMenu className="px-0 py-0.5">
-                  {businessToolsItems.map((item) => {
-                    const isActive = location === item.path;
-                    return (
-                      <SidebarMenuItem key={item.path}>
-                        <SidebarMenuButton
-                          isActive={isActive}
-                          onClick={() => {
-                            if (item.placeholder) {
-                              toast.info(`${item.label} — coming soon`);
-                            } else {
-                              setLocation(item.path);
-                            }
-                          }}
-                          tooltip={item.label}
-                          className={`h-8 ${item.placeholder ? "opacity-40" : ""}`}
-                        >
-                          <item.icon className={`h-3.5 w-3.5 ${isActive ? "text-sidebar-primary" : ""}`} />
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-              )}
-            </div>
+              </>
+            )}
 
             {/* Admin section — only visible to admins */}
             {user?.role === "admin" && (

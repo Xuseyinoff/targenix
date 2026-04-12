@@ -30,7 +30,43 @@ import Analytics from "./pages/Analytics";
 import Campaigns from "./pages/Campaigns";
 import AdSets from "./pages/AdSets";
 import { useAuth } from "./_core/hooks/useAuth";
-import { useEffect } from "react";
+import { useEffect, type ComponentType, type ReactNode } from "react";
+
+/** Business Tools: admin-only until productized (sidebar already hides for non-admins). */
+function AdminBusinessGate({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth();
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user) {
+      setLocation("/login");
+      return;
+    }
+    if (user.role !== "admin") {
+      setLocation("/overview");
+    }
+  }, [loading, user, setLocation]);
+
+  if (loading || !user || user.role !== "admin") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
+function businessToolsPage(Page: ComponentType) {
+  return function BusinessToolsRoute() {
+    return (
+      <AdminBusinessGate>
+        <Page />
+      </AdminBusinessGate>
+    );
+  };
+}
 
 // ─── Root route: shows landing for unauth, redirects to /overview for auth ───
 function RootRoute() {
@@ -85,13 +121,16 @@ function Router() {
       <Route path="/admin/destination-templates" component={AdminTemplates} />
       <Route path="/leads/:id" component={LeadDetail} />
       <Route path="/settings" component={Settings} />
-      {/* Business Tools routes */}
-      <Route path="/business/ad-accounts" component={AdAccounts} />
-      <Route path="/business/ad-accounts/:id/campaigns" component={Campaigns} />
-      <Route path="/business/ad-accounts/:accountId/campaigns/:campaignId/adsets" component={AdSets} />
-      <Route path="/business/analytics" component={Analytics} />
-      {/* Legacy /ad-accounts redirect */}
-      <Route path="/ad-accounts" component={AdAccounts} />
+      {/* Business Tools routes (admin-only UI + deep-link guard) */}
+      <Route path="/business/ad-accounts" component={businessToolsPage(AdAccounts)} />
+      <Route path="/business/ad-accounts/:id/campaigns" component={businessToolsPage(Campaigns)} />
+      <Route
+        path="/business/ad-accounts/:accountId/campaigns/:campaignId/adsets"
+        component={businessToolsPage(AdSets)}
+      />
+      <Route path="/business/analytics" component={businessToolsPage(Analytics)} />
+      {/* Legacy /ad-accounts */}
+      <Route path="/ad-accounts" component={businessToolsPage(AdAccounts)} />
       {/* Auth pages */}
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
