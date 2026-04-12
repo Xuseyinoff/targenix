@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { Link } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -13,113 +14,168 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
+import { useIsMobile } from "@/hooks/useMobile";
+import { cn } from "@/lib/utils";
 import {
   Facebook,
   Loader2,
   Trash2,
   RefreshCw,
   CheckCircle2,
-  XCircle,
   AlertTriangle,
   User,
-  Calendar,
   ChevronDown,
-  ChevronRight,
   Plus,
   ShieldCheck,
+  MoreHorizontal,
+  Fingerprint,
+  LifeBuoy,
 } from "lucide-react";
 
+function formatShortDate(d: string | Date) {
+  return new Date(d).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function ConnectionsSkeleton() {
+  return (
+    <div className="space-y-4">
+      {[0, 1].map((i) => (
+        <div
+          key={i}
+          className="rounded-2xl border border-border/60 bg-card p-4 shadow-sm space-y-4 animate-pulse"
+        >
+          <div className="flex items-center gap-3">
+            <div className="h-11 w-11 rounded-full bg-muted" />
+            <div className="flex-1 space-y-2">
+              <div className="h-4 w-40 max-w-[55%] rounded-md bg-muted" />
+              <div className="h-3 w-28 rounded-md bg-muted/80" />
+            </div>
+            <div className="h-8 w-8 rounded-md bg-muted" />
+          </div>
+          <div className="h-16 rounded-xl bg-muted/50" />
+          <div className="h-16 rounded-xl bg-muted/40" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
- * Connections page — uses Authorization Code Flow (server-side) for security.
- *
- * Flow:
- *  1. Click "Connect Facebook Account"
- *  2. Frontend calls /api/auth/facebook/initiate → server generates CSRF state, returns OAuth URL
- *  3. Frontend opens OAuth URL in a popup window
- *  4. Facebook redirects to /api/auth/facebook/callback with code+state
- *  5. Server verifies CSRF state, exchanges code for token, saves pages
- *  6. Callback page sends postMessage to opener with result
- *  7. Frontend receives message, shows success/error, refreshes data
+ * Facebook Connections — OAuth + grouped pages (premium SaaS layout, mobile-first).
  */
 export default function Connections() {
+  const isMobile = useIsMobile();
   const [connecting, setConnecting] = useState(false);
   const [connectResult, setConnectResult] = useState<{
     fbUserName: string;
     warnings?: string[];
     pages: Array<{ pageId: string; pageName: string; subscribed: boolean; isNew?: boolean; error?: string }>;
   } | null>(null);
-  const [expandedAccounts, setExpandedAccounts] = useState<Set<number>>(new Set());
+  const [openAccounts, setOpenAccounts] = useState<Record<number, boolean>>({});
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [howOpen, setHowOpen] = useState(false);
+
   const popupRef = useRef<Window | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const bcRef = useRef<BroadcastChannel | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Prevents double-processing when both BroadcastChannel and window.message deliver the same event
   const oauthCompletedRef = useRef(false);
 
   const utils = trpc.useUtils();
 
-  // ── Queries ────────────────────────────────────────────────────────────────
   const {
     data: accountsWithPages = [],
     isLoading,
+    isError,
+    error: queryError,
     refetch,
   } = trpc.facebookAccounts.getAccountsWithPages.useQuery(undefined, {
     refetchInterval: 10000,
   });
 
-  // ── Mutations ──────────────────────────────────────────────────────────────
   const toggleMutation = trpc.facebookAccounts.togglePageActive.useMutation({
     onSuccess: () => {
       utils.facebookAccounts.getAccountsWithPages.invalidate();
       utils.facebookAccounts.listConnectedPages.invalidate();
     },
-    onError: (err) => {
-      toast.error(err.message);
-    },
+    onError: (err) => toast.error(err.message),
   });
 
   const deleteMutation = trpc.facebookAccounts.deletePageConnection.useMutation({
     onSuccess: () => {
-      toast.success("Connection deleted successfully.");
+      toast.success("Page removed.");
       utils.facebookAccounts.getAccountsWithPages.invalidate();
       utils.facebookAccounts.listConnectedPages.invalidate();
+      setDeleteTarget(null);
     },
-    onError: (err) => {
-      toast.error(err.message);
-    },
+    onError: (err) => toast.error(err.message),
   });
 
-  // ── Keep utils in a ref so OAuth handlers always see the latest instance ────
   const utilsRef = useRef(utils);
-  useEffect(() => { utilsRef.current = utils; }, [utils]);
+  useEffect(() => {
+    utilsRef.current = utils;
+  }, [utils]);
 
-  // ── Shared OAuth result handler ───────────────────────────────────────────
-  // Stored in a ref so it can be called from both BroadcastChannel and
-  // window.message without stale closures or re-registering listeners.
   const processOAuthResultRef = useRef<((data: unknown) => void) | null>(null);
   processOAuthResultRef.current = (data: unknown) => {
     if (!data || typeof data !== "object") return;
     const msg = data as Record<string, unknown>;
     if (msg.type !== "fb_oauth_success" && msg.type !== "fb_oauth_error") return;
 
-    // Guard against double-processing (both channels may deliver the same event)
     if (oauthCompletedRef.current) return;
     oauthCompletedRef.current = true;
 
-    // Cancel all pending timers and channels
-    if (pollIntervalRef.current) { clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
-    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
-    if (bcRef.current) { bcRef.current.close(); bcRef.current = null; }
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (bcRef.current) {
+      bcRef.current.close();
+      bcRef.current = null;
+    }
 
     if (msg.type === "fb_oauth_success") {
       setConnecting(false);
       setConnectResult({
         fbUserName: msg.fbUserName as string,
         warnings: (msg.warnings ?? []) as string[],
-        pages: (msg.pages ?? []) as Array<{ pageId: string; pageName: string; subscribed: boolean; isNew?: boolean; error?: string }>,
+        pages: (msg.pages ?? []) as Array<{
+          pageId: string;
+          pageName: string;
+          subscribed: boolean;
+          isNew?: boolean;
+          error?: string;
+        }>,
       });
       utilsRef.current.facebookAccounts.getAccountsWithPages.invalidate();
       utilsRef.current.facebookAccounts.listConnectedPages.invalidate();
@@ -136,7 +192,6 @@ export default function Connections() {
     }
   };
 
-  // ── window.message listener — backup path (BroadcastChannel is primary) ───
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
       if (event.origin !== window.location.origin) return;
@@ -144,26 +199,26 @@ export default function Connections() {
     }
     window.addEventListener("message", handleMessage);
     return () => window.removeEventListener("message", handleMessage);
-  }, []); // empty deps — listener lives for the full component lifetime
+  }, []);
 
-  // ── Cleanup on unmount ─────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
-      if (bcRef.current) { bcRef.current.close(); bcRef.current = null; }
+      if (bcRef.current) {
+        bcRef.current.close();
+        bcRef.current = null;
+      }
       if (popupRef.current && !popupRef.current.closed) popupRef.current.close();
     };
   }, []);
 
-  // ── Connect Facebook Account (Authorization Code Flow) ─────────────────────
   const handleConnectFacebook = useCallback(async () => {
     if (connecting) return;
     setConnecting(true);
     setConnectResult(null);
 
     try {
-      // Step 1: Get OAuth URL from server (server generates CSRF state)
       const response = await fetch("/api/auth/facebook/initiate", {
         credentials: "include",
       });
@@ -175,7 +230,6 @@ export default function Connections() {
 
       const { oauthUrl } = await response.json();
 
-      // Step 2: Open OAuth URL in popup
       const popupWidth = 600;
       const popupHeight = 700;
       const left = Math.round(window.screenX + (window.outerWidth - popupWidth) / 2);
@@ -194,381 +248,465 @@ export default function Connections() {
       popupRef.current = popup;
       oauthCompletedRef.current = false;
 
-      // Step 3: BroadcastChannel — primary success/error signal.
-      // This is immune to Facebook's Cross-Origin-Opener-Policy header, which
-      // nullifies window.opener (and breaks window.opener.postMessage) when the
-      // popup navigates to facebook.com, also making popup.closed unreliable.
       try {
         const bc = new BroadcastChannel("targenix_fb_oauth");
         bcRef.current = bc;
         bc.onmessage = (event) => processOAuthResultRef.current?.(event.data);
       } catch {
-        // BroadcastChannel unavailable — window.message listener (always active) is the fallback
+        /* fallback: window.message */
       }
 
-      // Step 4: 30-second timeout — fires if user closes the popup without completing OAuth,
-      // or if something goes wrong and no message is ever received.
       timeoutRef.current = setTimeout(() => {
-        if (bcRef.current) { bcRef.current.close(); bcRef.current = null; }
+        if (bcRef.current) {
+          bcRef.current.close();
+          bcRef.current = null;
+        }
         setConnecting((prev) => {
           if (prev) toast.error("Facebook connection timed out. Please try again.");
           return false;
         });
       }, 30_000);
-    } catch (error) {
+    } catch (err) {
       setConnecting(false);
-      toast.error(error instanceof Error ? error.message : "Failed to connect Facebook account.");
+      toast.error(err instanceof Error ? err.message : "Failed to connect Facebook account.");
     }
   }, [connecting]);
 
-  function toggleAccount(accountId: number) {
-    setExpandedAccounts((prev) => {
-      const next = new Set(prev);
-      if (next.has(accountId)) {
-        next.delete(accountId);
-      } else {
-        next.add(accountId);
-      }
-      return next;
-    });
-  }
+  const totalPages = useMemo(
+    () => accountsWithPages.reduce((sum, a) => sum + a.pages.length, 0),
+    [accountsWithPages]
+  );
 
-  const totalPages = accountsWithPages.reduce((sum, a) => sum + a.pages.length, 0);
+  const setAccountOpen = (id: number, open: boolean) => {
+    setOpenAccounts((m) => ({ ...m, [id]: open }));
+  };
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  const fbConnectButton = (
+    <Button
+      onClick={handleConnectFacebook}
+      disabled={connecting}
+      className={cn(
+        "gap-2 rounded-xl bg-[#1877F2] font-medium text-white shadow-sm transition-all hover:bg-[#166fe5] hover:shadow-md active:scale-[0.99]",
+        "md:w-auto w-full min-h-11"
+      )}
+    >
+      {connecting ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <Plus className="h-4 w-4 shrink-0" />}
+      {connecting ? "Connecting…" : "Connect Facebook"}
+    </Button>
+  );
+
   return (
     <DashboardLayout>
-      <div className="space-y-6">
-        {/* ── Header ── */}
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Connections</h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Connect your Facebook account to automatically subscribe all your pages to receive
-              lead ads.
-            </p>
+      <Sheet open={howOpen} onOpenChange={setHowOpen}>
+        <SheetContent
+          side={isMobile ? "bottom" : "right"}
+          className={cn(
+            "rounded-t-2xl sm:rounded-none border-border/80",
+            isMobile && "max-h-[min(88vh,640px)]"
+          )}
+        >
+          <SheetHeader className="text-left border-b border-border/60 pb-4">
+            <SheetTitle className="flex items-center gap-2 text-lg">
+              <Facebook className="h-5 w-5 text-[#1877F2]" />
+              How it works
+            </SheetTitle>
+            <SheetDescription className="text-left text-sm leading-relaxed">
+              Secure Facebook login; we subscribe your pages for lead webhooks.
+            </SheetDescription>
+          </SheetHeader>
+          <ul className="mt-4 space-y-3 text-sm text-muted-foreground">
+            <li className="flex gap-3">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+              <span>
+                Tap <strong className="text-foreground">Connect Facebook</strong> — a popup opens with Facebook&apos;s
+                official login.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+              <span>
+                After you approve, we pull pages you manage (including Business Manager) and register webhooks.
+              </span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+              <span>
+                Use{" "}
+                <Link href="/integrations" className="font-medium text-primary hover:underline">
+                  Integrations
+                </Link>{" "}
+                to route each page to Telegram, affiliate, or custom destinations.
+              </span>
+            </li>
+          </ul>
+        </SheetContent>
+      </Sheet>
+
+      <div className="mx-auto max-w-3xl space-y-5 pb-28 md:space-y-6 md:pb-0 px-0 sm:px-0">
+        {/* Header — mobile: compact title row + icon actions; desktop unchanged rhythm */}
+        <header className="space-y-2.5 md:space-y-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex items-start justify-between gap-2 md:block">
+                <h1 className="text-xl font-semibold tracking-tight text-foreground md:text-2xl">Connections</h1>
+                <div className="flex shrink-0 items-center gap-1.5 md:hidden">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-10 w-10 rounded-xl border-border/60 bg-background shadow-sm"
+                    onClick={() => refetch()}
+                    disabled={isLoading}
+                    aria-label="Refresh connections"
+                  >
+                    <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-10 w-10 rounded-xl border-border/60 bg-background shadow-sm"
+                    onClick={() => setHowOpen(true)}
+                    aria-label="How it works"
+                  >
+                    <LifeBuoy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs leading-snug text-muted-foreground md:text-sm md:leading-relaxed md:max-w-md">
+                Link Facebook to sync pages and receive lead webhooks — then route in{" "}
+                <Link href="/integrations" className="text-primary font-medium hover:underline">
+                  Integrations
+                </Link>
+                .
+              </p>
+            </div>
+            <div className="hidden shrink-0 flex-col gap-2 sm:flex-row md:flex">
+              <Button
+                variant="outline"
+                size="default"
+                className="rounded-xl min-h-10 border-border/80"
+                onClick={() => refetch()}
+                disabled={isLoading}
+              >
+                <RefreshCw className={cn("h-4 w-4 sm:mr-2", isLoading && "animate-spin")} />
+                <span className="hidden sm:inline">Refresh</span>
+              </Button>
+              {fbConnectButton}
+            </div>
           </div>
-          <div className="flex items-center gap-2">
+
+          {/* Mobile: one tappable row → opens same “How it works” sheet (saves vertical space) */}
+          <button
+            type="button"
+            onClick={() => setHowOpen(true)}
+            className="flex w-full items-center gap-2.5 rounded-xl border border-border/60 bg-muted/15 px-3 py-2.5 text-left transition-colors active:bg-muted/30 md:hidden"
+          >
+            <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" />
+            <span className="text-[11px] leading-snug text-muted-foreground">
+              <span className="font-medium text-foreground/90">OAuth on the server</span> — tokens never touch your
+              browser. <span className="text-primary">Learn more</span>
+            </span>
+          </button>
+
+          <div className="hidden flex-wrap items-center gap-2 md:flex">
+            <div className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-3 py-1 text-xs text-muted-foreground">
+              <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+              <span>OAuth on server — tokens never in the browser</span>
+            </div>
             <Button
-              variant="outline"
+              type="button"
+              variant="ghost"
               size="sm"
-              onClick={() => refetch()}
-              disabled={isLoading}
+              className="h-8 gap-1.5 rounded-full text-xs text-muted-foreground"
+              onClick={() => setHowOpen(true)}
             >
-              <RefreshCw className={`h-4 w-4 mr-2 ${isLoading ? "animate-spin" : ""}`} />
-              Refresh
-            </Button>
-            <Button
-              onClick={handleConnectFacebook}
-              disabled={connecting}
-              className="bg-[#1877F2] hover:bg-[#166fe5] text-white gap-2"
-            >
-              {connecting ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Plus className="h-4 w-4" />
-              )}
-              {connecting ? "Connecting..." : "Connect Facebook Account"}
+              <LifeBuoy className="h-3.5 w-3.5" />
+              How it works
             </Button>
           </div>
-        </div>
+        </header>
 
-        {/* ── Security badge ── */}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <ShieldCheck className="h-3.5 w-3.5 text-green-500" />
-          <span>Secured with Authorization Code Flow — your token never touches the browser</span>
-        </div>
+        {isError && (
+          <Alert variant="destructive" className="rounded-2xl">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Couldn&apos;t load connections</AlertTitle>
+            <AlertDescription className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <span>{queryError?.message ?? "Please try again."}</span>
+              <Button variant="outline" size="sm" className="shrink-0 border-destructive/40" onClick={() => refetch()}>
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
 
-        {/* ── Connection result banner ── */}
         {connectResult && (
-          <div className="rounded-xl border border-green-200 bg-green-50 dark:bg-green-950/20 dark:border-green-800 p-4">
-            <div className="flex items-center gap-2 font-medium text-sm mb-1">
-              <CheckCircle2 className="h-4 w-4 text-green-600" />
+          <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/80 p-4 dark:border-emerald-900/50 dark:bg-emerald-950/25">
+            <div className="flex items-center gap-2 font-medium text-sm text-emerald-900 dark:text-emerald-100">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
               Connected as {connectResult.fbUserName}
             </div>
-            <p className="text-sm text-muted-foreground">
-              {connectResult.pages.filter((p) => p.subscribed).length} of{" "}
-              {connectResult.pages.length} pages subscribed to receive leads.
+            <p className="mt-1 text-sm text-emerald-800/90 dark:text-emerald-200/90">
+              {connectResult.pages.filter((p) => p.subscribed).length} of {connectResult.pages.length} pages
+              subscribed.
             </p>
             {connectResult.pages.some((p) => !p.subscribed) && (
-              <div className="mt-2 space-y-1">
+              <ul className="mt-2 space-y-1 text-xs text-amber-800 dark:text-amber-200/90">
                 {connectResult.pages
                   .filter((p) => !p.subscribed)
                   .map((p) => (
-                    <div
-                      key={p.pageId}
-                      className="flex items-center gap-2 text-sm text-yellow-700 dark:text-yellow-400"
-                    >
-                      <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <li key={p.pageId} className="flex gap-2">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                       <span>
                         {p.pageName}: {p.error}
                       </span>
-                    </div>
+                    </li>
                   ))}
-              </div>
+              </ul>
             )}
           </div>
         )}
 
-        {/* ── Section heading ── */}
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold">Connected Facebook Accounts</h2>
-          <Badge variant="secondary" className="text-xs">
-            {accountsWithPages.length}
-          </Badge>
-          {totalPages > 0 && (
-            <span className="text-xs text-muted-foreground">
-              · {totalPages} page{totalPages !== 1 ? "s" : ""} total
+        <div className="flex items-baseline justify-between gap-2">
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Your accounts</h2>
+          {!isLoading && accountsWithPages.length > 0 && (
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {accountsWithPages.length} account{accountsWithPages.length !== 1 ? "s" : ""} · {totalPages} page
+              {totalPages !== 1 ? "s" : ""}
             </span>
           )}
         </div>
 
-        {/* ── Account cards ── */}
         {isLoading ? (
-          <div className="space-y-3">
-            {[1, 2].map((i) => (
-              <div key={i} className="h-20 rounded-xl border bg-card animate-pulse" />
-            ))}
-          </div>
+          <ConnectionsSkeleton />
         ) : accountsWithPages.length === 0 ? (
-          <div className="rounded-xl border border-dashed bg-card p-10 text-center">
-            <Facebook className="h-10 w-10 mx-auto mb-3 text-[#1877F2] opacity-60" />
-            <p className="font-medium mb-1">No Facebook accounts connected</p>
-            <p className="text-sm text-muted-foreground mb-4">
-              Connect your Facebook account to start receiving leads from your pages.
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-border/80 bg-muted/10 px-6 py-14 text-center">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#1877F2]/10">
+              <Facebook className="h-7 w-7 text-[#1877F2]" />
+            </div>
+            <p className="text-base font-medium text-foreground">No Facebook accounts yet</p>
+            <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+              Connect once — we&apos;ll list your pages so you can enable lead delivery per page.
             </p>
-            <Button
-              onClick={handleConnectFacebook}
-              disabled={connecting}
-              size="sm"
-              className="bg-[#1877F2] hover:bg-[#166fe5] text-white gap-2"
-            >
-              <Plus className="h-4 w-4" />
-              Connect Facebook Account
-            </Button>
+            <div className="mt-6 w-full max-w-xs md:hidden">{fbConnectButton}</div>
+            <div className="mt-6 hidden md:block">{fbConnectButton}</div>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {accountsWithPages.map((account) => {
-              const isExpanded = expandedAccounts.has(account.id);
               const activePages = account.pages.filter((p) => p.isActive).length;
+              const tokenExpired = account.tokenExpiresAt ? new Date(account.tokenExpiresAt) < new Date() : false;
+              const isOpen = openAccounts[account.id] ?? false;
 
               return (
-                <div
+                <Collapsible
                   key={account.id}
-                  className="rounded-xl border bg-card overflow-hidden"
+                  open={isOpen}
+                  onOpenChange={(open) => setAccountOpen(account.id, open)}
+                  className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm transition-shadow hover:shadow-md"
                 >
-                  {/* ── Account header (clickable) ── */}
-                  <button
-                    className="w-full flex items-center gap-4 p-4 hover:bg-muted/40 transition-colors text-left"
-                    onClick={() => toggleAccount(account.id)}
-                  >
-                    {/* Avatar */}
-                    <div className="h-10 w-10 rounded-full bg-[#1877F2]/10 flex items-center justify-center shrink-0">
-                      <User className="h-5 w-5 text-[#1877F2]" />
-                    </div>
-
-                    {/* Info */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold text-sm">{account.fbUserName}</span>
-                        <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono text-muted-foreground">
-                          {account.fbUserId}
-                        </code>
-                      </div>
-                      <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground flex-wrap">
-                        <span>
-                          {account.pages.length} page{account.pages.length !== 1 ? "s" : ""}{" "}
-                          connected
-                          {activePages < account.pages.length && (
-                            <span className="ml-1 text-amber-500">({activePages} active)</span>
-                          )}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Calendar className="h-3 w-3" />
-                          Token updated:{" "}
-                          {new Date(account.connectedAt ?? account.createdAt).toLocaleString("en-US", {
-                            year: "numeric",
-                            month: "short",
-                            day: "numeric",
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
-                        {account.tokenExpiresAt ? (
-                          new Date(account.tokenExpiresAt) < new Date() ? (
-                            <span className="flex items-center gap-1 text-red-500">
-                              <AlertTriangle className="h-3 w-3" />
-                              Token expired
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-1 text-green-600">
-                              <CheckCircle2 className="h-3 w-3" />
-                              Long-Lived ✅
-                            </span>
-                          )
-                        ) : (
-                          <span className="flex items-center gap-1 text-green-600">
-                            <CheckCircle2 className="h-3 w-3" />
-                            Long-Lived ✅
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Chevron */}
-                    <div className="shrink-0 text-muted-foreground">
-                      {isExpanded ? (
-                        <ChevronDown className="h-4 w-4" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4" />
-                      )}
-                    </div>
-                  </button>
-
-                  {/* ── Pages list (expanded) ── */}
-                  {isExpanded && (
-                    <div className="border-t">
-                      {account.pages.length === 0 ? (
-                        <div className="px-4 py-6 text-center text-sm text-muted-foreground">
-                          No pages found for this account.
+                  <div className="flex items-stretch">
+                    <CollapsibleTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex min-h-[4.25rem] flex-1 min-w-0 items-center gap-3 p-4 pr-2 text-left transition-colors hover:bg-muted/30 active:bg-muted/40"
+                      >
+                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#1877F2]/10 ring-1 ring-[#1877F2]/15">
+                          <User className="h-5 w-5 text-[#1877F2]" />
                         </div>
-                      ) : (
-                        <div className="divide-y">
-                          {account.pages.map((page) => (
-                            <div
-                              key={page.id}
-                              className="flex items-center gap-3 px-4 py-3 hover:bg-muted/20 transition-colors"
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-semibold text-foreground">{account.fbUserName}</div>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            {account.pages.length} page{account.pages.length !== 1 ? "s" : ""}
+                            {activePages < account.pages.length ? (
+                              <> · {activePages} active</>
+                            ) : (
+                              <> · all active</>
+                            )}
+                            <span className="mx-1.5 text-border">·</span>
+                            <span className="tabular-nums">
+                              Updated {formatShortDate(account.connectedAt ?? account.createdAt)}
+                            </span>
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1.5 pl-1">
+                          {tokenExpired ? (
+                            <Badge
+                              variant="outline"
+                              className="border-red-200 bg-red-50 text-red-700 text-[10px] uppercase tracking-wide"
                             >
-                              {/* Indent arrow */}
-                              <span className="text-muted-foreground text-xs shrink-0 pl-2">
-                                →
-                              </span>
-
-                              {/* Page name + ID */}
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-sm font-medium truncate">
-                                    {page.pageName}
-                                  </span>
-                                  <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono text-muted-foreground shrink-0">
-                                    {page.pageId}
-                                  </code>
-                                </div>
-                                <span className="text-xs text-muted-foreground">
-                                  Connected{" "}
-                                  {new Date(page.createdAt).toLocaleDateString("en-US", {
-                                    year: "numeric",
-                                    month: "short",
-                                    day: "numeric",
-                                  })}
-                                </span>
-                              </div>
-
-                              {/* Status badge */}
-                              <div className="shrink-0 flex items-center gap-1.5">
-                                {page.subscriptionStatus === "failed" && (
-                                  <Badge
-                                    variant="outline"
-                                    className="text-amber-600 border-amber-300 dark:border-amber-700 text-xs"
-                                    title={page.subscriptionError ?? "Subscription failed"}
-                                  >
-                                    <AlertTriangle className="h-3 w-3 mr-1" />
-                                    Sub. Failed
-                                  </Badge>
-                                )}
-                                {page.isActive ? (
-                                  <Badge
-                                    variant="default"
-                                    className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 border-0 text-xs"
-                                  >
-                                    <CheckCircle2 className="h-3 w-3 mr-1" />
-                                    Active
-                                  </Badge>
-                                ) : (
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-muted-foreground text-xs"
-                                  >
-                                    <XCircle className="h-3 w-3 mr-1" />
-                                    Inactive
-                                  </Badge>
-                                )}
-                              </div>
-
-                              {/* Toggle + Delete */}
-                              <div className="flex items-center gap-3 shrink-0">
-                                <Switch
-                                  checked={page.isActive}
-                                  onCheckedChange={(checked) =>
-                                    toggleMutation.mutate({
-                                      connectionId: page.id,
-                                      isActive: checked,
-                                    })
-                                  }
-                                  disabled={toggleMutation.isPending}
-                                />
-                                <AlertDialog>
-                                  <AlertDialogTrigger asChild>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                                    >
-                                      <Trash2 className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </AlertDialogTrigger>
-                                  <AlertDialogContent>
-                                    <AlertDialogHeader>
-                                      <AlertDialogTitle>Remove page connection?</AlertDialogTitle>
-                                      <AlertDialogDescription>
-                                        This will remove <strong>{page.pageName}</strong> from
-                                        Targenix.uz. Leads from this page will no longer be
-                                        processed. This action cannot be undone.
-                                      </AlertDialogDescription>
-                                    </AlertDialogHeader>
-                                    <AlertDialogFooter>
-                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                      <AlertDialogAction
-                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                                        onClick={() =>
-                                          deleteMutation.mutate({ connectionId: page.id })
-                                        }
-                                      >
-                                        Remove
-                                      </AlertDialogAction>
-                                    </AlertDialogFooter>
-                                  </AlertDialogContent>
-                                </AlertDialog>
-                              </div>
-                            </div>
-                          ))}
+                              Token expired
+                            </Badge>
+                          ) : (
+                            <Badge
+                              variant="secondary"
+                              className="border-emerald-200/60 bg-emerald-50 text-emerald-800 text-[10px] font-medium uppercase tracking-wide dark:bg-emerald-950/40 dark:text-emerald-300"
+                            >
+                              Token OK
+                            </Badge>
+                          )}
+                          <ChevronDown
+                            className={cn(
+                              "h-4 w-4 text-muted-foreground transition-transform duration-200",
+                              isOpen && "rotate-180"
+                            )}
+                          />
                         </div>
+                      </button>
+                    </CollapsibleTrigger>
+                    <div className="hidden md:flex">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="flex w-11 shrink-0 items-center justify-center border-l border-border/50 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
+                            aria-label="Facebook user ID"
+                          >
+                            <Fingerprint className="h-4 w-4" />
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="left" className="max-w-xs font-mono text-xs">
+                          User ID: {account.fbUserId}
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </div>
+
+                  <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                    <div className="border-t border-border/60 bg-muted/5 px-2 pb-2 pt-1 sm:px-3">
+                      {account.pages.length === 0 ? (
+                        <p className="py-8 text-center text-sm text-muted-foreground">No pages for this account.</p>
+                      ) : (
+                        <ul className="space-y-2 py-2">
+                          {account.pages.map((page) => (
+                            <li
+                              key={page.id}
+                              className="flex flex-col gap-3 rounded-xl border border-transparent bg-background/80 p-3 shadow-sm transition-all hover:border-border/80 hover:shadow-sm sm:flex-row sm:items-center sm:gap-4"
+                            >
+                              <div className="min-w-0 flex-1 space-y-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-medium text-foreground leading-snug">{page.pageName}</span>
+                                  {page.subscriptionStatus === "failed" && (
+                                    <Badge
+                                      variant="outline"
+                                      className="border-amber-300 bg-amber-50 text-amber-800 text-[10px] uppercase dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                                      title={page.subscriptionError ?? "Subscription failed"}
+                                    >
+                                      Webhook issue
+                                    </Badge>
+                                  )}
+                                  {page.isActive ? (
+                                    <Badge className="border-0 bg-emerald-100 text-emerald-800 hover:bg-emerald-100 text-[10px] uppercase tracking-wide dark:bg-emerald-950/50 dark:text-emerald-300">
+                                      Active
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="secondary" className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                                      Inactive
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="text-xs text-muted-foreground">
+                                  <span>Added {formatShortDate(page.createdAt)}</span>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <button
+                                        type="button"
+                                        className="ml-2 inline text-primary underline-offset-2 hover:underline"
+                                      >
+                                        Page ID
+                                      </button>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-xs font-mono text-xs">{page.pageId}</TooltipContent>
+                                  </Tooltip>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3 sm:border-t-0 sm:pt-0">
+                                <div className="flex items-center gap-2 sm:flex-col sm:items-end">
+                                  <span className="text-xs text-muted-foreground sm:hidden">Receive leads</span>
+                                  <Switch
+                                    checked={page.isActive}
+                                    onCheckedChange={(checked) =>
+                                      toggleMutation.mutate({
+                                        connectionId: page.id,
+                                        isActive: checked,
+                                      })
+                                    }
+                                    disabled={toggleMutation.isPending}
+                                    className="data-[state=checked]:bg-emerald-600 scale-110 sm:scale-100"
+                                  />
+                                </div>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="icon"
+                                      className="h-11 w-11 shrink-0 rounded-xl border-border/80"
+                                      aria-label="Page actions"
+                                    >
+                                      <MoreHorizontal className="h-4 w-4" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="w-48 rounded-xl">
+                                    <DropdownMenuItem
+                                      className="cursor-pointer"
+                                      onClick={() => {
+                                        void navigator.clipboard.writeText(page.pageId);
+                                        toast.success("Page ID copied");
+                                      }}
+                                    >
+                                      <Fingerprint className="mr-2 h-4 w-4" />
+                                      Copy page ID
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      className="cursor-pointer text-destructive focus:text-destructive"
+                                      onClick={() => setDeleteTarget({ id: page.id, name: page.pageName })}
+                                    >
+                                      <Trash2 className="mr-2 h-4 w-4" />
+                                      Remove page…
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
                       )}
                     </div>
-                  )}
-                </div>
+                  </CollapsibleContent>
+                </Collapsible>
               );
             })}
           </div>
         )}
 
-        {/* ── How it works ── */}
-        <div className="rounded-xl border border-dashed p-4">
-          <div className="flex gap-3 text-sm text-muted-foreground">
-            <Facebook className="h-4 w-4 shrink-0 mt-0.5 text-[#1877F2]" />
-            <div className="space-y-1">
-              <p className="font-medium text-foreground">How it works</p>
-              <p>
-                When you click "Connect Facebook Account", a secure Facebook login popup opens using
-                Authorization Code Flow. After you grant permissions, Targenix.uz automatically
-                fetches all pages you manage (including Business Manager pages) and subscribes each
-                one to receive lead ads via webhook. You can then go to{" "}
-                <strong>Integrations</strong> to create routing rules for any connected page.
-              </p>
-            </div>
+        {/* Sticky primary CTA — mobile (hidden when empty to avoid duplicate with empty state) */}
+        {!isLoading && accountsWithPages.length > 0 && (
+          <div className="md:hidden pointer-events-none fixed inset-x-0 bottom-0 z-30 border-t border-border/40 bg-gradient-to-t from-background via-background/95 to-transparent p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-8 shadow-[0_-12px_40px_-16px_rgba(0,0,0,0.08)] dark:shadow-[0_-12px_40px_-16px_rgba(0,0,0,0.35)]">
+            <div className="pointer-events-auto mx-auto max-w-3xl">{fbConnectButton}</div>
           </div>
-        </div>
+        )}
+
+        <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+          <AlertDialogContent className="rounded-2xl">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove this page?</AlertDialogTitle>
+              <AlertDialogDescription>
+                <strong className="text-foreground">{deleteTarget?.name}</strong> will stop receiving leads in
+                Targenix. This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="gap-2 sm:gap-0">
+              <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={() => deleteTarget && deleteMutation.mutate({ connectionId: deleteTarget.id })}
+              >
+                Remove
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </DashboardLayout>
   );
