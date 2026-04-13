@@ -3,8 +3,8 @@ builder = "nixpacks"
 buildCommand = "pnpm install --frozen-lockfile && pnpm run build"
 
 [deploy]
-startCommand = "NODE_ENV=production node dist/index.js"
-healthcheckPath = "/"
-healthcheckTimeout = 30
+# startCommand / healthcheck: Railway UI da har servis uchun alohida (web vs WORKER).
+# WORKER: Custom Start = `pnpm start:worker` yoki `NODE_ENV=production node dist/worker.js`
+# Web: `pnpm start` yoki `NODE_ENV=production node dist/index.js` + kerak bo'lsa Healthcheck `/`
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
