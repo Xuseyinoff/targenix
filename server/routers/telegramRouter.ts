@@ -89,7 +89,7 @@ export const telegramRouter = router({
     // Keep tokens short: they are embedded in Telegram inline button callback_data (max 64 bytes).
     // 12 bytes hex => 24 chars, plenty of entropy for a 15-minute one-time token.
     const token = crypto.randomBytes(12).toString("hex");
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour (was 15 min - too short!)
 
     await db.insert(telegramChatConnectTokens).values({
       userId: ctx.user.id,

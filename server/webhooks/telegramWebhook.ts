@@ -116,15 +116,27 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
       chatId,
       text: text.slice(0, 120),
       fromUsername: from?.username,
+      chatType: message.chat.type,
     });
 
     // Handle /start <token> and /start@BotName <token>
     if (text.startsWith("/start")) {
       const token = parseStartToken(text);
+      await log.info("TELEGRAM", "Parsed /start token", {
+        chatId,
+        tokenFound: !!token,
+        tokenPrefix: token ? token.slice(0, 8) + "..." : "N/A",
+        chatType: message.chat.type,
+      });
       if (token) {
         if (message.chat.type !== "private") {
+          await log.info("TELEGRAM", "Routing to handleDeliveryStartWithToken", {
+            chatId,
+            chatType: message.chat.type,
+          });
           await handleDeliveryStartWithToken(chatId, token, message.chat);
         } else {
+          await log.info("TELEGRAM", "Routing to handleStartWithToken", { chatId });
           await handleStartWithToken(chatId, token, from);
         }
         return;
@@ -222,9 +234,22 @@ async function handleDeliveryStartWithToken(
   token: string,
   chat: TelegramChat,
 ): Promise<void> {
-  if (!token) return;
+  if (!token) {
+    await log.warn("TELEGRAM", "handleDeliveryStartWithToken: token is empty");
+    return;
+  }
   const db = await getDb();
-  if (!db) return;
+  if (!db) {
+    await log.error("TELEGRAM", "handleDeliveryStartWithToken: DB unavailable");
+    return;
+  }
+
+  await log.info("TELEGRAM", "handleDeliveryStartWithToken: looking up token", {
+    chatId,
+    tokenPrefix: token.slice(0, 8) + "...",
+    chatTitle: chat.title,
+    chatType: chat.type,
+  });
 
   const [tok] = await db
     .select()
@@ -233,6 +258,10 @@ async function handleDeliveryStartWithToken(
     .limit(1);
 
   if (!tok) {
+    await log.warn("TELEGRAM", "handleDeliveryStartWithToken: token not found or expired", {
+      chatId,
+      tokenPrefix: token.slice(0, 8) + "...",
+    });
     await sendTelegramMessage(
       chatId,
       "❌ Token topilmadi yoki muddati o'tgan. Iltimos, Targenix.uz saytidan qaytadan \"Add delivery chat\" qiling.",
@@ -244,6 +273,10 @@ async function handleDeliveryStartWithToken(
   // If already connected, stop.
   const [existing] = await db.select().from(telegramChats).where(eq(telegramChats.chatId, chatId)).limit(1);
   if (existing) {
+    await log.info("TELEGRAM", "handleDeliveryStartWithToken: chat already connected", {
+      chatId,
+      existingUserId: (existing as any)?.userId,
+    });
     await sendTelegramMessage(chatId, "ℹ️ Bu chat allaqachon ulangan.", "HTML");
     return;
   }
@@ -253,7 +286,10 @@ async function handleDeliveryStartWithToken(
   const payloadConfirm = `tg:c:${tok.id}`;
   const payloadCancel = `tg:x:${tok.id}`;
 
-  if (!BOT_TOKEN) return;
+  if (!BOT_TOKEN) {
+    await log.error("TELEGRAM", "handleDeliveryStartWithToken: BOT_TOKEN not set");
+    return;
+  }
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
       method: "POST",
@@ -272,8 +308,15 @@ async function handleDeliveryStartWithToken(
         },
       }),
     });
+    await log.info("TELEGRAM", "handleDeliveryStartWithToken: confirmation buttons sent", {
+      chatId,
+      tokenId: tok.id,
+    });
   } catch (err) {
-    await log.error("TELEGRAM", "Failed to send confirm buttons", { chatId, error: String(err) });
+    await log.error("TELEGRAM", "handleDeliveryStartWithToken: Failed to send confirm buttons", {
+      chatId,
+      error: String(err),
+    });
   }
 }
 
