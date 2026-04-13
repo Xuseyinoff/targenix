@@ -38,15 +38,22 @@ function cacheSet<T>(cache: Map<string, CacheEntry<T>>, key: string, data: T): v
 
 // ─── appsecret_proof ──────────────────────────────────────────────────────────
 /**
+ * Canonical token string for Graph query params — MUST match what you pass as
+ * `access_token` in the same request, or Meta returns `Invalid appsecret_proof`.
+ */
+export function normalizeFacebookAccessToken(accessToken: string): string {
+  return (accessToken ?? "").trim().replace(/^\uFEFF/, "");
+}
+
+/**
  * Generates appsecret_proof = HMAC-SHA256(app_secret, access_token)
  * Required for all server-side Graph API calls for enhanced security.
  *
- * Reads `FACEBOOK_APP_SECRET` at call time (not a module snapshot) and trims
- * whitespace — Railway/copy-paste often adds a trailing newline, which breaks HMAC.
+ * Reads `FACEBOOK_APP_SECRET` at call time and trims whitespace (Railway paste).
  */
 export function generateAppSecretProof(accessToken: string): string {
   const secret = (process.env.FACEBOOK_APP_SECRET ?? "").trim();
-  const token = (accessToken ?? "").trim();
+  const token = normalizeFacebookAccessToken(accessToken);
   if (!secret) {
     throw new Error("FACEBOOK_APP_SECRET is missing or empty");
   }
@@ -105,11 +112,12 @@ interface RawAdAccount {
 
 // ─── Fetch Ad Accounts ────────────────────────────────────────────────────────
 export async function fetchAdAccounts(accessToken: string): Promise<AdAccount[]> {
-  const cacheKey = `adaccounts:${accessToken.slice(-16)}`;
+  const token = normalizeFacebookAccessToken(accessToken);
+  const cacheKey = `adaccounts:${token.slice(-16)}`;
   const cached = cacheGet(adAccountsCache, cacheKey);
   if (cached) return cached;
 
-  const appsecretProof = generateAppSecretProof(accessToken);
+  const appsecretProof = generateAppSecretProof(token);
 
   let res;
   try {
@@ -118,7 +126,7 @@ export async function fetchAdAccounts(accessToken: string): Promise<AdAccount[]>
       {
         params: {
           fields: "id,name,account_id,account_status,amount_spent,currency,balance,min_daily_budget",
-          access_token: accessToken,
+          access_token: token,
           appsecret_proof: appsecretProof,
           limit: 100,
         },
@@ -190,14 +198,15 @@ export async function fetchAdAccountInsights(
   currency: string = "USD",
   datePreset: string = "last_30d"
 ): Promise<InsightsSummary> {
-  const cacheKey = `insights:${adAccountId}:${datePreset}:${accessToken.slice(-16)}`;
+  const token = normalizeFacebookAccessToken(accessToken);
+  const cacheKey = `insights:${adAccountId}:${datePreset}:${token.slice(-16)}`;
   const cached = cacheGet(insightsCache, cacheKey);
   if (cached) {
     // Rebuild summary from cached daily data
     return buildSummary(cached, currency);
   }
 
-  const appsecretProof = generateAppSecretProof(accessToken);
+  const appsecretProof = generateAppSecretProof(token);
 
   const res = await axios.get<{ data: RawInsight[] }>(
     `${GRAPH}/${adAccountId}/insights`,
@@ -207,7 +216,7 @@ export async function fetchAdAccountInsights(
         time_increment: 1,
         date_preset: datePreset,
         action_breakdowns: "action_type",
-        access_token: accessToken,
+        access_token: token,
         appsecret_proof: appsecretProof,
         limit: 90,
       },

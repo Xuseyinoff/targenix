@@ -26,7 +26,7 @@ import {
   adSetsCache,
 } from "../../drizzle/schema";
 import { decrypt } from "../encryption";
-import { generateAppSecretProof } from "./adAccountsService";
+import { generateAppSecretProof, normalizeFacebookAccessToken } from "./adAccountsService";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 
@@ -113,7 +113,8 @@ export async function syncFbAccountData(
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
 
-  const appsecretProof = generateAppSecretProof(accessToken);
+  const token = normalizeFacebookAccessToken(accessToken);
+  const appsecretProof = generateAppSecretProof(token);
   const now = new Date();
   let accountsSynced = 0;
   let campaignsSynced = 0;
@@ -127,7 +128,7 @@ export async function syncFbAccountData(
       {
         params: {
           fields: "id,name,account_id,account_status,currency,timezone_name,balance,amount_spent,min_daily_budget",
-          access_token: accessToken,
+          access_token: token,
           appsecret_proof: appsecretProof,
           limit: 200,
         },
@@ -187,7 +188,7 @@ export async function syncFbAccountData(
           params: {
             fields: "id,name,status,objective,daily_budget,lifetime_budget",
             effective_status: JSON.stringify(["ACTIVE", "PAUSED"]),
-            access_token: accessToken,
+            access_token: token,
             appsecret_proof: appsecretProof,
             limit: 200,
           },
@@ -243,7 +244,7 @@ export async function syncFbAccountData(
               level: "campaign",
               date_preset: fbPreset,
               action_breakdowns: "action_type",
-              access_token: accessToken,
+              access_token: token,
               appsecret_proof: appsecretProof,
               limit: 200,
             },
@@ -320,7 +321,8 @@ export async function syncAdSetsForCampaign(
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
 
-  const appsecretProof = generateAppSecretProof(accessToken);
+  const token = normalizeFacebookAccessToken(accessToken);
+  const appsecretProof = generateAppSecretProof(token);
   const now = new Date();
 
   let rawAdSets: RawAdSet[] = [];
@@ -329,7 +331,7 @@ export async function syncAdSetsForCampaign(
     {
       params: {
         fields: "id,name,status,campaign_id,daily_budget,lifetime_budget,optimization_goal,billing_event",
-        access_token: accessToken,
+        access_token: token,
         appsecret_proof: appsecretProof,
         limit: 200,
       },

@@ -8,7 +8,7 @@
  */
 
 import axios from "axios";
-import { generateAppSecretProof } from "./adAccountsService";
+import { generateAppSecretProof, normalizeFacebookAccessToken } from "./adAccountsService";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -100,11 +100,12 @@ export async function fetchCampaigns(
   adAccountId: string,
   accessToken: string
 ): Promise<Campaign[]> {
-  const cacheKey = `campaigns:${adAccountId}:${accessToken.slice(-16)}`;
+  const token = normalizeFacebookAccessToken(accessToken);
+  const cacheKey = `campaigns:${adAccountId}:${token.slice(-16)}`;
   const cached = cacheGet(campaignsCache, cacheKey);
   if (cached) return cached;
 
-  const appsecretProof = generateAppSecretProof(accessToken);
+  const appsecretProof = generateAppSecretProof(token);
 
   let res;
   try {
@@ -114,7 +115,7 @@ export async function fetchCampaigns(
         params: {
           fields: "id,name,status,objective,daily_budget,lifetime_budget",
           effective_status: JSON.stringify(["ACTIVE", "PAUSED"]),
-          access_token: accessToken,
+          access_token: token,
           appsecret_proof: appsecretProof,
           limit: 100,
         },
@@ -158,11 +159,12 @@ export async function fetchCampaignInsights(
   datePreset: string = "last_30d",
   currency: string = "USD"
 ): Promise<CampaignInsightsSummary> {
-  const cacheKey = `campaign_insights:${adAccountId}:${datePreset}:${accessToken.slice(-16)}`;
+  const token = normalizeFacebookAccessToken(accessToken);
+  const cacheKey = `campaign_insights:${adAccountId}:${datePreset}:${token.slice(-16)}`;
   const cached = cacheGet(campaignInsightsCache, cacheKey);
   if (cached) return buildCampaignSummary(cached, datePreset, currency);
 
-  const appsecretProof = generateAppSecretProof(accessToken);
+  const appsecretProof = generateAppSecretProof(token);
 
   let res;
   try {
@@ -174,7 +176,7 @@ export async function fetchCampaignInsights(
           level: "campaign",
           date_preset: datePreset,
           action_breakdowns: "action_type",
-          access_token: accessToken,
+          access_token: token,
           appsecret_proof: appsecretProof,
           limit: 100,
         },
