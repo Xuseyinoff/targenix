@@ -253,12 +253,6 @@ async function handleDeliveryStartWithToken(
   const payloadConfirm = `tg:c:${tok.id}`;
   const payloadCancel = `tg:x:${tok.id}`;
 
-  await sendTelegramMessage(
-    chatId,
-    `Hello 👋\n\nDo you want to connect this chat to <b>Targenix</b>?\n\n<b>${escapeHtml(title)}</b>`,
-    "HTML",
-  );
-
   if (!BOT_TOKEN) return;
   try {
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
@@ -266,7 +260,7 @@ async function handleDeliveryStartWithToken(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
-        text: "Confirm linking:",
+        text: `Hello 👋\n\nDo you want to connect this chat to <b>Targenix</b>?\n\n<b>${escapeHtml(title)}</b>\n\nConfirm linking:`,
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
