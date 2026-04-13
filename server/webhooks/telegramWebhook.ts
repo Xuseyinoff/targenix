@@ -7,11 +7,42 @@
 
 import type { Request, Response } from "express";
 import { getDb } from "../db";
-import { users } from "../../drizzle/schema";
-import { eq } from "drizzle-orm";
+import { telegramChatConnectTokens, telegramChats, users } from "../../drizzle/schema";
+import { and, eq, gt, isNull } from "drizzle-orm";
 import { log } from "../services/appLogger";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
+const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME ?? "Targenixbot";
+
+type BotIdentity = { id: number; username?: string };
+let cachedBot: BotIdentity | null = null;
+
+async function getBotIdentity(): Promise<BotIdentity | null> {
+  if (cachedBot) return cachedBot;
+  if (!BOT_TOKEN) return null;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`);
+    const data = (await res.json()) as { ok: boolean; result?: { id: number; username?: string } };
+    if (!data.ok || !data.result) return null;
+    cachedBot = { id: data.result.id, username: data.result.username };
+    return cachedBot;
+  } catch {
+    return null;
+  }
+}
+
+async function getChatMemberStatus(chatId: string, userId: number): Promise<string | null> {
+  if (!BOT_TOKEN) return null;
+  try {
+    const url = `https://api.telegram.org/bot${BOT_TOKEN}/getChatMember?chat_id=${encodeURIComponent(chatId)}&user_id=${userId}`;
+    const res = await fetch(url);
+    const data = (await res.json()) as { ok: boolean; result?: { status?: string } };
+    if (!data.ok) return null;
+    return data.result?.status ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** Send a Telegram message via Bot API */
 export async function sendTelegramMessage(
@@ -73,33 +104,52 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
   res.status(200).json({ ok: true });
 
   const update = req.body as TelegramUpdate;
-  if (!update?.message) return;
+  if (!update) return;
 
-  const message = update.message;
-  const chatId = String(message.chat.id);
-  const text = message.text ?? "";
-  const from = message.from;
+  if (update.message) {
+    const message = update.message;
+    const chatId = String(message.chat.id);
+    const text = message.text ?? "";
+    const from = message.from;
 
-  await log.info("TELEGRAM", "Incoming update", {
-    chatId,
-    text: text.slice(0, 100),
-    fromUsername: from?.username,
-  });
+    await log.info("TELEGRAM", "Incoming message", {
+      chatId,
+      text: text.slice(0, 120),
+      fromUsername: from?.username,
+    });
 
-  // Handle /start <token>
-  if (text.startsWith("/start ")) {
-    const token = text.slice(7).trim();
-    await handleStartWithToken(chatId, token, from);
+    // Handle /start <token>
+    if (text.startsWith("/start ")) {
+      const token = text.slice(7).trim();
+      if (message.chat.type !== "private") {
+        await handleDeliveryStartWithToken(chatId, token, message.chat);
+      } else {
+        await handleStartWithToken(chatId, token, from);
+      }
+      return;
+    }
+
+    // Handle plain /start (no token)
+    if (text === "/start") {
+      await sendTelegramMessage(
+        chatId,
+        "👋 Salom! Targenix.uz botiga xush kelibsiz.\n\n1) <b>System chat</b> ulandi.\n2) Leadlarni yuborish uchun: <b>Targenix.uz → Settings → Telegram → Add delivery chat</b> bo'limiga o'ting va botni guruh/kanalga qo'shib <b>Confirm</b> qiling.",
+        "HTML"
+      );
+      return;
+    }
+  }
+
+  // Bot added to group/channel — ask for confirmation (delivery chat connect)
+  if (update.my_chat_member) {
+    await handleMyChatMember(update.my_chat_member);
     return;
   }
 
-  // Handle plain /start (no token)
-  if (text === "/start") {
-    await sendTelegramMessage(
-      chatId,
-      "👋 Salom! Targenix.uz botiga xush kelibsiz.\n\nHisobingizni ulash uchun <b>Targenix.uz → Settings → Telegram</b> bo'limiga o'ting va \"Connect Telegram\" tugmasini bosing.",
-      "HTML"
-    );
+  // Inline button callbacks: Confirm / Cancel
+  if (update.callback_query) {
+    await handleCallbackQuery(update.callback_query);
+    return;
   }
 }
 
@@ -133,6 +183,7 @@ async function handleStartWithToken(
   await db
     .update(users)
     .set({
+      telegramUserId: from?.id != null ? String(from.id) : null,
       telegramChatId: chatId,
       telegramUsername: from?.username ?? null,
       telegramConnectedAt: new Date(),
@@ -149,9 +200,194 @@ async function handleStartWithToken(
   // Send confirmation message in Uzbek
   await sendTelegramMessage(
     chatId,
-    "✅ <b>Targenix.uz ga muvaffaqiyatli ulandi!</b>\n\nEndi yangi leadlar bu yerga yuboriladi.",
+    "✅ <b>Targenix.uz ga muvaffaqiyatli ulandi!</b>\n\nBu <b>System chat</b> hisoblanadi: bu yerga faqat alert/error/statistika keladi.\n\nLeadlarni yuborish uchun <b>Delivery chat</b> qo'shing: Settings → Telegram → Add delivery chat.",
     "HTML"
   );
+}
+
+async function handleDeliveryStartWithToken(
+  chatId: string,
+  token: string,
+  chat: TelegramChat,
+): Promise<void> {
+  if (!token) return;
+  const db = await getDb();
+  if (!db) return;
+
+  const [tok] = await db
+    .select()
+    .from(telegramChatConnectTokens)
+    .where(and(eq(telegramChatConnectTokens.token, token), isNull(telegramChatConnectTokens.usedAt), gt(telegramChatConnectTokens.expiresAt, new Date())))
+    .limit(1);
+
+  if (!tok) {
+    await sendTelegramMessage(
+      chatId,
+      "❌ Token topilmadi yoki muddati o'tgan. Iltimos, Targenix.uz saytidan qaytadan \"Add delivery chat\" qiling.",
+      "HTML",
+    );
+    return;
+  }
+
+  // If already connected, stop.
+  const [existing] = await db.select().from(telegramChats).where(eq(telegramChats.chatId, chatId)).limit(1);
+  if (existing) {
+    await sendTelegramMessage(chatId, "ℹ️ Bu chat allaqachon ulangan.", "HTML");
+    return;
+  }
+
+  const title = chat.title ?? "Telegram chat";
+  const payloadConfirm = `tg:confirm:${token}`;
+  const payloadCancel = `tg:cancel:${token}`;
+
+  await sendTelegramMessage(
+    chatId,
+    `Hello 👋\n\nDo you want to connect this chat to <b>Targenix</b>?\n\n<b>${escapeHtml(title)}</b>`,
+    "HTML",
+  );
+
+  if (!BOT_TOKEN) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: "Confirm linking:",
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: "✅ Confirm", callback_data: payloadConfirm },
+              { text: "❌ Cancel", callback_data: payloadCancel },
+            ],
+          ],
+        },
+      }),
+    });
+  } catch (err) {
+    await log.error("TELEGRAM", "Failed to send confirm buttons", { chatId, error: String(err) });
+  }
+}
+
+async function handleMyChatMember(evt: TelegramChatMemberUpdated): Promise<void> {
+  const chatId = String(evt.chat.id);
+  const newStatus = evt.new_chat_member?.status;
+
+  // Only react when bot becomes a member/admin in a non-private chat
+  if (evt.chat.type === "private") return;
+  if (!newStatus || (newStatus !== "member" && newStatus !== "administrator")) return;
+
+  await sendTelegramMessage(
+    chatId,
+    "👋 Salom! Bot guruh/kanalga qo'shildi.\n\nUlash uchun Targenix.uz saytida <b>Settings → Telegram → Add delivery chat</b> tugmasini bosing va chiqqan link orqali botni aynan shu chatga qo'shing. Shunda bot bu yerda <b>Confirm</b> tugmasini chiqaradi.",
+    "HTML",
+  );
+}
+
+async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
+  const chatId = String(q.message?.chat?.id ?? q.from?.id ?? "");
+  const data = q.data ?? "";
+
+  await log.info("TELEGRAM", "Incoming callback", {
+    chatId,
+    data: data.slice(0, 80),
+    fromUsername: q.from?.username,
+  });
+
+  // Answer callback quickly (prevents spinner)
+  if (BOT_TOKEN && q.id) {
+    void fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: q.id }),
+    }).catch(() => {});
+  }
+
+  if (!data.startsWith("tg:")) return;
+  const parts = data.split(":");
+  // tg:confirm:<token> or tg:cancel:<token>
+  const action = parts[1];
+  const token = parts.slice(2).join(":").trim();
+  if (!token) return;
+
+  if (action === "cancel") {
+    await sendTelegramMessage(chatId, "❌ Cancelled.", "HTML");
+    return;
+  }
+
+  if (action !== "confirm") return;
+
+  const db = await getDb();
+  if (!db) return;
+
+  // Validate token: unexpired & unused
+  const [tok] = await db
+    .select()
+    .from(telegramChatConnectTokens)
+    .where(and(eq(telegramChatConnectTokens.token, token), isNull(telegramChatConnectTokens.usedAt), gt(telegramChatConnectTokens.expiresAt, new Date())))
+    .limit(1);
+
+  if (!tok) {
+    await sendTelegramMessage(chatId, "❌ Token topilmadi yoki muddati o'tgan. Iltimos, saytdan qaytadan urinib ko'ring.", "HTML");
+    return;
+  }
+
+  // Enforce unique ownership
+  const [existing] = await db.select().from(telegramChats).where(eq(telegramChats.chatId, chatId)).limit(1);
+  if (existing) {
+    await sendTelegramMessage(chatId, "❌ Bu chat allaqachon boshqa userga ulangan (yoki avvalroq ulangan).", "HTML");
+    return;
+  }
+
+  // Admin check: bot must be administrator
+  const bot = await getBotIdentity();
+  if (!bot) {
+    await sendTelegramMessage(chatId, "❌ Bot konfiguratsiyasi xato: TELEGRAM_BOT_TOKEN yo'q.", "HTML");
+    return;
+  }
+  const status = await getChatMemberStatus(chatId, bot.id);
+  if (status !== "administrator") {
+    await sendTelegramMessage(
+      chatId,
+      "❌ Bot bu chatda <b>administrator</b> emas.\n\nIltimos botga admin huquq bering va qaytadan Confirm qiling.",
+      "HTML",
+    );
+    return;
+  }
+
+  const title = q.message?.chat?.title ?? null;
+  const username = (q.message?.chat as any)?.username ?? null;
+
+  await db.insert(telegramChats).values({
+    userId: tok.userId,
+    chatId,
+    type: "DELIVERY",
+    title,
+    username,
+    connectedAt: new Date(),
+    createdAt: new Date(),
+  });
+
+  await db
+    .update(telegramChatConnectTokens)
+    .set({ usedAt: new Date() })
+    .where(eq(telegramChatConnectTokens.id, tok.id));
+
+  await sendTelegramMessage(
+    chatId,
+    "✅ <b>Delivery chat ulandi!</b>\n\nEndi integratsiyalarga biriktirib leadlarni shu yerga yuborishingiz mumkin (Settings → Telegram).",
+    "HTML",
+  );
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 // ─── Telegram Update Types ────────────────────────────────────────────────────
@@ -159,6 +395,8 @@ async function handleStartWithToken(
 interface TelegramUpdate {
   update_id: number;
   message?: TelegramMessage;
+  my_chat_member?: TelegramChatMemberUpdated;
+  callback_query?: TelegramCallbackQuery;
 }
 
 interface TelegramMessage {
@@ -178,4 +416,20 @@ interface TelegramChat {
   id: number;
   type: string;
   username?: string;
+  title?: string;
+}
+
+interface TelegramChatMemberUpdated {
+  chat: TelegramChat;
+  from?: TelegramUser;
+  date: number;
+  old_chat_member: { status: string };
+  new_chat_member: { status: string };
+}
+
+interface TelegramCallbackQuery {
+  id: string;
+  from: TelegramUser;
+  message?: { chat: TelegramChat };
+  data?: string;
 }

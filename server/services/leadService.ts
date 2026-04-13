@@ -368,7 +368,8 @@ export async function sendLeadTelegramNotification(params: {
   const deliverySource = params.deliverySource ?? "initial";
   const isAutoRetry = deliverySource === "auto_retry";
 
-  // Destination: integration chat only if this integration row belongs to the same user (tenant isolation).
+  // DELIVERY rule (SPEC): leads must go ONLY to a delivery chat assigned to the integration.
+  // System chat (users.telegramChatId) is reserved for alerts/errors/stats — never lead deliveries.
   let chatId: string | null = null;
   const integrationOwned = params.integration.userId === params.userId;
   if (!integrationOwned && params.integration.telegramChatId?.trim()) {
@@ -386,15 +387,7 @@ export async function sendLeadTelegramNotification(params: {
   if (integrationOwned && params.integration.telegramChatId?.trim()) {
     chatId = params.integration.telegramChatId.trim();
   }
-  if (!chatId) {
-    const [user] = await db
-      .select({ telegramChatId: users.telegramChatId })
-      .from(users)
-      .where(eq(users.id, params.userId))
-      .limit(1);
-    chatId = user?.telegramChatId?.trim() ?? null;
-  }
-  if (!chatId) return; // No Telegram configured for this user / integration
+  if (!chatId) return; // No delivery chat assigned for this integration
 
   // Resolve page name and account name for richer context
   let pageName: string | null = null;

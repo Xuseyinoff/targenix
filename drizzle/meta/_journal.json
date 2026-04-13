@@ -211,6 +211,13 @@
       "when": 1776100000000,
       "tag": "0029_order_delivery_retry",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "5",
+      "when": 1776081131598,
+      "tag": "0030_telegram_delivery_chats",
+      "breakpoints": true
     }
   ]
 }

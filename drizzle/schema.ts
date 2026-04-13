@@ -22,6 +22,8 @@ export const users = mysqlTable("users", {
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   /** Telegram integration fields */
+  /** Telegram user ID (from message.from.id) for the system chat link */
+  telegramUserId: varchar("telegramUserId", { length: 32 }),
   telegramChatId: varchar("telegramChatId", { length: 64 }),
   telegramUsername: varchar("telegramUsername", { length: 128 }),
   telegramConnectedAt: timestamp("telegramConnectedAt"),
@@ -34,6 +36,60 @@ export const users = mysqlTable("users", {
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
+
+// ─── Telegram Chats (Delivery / System) ───────────────────────────────────────
+export const telegramChats = mysqlTable("telegram_chats", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  /** Telegram chat id (group/channel/user). Unique globally to prevent cross-user linking. */
+  chatId: varchar("chatId", { length: 64 }).notNull(),
+  /** SYSTEM = user private chat; DELIVERY = group/channel used for lead delivery */
+  type: mysqlEnum("type", ["SYSTEM", "DELIVERY"]).notNull(),
+  /** Telegram chat title for groups/channels (best-effort) */
+  title: varchar("title", { length: 255 }),
+  /** Telegram username for channels (best-effort) */
+  username: varchar("username", { length: 128 }),
+  connectedAt: timestamp("connectedAt").defaultNow().notNull(),
+  disconnectedAt: timestamp("disconnectedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  uqChatId: uniqueIndex("uq_telegram_chats_chat_id").on(t.chatId),
+  idxUserType: index("idx_telegram_chats_user_type").on(t.userId, t.type),
+}));
+
+export type TelegramChat = typeof telegramChats.$inferSelect;
+export type InsertTelegramChat = typeof telegramChats.$inferInsert;
+
+// ─── Telegram Delivery Chat Connect Tokens ────────────────────────────────────
+export const telegramChatConnectTokens = mysqlTable("telegram_chat_connect_tokens", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  token: varchar("token", { length: 128 }).notNull(),
+  /** Token expiry; after this, confirm should fail */
+  expiresAt: timestamp("expiresAt").notNull(),
+  usedAt: timestamp("usedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  uqToken: uniqueIndex("uq_telegram_chat_connect_tokens_token").on(t.token),
+  idxUser: index("idx_telegram_chat_connect_tokens_user").on(t.userId, t.createdAt),
+}));
+
+export type TelegramChatConnectToken = typeof telegramChatConnectTokens.$inferSelect;
+export type InsertTelegramChatConnectToken = typeof telegramChatConnectTokens.$inferInsert;
+
+// ─── Telegram Chat ↔ Integration Mapping ──────────────────────────────────────
+export const telegramChatIntegrations = mysqlTable("telegram_chat_integrations", {
+  id: int("id").autoincrement().primaryKey(),
+  telegramChatId: int("telegramChatId").notNull(),
+  integrationId: int("integrationId").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  uqChatIntegration: uniqueIndex("uq_telegram_chat_integrations_chat_integration").on(t.telegramChatId, t.integrationId),
+  idxIntegration: index("idx_telegram_chat_integrations_integration").on(t.integrationId),
+}));
+
+export type TelegramChatIntegration = typeof telegramChatIntegrations.$inferSelect;
+export type InsertTelegramChatIntegration = typeof telegramChatIntegrations.$inferInsert;
 
 // ─── Password Reset Tokens ────────────────────────────────────────────────────
 export const passwordResetTokens = mysqlTable("password_reset_tokens", {

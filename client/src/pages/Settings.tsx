@@ -20,6 +20,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
 import {
   Send,
@@ -29,6 +36,7 @@ import {
   ExternalLink,
   RefreshCw,
   Trash2,
+  Users,
 } from "lucide-react";
 
 export default function Settings() {
@@ -46,6 +54,8 @@ export default function Settings() {
 
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [deliveryUrl, setDeliveryUrl] = useState<string | null>(null);
+  const [deliveryConnecting, setDeliveryConnecting] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
 
@@ -77,6 +87,32 @@ export default function Settings() {
     onError: (err) => toast.error(err.message),
   });
 
+  const { data: deliveryChats, refetch: refetchDeliveryChats, isFetching: deliveryFetching } =
+    trpc.telegram.listDeliveryChats.useQuery(undefined, { staleTime: 5_000 });
+
+  const { data: integrationMappings, refetch: refetchMappings, isFetching: mappingsFetching } =
+    trpc.telegram.listIntegrationMappings.useQuery(undefined, { staleTime: 5_000 });
+
+  const mapIntegrationMutation = trpc.telegram.mapIntegrationToChat.useMutation({
+    onSuccess: () => {
+      void refetchMappings();
+      toast.success("Saved.");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const generateDeliveryTokenMutation = trpc.telegram.generateDeliveryConnectToken.useMutation({
+    onSuccess: (data) => {
+      setDeliveryUrl(data.botUrl);
+      setDeliveryConnecting(false);
+      void refetchDeliveryChats();
+    },
+    onError: (err) => {
+      toast.error(err.message);
+      setDeliveryConnecting(false);
+    },
+  });
+
   // When status switches to connected, clear the connect URL and show toast
   useEffect(() => {
     if (telegramStatus?.connected && connectUrl) {
@@ -90,6 +126,11 @@ export default function Settings() {
   const handleConnect = () => {
     setConnecting(true);
     generateTokenMutation.mutate();
+  };
+
+  const handleAddDeliveryChat = () => {
+    setDeliveryConnecting(true);
+    generateDeliveryTokenMutation.mutate();
   };
 
   return (
@@ -240,6 +281,156 @@ export default function Settings() {
                 <p className="text-xs text-muted-foreground">
                   Click the button → Telegram opens → Press Start → Done
                 </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ─── Delivery Chats (Groups / Channels) ─────────────────────────── */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                  <Users className="h-5 w-5 text-violet-600" />
+                </div>
+                <div>
+                  <CardTitle className="text-base">Delivery Chats</CardTitle>
+                  <CardDescription>
+                    Add a Telegram group/channel for lead delivery (leads will NOT go to your system chat)
+                  </CardDescription>
+                </div>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => refetchDeliveryChats()} disabled={deliveryFetching}>
+                <RefreshCw className={`h-4 w-4 mr-1.5 ${deliveryFetching ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {deliveryUrl ? (
+              <div className="space-y-3">
+                <div className="rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800 p-4 space-y-2">
+                  <p className="text-sm font-medium text-violet-800 dark:text-violet-300">
+                    Steps:
+                  </p>
+                  <ol className="text-sm text-violet-700 dark:text-violet-400 space-y-1 list-decimal list-inside">
+                    <li>Open Telegram via the button</li>
+                    <li>Add bot to your group/channel</li>
+                    <li>In the chat, press <strong>Confirm</strong></li>
+                  </ol>
+                </div>
+                <Button asChild className="bg-violet-600 hover:bg-violet-700 text-white">
+                  <a href={deliveryUrl} target="_blank" rel="noopener noreferrer">
+                    <Users className="h-4 w-4 mr-2" />
+                    Add bot to group/channel
+                    <ExternalLink className="h-3.5 w-3.5 ml-2" />
+                  </a>
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  After Confirm, click Refresh to see the chat in the list.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Button onClick={handleAddDeliveryChat} disabled={deliveryConnecting}>
+                  {deliveryConnecting ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Users className="h-4 w-4 mr-2" />
+                  )}
+                  Add delivery chat
+                </Button>
+                <p className="text-xs text-muted-foreground">
+                  You must confirm inside the Telegram group/channel to link it.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {!deliveryChats?.length ? (
+                <p className="text-sm text-muted-foreground">No delivery chats connected yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {deliveryChats.map((c) => (
+                    <div key={c.id} className="flex items-center justify-between border rounded-md px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{c.title ?? `Chat ${c.chatId}`}</p>
+                        <p className="text-xs text-muted-foreground font-mono truncate">{c.chatId}</p>
+                      </div>
+                      <Badge variant="secondary" className="font-mono text-xs">DELIVERY</Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* ─── Delivery Mapping (Integration → Chat) ─────────────────────── */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <CardTitle className="text-base">Delivery Mapping</CardTitle>
+                <CardDescription>
+                  Assign a delivery chat to each Lead Routing integration (leads are sent only to assigned chats)
+                </CardDescription>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => { void refetchMappings(); void refetchDeliveryChats(); }}
+                disabled={mappingsFetching || deliveryFetching}
+              >
+                <RefreshCw className={`h-4 w-4 mr-1.5 ${(mappingsFetching || deliveryFetching) ? "animate-spin" : ""}`} />
+                Refresh
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {!integrationMappings?.length ? (
+              <p className="text-sm text-muted-foreground">No Lead Routing integrations found.</p>
+            ) : (
+              <div className="space-y-2">
+                {integrationMappings.map((i) => {
+                  const current = i.chat?.id != null ? String(i.chat.id) : "none";
+                  return (
+                    <div key={i.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{i.name}</p>
+                        <p className="text-xs text-muted-foreground font-mono">integrationId: {i.id}</p>
+                      </div>
+                      <div className="w-[240px]">
+                        <Select
+                          value={current}
+                          onValueChange={(val) => {
+                            const chatId = val === "none" ? null : parseInt(val, 10);
+                            mapIntegrationMutation.mutate({ integrationId: i.id, telegramChatId: chatId });
+                          }}
+                          disabled={mapIntegrationMutation.isPending}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select delivery chat" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">No delivery chat</SelectItem>
+                            {(deliveryChats ?? []).map((c) => (
+                              <SelectItem key={c.id} value={String(c.id)}>
+                                {c.title ?? c.chatId}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {i.chat?.chatId && (
+                          <p className="text-[11px] text-muted-foreground font-mono mt-1 truncate">
+                            {i.chat.chatId}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </CardContent>
