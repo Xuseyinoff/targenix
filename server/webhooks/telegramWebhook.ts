@@ -118,15 +118,17 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
       fromUsername: from?.username,
     });
 
-    // Handle /start <token>
-    if (text.startsWith("/start ")) {
-      const token = text.slice(7).trim();
-      if (message.chat.type !== "private") {
-        await handleDeliveryStartWithToken(chatId, token, message.chat);
-      } else {
-        await handleStartWithToken(chatId, token, from);
+    // Handle /start <token> and /start@BotName <token>
+    if (text.startsWith("/start")) {
+      const token = parseStartToken(text);
+      if (token) {
+        if (message.chat.type !== "private") {
+          await handleDeliveryStartWithToken(chatId, token, message.chat);
+        } else {
+          await handleStartWithToken(chatId, token, from);
+        }
+        return;
       }
-      return;
     }
 
     // Handle plain /start (no token)
@@ -151,6 +153,16 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
     await handleCallbackQuery(update.callback_query);
     return;
   }
+}
+
+function parseStartToken(text: string): string | null {
+  // Supports:
+  // - "/start <token>"
+  // - "/start@BotName <token>"
+  // Telegram may include the bot mention in groups.
+  const m = text.match(/^\/start(?:@\w+)?\s+(.+)\s*$/i);
+  const token = m?.[1]?.trim();
+  return token ? token : null;
 }
 
 async function handleStartWithToken(

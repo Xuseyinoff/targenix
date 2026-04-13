@@ -10,8 +10,8 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { integrations, telegramChatConnectTokens, telegramChats, telegramChatIntegrations, users } from "../../drizzle/schema";
-import { and, desc, eq, gt, inArray, isNull } from "drizzle-orm";
+import { telegramChatConnectTokens, telegramChats, targetWebsites, users } from "../../drizzle/schema";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import crypto from "crypto";
 
 const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME ?? "Targenixbot";
@@ -119,61 +119,27 @@ export const telegramRouter = router({
       .orderBy(desc(telegramChats.connectedAt));
   }),
 
-  /** Map an integration to a delivery chat (and set integration.telegramChatId for fast routing) */
-  mapIntegrationToChat: protectedProcedure
-    .input(z.object({ integrationId: z.number(), telegramChatId: z.number().nullable() }))
-    .mutation(async ({ ctx, input }) => {
-      const db = await getDb();
-      if (!db) throw new Error("DB unavailable");
-
-      const [intg] = await db
-        .select({ id: integrations.id, userId: integrations.userId })
-        .from(integrations)
-        .where(eq(integrations.id, input.integrationId))
-        .limit(1);
-      if (!intg || intg.userId !== ctx.user.id) throw new Error("Integration not found");
-
-      if (input.telegramChatId == null) {
-        await db.delete(telegramChatIntegrations).where(eq(telegramChatIntegrations.integrationId, input.integrationId));
-        await db.update(integrations).set({ telegramChatId: null }).where(eq(integrations.id, input.integrationId));
-        return { success: true };
-      }
-
-      const [chat] = await db
-        .select({ id: telegramChats.id, chatId: telegramChats.chatId, userId: telegramChats.userId, type: telegramChats.type })
-        .from(telegramChats)
-        .where(eq(telegramChats.id, input.telegramChatId))
-        .limit(1);
-      if (!chat || chat.userId !== ctx.user.id || chat.type !== "DELIVERY") throw new Error("Chat not found");
-
-      await db
-        .insert(telegramChatIntegrations)
-        .values({ telegramChatId: chat.id, integrationId: input.integrationId, createdAt: new Date() })
-        // MySQL: ignore duplicates by checking first
-        .catch(() => {});
-
-      await db.update(integrations).set({ telegramChatId: chat.chatId }).where(eq(integrations.id, input.integrationId));
-
-      return { success: true };
-    }),
-
-  /** List integrations + their mapped delivery chat (if any) */
-  listIntegrationMappings: protectedProcedure.query(async ({ ctx }) => {
+  /** List destinations (target_websites) with template info + mapped delivery chat (if any) */
+  listDestinationMappings: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error("DB unavailable");
 
-    const ints = await db
+    const tws = await db
       .select({
-        id: integrations.id,
-        name: integrations.name,
-        type: integrations.type,
-        telegramChatId: integrations.telegramChatId,
+        id: targetWebsites.id,
+        name: targetWebsites.name,
+        url: targetWebsites.url,
+        templateType: targetWebsites.templateType,
+        templateId: targetWebsites.templateId,
+        telegramChatId: targetWebsites.telegramChatId,
+        isActive: targetWebsites.isActive,
+        createdAt: targetWebsites.createdAt,
       })
-      .from(integrations)
-      .where(and(eq(integrations.userId, ctx.user.id), eq(integrations.type, "LEAD_ROUTING")));
+      .from(targetWebsites)
+      .where(eq(targetWebsites.userId, ctx.user.id))
+      .orderBy(desc(targetWebsites.createdAt));
 
-    // Resolve chat records by chatId string
-    const chatIds = Array.from(new Set(ints.map((i) => i.telegramChatId).filter((x): x is string => !!x)));
+    const chatIds = Array.from(new Set(tws.map((t) => t.telegramChatId).filter((x): x is string => !!x)));
     const chats = chatIds.length
       ? await db
           .select({ id: telegramChats.id, chatId: telegramChats.chatId, title: telegramChats.title })
@@ -182,11 +148,46 @@ export const telegramRouter = router({
       : [];
     const byChatId = new Map(chats.map((c) => [c.chatId, c]));
 
-    return ints.map((i) => ({
-      id: i.id,
-      name: i.name,
-      type: i.type,
-      chat: i.telegramChatId ? byChatId.get(i.telegramChatId) ?? null : null,
+    return tws.map((t) => ({
+      id: t.id,
+      name: t.name,
+      url: t.url,
+      templateType: t.templateType,
+      templateId: t.templateId,
+      isActive: t.isActive,
+      createdAt: t.createdAt,
+      chat: t.telegramChatId ? byChatId.get(t.telegramChatId) ?? null : null,
     }));
   }),
+
+  /** Set destination → delivery chat mapping (stored on target_websites.telegramChatId) */
+  setDestinationChat: protectedProcedure
+    .input(z.object({ targetWebsiteId: z.number(), telegramChatId: z.string().trim().min(1).nullable() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+
+      const [tw] = await db
+        .select({ id: targetWebsites.id, userId: targetWebsites.userId })
+        .from(targetWebsites)
+        .where(eq(targetWebsites.id, input.targetWebsiteId))
+        .limit(1);
+      if (!tw || tw.userId !== ctx.user.id) throw new Error("Destination not found");
+
+      if (input.telegramChatId == null) {
+        await db.update(targetWebsites).set({ telegramChatId: null }).where(eq(targetWebsites.id, input.targetWebsiteId));
+        return { success: true };
+      }
+
+      // Validate delivery chat ownership
+      const [chat] = await db
+        .select({ chatId: telegramChats.chatId, userId: telegramChats.userId, type: telegramChats.type })
+        .from(telegramChats)
+        .where(eq(telegramChats.chatId, input.telegramChatId))
+        .limit(1);
+      if (!chat || chat.userId !== ctx.user.id || chat.type !== "DELIVERY") throw new Error("Chat not found");
+
+      await db.update(targetWebsites).set({ telegramChatId: chat.chatId }).where(eq(targetWebsites.id, input.targetWebsiteId));
+      return { success: true };
+    }),
 });

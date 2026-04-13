@@ -231,6 +231,8 @@ export const targetWebsites = mysqlTable("target_websites", {
   templateId: int("templateId"),
   /** Template-specific config (api keys, field mappings, success conditions) */
   templateConfig: json("templateConfig"),
+  /** Delivery chatId for Telegram lead notifications (delivery chat only) */
+  telegramChatId: varchar("telegramChatId", { length: 64 }),
   isActive: boolean("isActive").default(true).notNull(),
   /** Hex color for visual distinction in UI (e.g., #3b82f6) */
   color: varchar("color", { length: 7 }).default("#6366f1").notNull(),

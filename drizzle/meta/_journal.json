@@ -218,6 +218,13 @@
       "when": 1776081131598,
       "tag": "0030_telegram_delivery_chats",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "5",
+      "when": 1776089341908,
+      "tag": "0031_target_website_telegram_chat",
+      "breakpoints": true
     }
   ]
 }

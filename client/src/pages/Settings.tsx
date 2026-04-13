@@ -90,15 +90,16 @@ export default function Settings() {
   const { data: deliveryChats, refetch: refetchDeliveryChats, isFetching: deliveryFetching } =
     trpc.telegram.listDeliveryChats.useQuery(undefined, { staleTime: 5_000 });
 
-  const { data: integrationMappings, refetch: refetchMappings, isFetching: mappingsFetching } =
-    trpc.telegram.listIntegrationMappings.useQuery(undefined, { staleTime: 5_000 });
+  const { data: destinationMappings, refetch: refetchMappings, isFetching: mappingsFetching } =
+    trpc.telegram.listDestinationMappings.useQuery(undefined, { staleTime: 5_000 });
 
-  const mapIntegrationMutation = trpc.telegram.mapIntegrationToChat.useMutation({
+  const setDestinationChatMutation = trpc.telegram.setDestinationChat.useMutation({
     onSuccess: () => {
       void refetchMappings();
       toast.success("Saved.");
     },
-    onError: (err) => toast.error(err.message),
+    onError: (err: { message?: string } | Error) =>
+      toast.error(err instanceof Error ? err.message : (err.message ?? "Failed")),
   });
 
   const generateDeliveryTokenMutation = trpc.telegram.generateDeliveryConnectToken.useMutation({
@@ -367,14 +368,14 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        {/* ─── Delivery Mapping (Integration → Chat) ─────────────────────── */}
+        {/* ─── Delivery Mapping (Destination/Template → Chat) ────────────── */}
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between gap-3">
               <div>
                 <CardTitle className="text-base">Delivery Mapping</CardTitle>
                 <CardDescription>
-                  Assign a delivery chat to each Lead Routing integration (leads are sent only to assigned chats)
+                  Assign a delivery chat per affiliate destination/template (leads are sent only if mapped)
                 </CardDescription>
               </div>
               <Button
@@ -389,26 +390,29 @@ export default function Settings() {
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
-            {!integrationMappings?.length ? (
-              <p className="text-sm text-muted-foreground">No Lead Routing integrations found.</p>
+            {!destinationMappings?.length ? (
+              <p className="text-sm text-muted-foreground">No destinations/templates found.</p>
             ) : (
               <div className="space-y-2">
-                {integrationMappings.map((i) => {
-                  const current = i.chat?.id != null ? String(i.chat.id) : "none";
+                {destinationMappings.map((t) => {
+                  const current = t.chat?.chatId != null ? String(t.chat.chatId) : "none";
                   return (
-                    <div key={i.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
+                    <div key={t.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{i.name}</p>
-                        <p className="text-xs text-muted-foreground font-mono">integrationId: {i.id}</p>
+                        <p className="text-sm font-medium truncate">{t.name}</p>
+                        <p className="text-xs text-muted-foreground font-mono">
+                          destinationId: {t.id}
+                          {t.templateId ? ` · templateId:${t.templateId}` : ` · ${t.templateType}`}
+                        </p>
                       </div>
                       <div className="w-[240px]">
                         <Select
                           value={current}
                           onValueChange={(val) => {
-                            const chatId = val === "none" ? null : parseInt(val, 10);
-                            mapIntegrationMutation.mutate({ integrationId: i.id, telegramChatId: chatId });
+                            const chatId = val === "none" ? null : val;
+                            setDestinationChatMutation.mutate({ targetWebsiteId: t.id, telegramChatId: chatId });
                           }}
-                          disabled={mapIntegrationMutation.isPending}
+                          disabled={setDestinationChatMutation.isPending}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select delivery chat" />
@@ -416,15 +420,15 @@ export default function Settings() {
                           <SelectContent>
                             <SelectItem value="none">No delivery chat</SelectItem>
                             {(deliveryChats ?? []).map((c) => (
-                              <SelectItem key={c.id} value={String(c.id)}>
+                              <SelectItem key={c.chatId} value={String(c.chatId)}>
                                 {c.title ?? c.chatId}
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
-                        {i.chat?.chatId && (
+                        {t.chat?.chatId && (
                           <p className="text-[11px] text-muted-foreground font-mono mt-1 truncate">
-                            {i.chat.chatId}
+                            {t.chat.chatId}
                           </p>
                         )}
                       </div>

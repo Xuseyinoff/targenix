@@ -606,6 +606,7 @@ async function runOrderIntegrationSend(params: {
     const config = integration.config as Record<string, unknown>;
     const _t0Routing = Date.now();
     let targetUrlUsed: string | undefined;
+    let destinationTelegramChatId: string | null = null;
     const twId = integration.targetWebsiteId ?? (config.targetWebsiteId ? Number(config.targetWebsiteId) : null);
     if (twId) {
       const { targetWebsites, destinationTemplates } = await import("../../drizzle/schema");
@@ -613,6 +614,7 @@ async function runOrderIntegrationSend(params: {
       if (tw && tw.userId !== userId) {
         result = { success: false, error: "Target website owner mismatch" };
       } else {
+        destinationTelegramChatId = (tw as { telegramChatId?: string | null } | undefined)?.telegramChatId?.trim?.() ?? null;
         const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
         if (tw && tw.templateId) {
           const { sendLeadViaTemplate } = await import("./affiliateService");
@@ -666,7 +668,8 @@ async function runOrderIntegrationSend(params: {
     await sendLeadTelegramNotification({
       integration: {
         userId: integration.userId,
-        telegramChatId: integration.telegramChatId,
+        // Delivery chat is mapped on destination (target website), not on integration.
+        telegramChatId: destinationTelegramChatId,
         name: integration.name,
         type: integration.type,
       },
