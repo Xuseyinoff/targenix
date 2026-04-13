@@ -307,13 +307,21 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
     fromUsername: q.from?.username,
   });
 
-  // Answer callback quickly (prevents spinner)
-  if (BOT_TOKEN && q.id) {
-    void fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ callback_query_id: q.id }),
-    }).catch(() => {});
+  async function answer(text?: string, showAlert?: boolean) {
+    if (!BOT_TOKEN || !q.id) return;
+    try {
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          callback_query_id: q.id,
+          text,
+          show_alert: !!showAlert,
+        }),
+      });
+    } catch {
+      // ignore
+    }
   }
 
   if (!data.startsWith("tg:")) return;
@@ -324,6 +332,7 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
   if (!token) return;
 
   if (action === "cancel") {
+    await answer("Cancelled");
     await sendTelegramMessage(chatId, "❌ Cancelled.", "HTML");
     return;
   }
@@ -341,6 +350,8 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
     .limit(1);
 
   if (!tok) {
+    await log.warn("TELEGRAM", "Confirm failed: token missing/expired", { chatId, tokenPrefix: token.slice(0, 8) + "..." });
+    await answer("Token expired. Recreate in Settings.", true);
     await sendTelegramMessage(chatId, "❌ Token topilmadi yoki muddati o'tgan. Iltimos, saytdan qaytadan urinib ko'ring.", "HTML");
     return;
   }
@@ -348,6 +359,8 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
   // Enforce unique ownership
   const [existing] = await db.select().from(telegramChats).where(eq(telegramChats.chatId, chatId)).limit(1);
   if (existing) {
+    await log.warn("TELEGRAM", "Confirm blocked: chat already linked", { chatId, existingUserId: (existing as any)?.userId });
+    await answer("Chat already linked.", true);
     await sendTelegramMessage(chatId, "❌ Bu chat allaqachon boshqa userga ulangan (yoki avvalroq ulangan).", "HTML");
     return;
   }
@@ -355,11 +368,14 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
   // Admin check: bot must be administrator
   const bot = await getBotIdentity();
   if (!bot) {
+    await answer("Bot misconfigured.", true);
     await sendTelegramMessage(chatId, "❌ Bot konfiguratsiyasi xato: TELEGRAM_BOT_TOKEN yo'q.", "HTML");
     return;
   }
   const status = await getChatMemberStatus(chatId, bot.id);
   if (status !== "administrator") {
+    await log.warn("TELEGRAM", "Confirm blocked: bot is not admin", { chatId, status });
+    await answer("Bot must be admin.", true);
     await sendTelegramMessage(
       chatId,
       "❌ Bot bu chatda <b>administrator</b> emas.\n\nIltimos botga admin huquq bering va qaytadan Confirm qiling.",
@@ -391,6 +407,7 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
     "✅ <b>Delivery chat ulandi!</b>\n\nEndi integratsiyalarga biriktirib leadlarni shu yerga yuborishingiz mumkin (Settings → Telegram).",
     "HTML",
   );
+  await answer("✅ Connected!");
 }
 
 function escapeHtml(s: string): string {
