@@ -114,6 +114,13 @@ export async function getLeads(
   const db = await getDb();
   if (!db) return [];
   const conditions = [eq(leads.userId, userId)];
+
+  // Visibility rule: only show leads that have been routed at least once
+  // (i.e., at least one integration delivery attempt exists).
+  conditions.push(
+    sql`EXISTS (SELECT 1 FROM ${orders} o WHERE o.lead_id = ${leads.id} AND o.user_id = ${userId} AND o.attempts > 0)`
+  );
+
   if (status === "PENDING") {
     const enrichedPending = and(
       eq(leads.dataStatus, "ENRICHED"),
@@ -168,7 +175,12 @@ export async function getLeadStats(userId: number) {
       failed: sql<number>`SUM(CASE WHEN ${leads.dataStatus} = 'ERROR' OR ${leads.deliveryStatus} IN ('FAILED','PARTIAL') THEN 1 ELSE 0 END)`,
     })
     .from(leads)
-    .where(eq(leads.userId, userId));
+    .where(
+      and(
+        eq(leads.userId, userId),
+        sql`EXISTS (SELECT 1 FROM ${orders} o WHERE o.lead_id = ${leads.id} AND o.user_id = ${userId} AND o.attempts > 0)`
+      )
+    );
   return row ?? { total: 0, pending: 0, received: 0, failed: 0 };
 }
 
@@ -184,6 +196,12 @@ export async function getLeadsCount(
   const db = await getDb();
   if (!db) return 0;
   const conditions = [eq(leads.userId, userId)];
+
+  // Same visibility rule as getLeads(): only count leads that have been routed at least once.
+  conditions.push(
+    sql`EXISTS (SELECT 1 FROM ${orders} o WHERE o.lead_id = ${leads.id} AND o.user_id = ${userId} AND o.attempts > 0)`
+  );
+
   if (status === "PENDING") {
     const enrichedPending = and(
       eq(leads.dataStatus, "ENRICHED"),
