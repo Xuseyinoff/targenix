@@ -118,13 +118,13 @@ export const adminLeadsRouter = router({
         userId: users.id,
         userName: users.name,
         userEmail: users.email,
-        deliveriesTotal: sql<number>`(SELECT COUNT(*) FROM ${orders} o WHERE o.${orders.leadId} = ${leads.id} AND o.${orders.userId} = ${leads.userId})`,
-        deliveriesSent: sql<number>`(SELECT COUNT(*) FROM ${orders} o WHERE o.${orders.leadId} = ${leads.id} AND o.${orders.userId} = ${leads.userId} AND o.${orders.status} = 'SENT')`,
-        deliveriesFailed: sql<number>`(SELECT COUNT(*) FROM ${orders} o WHERE o.${orders.leadId} = ${leads.id} AND o.${orders.userId} = ${leads.userId} AND o.${orders.status} = 'FAILED')`,
-        deliveriesPending: sql<number>`(SELECT COUNT(*) FROM ${orders} o WHERE o.${orders.leadId} = ${leads.id} AND o.${orders.userId} = ${leads.userId} AND o.${orders.status} = 'PENDING')`,
-        attemptsMax: sql<number>`(SELECT COALESCE(MAX(o.${orders.attempts}), 0) FROM ${orders} o WHERE o.${orders.leadId} = ${leads.id} AND o.${orders.userId} = ${leads.userId})`,
-        lastOrderAt: sql<Date | null>`(SELECT o.${orders.updatedAt} FROM ${orders} o WHERE o.${orders.leadId} = ${leads.id} AND o.${orders.userId} = ${leads.userId} ORDER BY o.${orders.updatedAt} DESC LIMIT 1)`,
-        lastIntegrationId: sql<number | null>`(SELECT o.${orders.integrationId} FROM ${orders} o WHERE o.${orders.leadId} = ${leads.id} AND o.${orders.userId} = ${leads.userId} ORDER BY o.${orders.updatedAt} DESC LIMIT 1)`,
+        deliveriesTotal: sql<number>`(SELECT COUNT(*) FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${leads.userId})`,
+        deliveriesSent: sql<number>`(SELECT COUNT(*) FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${leads.userId} AND ${orders.status} = 'SENT')`,
+        deliveriesFailed: sql<number>`(SELECT COUNT(*) FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${leads.userId} AND ${orders.status} = 'FAILED')`,
+        deliveriesPending: sql<number>`(SELECT COUNT(*) FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${leads.userId} AND ${orders.status} = 'PENDING')`,
+        attemptsMax: sql<number>`(SELECT COALESCE(MAX(${orders.attempts}), 0) FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${leads.userId})`,
+        lastOrderAt: sql<Date | null>`(SELECT ${orders.updatedAt} FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${leads.userId} ORDER BY ${orders.updatedAt} DESC LIMIT 1)`,
+        lastIntegrationId: sql<number | null>`(SELECT ${orders.integrationId} FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${leads.userId} ORDER BY ${orders.updatedAt} DESC LIMIT 1)`,
       })
       .from(leads)
       .innerJoin(users, eq(users.id, leads.userId))
