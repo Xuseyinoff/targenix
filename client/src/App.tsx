@@ -23,6 +23,7 @@ import Logs from "./pages/Logs";
 import AdminLogs from "./pages/AdminLogs";
 import AdminBackfill from "./pages/AdminBackfill";
 import AdminTemplates from "./pages/AdminTemplates";
+import AdminLeads from "./pages/AdminLeads";
 import LeadDetail from "./pages/LeadDetail";
 import Settings from "./pages/Settings";
 import AdAccounts from "./pages/AdAccounts";
@@ -117,6 +118,7 @@ function Router() {
       <Route path="/activity" component={Logs} />
       <Route path="/logs" component={Logs} />
       <Route path="/admin/logs" component={AdminLogs} />
+      <Route path="/admin/leads" component={AdminLeads} />
       <Route path="/admin/backfill" component={AdminBackfill} />
       <Route path="/admin/destination-templates" component={AdminTemplates} />
       <Route path="/leads/:id" component={LeadDetail} />

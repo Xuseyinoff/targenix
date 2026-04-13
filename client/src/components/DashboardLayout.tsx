@@ -35,6 +35,7 @@ import {
   SendHorizonal,
   Settings,
   Shield,
+  Users,
   Webhook,
   Zap,
 } from "lucide-react";
@@ -79,6 +80,7 @@ const navGroups: NavGroup[] = [
 const adminMenuItems = [
   { icon: Webhook, label: "Webhook Health", path: "/webhook" },
   { icon: Shield, label: "Admin Logs", path: "/admin/logs" },
+  { icon: Users, label: "Admin Leads", path: "/admin/leads" },
   { icon: SendHorizonal, label: "Lead Backfill", path: "/admin/backfill" },
   { icon: Globe, label: "Dest. Templates", path: "/admin/destination-templates" },
 ];
