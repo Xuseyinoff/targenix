@@ -86,7 +86,9 @@ export const telegramRouter = router({
     const db = await getDb();
     if (!db) throw new Error("DB unavailable");
 
-    const token = crypto.randomBytes(24).toString("base64url");
+    // Keep tokens short: they are embedded in Telegram inline button callback_data (max 64 bytes).
+    // 12 bytes hex => 24 chars, plenty of entropy for a 15-minute one-time token.
+    const token = crypto.randomBytes(12).toString("hex");
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 min
 
     await db.insert(telegramChatConnectTokens).values({

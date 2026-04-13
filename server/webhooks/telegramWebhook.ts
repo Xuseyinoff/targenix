@@ -249,8 +249,9 @@ async function handleDeliveryStartWithToken(
   }
 
   const title = chat.title ?? "Telegram chat";
-  const payloadConfirm = `tg:confirm:${token}`;
-  const payloadCancel = `tg:cancel:${token}`;
+  // Telegram inline button callback_data is max 64 bytes — never embed the raw secret token.
+  const payloadConfirm = `tg:c:${tok.id}`;
+  const payloadCancel = `tg:x:${tok.id}`;
 
   await sendTelegramMessage(
     chatId,
@@ -326,31 +327,66 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
 
   if (!data.startsWith("tg:")) return;
   const parts = data.split(":");
-  // tg:confirm:<token> or tg:cancel:<token>
   const action = parts[1];
-  const token = parts.slice(2).join(":").trim();
-  if (!token) return;
+  const payload = parts.slice(2).join(":").trim();
+  if (!payload) return;
 
-  if (action === "cancel") {
+  const db = await getDb();
+  if (!db) return;
+
+  // New format (short): tg:c:<connectTokenRowId> / tg:x:<connectTokenRowId>
+  // Legacy: tg:confirm:<token> / tg:cancel:<token>
+  let tok: typeof telegramChatConnectTokens.$inferSelect | undefined;
+  if (action === "x" || action === "c") {
+    const id = Number(payload);
+    if (!Number.isFinite(id)) return;
+    const [row] = await db
+      .select()
+      .from(telegramChatConnectTokens)
+      .where(eq(telegramChatConnectTokens.id, id))
+      .limit(1);
+    tok = row;
+  } else if (action === "cancel" || action === "confirm") {
+    const [row] = await db
+      .select()
+      .from(telegramChatConnectTokens)
+      .where(eq(telegramChatConnectTokens.token, payload))
+      .limit(1);
+    tok = row;
+  } else {
+    return;
+  }
+
+  const isCancel = action === "cancel" || action === "x";
+  const isConfirm = action === "confirm" || action === "c";
+
+  if (isCancel) {
+    if (tok) {
+      await db
+        .update(telegramChatConnectTokens)
+        .set({ usedAt: new Date() })
+        .where(
+          and(
+            eq(telegramChatConnectTokens.id, tok.id),
+            isNull(telegramChatConnectTokens.usedAt),
+            gt(telegramChatConnectTokens.expiresAt, new Date()),
+          ),
+        );
+    }
     await answer("Cancelled");
     await sendTelegramMessage(chatId, "❌ Cancelled.", "HTML");
     return;
   }
 
-  if (action !== "confirm") return;
-
-  const db = await getDb();
-  if (!db) return;
+  if (!isConfirm) return;
 
   // Validate token: unexpired & unused
-  const [tok] = await db
-    .select()
-    .from(telegramChatConnectTokens)
-    .where(and(eq(telegramChatConnectTokens.token, token), isNull(telegramChatConnectTokens.usedAt), gt(telegramChatConnectTokens.expiresAt, new Date())))
-    .limit(1);
-
-  if (!tok) {
-    await log.warn("TELEGRAM", "Confirm failed: token missing/expired", { chatId, tokenPrefix: token.slice(0, 8) + "..." });
+  if (!tok || tok.usedAt != null || !(tok.expiresAt > new Date())) {
+    await log.warn("TELEGRAM", "Confirm failed: token missing/expired/used", {
+      chatId,
+      connectTokenId: action === "c" ? Number(payload) : undefined,
+      tokenPrefix: action === "confirm" ? payload.slice(0, 8) + "..." : undefined,
+    });
     await answer("Token expired. Recreate in Settings.", true);
     await sendTelegramMessage(chatId, "❌ Token topilmadi yoki muddati o'tgan. Iltimos, saytdan qaytadan urinib ko'ring.", "HTML");
     return;
