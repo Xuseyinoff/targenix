@@ -8,9 +8,12 @@
  */
 
 import axios from "axios";
-import { generateAppSecretProof, normalizeFacebookAccessToken } from "./adAccountsService";
-
-const GRAPH = "https://graph.facebook.com/v21.0";
+import {
+  generateAppSecretProof,
+  graphMarketingFormPost,
+  GraphDataList,
+  normalizeFacebookAccessToken,
+} from "./adAccountsService";
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ─── In-memory cache ──────────────────────────────────────────────────────────
@@ -109,18 +112,16 @@ export async function fetchCampaigns(
 
   let res;
   try {
-    res = await axios.get<{ data: RawCampaign[] }>(
-      `${GRAPH}/${adAccountId}/campaigns`,
+    res = await graphMarketingFormPost<GraphDataList<RawCampaign>>(
+      `/${adAccountId}/campaigns`,
       {
-        params: {
-          fields: "id,name,status,objective,daily_budget,lifetime_budget",
-          effective_status: JSON.stringify(["ACTIVE", "PAUSED"]),
-          access_token: token,
-          appsecret_proof: appsecretProof,
-          limit: 100,
-        },
-        timeout: 15000,
-      }
+        fields: "id,name,status,objective,daily_budget,lifetime_budget",
+        effective_status: JSON.stringify(["ACTIVE", "PAUSED"]),
+        access_token: token,
+        appsecret_proof: appsecretProof,
+        limit: "100",
+      },
+      15000,
     );
   } catch (err: unknown) {
     if (axios.isAxiosError(err) && err.response) {
@@ -139,7 +140,7 @@ export async function fetchCampaigns(
     throw err;
   }
 
-  const campaigns: Campaign[] = (res.data.data ?? []).map((raw) => ({
+  const campaigns: Campaign[] = (res.data ?? []).map((raw) => ({
     id: raw.id,
     name: raw.name,
     status: (raw.status as CampaignStatus) ?? "PAUSED",
@@ -168,20 +169,18 @@ export async function fetchCampaignInsights(
 
   let res;
   try {
-    res = await axios.get<{ data: RawCampaignInsight[] }>(
-      `${GRAPH}/${adAccountId}/insights`,
+    res = await graphMarketingFormPost<GraphDataList<RawCampaignInsight>>(
+      `/${adAccountId}/insights`,
       {
-        params: {
-          fields: "campaign_id,campaign_name,spend,actions,impressions,clicks",
-          level: "campaign",
-          date_preset: datePreset,
-          action_breakdowns: "action_type",
-          access_token: token,
-          appsecret_proof: appsecretProof,
-          limit: 100,
-        },
-        timeout: 20000,
-      }
+        fields: "campaign_id,campaign_name,spend,actions,impressions,clicks",
+        level: "campaign",
+        date_preset: datePreset,
+        action_breakdowns: "action_type",
+        access_token: token,
+        appsecret_proof: appsecretProof,
+        limit: "100",
+      },
+      20000,
     );
   } catch (err: unknown) {
     if (axios.isAxiosError(err) && err.response) {
@@ -200,7 +199,7 @@ export async function fetchCampaignInsights(
     throw err;
   }
 
-  const rows: CampaignInsightRow[] = (res.data.data ?? []).map((raw) => {
+  const rows: CampaignInsightRow[] = (res.data ?? []).map((raw) => {
     const spend = parseFloat(raw.spend ?? "0");
     const impressions = parseInt(raw.impressions ?? "0", 10);
     const clicks = parseInt(raw.clicks ?? "0", 10);

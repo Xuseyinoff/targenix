@@ -26,9 +26,12 @@ import {
   adSetsCache,
 } from "../../drizzle/schema";
 import { decrypt } from "../encryption";
-import { generateAppSecretProof, normalizeFacebookAccessToken } from "./adAccountsService";
-
-const GRAPH = "https://graph.facebook.com/v21.0";
+import {
+  generateAppSecretProof,
+  graphMarketingFormPost,
+  GraphDataList,
+  normalizeFacebookAccessToken,
+} from "./adAccountsService";
 
 // Date presets to sync — all 4 are cached so every UI option has data
 const SYNC_DATE_PRESETS = ["last_30d", "last_7d", "today", "yesterday"] as const;
@@ -123,19 +126,17 @@ export async function syncFbAccountData(
   // ── 1. Fetch & upsert ad accounts ──────────────────────────────────────────
   let adAccountsList: RawAdAccount[] = [];
   try {
-    const res = await axios.get<{ data: RawAdAccount[] }>(
-      `${GRAPH}/me/adaccounts`,
+    const res = await graphMarketingFormPost<GraphDataList<RawAdAccount>>(
+      "/me/adaccounts",
       {
-        params: {
-          fields: "id,name,account_id,account_status,currency,timezone_name,balance,amount_spent,min_daily_budget",
-          access_token: token,
-          appsecret_proof: appsecretProof,
-          limit: 200,
-        },
-        timeout: 20000,
-      }
+        fields: "id,name,account_id,account_status,currency,timezone_name,balance,amount_spent,min_daily_budget",
+        access_token: token,
+        appsecret_proof: appsecretProof,
+        limit: "200",
+      },
+      20000,
     );
-    adAccountsList = res.data.data ?? [];
+    adAccountsList = res.data ?? [];
   } catch (err) {
     console.error("[adsSyncService] Failed to fetch ad accounts:", err instanceof Error ? err.message : err);
     throw err;
@@ -182,20 +183,18 @@ export async function syncFbAccountData(
     // 2a. Fetch campaigns (single API call, returns all campaigns)
     let rawCampaigns: RawCampaign[] = [];
     try {
-      const res = await axios.get<{ data: RawCampaign[] }>(
-        `${GRAPH}/${adAccountId}/campaigns`,
+      const res = await graphMarketingFormPost<GraphDataList<RawCampaign>>(
+        `/${adAccountId}/campaigns`,
         {
-          params: {
-            fields: "id,name,status,objective,daily_budget,lifetime_budget",
-            effective_status: JSON.stringify(["ACTIVE", "PAUSED"]),
-            access_token: token,
-            appsecret_proof: appsecretProof,
-            limit: 200,
-          },
-          timeout: 20000,
-        }
+          fields: "id,name,status,objective,daily_budget,lifetime_budget",
+          effective_status: JSON.stringify(["ACTIVE", "PAUSED"]),
+          access_token: token,
+          appsecret_proof: appsecretProof,
+          limit: "200",
+        },
+        20000,
       );
-      rawCampaigns = res.data.data ?? [];
+      rawCampaigns = res.data ?? [];
     } catch (err) {
       console.error(`[adsSyncService] Failed to fetch campaigns for ${adAccountId}:`, err instanceof Error ? err.message : err);
       continue; // skip this account if campaigns fail
@@ -236,22 +235,20 @@ export async function syncFbAccountData(
       let rawInsights: RawCampaignInsight[] = [];
 
       try {
-        const res = await axios.get<{ data: RawCampaignInsight[] }>(
-          `${GRAPH}/${adAccountId}/insights`,
+        const res = await graphMarketingFormPost<GraphDataList<RawCampaignInsight>>(
+          `/${adAccountId}/insights`,
           {
-            params: {
-              fields: "campaign_id,campaign_name,spend,actions,impressions,clicks",
-              level: "campaign",
-              date_preset: fbPreset,
-              action_breakdowns: "action_type",
-              access_token: token,
-              appsecret_proof: appsecretProof,
-              limit: 200,
-            },
-            timeout: 30000,
-          }
+            fields: "campaign_id,campaign_name,spend,actions,impressions,clicks",
+            level: "campaign",
+            date_preset: fbPreset,
+            action_breakdowns: "action_type",
+            access_token: token,
+            appsecret_proof: appsecretProof,
+            limit: "200",
+          },
+          30000,
         );
-        rawInsights = res.data.data ?? [];
+        rawInsights = res.data ?? [];
       } catch (err) {
         console.error(`[adsSyncService] Failed to fetch insights for ${adAccountId} (${preset}):`, err instanceof Error ? err.message : err);
         continue;
@@ -326,19 +323,17 @@ export async function syncAdSetsForCampaign(
   const now = new Date();
 
   let rawAdSets: RawAdSet[] = [];
-  const res = await axios.get<{ data: RawAdSet[] }>(
-    `${GRAPH}/${fbCampaignId}/adsets`,
+  const res = await graphMarketingFormPost<GraphDataList<RawAdSet>>(
+    `/${fbCampaignId}/adsets`,
     {
-      params: {
-        fields: "id,name,status,campaign_id,daily_budget,lifetime_budget,optimization_goal,billing_event",
-        access_token: token,
-        appsecret_proof: appsecretProof,
-        limit: 200,
-      },
-      timeout: 20000,
-    }
+      fields: "id,name,status,campaign_id,daily_budget,lifetime_budget,optimization_goal,billing_event",
+      access_token: token,
+      appsecret_proof: appsecretProof,
+      limit: "200",
+    },
+    20000,
   );
-  rawAdSets = res.data.data ?? [];
+  rawAdSets = res.data ?? [];
 
   for (const raw of rawAdSets) {
     await db

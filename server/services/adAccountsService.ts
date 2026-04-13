@@ -13,6 +13,31 @@ import { createHmac } from "crypto";
 const GRAPH = "https://graph.facebook.com/v21.0";
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
+const FORM_HEADERS = { "Content-Type": "application/x-www-form-urlencoded" } as const;
+
+/**
+ * POST with URL-encoded body. Long `access_token` + `appsecret_proof` on GET query
+ * strings can be truncated by proxies; Meta then validates proof against a different token string.
+ */
+export async function graphMarketingFormPost<T>(
+  path: string,
+  fields: Record<string, string>,
+  timeoutMs: number
+): Promise<T> {
+  const pathNorm = path.startsWith("/") ? path : `/${path}`;
+  const body = new URLSearchParams();
+  // POST-as-GET: required for read calls sent as POST (long token + proof; avoids URL truncation).
+  body.set("method", "GET");
+  for (const [k, v] of Object.entries(fields)) {
+    body.set(k, v);
+  }
+  const { data } = await axios.post<T>(`${GRAPH}${pathNorm}`, body.toString(), {
+    headers: FORM_HEADERS,
+    timeout: timeoutMs,
+  });
+  return data;
+}
+
 // ─── In-memory cache ──────────────────────────────────────────────────────────
 interface CacheEntry<T> {
   data: T;
@@ -110,6 +135,9 @@ interface RawAdAccount {
   min_daily_budget: string;
 }
 
+/** Graph list edge JSON — alias avoids `<{ data: T[] }>` generic parse edge cases */
+export type GraphDataList<T> = { data?: T[] };
+
 // ─── Fetch Ad Accounts ────────────────────────────────────────────────────────
 export async function fetchAdAccounts(accessToken: string): Promise<AdAccount[]> {
   const token = normalizeFacebookAccessToken(accessToken);
@@ -121,17 +149,15 @@ export async function fetchAdAccounts(accessToken: string): Promise<AdAccount[]>
 
   let res;
   try {
-    res = await axios.get<{ data: RawAdAccount[] }>(
-      `${GRAPH}/me/adaccounts`,
+    res = await graphMarketingFormPost<GraphDataList<RawAdAccount>>(
+      "/me/adaccounts",
       {
-        params: {
-          fields: "id,name,account_id,account_status,amount_spent,currency,balance,min_daily_budget",
-          access_token: token,
-          appsecret_proof: appsecretProof,
-          limit: 100,
-        },
-        timeout: 15000,
-      }
+        fields: "id,name,account_id,account_status,amount_spent,currency,balance,min_daily_budget",
+        access_token: token,
+        appsecret_proof: appsecretProof,
+        limit: "100",
+      },
+      15000,
     );
   } catch (err: unknown) {
     // Log the full Facebook API error for debugging
@@ -142,7 +168,7 @@ export async function fetchAdAccounts(accessToken: string): Promise<AdAccount[]>
     throw err;
   }
 
-  const accounts: AdAccount[] = (res.data.data ?? []).map((raw) => ({
+  const accounts: AdAccount[] = (res.data ?? []).map((raw) => ({
     id: raw.id,
     accountId: raw.account_id,
     name: raw.name,
@@ -208,23 +234,21 @@ export async function fetchAdAccountInsights(
 
   const appsecretProof = generateAppSecretProof(token);
 
-  const res = await axios.get<{ data: RawInsight[] }>(
-    `${GRAPH}/${adAccountId}/insights`,
+  const res = await graphMarketingFormPost<GraphDataList<RawInsight>>(
+    `/${adAccountId}/insights`,
     {
-      params: {
-        fields: "date_start,spend,actions,impressions,clicks",
-        time_increment: 1,
-        date_preset: datePreset,
-        action_breakdowns: "action_type",
-        access_token: token,
-        appsecret_proof: appsecretProof,
-        limit: 90,
-      },
-      timeout: 20000,
-    }
+      fields: "date_start,spend,actions,impressions,clicks",
+      time_increment: "1",
+      date_preset: datePreset,
+      action_breakdowns: "action_type",
+      access_token: token,
+      appsecret_proof: appsecretProof,
+      limit: "90",
+    },
+    20000,
   );
 
-  const daily: DailyInsight[] = (res.data.data ?? []).map((raw) => {
+  const daily: DailyInsight[] = (res.data ?? []).map((raw) => {
     const spend = parseFloat(raw.spend ?? "0");
     const impressions = parseInt(raw.impressions ?? "0", 10);
     const clicks = parseInt(raw.clicks ?? "0", 10);
