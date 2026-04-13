@@ -12,7 +12,7 @@
 
 import { syncAllUsersAdsData } from "./adsSyncService";
 
-const SYNC_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+const SYNC_INTERVAL_MS = 60 * 60 * 1000; // 60 minutes
 const INITIAL_DELAY_MS = 30 * 1000;       // 30 seconds after startup
 
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
