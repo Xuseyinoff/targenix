@@ -82,17 +82,22 @@ export async function registerTelegramWebhook(appUrl: string): Promise<void> {
   let origin = appUrl;
   try { origin = new URL(appUrl).origin; } catch { /* keep as-is */ }
   const webhookUrl = `${origin}/api/telegram/webhook`;
+  /** Explicit list so Telegram never sticks to a stale narrow subset (e.g. message-only → no callback_query). */
+  const allowedUpdates = ["message", "callback_query", "my_chat_member"] as const;
   try {
     const res = await fetch(
       `https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: webhookUrl }),
+        body: JSON.stringify({ url: webhookUrl, allowed_updates: [...allowedUpdates] }),
       }
     );
     const data = (await res.json()) as { ok: boolean; description?: string };
-    await log.info("TELEGRAM", `setWebhook → ${data.ok ? "OK" : data.description}`, { webhookUrl });
+    await log.info("TELEGRAM", `setWebhook → ${data.ok ? "OK" : data.description}`, {
+      webhookUrl,
+      allowedUpdates: [...allowedUpdates],
+    });
   } catch (err) {
     await log.error("TELEGRAM", "setWebhook threw", { error: String(err) });
   }
