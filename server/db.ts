@@ -118,7 +118,7 @@ export async function getLeads(
   // Visibility rule: only show leads that have been routed at least once
   // (i.e., at least one integration delivery attempt exists).
   conditions.push(
-    sql`EXISTS (SELECT 1 FROM ${orders} o WHERE o.lead_id = ${leads.id} AND o.user_id = ${userId} AND o.attempts > 0)`
+    sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
   );
 
   if (status === "PENDING") {
@@ -178,7 +178,7 @@ export async function getLeadStats(userId: number) {
     .where(
       and(
         eq(leads.userId, userId),
-        sql`EXISTS (SELECT 1 FROM ${orders} o WHERE o.lead_id = ${leads.id} AND o.user_id = ${userId} AND o.attempts > 0)`
+        sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
       )
     );
   return row ?? { total: 0, pending: 0, received: 0, failed: 0 };
@@ -199,7 +199,7 @@ export async function getLeadsCount(
 
   // Same visibility rule as getLeads(): only count leads that have been routed at least once.
   conditions.push(
-    sql`EXISTS (SELECT 1 FROM ${orders} o WHERE o.lead_id = ${leads.id} AND o.user_id = ${userId} AND o.attempts > 0)`
+    sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
   );
 
   if (status === "PENDING") {
