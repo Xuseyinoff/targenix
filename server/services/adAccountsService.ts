@@ -9,7 +9,6 @@
 
 import axios from "axios";
 import { createHmac } from "crypto";
-import { ENV } from "../_core/env";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -41,11 +40,17 @@ function cacheSet<T>(cache: Map<string, CacheEntry<T>>, key: string, data: T): v
 /**
  * Generates appsecret_proof = HMAC-SHA256(app_secret, access_token)
  * Required for all server-side Graph API calls for enhanced security.
+ *
+ * Reads `FACEBOOK_APP_SECRET` at call time (not a module snapshot) and trims
+ * whitespace — Railway/copy-paste often adds a trailing newline, which breaks HMAC.
  */
 export function generateAppSecretProof(accessToken: string): string {
-  return createHmac("sha256", ENV.facebookAppSecret)
-    .update(accessToken)
-    .digest("hex");
+  const secret = (process.env.FACEBOOK_APP_SECRET ?? "").trim();
+  const token = (accessToken ?? "").trim();
+  if (!secret) {
+    throw new Error("FACEBOOK_APP_SECRET is missing or empty");
+  }
+  return createHmac("sha256", secret).update(token).digest("hex");
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
