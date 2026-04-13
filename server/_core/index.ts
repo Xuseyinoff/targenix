@@ -95,6 +95,10 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
+  // We're behind a proxy (Railway / reverse proxy) in production, so enable trust proxy
+  // to let express-rate-limit and req.ip behave correctly with X-Forwarded-For.
+  app.set("trust proxy", 1);
+
   // Security headers
   app.use(
     helmet({

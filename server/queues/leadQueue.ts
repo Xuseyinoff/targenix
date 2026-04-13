@@ -33,7 +33,9 @@ export async function enqueueLeadJob(data: LeadJobData): Promise<void> {
   try {
     const queue = getLeadQueue();
     await queue.add("process-lead", data, {
-      jobId: `lead-${data.leadgenId}`,
+      // IMPORTANT: leadgenId can be shared across multiple users (multi-tenant),
+      // so jobId must be unique per saved lead row to avoid collisions.
+      jobId: `lead-${data.leadId}`,
     });
     console.log(`[Queue] Enqueued lead job for leadgenId=${data.leadgenId}`);
   } catch (err) {
