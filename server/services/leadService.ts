@@ -612,6 +612,7 @@ async function runOrderIntegrationSend(params: {
   } else if (integration.type === "LEAD_ROUTING") {
     const config = integration.config as Record<string, unknown>;
     const _t0Routing = Date.now();
+    let targetUrlUsed: string | undefined;
     const twId = integration.targetWebsiteId ?? (config.targetWebsiteId ? Number(config.targetWebsiteId) : null);
     if (twId) {
       const { targetWebsites, destinationTemplates } = await import("../../drizzle/schema");
@@ -628,11 +629,14 @@ async function runOrderIntegrationSend(params: {
             .where(eq(destinationTemplates.id, tw.templateId))
             .limit(1);
           if (dynTpl) {
+            targetUrlUsed = dynTpl.endpointUrl ?? undefined;
             result = await sendLeadViaTemplate(dynTpl, tw.templateConfig, leadPayload, variableFields);
           } else {
+            targetUrlUsed = undefined;
             result = { success: false, error: `Template ${tw.templateId} not found` };
           }
         } else if (tw && tw.templateType) {
+          targetUrlUsed = (tw.url as string | null) ?? undefined;
           result = await sendAffiliateOrderByTemplate(
             tw.templateType as TemplateType,
             tw.templateConfig as TemplateConfig,
@@ -641,17 +645,24 @@ async function runOrderIntegrationSend(params: {
             tw.url,
           );
         } else {
+          targetUrlUsed = (config.targetUrl as string | undefined) ?? undefined;
           result = await sendLeadToTargetWebsite(config, leadPayload);
         }
       }
     } else {
+      targetUrlUsed = (config.targetUrl as string | undefined) ?? undefined;
       result = await sendLeadToTargetWebsite(config, leadPayload);
     }
     result.durationMs = Date.now() - _t0Routing;
     await log[result.success ? "info" : "warn"](
       "ORDER",
       result.success ? `Lead routed to target website for leadId=${lead.id}` : `Lead routing failed for leadId=${lead.id}`,
-      { integrationId: integration.id, targetUrl: (config as Record<string, unknown>).targetUrl, error: result.error },
+      {
+        integrationId: integration.id,
+        targetUrl: targetUrlUsed ?? ((config.targetUrl as string | undefined) ?? undefined),
+        error: result.error ?? null,
+        responseData: (result as { responseData?: unknown }).responseData,
+      },
       lead.id,
       leadPayload.pageId,
       userId,
