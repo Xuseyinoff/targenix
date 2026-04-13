@@ -389,7 +389,9 @@ export async function syncAllUsersAdsData(): Promise<void> {
     try {
       accessToken = decrypt(account.accessToken);
     } catch {
-      console.warn(`[adsSyncService] Failed to decrypt token for facebookAccountId=${account.id}`);
+      console.warn(
+        `[adsSyncService] Failed to decrypt token for userId=${account.userId} facebookAccountId=${account.id}`,
+      );
       continue;
     }
 
@@ -397,7 +399,16 @@ export async function syncAllUsersAdsData(): Promise<void> {
       await syncFbAccountData(account.userId, account.id, accessToken);
     } catch (err) {
       // Don't crash the whole sync if one account fails (e.g., expired token)
-      console.error(`[adsSyncService] Sync failed for facebookAccountId=${account.id}:`, err instanceof Error ? err.message : err);
+      let detail: string;
+      if (axios.isAxiosError(err) && err.response) {
+        detail = `${err.response.status} ${JSON.stringify(err.response.data)}`;
+      } else {
+        detail = err instanceof Error ? err.message : String(err);
+      }
+      console.error(
+        `[adsSyncService] Sync failed for userId=${account.userId} facebookAccountId=${account.id}:`,
+        detail,
+      );
     }
   }
 
