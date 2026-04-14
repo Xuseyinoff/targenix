@@ -4,6 +4,7 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { LocaleProvider } from "./contexts/LocaleContext";
 import LandingPage from "./pages/LandingPage";
 import Home from "./pages/Home";
 import Leads from "./pages/Leads";
@@ -163,11 +164,13 @@ function Router() {
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider defaultTheme="light">
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
+      <ThemeProvider defaultTheme="light" switchable>
+        <LocaleProvider defaultLocale="uz">
+          <TooltipProvider>
+            <Toaster />
+            <Router />
+          </TooltipProvider>
+        </LocaleProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );

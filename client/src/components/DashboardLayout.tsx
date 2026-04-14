@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,20 +21,26 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/useMobile";
+import { useLocale } from "@/contexts/LocaleContext";
+import { useTheme } from "@/contexts/ThemeContext";
 import {
   Activity,
   BarChart3,
+  Bell,
   ChevronDown,
   Facebook,
   Globe,
   LayoutDashboard,
   LogOut,
   MonitorCheck,
+  Moon,
   PanelLeft,
   Plug,
+  Search,
   SendHorizonal,
   Settings,
   Shield,
+  Sun,
   Users,
   Webhook,
   Zap,
@@ -176,11 +183,20 @@ function DashboardLayoutContent({
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
+  const { toggleTheme, theme, switchable } = useTheme();
+  const { locale, setLocale } = useLocale();
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const allItems = navGroups.flatMap((g) => g.items);
   const activeMenuItem = allItems.find((item) => item.path === location);
+  const activeGroupLabel = useMemo(() => {
+    for (const g of navGroups) {
+      if (g.items.some((it) => it.path === location)) return g.label ?? "General";
+    }
+    return location.startsWith("/business/") ? "Business Tools" : undefined;
+  }, [location]);
   const isMobile = useIsMobile();
+  const [navQuery, setNavQuery] = useState("");
 
   /** Sidebar only lists shipped tools; placeholders stay in data for routes/flags. */
   const visibleBusinessToolsItems = useMemo(
@@ -246,6 +262,24 @@ function DashboardLayoutContent({
     };
   }, [isResizing, setSidebarWidth]);
 
+  const filteredNavGroups = useMemo(() => {
+    const q = navQuery.trim().toLowerCase();
+    if (!q) return navGroups;
+    return navGroups
+      .map((g) => ({
+        ...g,
+        items: g.items.filter((it) => it.label.toLowerCase().includes(q)),
+      }))
+      .filter((g) => g.items.length > 0);
+  }, [navQuery]);
+
+  const firstNavMatch = useMemo(() => {
+    const q = navQuery.trim().toLowerCase();
+    if (!q) return null;
+    const all = navGroups.flatMap((g) => g.items);
+    return all.find((it) => it.label.toLowerCase().includes(q)) ?? null;
+  }, [navQuery]);
+
   return (
     <>
       <div className="relative" ref={sidebarRef}>
@@ -273,8 +307,21 @@ function DashboardLayoutContent({
           </SidebarHeader>
 
           <SidebarContent className="gap-0 pt-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+            {!isCollapsed && (
+              <div className="px-3 pb-2">
+                <div className="relative">
+                  <Search className="h-4 w-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Input
+                    value={navQuery}
+                    onChange={(e) => setNavQuery(e.target.value)}
+                    placeholder="Search..."
+                    className="pl-9 bg-sidebar-accent/30 border-sidebar-border focus-visible:ring-0 focus-visible:ring-offset-0"
+                  />
+                </div>
+              </div>
+            )}
             {/* Main nav groups */}
-            {navGroups.map((group, gi) => (
+            {filteredNavGroups.map((group, gi) => (
               <div key={gi}>
                 {gi > 0 && !isCollapsed && (
                   <div className="mx-3 my-1 border-t border-sidebar-border/50" />
@@ -491,14 +538,133 @@ function DashboardLayoutContent({
       </div>
 
       <SidebarInset>
-        {isMobile && (
-          <div className="flex border-b h-14 items-center justify-between bg-background/95 px-4 backdrop-blur sticky top-0 z-40">
-            <div className="flex items-center gap-3">
+        <div className="flex border-b h-14 items-center justify-between bg-background/85 px-4 backdrop-blur sticky top-0 z-40">
+          <div className="flex items-center gap-3 min-w-0">
+            {isMobile ? (
               <SidebarTrigger className="h-9 w-9 rounded-lg" />
-              <span className="font-medium text-sm">{activeMenuItem?.label ?? "Dashboard"}</span>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 rounded-lg"
+                onClick={toggleSidebar}
+                aria-label="Toggle sidebar"
+              >
+                <PanelLeft className="h-4 w-4" />
+              </Button>
+            )}
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                {activeGroupLabel && (
+                  <span className="text-xs text-muted-foreground hidden sm:inline">
+                    {activeGroupLabel}
+                  </span>
+                )}
+                {activeGroupLabel && (
+                  <span className="text-muted-foreground/60 hidden sm:inline">/</span>
+                )}
+                <span className="font-medium text-sm truncate">
+                  {activeMenuItem?.label ?? "Dashboard"}
+                </span>
+              </div>
             </div>
           </div>
-        )}
+
+          <div className="flex items-center gap-2">
+            {!isMobile && (
+              <div className="hidden md:block w-[360px] lg:w-[440px]">
+                <div className="relative">
+                  <Search className="h-4 w-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
+                  <Input
+                    value={navQuery}
+                    onChange={(e) => setNavQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      if (!firstNavMatch) return;
+                      setLocation(firstNavMatch.path);
+                    }}
+                    placeholder={locale === "uz" ? "Qidirish..." : "Search..."}
+                    className="pl-9 bg-background/60"
+                  />
+                </div>
+              </div>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-9 px-2">
+                  {locale === "uz" ? "UZ" : "EN"}
+                  <ChevronDown className="ml-1 h-4 w-4 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <DropdownMenuItem onClick={() => setLocale("uz")} className="cursor-pointer">
+                  O‘zbekcha
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocale("en")} className="cursor-pointer">
+                  English
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {switchable && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 rounded-lg"
+                onClick={() => toggleTheme?.()}
+                aria-label="Toggle theme"
+              >
+                {theme === "dark" ? (
+                  <Sun className="h-4 w-4" />
+                ) : (
+                  <Moon className="h-4 w-4" />
+                )}
+              </Button>
+            )}
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 rounded-lg"
+              aria-label="Notifications"
+              title="Notifications"
+            >
+              <span className="relative">
+                <Bell className="h-4 w-4" />
+                <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background" />
+              </span>
+            </Button>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="h-9 px-2 gap-2 rounded-lg">
+                  <Avatar className="h-7 w-7 border border-border">
+                    <AvatarFallback className="text-[10px] font-semibold">
+                      {user?.name?.charAt(0).toUpperCase() ?? "U"}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="hidden sm:inline text-sm max-w-[140px] truncate">
+                    {user?.name || "User"}
+                  </span>
+                  <ChevronDown className="h-4 w-4 opacity-60" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuItem onClick={() => setLocation("/settings")} className="cursor-pointer">
+                  <Settings className="mr-2 h-4 w-4" />
+                  Settings
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={logout}
+                  className="cursor-pointer text-destructive focus:text-destructive"
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
         <main className="flex-1 p-6">{children}</main>
       </SidebarInset>
     </>
