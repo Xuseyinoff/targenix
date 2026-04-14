@@ -471,9 +471,20 @@ export const facebookAccountsRouter = router({
             );
 
           if (pageIds.length > 0) {
-            await tx
-              .delete(facebookForms)
-              .where(and(eq(facebookForms.userId, userId), inArray(facebookForms.pageId, pageIds)));
+            // Only delete forms for pages that are no longer connected at all.
+            // Otherwise disconnecting one FB account can wipe the forms cache for a page
+            // that is still accessible via another connected FB account.
+            const stillConnected = await tx
+              .select({ pageId: facebookConnections.pageId })
+              .from(facebookConnections)
+              .where(and(eq(facebookConnections.userId, userId), inArray(facebookConnections.pageId, pageIds)));
+            const stillConnectedSet = new Set(stillConnected.map((r) => r.pageId));
+            const deletePageIds = pageIds.filter((pid) => !stillConnectedSet.has(pid));
+            if (deletePageIds.length > 0) {
+              await tx
+                .delete(facebookForms)
+                .where(and(eq(facebookForms.userId, userId), inArray(facebookForms.pageId, deletePageIds)));
+            }
           }
 
           await tx
@@ -530,7 +541,8 @@ export const facebookAccountsRouter = router({
         .where(eq(facebookAccounts.id, input.accountId))
         .limit(1);
       if (!acct || acct.userId !== userId) throw new Error("Account not found");
-      // Return all connected pages from facebookConnections for this user
+      // Return only pages connected via THIS facebook account.
+      // Without this filter, the same shared page appears under every connected FB account.
       const connections = await db
         .select({
           id: facebookConnections.id,
@@ -539,7 +551,7 @@ export const facebookAccountsRouter = router({
           isActive: facebookConnections.isActive,
         })
         .from(facebookConnections)
-        .where(eq(facebookConnections.userId, userId));
+        .where(and(eq(facebookConnections.userId, userId), eq(facebookConnections.facebookAccountId, input.accountId)));
       return connections.map((c) => ({
         id: c.pageId,
         name: c.pageName,
