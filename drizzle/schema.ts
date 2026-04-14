@@ -98,6 +98,42 @@ export const telegramPendingChats = mysqlTable("telegram_pending_chats", {
 export type TelegramPendingChat = typeof telegramPendingChats.$inferSelect;
 export type InsertTelegramPendingChat = typeof telegramPendingChats.$inferInsert;
 
+// ─── Telegram Linking Sessions (SaaS-safe delivery chat onboarding) ────────────
+export const telegramLinkingSessions = mysqlTable("telegram_linking_sessions", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  telegramUserId: varchar("telegramUserId", { length: 32 }).notNull(),
+  token: varchar("token", { length: 64 }).notNull(),
+  expiresAt: timestamp("expiresAt").notNull(),
+  usedAt: timestamp("usedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  uqToken: uniqueIndex("uq_telegram_linking_sessions_token").on(t.token),
+  idxUserExpires: index("idx_telegram_linking_sessions_user_expires").on(t.userId, t.expiresAt),
+  idxTgUserExpires: index("idx_telegram_linking_sessions_tguser_expires").on(t.telegramUserId, t.expiresAt),
+}));
+
+export type TelegramLinkingSession = typeof telegramLinkingSessions.$inferSelect;
+export type InsertTelegramLinkingSession = typeof telegramLinkingSessions.$inferInsert;
+
+export const telegramLinkingSessionChats = mysqlTable("telegram_linking_session_chats", {
+  id: int("id").autoincrement().primaryKey(),
+  sessionId: int("sessionId").notNull(),
+  chatId: varchar("chatId", { length: 64 }).notNull(),
+  chatType: varchar("chatType", { length: 32 }).notNull(),
+  title: varchar("title", { length: 255 }),
+  username: varchar("username", { length: 128 }),
+  botStatus: varchar("botStatus", { length: 32 }),
+  addedByTelegramUserId: varchar("addedByTelegramUserId", { length: 32 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  uqSessionChat: uniqueIndex("uq_telegram_linking_session_chats_session_chat").on(t.sessionId, t.chatId),
+  idxSession: index("idx_telegram_linking_session_chats_session").on(t.sessionId, t.createdAt),
+}));
+
+export type TelegramLinkingSessionChat = typeof telegramLinkingSessionChats.$inferSelect;
+export type InsertTelegramLinkingSessionChat = typeof telegramLinkingSessionChats.$inferInsert;
+
 // ─── Telegram Chat ↔ Integration Mapping ──────────────────────────────────────
 export const telegramChatIntegrations = mysqlTable("telegram_chat_integrations", {
   id: int("id").autoincrement().primaryKey(),

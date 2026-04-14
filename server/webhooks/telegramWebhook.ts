@@ -6,8 +6,9 @@
  */
 
 import type { Request, Response } from "express";
+import crypto from "crypto";
 import { getDb } from "../db";
-import { telegramChatConnectTokens, telegramChats, telegramPendingChats, users } from "../../drizzle/schema";
+import { integrations, targetWebsites, telegramChatConnectTokens, telegramChats, telegramLinkingSessionChats, telegramLinkingSessions, telegramPendingChats, users } from "../../drizzle/schema";
 import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import { log } from "../services/appLogger";
 
@@ -150,11 +151,30 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
 
     // Handle plain /start (no token)
     if (text === "/start") {
-      await sendTelegramMessage(
-        chatId,
-        "👋 Salom! Targenix.uz botiga xush kelibsiz.\n\n1) <b>System chat</b> ulandi.\n2) Leadlarni yuborish uchun: <b>Targenix.uz → Settings → Telegram → Add delivery chat</b> bo'limiga o'ting va botni guruh/kanalga qo'shib <b>Confirm</b> qiling.",
-        "HTML"
-      );
+      // Private chat: show onboarding actions (delivery linking is handled inside Telegram)
+      if (message.chat.type === "private") {
+        if (!BOT_TOKEN) return;
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: "👋 Salom! Targenix.uz botiga xush kelibsiz.\n\nQuyidagilardan birini tanlang:",
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "➕ Delivery chat qo‘shish", callback_data: "tg:lsn" }],
+              ],
+            },
+          }),
+        });
+      } else {
+        await sendTelegramMessage(
+          chatId,
+          "👋 Salom! Bu botni boshqarish uchun shaxsiy chatda /start bosing.",
+          "HTML",
+        );
+      }
       return;
     }
   }
@@ -426,8 +446,91 @@ async function handleMyChatMember(evt: TelegramChatMemberUpdated): Promise<void>
   if (evt.chat.type === "private") return;
   if (!newStatus) return;
 
-  // Upsert pending chat record so the user can claim it from private.
+  const fromTgUserId = evt.from?.id != null ? String(evt.from.id) : null;
+
+  // If there's an active linking session for the Telegram user who added the bot,
+  // attach this chat to that session and proactively ping the user in private.
   const db = await getDb();
+  if (db && fromTgUserId) {
+    const now = new Date();
+    const [session] = await db
+      .select()
+      .from(telegramLinkingSessions)
+      .where(and(eq(telegramLinkingSessions.telegramUserId, fromTgUserId), isNull(telegramLinkingSessions.usedAt), gt(telegramLinkingSessions.expiresAt, now)))
+      .limit(1);
+
+    if (session) {
+      const title = evt.chat.title ?? null;
+      const username = (evt.chat as any)?.username ?? null;
+      const chatType = evt.chat.type;
+
+      // Upsert session chat record (best-effort)
+      const [existing] = await db
+        .select({ id: telegramLinkingSessionChats.id })
+        .from(telegramLinkingSessionChats)
+        .where(and(eq(telegramLinkingSessionChats.sessionId, session.id), eq(telegramLinkingSessionChats.chatId, chatId)))
+        .limit(1);
+      if (existing) {
+        await db
+          .update(telegramLinkingSessionChats)
+          .set({ title, username, chatType, botStatus: newStatus, addedByTelegramUserId: fromTgUserId })
+          .where(eq(telegramLinkingSessionChats.id, existing.id));
+      } else {
+        await db.insert(telegramLinkingSessionChats).values({
+          sessionId: session.id,
+          chatId,
+          chatType,
+          title,
+          username,
+          botStatus: newStatus,
+          addedByTelegramUserId: fromTgUserId,
+          createdAt: new Date(),
+        });
+      }
+
+      // Build quick picker keyboard for this session (last 10)
+      const sessionChats = await db
+        .select({
+          id: telegramLinkingSessionChats.id,
+          chatId: telegramLinkingSessionChats.chatId,
+          chatType: telegramLinkingSessionChats.chatType,
+          title: telegramLinkingSessionChats.title,
+          username: telegramLinkingSessionChats.username,
+          botStatus: telegramLinkingSessionChats.botStatus,
+        })
+        .from(telegramLinkingSessionChats)
+        .where(eq(telegramLinkingSessionChats.sessionId, session.id))
+        .limit(10);
+
+      const keyboard = sessionChats
+        .filter((c) => c.botStatus === "member" || c.botStatus === "administrator")
+        .map((c) => {
+          const label =
+            (c.title && c.title.length > 0 ? c.title : c.username ? `@${c.username}` : c.chatId) +
+            ` (${c.chatType})`;
+          return [{ text: label.slice(0, 50), callback_data: `tg:lsp:${session.id}:${c.id}` }];
+        });
+      keyboard.push([{ text: "❌ Bekor qilish", callback_data: `tg:lsx:${session.id}` }]);
+
+      if (keyboard.length) {
+        if (!BOT_TOKEN) return;
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: fromTgUserId,
+            text: "✅ Bot qo‘shildi.\n\nQaysi chatni delivery qilamiz?",
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: keyboard },
+          }),
+        });
+      }
+
+      return; // session flow takes precedence
+    }
+  }
+
+  // Upsert pending chat record so the user can claim it from private.
   if (db) {
     try {
       const title = evt.chat.title ?? null;
@@ -506,10 +609,68 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
   const parts = data.split(":");
   const action = parts[1];
   const payload = parts.slice(2).join(":").trim();
-  if (!payload) return;
 
   const db = await getDb();
   if (!db) return;
+
+  // Create a new linking session from private chat
+  if (action === "lsn") {
+    if (q.message?.chat?.type !== "private") {
+      await answer("Open in private chat.", true);
+      return;
+    }
+    const tgUserId = String(q.from.id);
+    const now = new Date();
+
+    const [user] = await db
+      .select({ id: users.id, telegramUserId: users.telegramUserId })
+      .from(users)
+      .where(eq(users.telegramUserId, tgUserId))
+      .limit(1);
+
+    if (!user) {
+      await answer("Not linked yet.", true);
+      await sendTelegramMessage(
+        chatId,
+        "❌ Avval Targenix.uz hisobingizni Telegramga ulang.\n\nTargenix.uz → Settings → Telegram → Connect (System chat) qilib keyin qayta urinib ko‘ring.",
+        "HTML",
+      );
+      return;
+    }
+
+    // Invalidate any prior active sessions for this user
+    await db
+      .update(telegramLinkingSessions)
+      .set({ usedAt: now })
+      .where(and(eq(telegramLinkingSessions.userId, user.id), isNull(telegramLinkingSessions.usedAt), gt(telegramLinkingSessions.expiresAt, now)));
+
+    const token = `link_${cryptoRandomToken(16)}`;
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+    const [sessionRow] = await db
+      .insert(telegramLinkingSessions)
+      .values({
+        userId: user.id,
+        telegramUserId: tgUserId,
+        token,
+        expiresAt,
+        createdAt: now,
+      })
+      .$returningId();
+
+    // Tell user what to do next
+    await answer();
+    await sendTelegramMessage(
+      chatId,
+      "✅ Delivery chat ulashni boshladik.\n\n1) Botni kerakli <b>guruh/kanal</b>ga qo‘shing.\n2) Botni <b>administrator</b> qiling.\n3) So‘ng shu shaxsiy chatga qayting (bot sizga ro‘yxat yuboradi).",
+      "HTML",
+    );
+    // If Telegram supports it, the user can also share/open deep-link; we keep token for audit/debug
+    await log.info("TELEGRAM", "Linking session created", { userId: user.id, tgUserId, sessionId: sessionRow?.id, expiresAt });
+    return;
+  }
+
+  if (!payload && action !== "lsn") return;
 
   // New format (short): tg:c:<connectTokenRowId> / tg:x:<connectTokenRowId>
   // Pending picker: tg:p:<connectTokenRowId>:<pendingChatId> (sent in private chat)
@@ -518,6 +679,8 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
   // Legacy: tg:confirm:<token> / tg:cancel:<token>
   let tok: typeof telegramChatConnectTokens.$inferSelect | undefined;
   let pendingChat: typeof telegramPendingChats.$inferSelect | undefined;
+  let session: typeof telegramLinkingSessions.$inferSelect | undefined;
+  let sessionChat: typeof telegramLinkingSessionChats.$inferSelect | undefined;
   if (action === "x" || action === "c") {
     const id = Number(payload);
     if (!Number.isFinite(id)) return;
@@ -560,6 +723,181 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
       .limit(1);
     tok = row;
   } else {
+    // New session-based onboarding actions
+    if (action === "lsx") {
+      const sessionId = Number(payload);
+      if (!Number.isFinite(sessionId)) return;
+      await db.update(telegramLinkingSessions).set({ usedAt: new Date() }).where(eq(telegramLinkingSessions.id, sessionId));
+      await answer("Cancelled");
+      await sendTelegramMessage(chatId, "❌ Bekor qilindi.", "HTML");
+      return;
+    }
+    if (action === "lsp") {
+      // pick chat for session: payload "<sessionId>:<sessionChatRowId>"
+      const [sidRaw, scidRaw] = payload.split(":");
+      const sid = Number(sidRaw);
+      const scid = Number(scidRaw);
+      if (!Number.isFinite(sid) || !Number.isFinite(scid)) return;
+      const now = new Date();
+
+      const [s] = await db
+        .select()
+        .from(telegramLinkingSessions)
+        .where(and(eq(telegramLinkingSessions.id, sid), isNull(telegramLinkingSessions.usedAt), gt(telegramLinkingSessions.expiresAt, now)))
+        .limit(1);
+      if (!s || s.telegramUserId !== String(q.from.id)) {
+        await answer("Session expired.", true);
+        return;
+      }
+      session = s;
+      const [sc] = await db
+        .select()
+        .from(telegramLinkingSessionChats)
+        .where(and(eq(telegramLinkingSessionChats.id, scid), eq(telegramLinkingSessionChats.sessionId, sid)))
+        .limit(1);
+      if (!sc) {
+        await answer("Chat not found.", true);
+        return;
+      }
+      sessionChat = sc;
+
+      const label =
+        (sessionChat.title && sessionChat.title.length > 0
+          ? sessionChat.title
+          : sessionChat.username
+            ? `@${sessionChat.username}`
+            : sessionChat.chatId) + ` (${sessionChat.chatType})`;
+
+      if (!BOT_TOKEN) return;
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: `Tanlangan chat:\n<b>${escapeHtml(label)}</b>\n\nUlashni tasdiqlaysizmi?`,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "✅ Confirm", callback_data: `tg:lsc:${sid}:${scid}` },
+                { text: "❌ Cancel", callback_data: `tg:lsx:${sid}` },
+              ],
+            ],
+          },
+        }),
+      });
+      await answer();
+      return;
+    }
+    if (action === "lsc") {
+      // confirm chat for session: payload "<sessionId>:<sessionChatRowId>"
+      const [sidRaw, scidRaw] = payload.split(":");
+      const sid = Number(sidRaw);
+      const scid = Number(scidRaw);
+      if (!Number.isFinite(sid) || !Number.isFinite(scid)) return;
+      const now = new Date();
+
+      const [s] = await db
+        .select()
+        .from(telegramLinkingSessions)
+        .where(and(eq(telegramLinkingSessions.id, sid), isNull(telegramLinkingSessions.usedAt), gt(telegramLinkingSessions.expiresAt, now)))
+        .limit(1);
+      if (!s || s.telegramUserId !== String(q.from.id)) {
+        await answer("Session expired.", true);
+        return;
+      }
+      session = s;
+      const [sc] = await db
+        .select()
+        .from(telegramLinkingSessionChats)
+        .where(and(eq(telegramLinkingSessionChats.id, scid), eq(telegramLinkingSessionChats.sessionId, sid)))
+        .limit(1);
+      if (!sc) {
+        await answer("Chat not found.", true);
+        return;
+      }
+      sessionChat = sc;
+
+      // Enforce unique ownership
+      const [existingChat] = await db.select().from(telegramChats).where(eq(telegramChats.chatId, sessionChat.chatId)).limit(1);
+      if (existingChat) {
+        await answer("Chat already linked.", true);
+        await sendTelegramMessage(chatId, "❌ Bu chat allaqachon ulangan.", "HTML");
+        return;
+      }
+
+      // Strict permissions: require bot to be admin in the target chat
+      const bot = await getBotIdentity();
+      if (!bot) {
+        await answer("Bot misconfigured.", true);
+        return;
+      }
+      const status = await getChatMemberStatus(sessionChat.chatId, bot.id);
+      if (status !== "administrator") {
+        await answer("Bot must be admin.", true);
+        await sendTelegramMessage(chatId, "❌ Iltimos botni shu chatda <b>administrator</b> qiling va qayta urinib ko‘ring.", "HTML");
+        return;
+      }
+
+      await db.insert(telegramChats).values({
+        userId: session.userId,
+        chatId: sessionChat.chatId,
+        type: "DELIVERY",
+        title: sessionChat.title ?? null,
+        username: sessionChat.username ?? null,
+        connectedAt: new Date(),
+        createdAt: new Date(),
+      });
+
+      await db.update(telegramLinkingSessions).set({ usedAt: new Date() }).where(eq(telegramLinkingSessions.id, session.id));
+
+      // Next: mapping choice (minimal)
+      if (!BOT_TOKEN) return;
+      await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text: "✅ Delivery chat ulandi.\n\nQaysi joylarga biriktiramiz?",
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "✅ Hammasiga", callback_data: `tg:lma:${session.userId}:${encodeURIComponent(sessionChat.chatId)}` }],
+              [{ text: "⏭️ Hozircha o‘tkazib yuborish", callback_data: `tg:lmskip` }],
+            ],
+          },
+        }),
+      });
+      await answer("✅ Connected!");
+      return;
+    }
+    if (action === "lma") {
+      // Apply to all integrations/targets: payload "<userId>:<chatIdEncoded>"
+      const [uidRaw, chatIdEnc] = payload.split(":");
+      const uid = Number(uidRaw);
+      if (!Number.isFinite(uid) || !chatIdEnc) return;
+      const targetChatId = decodeURIComponent(chatIdEnc);
+
+      // Authorize by telegram user id
+      const [user] = await db.select({ id: users.id }).from(users).where(eq(users.telegramUserId, String(q.from.id))).limit(1);
+      if (!user || user.id !== uid) {
+        await answer("Not allowed.", true);
+        return;
+      }
+
+      await db.update(integrations).set({ telegramChatId: targetChatId }).where(eq(integrations.userId, uid));
+      await db.update(targetWebsites).set({ telegramChatId: targetChatId }).where(eq(targetWebsites.userId, uid));
+
+      await answer("✅ Done!");
+      await sendTelegramMessage(chatId, "✅ Hammasiga biriktirildi.", "HTML");
+      return;
+    }
+    if (action === "lmskip") {
+      await answer("OK");
+      await sendTelegramMessage(chatId, "✅ Tayyor. Keyin saytdan yoki botdan mappingni o‘zgartirishingiz mumkin.", "HTML");
+      return;
+    }
+
     return;
   }
 
@@ -775,6 +1113,10 @@ function escapeHtml(s: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function cryptoRandomToken(bytes: number): string {
+  return crypto.randomBytes(bytes).toString("hex");
 }
 
 // ─── Telegram Update Types ────────────────────────────────────────────────────
