@@ -12,7 +12,7 @@
  *  - Test button: sends sample lead, shows request + response
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,13 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { DialogFooter } from "@/components/ui/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   WebsiteFlowDialog,
   AddWebsiteSelectStep,
 } from "@/components/AddWebsiteModal";
@@ -41,6 +48,7 @@ import {
   Globe,
   ArrowLeft,
   Loader2,
+  MoreVertical,
   Eye,
   EyeOff,
   Info,
@@ -379,6 +387,8 @@ export default function TargetWebsites() {
   const [mode, setMode] = useState<FormMode>("select-template");
   const [form, setForm] = useState<FormState>(defaultForm());
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "active" | "inactive" | "template" | "custom">("all");
   // Dynamic template state (create flow)
   const [selectedDynTemplate, setSelectedDynTemplate] = useState<DynTemplate | null>(null);
   const [dynName, setDynName] = useState("");
@@ -450,6 +460,31 @@ export default function TargetWebsites() {
 
   const selectedTemplate = TEMPLATES.find((t) => t.id === form.templateType)!;
   const isCustom = form.templateType === "custom";
+
+  const filteredSites = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return sites
+      .filter((site) => {
+        const isTemplateBased = site.templateType !== "custom" || !!(site as { templateId?: number | null }).templateId;
+        const isPureCustom = site.templateType === "custom" && !(site as { templateId?: number | null }).templateId;
+        if (filter === "active") return !!site.isActive;
+        if (filter === "inactive") return !site.isActive;
+        if (filter === "template") return isTemplateBased;
+        if (filter === "custom") return isPureCustom;
+        return true;
+      })
+      .filter((site) => {
+        if (!q) return true;
+        const config = (site.templateConfig ?? {}) as Record<string, unknown>;
+        const url = String(site.url || (config.url as string) || "");
+        const type = String(site.templateType || "");
+        return (
+          site.name.toLowerCase().includes(q) ||
+          url.toLowerCase().includes(q) ||
+          type.toLowerCase().includes(q)
+        );
+      });
+  }, [sites, query, filter]);
 
   function openAdd() {
     setEditId(null);
@@ -637,11 +672,72 @@ export default function TargetWebsites() {
               Reusable affiliate site configurations — set up once, use in many Lead Routings
             </p>
           </div>
-          <Button size="sm" className="h-8 px-2 shrink-0" onClick={openAdd}>
+          <Button size="sm" className="h-10 px-3 shrink-0" onClick={openAdd}>
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline ml-1.5">Add Website</span>
           </Button>
         </div>
+
+        {/* Search + filters (mobile-first) */}
+        {!isLoading && sites.length > 0 && (
+          <div className="space-y-3">
+            <div className="relative">
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search destinations…"
+                className="h-10"
+              />
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <Button
+                type="button"
+                variant={filter === "all" ? "secondary" : "outline"}
+                size="sm"
+                className="h-9 shrink-0"
+                onClick={() => setFilter("all")}
+              >
+                All
+              </Button>
+              <Button
+                type="button"
+                variant={filter === "active" ? "secondary" : "outline"}
+                size="sm"
+                className="h-9 shrink-0"
+                onClick={() => setFilter("active")}
+              >
+                Active
+              </Button>
+              <Button
+                type="button"
+                variant={filter === "inactive" ? "secondary" : "outline"}
+                size="sm"
+                className="h-9 shrink-0"
+                onClick={() => setFilter("inactive")}
+              >
+                Inactive
+              </Button>
+              <Button
+                type="button"
+                variant={filter === "template" ? "secondary" : "outline"}
+                size="sm"
+                className="h-9 shrink-0"
+                onClick={() => setFilter("template")}
+              >
+                Template
+              </Button>
+              <Button
+                type="button"
+                variant={filter === "custom" ? "secondary" : "outline"}
+                size="sm"
+                className="h-9 shrink-0"
+                onClick={() => setFilter("custom")}
+              >
+                Custom
+              </Button>
+            </div>
+          </div>
+        )}
 
         {/* List */}
         {isLoading ? (
@@ -661,7 +757,7 @@ export default function TargetWebsites() {
           </Card>
         ) : (
           <div className="grid gap-3">
-            {sites.map((site) => {
+            {filteredSites.map((site) => {
               const config = (site.templateConfig ?? {}) as Record<string, unknown>;
               const tpl = TEMPLATES.find((t) => t.id === site.templateType);
               const isDynamic = !!(site as { templateId?: number | null }).templateId;
@@ -682,31 +778,63 @@ export default function TargetWebsites() {
                         {site.url || (config.url as string) || tpl?.endpoint || "—"}
                       </p>
                       {Boolean(config.apiKeyMasked) && (
-                        <p className="text-xs text-muted-foreground mt-0.5">API Key: ••••••••</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">API Key configured</p>
                       )}
                       {isDynamic && typeof config.secrets === "object" && config.secrets !== null && Object.keys(config.secrets as Record<string, unknown>).length > 0 && (
-                        <p className="text-xs text-muted-foreground mt-0.5">Secrets: ••••••••</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">Secrets configured</p>
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      <Switch
-                        checked={site.isActive}
-                        onCheckedChange={(checked) =>
-                          toggleMutation.mutate({ id: site.id, isActive: checked })
-                        }
-                      />
-                      <Button variant="ghost" size="icon" onClick={() => openEdit(site)}>
-                        <Pencil className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => {
-                          if (confirm("Delete this website?")) deleteMutation.mutate({ id: site.id });
-                        }}
-                      >
-                        <Trash2 className="w-4 h-4 text-destructive" />
-                      </Button>
+                      <div className="hidden sm:flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground w-12 text-right">
+                          {site.isActive ? "Active" : "Off"}
+                        </span>
+                        <Switch
+                          checked={site.isActive}
+                          onCheckedChange={(checked) =>
+                            toggleMutation.mutate({ id: site.id, isActive: checked })
+                          }
+                        />
+                      </div>
+                      <div className="sm:hidden flex flex-col items-end gap-1">
+                        <span className="text-[11px] text-muted-foreground">
+                          {site.isActive ? "Active" : "Off"}
+                        </span>
+                        <Switch
+                          checked={site.isActive}
+                          onCheckedChange={(checked) =>
+                            toggleMutation.mutate({ id: site.id, isActive: checked })
+                          }
+                        />
+                      </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-11 w-11"
+                            aria-label="More actions"
+                          >
+                            <MoreVertical className="w-5 h-5" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-44">
+                          <DropdownMenuItem onClick={() => openEdit(site)} className="cursor-pointer">
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => {
+                              if (confirm("Delete this destination?")) deleteMutation.mutate({ id: site.id });
+                            }}
+                            className="cursor-pointer text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </CardContent>
                 </Card>

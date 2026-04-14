@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { defineConfig } from "drizzle-kit";
 
 // Prefer TCP URLs — Railway sets DATABASE_URL to a socket path when MySQL is linked as plugin.
