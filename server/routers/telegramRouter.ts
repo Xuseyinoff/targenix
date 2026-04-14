@@ -10,7 +10,7 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { telegramChatConnectTokens, telegramChats, targetWebsites, users } from "../../drizzle/schema";
+import { telegramChats, targetWebsites, users } from "../../drizzle/schema";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import crypto from "crypto";
 
@@ -116,32 +116,7 @@ export const telegramRouter = router({
     return { success: true };
   }),
 
-  /**
-   * Create a connect token for linking a DELIVERY chat (group/channel) via inline Confirm.
-   * Returns a startgroup link that adds the bot to a group with payload.
-   */
-  generateDeliveryConnectToken: protectedProcedure.mutation(async ({ ctx }) => {
-    const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
-
-    // Keep tokens short: they are embedded in Telegram inline button callback_data (max 64 bytes).
-    // 12 bytes hex => 24 chars, plenty of entropy for a 15-minute one-time token.
-    const token = crypto.randomBytes(12).toString("hex");
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour (was 15 min - too short!)
-
-    await db.insert(telegramChatConnectTokens).values({
-      userId: ctx.user.id,
-      token,
-      expiresAt,
-      createdAt: new Date(),
-    });
-
-    const botUrl = `https://t.me/${BOT_USERNAME}?startgroup=${token}`;
-    // For channels, Telegram doesn't support startgroup. User should open the bot in private with /start <token>
-    // after adding the bot to the channel, to pick & confirm the pending chat.
-    const botUrlPrivate = `https://t.me/${BOT_USERNAME}?start=${token}`;
-    return { token, botUrl, botUrlPrivate, expiresAt };
-  }),
+  // (duplicate linkDeliveryChatById removed)
 
   /**
    * Link a delivery chat by chatId entered on the website.
