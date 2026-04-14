@@ -99,7 +99,10 @@ export const telegramRouter = router({
     });
 
     const botUrl = `https://t.me/${BOT_USERNAME}?startgroup=${token}`;
-    return { token, botUrl, expiresAt };
+    // For channels, Telegram doesn't support startgroup. User should open the bot in private with /start <token>
+    // after adding the bot to the channel, to pick & confirm the pending chat.
+    const botUrlPrivate = `https://t.me/${BOT_USERNAME}?start=${token}`;
+    return { token, botUrl, botUrlPrivate, expiresAt };
   }),
 
   /** List delivery chats owned by the current user */

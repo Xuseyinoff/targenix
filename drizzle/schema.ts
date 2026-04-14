@@ -77,6 +77,27 @@ export const telegramChatConnectTokens = mysqlTable("telegram_chat_connect_token
 export type TelegramChatConnectToken = typeof telegramChatConnectTokens.$inferSelect;
 export type InsertTelegramChatConnectToken = typeof telegramChatConnectTokens.$inferInsert;
 
+// ─── Telegram Pending Chats (Bot-added but not yet linked) ────────────────────
+export const telegramPendingChats = mysqlTable("telegram_pending_chats", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Telegram chat id (group/channel). Unique globally. */
+  chatId: varchar("chatId", { length: 64 }).notNull(),
+  /** Raw Telegram chat.type: group | supergroup | channel */
+  chatType: varchar("chatType", { length: 32 }).notNull(),
+  title: varchar("title", { length: 255 }),
+  username: varchar("username", { length: 128 }),
+  /** Bot's current status per my_chat_member: member | administrator | left | kicked | ... */
+  botStatus: varchar("botStatus", { length: 32 }),
+  firstSeenAt: timestamp("firstSeenAt").defaultNow().notNull(),
+  lastSeenAt: timestamp("lastSeenAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  uqChatId: uniqueIndex("uq_telegram_pending_chats_chat_id").on(t.chatId),
+  idxLastSeen: index("idx_telegram_pending_chats_last_seen").on(t.lastSeenAt),
+}));
+
+export type TelegramPendingChat = typeof telegramPendingChats.$inferSelect;
+export type InsertTelegramPendingChat = typeof telegramPendingChats.$inferInsert;
+
 // ─── Telegram Chat ↔ Integration Mapping ──────────────────────────────────────
 export const telegramChatIntegrations = mysqlTable("telegram_chat_integrations", {
   id: int("id").autoincrement().primaryKey(),

@@ -225,6 +225,13 @@
       "when": 1776089341908,
       "tag": "0031_target_website_telegram_chat",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "5",
+      "when": 1776172416417,
+      "tag": "0032_telegram_pending_chats",
+      "breakpoints": true
     }
   ]
 }

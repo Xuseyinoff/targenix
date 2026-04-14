@@ -7,8 +7,8 @@
 
 import type { Request, Response } from "express";
 import { getDb } from "../db";
-import { telegramChatConnectTokens, telegramChats, users } from "../../drizzle/schema";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { telegramChatConnectTokens, telegramChats, telegramPendingChats, users } from "../../drizzle/schema";
+import { and, eq, gt, inArray, isNull } from "drizzle-orm";
 import { log } from "../services/appLogger";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
@@ -141,8 +141,8 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
           });
           await handleDeliveryStartWithToken(chatId, token, message.chat);
         } else {
-          await log.info("TELEGRAM", "Routing to handleStartWithToken", { chatId });
-          await handleStartWithToken(chatId, token, from);
+          await log.info("TELEGRAM", "Routing to handlePrivateStartWithToken", { chatId });
+          await handlePrivateStartWithToken(chatId, token, from);
         }
         return;
       }
@@ -232,6 +232,99 @@ async function handleStartWithToken(
     "✅ <b>Targenix.uz ga muvaffaqiyatli ulandi!</b>\n\nBu <b>System chat</b> hisoblanadi: bu yerga faqat alert/error/statistika keladi.\n\nLeadlarni yuborish uchun <b>Delivery chat</b> qo'shing: Settings → Telegram → Add delivery chat.",
     "HTML"
   );
+}
+
+async function handlePrivateStartWithToken(
+  chatId: string,
+  token: string,
+  from?: TelegramUser,
+): Promise<void> {
+  // In private chat, the token can be:
+  // 1) users.telegramConnectToken — link system chat
+  // 2) telegramChatConnectTokens.token — link a DELIVERY chat by picking from pending chats
+  const db = await getDb();
+  if (!db) return;
+
+  // Try system-chat token first (existing behavior)
+  const [user] = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.telegramConnectToken, token))
+    .limit(1);
+  if (user) {
+    await handleStartWithToken(chatId, token, from);
+    return;
+  }
+
+  // Then try delivery token
+  const [tok] = await db
+    .select()
+    .from(telegramChatConnectTokens)
+    .where(and(eq(telegramChatConnectTokens.token, token), isNull(telegramChatConnectTokens.usedAt), gt(telegramChatConnectTokens.expiresAt, new Date())))
+    .limit(1);
+
+  if (!tok) {
+    await sendTelegramMessage(
+      chatId,
+      "❌ Token topilmadi yoki muddati o'tgan. Iltimos, Targenix.uz saytidan qaytadan urinib ko'ring.",
+      "HTML",
+    );
+    return;
+  }
+
+  // List recent pending chats (where bot was added). User picks one to link.
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const candidates = await db
+    .select({
+      id: telegramPendingChats.id,
+      chatId: telegramPendingChats.chatId,
+      chatType: telegramPendingChats.chatType,
+      title: telegramPendingChats.title,
+      username: telegramPendingChats.username,
+      botStatus: telegramPendingChats.botStatus,
+      lastSeenAt: telegramPendingChats.lastSeenAt,
+    })
+    .from(telegramPendingChats)
+    .where(
+      and(
+        gt(telegramPendingChats.lastSeenAt, weekAgo),
+        // best-effort: only show chats where bot is still present (status from my_chat_member)
+        inArray(telegramPendingChats.botStatus, ["member", "administrator"]),
+      ),
+    )
+    .limit(25);
+
+  if (!candidates.length) {
+    await sendTelegramMessage(
+      chatId,
+      "ℹ️ Hozircha bot qo'shilgan guruh/kanal topilmadi.\n\n1) Botni kerakli guruh/kanalga qo'shing.\n2) Keyin shu chatda bot admin/member bo'lib tursin.\n3) So'ng bu linkni qayta oching.",
+      "HTML",
+    );
+    return;
+  }
+
+  const keyboard = candidates.slice(0, 10).map((c) => {
+    const label =
+      (c.title && c.title.length > 0 ? c.title : c.username ? `@${c.username}` : c.chatId) +
+      ` (${c.chatType})`;
+    // callback_data max 64 bytes → only ids
+    return [{ text: label.slice(0, 50), callback_data: `tg:p:${tok.id}:${c.id}` }];
+  });
+
+  // Add cancel
+  keyboard.push([{ text: "❌ Cancel", callback_data: `tg:px:${tok.id}` }]);
+
+  if (!BOT_TOKEN) return;
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: "Qaysi guruh/kanalni <b>Delivery chat</b> sifatida ulaymiz?\n\nPastdan bittasini tanlang:",
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: keyboard },
+    }),
+  });
 }
 
 async function handleDeliveryStartWithToken(
@@ -331,7 +424,45 @@ async function handleMyChatMember(evt: TelegramChatMemberUpdated): Promise<void>
 
   // Only react when bot becomes a member/admin in a non-private chat
   if (evt.chat.type === "private") return;
-  if (!newStatus || (newStatus !== "member" && newStatus !== "administrator")) return;
+  if (!newStatus) return;
+
+  // Upsert pending chat record so the user can claim it from private.
+  const db = await getDb();
+  if (db) {
+    try {
+      const title = evt.chat.title ?? null;
+      const username = (evt.chat as any)?.username ?? null;
+      const chatType = evt.chat.type;
+
+      const [existing] = await db
+        .select({ id: telegramPendingChats.id })
+        .from(telegramPendingChats)
+        .where(eq(telegramPendingChats.chatId, chatId))
+        .limit(1);
+
+      if (existing) {
+        await db
+          .update(telegramPendingChats)
+          .set({ title, username, chatType, botStatus: newStatus, lastSeenAt: new Date() })
+          .where(eq(telegramPendingChats.id, existing.id));
+      } else {
+        await db.insert(telegramPendingChats).values({
+          chatId,
+          chatType,
+          title,
+          username,
+          botStatus: newStatus,
+          firstSeenAt: new Date(),
+          lastSeenAt: new Date(),
+        });
+      }
+    } catch (err) {
+      await log.warn("TELEGRAM", "Failed to upsert pending chat", { chatId, error: String(err) });
+    }
+  }
+
+  // If bot is removed/left, don't spam.
+  if (newStatus !== "member" && newStatus !== "administrator") return;
 
   await sendTelegramMessage(
     chatId,
@@ -341,13 +472,17 @@ async function handleMyChatMember(evt: TelegramChatMemberUpdated): Promise<void>
 }
 
 async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
-  const chatId = String(q.message?.chat?.id ?? q.from?.id ?? "");
+  // For delivery linking we require callback to be attached to a message in some chat.
+  // If Telegram ever sends a callback without message (inline mode), we can't safely infer the target chat.
+  const msgChatId = q.message?.chat?.id;
+  const chatId = String(msgChatId ?? q.from?.id ?? "");
   const data = q.data ?? "";
 
   await log.info("TELEGRAM", "Incoming callback", {
     chatId,
     data: data.slice(0, 80),
     fromUsername: q.from?.username,
+    hasMessage: !!q.message,
   });
 
   async function answer(text?: string, showAlert?: boolean) {
@@ -377,8 +512,12 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
   if (!db) return;
 
   // New format (short): tg:c:<connectTokenRowId> / tg:x:<connectTokenRowId>
+  // Pending picker: tg:p:<connectTokenRowId>:<pendingChatId> (sent in private chat)
+  // Pending cancel: tg:px:<connectTokenRowId>
+  // Pending confirm: tg:pc:<connectTokenRowId>:<pendingChatId>
   // Legacy: tg:confirm:<token> / tg:cancel:<token>
   let tok: typeof telegramChatConnectTokens.$inferSelect | undefined;
+  let pendingChat: typeof telegramPendingChats.$inferSelect | undefined;
   if (action === "x" || action === "c") {
     const id = Number(payload);
     if (!Number.isFinite(id)) return;
@@ -388,6 +527,31 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
       .where(eq(telegramChatConnectTokens.id, id))
       .limit(1);
     tok = row;
+  } else if (action === "px") {
+    const id = Number(payload);
+    if (!Number.isFinite(id)) return;
+    const [row] = await db.select().from(telegramChatConnectTokens).where(eq(telegramChatConnectTokens.id, id)).limit(1);
+    tok = row;
+  } else if (action === "p") {
+    // payload is "<connectTokenRowId>:<pendingChatId>"
+    const [tokIdRaw, pendingIdRaw] = payload.split(":");
+    const tokId = Number(tokIdRaw);
+    const pendingId = Number(pendingIdRaw);
+    if (!Number.isFinite(tokId) || !Number.isFinite(pendingId)) return;
+    const [rowTok] = await db.select().from(telegramChatConnectTokens).where(eq(telegramChatConnectTokens.id, tokId)).limit(1);
+    tok = rowTok;
+    const [rowPending] = await db.select().from(telegramPendingChats).where(eq(telegramPendingChats.id, pendingId)).limit(1);
+    pendingChat = rowPending;
+  } else if (action === "pc") {
+    // payload is "<connectTokenRowId>:<pendingChatId>"
+    const [tokIdRaw, pendingIdRaw] = payload.split(":");
+    const tokId = Number(tokIdRaw);
+    const pendingId = Number(pendingIdRaw);
+    if (!Number.isFinite(tokId) || !Number.isFinite(pendingId)) return;
+    const [rowTok] = await db.select().from(telegramChatConnectTokens).where(eq(telegramChatConnectTokens.id, tokId)).limit(1);
+    tok = rowTok;
+    const [rowPending] = await db.select().from(telegramPendingChats).where(eq(telegramPendingChats.id, pendingId)).limit(1);
+    pendingChat = rowPending;
   } else if (action === "cancel" || action === "confirm") {
     const [row] = await db
       .select()
@@ -399,8 +563,9 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
     return;
   }
 
-  const isCancel = action === "cancel" || action === "x";
+  const isCancel = action === "cancel" || action === "x" || action === "px";
   const isConfirm = action === "confirm" || action === "c";
+  const isPick = action === "p";
 
   if (isCancel) {
     if (tok) {
@@ -417,6 +582,114 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
     }
     await answer("Cancelled");
     await sendTelegramMessage(chatId, "❌ Cancelled.", "HTML");
+    return;
+  }
+
+  if (isPick) {
+    // Must be in private chat; otherwise don't allow linking from arbitrary chats.
+    if (q.message?.chat?.type !== "private") {
+      await answer("Open this in private chat.", true);
+      return;
+    }
+    if (!tok || tok.usedAt != null || !(tok.expiresAt > new Date())) {
+      await answer("Token expired. Recreate in Settings.", true);
+      return;
+    }
+    if (!pendingChat) {
+      await answer("Chat not found.", true);
+      return;
+    }
+
+    const pickLabel =
+      pendingChat.title && pendingChat.title.length > 0
+        ? pendingChat.title
+        : pendingChat.username
+          ? `@${pendingChat.username}`
+          : pendingChat.chatId;
+
+    const confirmData = `tg:pc:${tok.id}:${pendingChat.id}`;
+    const cancelData = `tg:px:${tok.id}`;
+
+    if (!BOT_TOKEN) return;
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text: `Tanlangan chat:\n<b>${escapeHtml(pickLabel)}</b>\n\nUlashni tasdiqlaysizmi?`,
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [[{ text: "✅ Confirm", callback_data: confirmData }, { text: "❌ Cancel", callback_data: cancelData }]],
+        },
+      }),
+    });
+    await answer();
+    return;
+  }
+
+  if (action === "pc") {
+    // Confirm linking picked pending chat
+    if (!tok || tok.usedAt != null || !(tok.expiresAt > new Date())) {
+      await answer("Token expired. Recreate in Settings.", true);
+      return;
+    }
+    if (!pendingChat) {
+      await answer("Chat not found.", true);
+      return;
+    }
+
+    const targetChatId = pendingChat.chatId;
+
+    // Enforce unique ownership
+    const [existing] = await db.select().from(telegramChats).where(eq(telegramChats.chatId, targetChatId)).limit(1);
+    if (existing) {
+      await answer("Chat already linked.", true);
+      await sendTelegramMessage(chatId, "❌ Bu chat allaqachon boshqa userga ulangan (yoki avvalroq ulangan).", "HTML");
+      return;
+    }
+
+    // Admin check depends on chat type
+    const bot = await getBotIdentity();
+    if (!bot) {
+      await answer("Bot misconfigured.", true);
+      await sendTelegramMessage(chatId, "❌ Bot konfiguratsiyasi xato: TELEGRAM_BOT_TOKEN yo'q.", "HTML");
+      return;
+    }
+    const status = await getChatMemberStatus(targetChatId, bot.id);
+    const chatType = pendingChat.chatType;
+    const isChannel = chatType === "channel";
+    const okStatus = isChannel ? status === "administrator" : status === "administrator" || status === "member";
+    if (!okStatus) {
+      await log.warn("TELEGRAM", "Confirm blocked: insufficient bot permissions", { targetChatId, chatType, status });
+      await answer(isChannel ? "Bot must be admin in channel." : "Bot must be member/admin.", true);
+      await sendTelegramMessage(
+        chatId,
+        isChannel
+          ? "❌ Kanalda post qilish uchun bot <b>administrator</b> bo'lishi kerak.\n\nBotga admin huquq bering va qaytadan Confirm qiling."
+          : "❌ Bot bu chatda <b>member</b> ham emas.\n\nIltimos botni qayta qo'shing va qaytadan Confirm qiling.",
+        "HTML",
+      );
+      return;
+    }
+
+    await db.insert(telegramChats).values({
+      userId: tok.userId,
+      chatId: targetChatId,
+      type: "DELIVERY",
+      title: pendingChat.title ?? null,
+      username: pendingChat.username ?? null,
+      connectedAt: new Date(),
+      createdAt: new Date(),
+    });
+
+    await db.update(telegramChatConnectTokens).set({ usedAt: new Date() }).where(eq(telegramChatConnectTokens.id, tok.id));
+
+    await sendTelegramMessage(
+      chatId,
+      "✅ <b>Delivery chat ulandi!</b>\n\nEndi integratsiyalarga biriktirib leadlarni shu yerga yuborishingiz mumkin (Settings → Telegram).",
+      "HTML",
+    );
+    await answer("✅ Connected!");
     return;
   }
 
@@ -443,7 +716,9 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
     return;
   }
 
-  // Admin check: bot must be administrator
+  // Admin check depends on chat type:
+  // - channel: administrator required to post
+  // - group/supergroup: member is enough for basic sendMessage (still recommended to grant admin)
   const bot = await getBotIdentity();
   if (!bot) {
     await answer("Bot misconfigured.", true);
@@ -451,12 +726,17 @@ async function handleCallbackQuery(q: TelegramCallbackQuery): Promise<void> {
     return;
   }
   const status = await getChatMemberStatus(chatId, bot.id);
-  if (status !== "administrator") {
-    await log.warn("TELEGRAM", "Confirm blocked: bot is not admin", { chatId, status });
-    await answer("Bot must be admin.", true);
+  const chatType = q.message?.chat?.type;
+  const isChannel = chatType === "channel";
+  const okStatus = isChannel ? status === "administrator" : status === "administrator" || status === "member";
+  if (!okStatus) {
+    await log.warn("TELEGRAM", "Confirm blocked: insufficient bot permissions", { chatId, chatType, status });
+    await answer(isChannel ? "Bot must be admin in channel." : "Bot must be member/admin.", true);
     await sendTelegramMessage(
       chatId,
-      "❌ Bot bu chatda <b>administrator</b> emas.\n\nIltimos botga admin huquq bering va qaytadan Confirm qiling.",
+      isChannel
+        ? "❌ Kanalda post qilish uchun bot <b>administrator</b> bo'lishi kerak.\n\nBotga admin huquq bering va qaytadan Confirm qiling."
+        : "❌ Bot bu chatda <b>member</b> ham emas.\n\nIltimos botni qayta qo'shing va qaytadan Confirm qiling.",
       "HTML",
     );
     return;
