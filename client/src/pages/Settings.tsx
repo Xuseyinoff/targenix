@@ -54,8 +54,8 @@ export default function Settings() {
 
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
-  const [deliveryUrl, setDeliveryUrl] = useState<string | null>(null);
-  const [deliveryConnecting, setDeliveryConnecting] = useState(false);
+  const [deliveryChatIdInput, setDeliveryChatIdInput] = useState("");
+  const [deliveryLinking, setDeliveryLinking] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
 
@@ -102,15 +102,16 @@ export default function Settings() {
       toast.error(err instanceof Error ? err.message : (err.message ?? "Failed")),
   });
 
-  const generateDeliveryTokenMutation = trpc.telegram.generateDeliveryConnectToken.useMutation({
-    onSuccess: (data) => {
-      setDeliveryUrl(data.botUrl);
-      setDeliveryConnecting(false);
-      void refetchDeliveryChats();
+  const linkDeliveryChatMutation = trpc.telegram.linkDeliveryChatById.useMutation({
+    onSuccess: async () => {
+      setDeliveryChatIdInput("");
+      setDeliveryLinking(false);
+      await refetchDeliveryChats();
+      toast.success("Delivery chat linked.");
     },
     onError: (err) => {
       toast.error(err.message);
-      setDeliveryConnecting(false);
+      setDeliveryLinking(false);
     },
   });
 
@@ -129,9 +130,9 @@ export default function Settings() {
     generateTokenMutation.mutate();
   };
 
-  const handleAddDeliveryChat = () => {
-    setDeliveryConnecting(true);
-    generateDeliveryTokenMutation.mutate();
+  const handleLinkDeliveryChat = () => {
+    setDeliveryLinking(true);
+    linkDeliveryChatMutation.mutate({ chatId: deliveryChatIdInput });
   };
 
   return (
@@ -309,44 +310,27 @@ export default function Settings() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {deliveryUrl ? (
-              <div className="space-y-3">
-                <div className="rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800 p-4 space-y-2">
-                  <p className="text-sm font-medium text-violet-800 dark:text-violet-300">
-                    Steps:
-                  </p>
-                  <ol className="text-sm text-violet-700 dark:text-violet-400 space-y-1 list-decimal list-inside">
-                    <li>Open Telegram via the button</li>
-                    <li>Add bot to your group/channel</li>
-                    <li>In the chat, press <strong>Confirm</strong></li>
-                  </ol>
-                </div>
-                <Button asChild className="bg-violet-600 hover:bg-violet-700 text-white">
-                  <a href={deliveryUrl} target="_blank" rel="noopener noreferrer">
-                    <Users className="h-4 w-4 mr-2" />
-                    Add bot to group/channel
-                    <ExternalLink className="h-3.5 w-3.5 ml-2" />
-                  </a>
-                </Button>
-                <p className="text-xs text-muted-foreground">
-                  After Confirm, click Refresh to see the chat in the list.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <Button onClick={handleAddDeliveryChat} disabled={deliveryConnecting}>
-                  {deliveryConnecting ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Users className="h-4 w-4 mr-2" />
-                  )}
-                  Add delivery chat
-                </Button>
-                <p className="text-xs text-muted-foreground">
-                  You must confirm inside the Telegram group/channel to link it.
-                </p>
-              </div>
-            )}
+            <div className="rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800 p-4 space-y-2">
+              <p className="text-sm font-medium text-violet-800 dark:text-violet-300">Steps:</p>
+              <ol className="text-sm text-violet-700 dark:text-violet-400 space-y-1 list-decimal list-inside">
+                <li>Add the bot to your group/channel</li>
+                <li>Make the bot an <strong>administrator</strong></li>
+                <li>The bot will post the <strong>Chat ID</strong> in that chat</li>
+                <li>Paste the Chat ID below and link</li>
+              </ol>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Input
+                placeholder="Paste Telegram Chat ID (e.g. -1001234567890)"
+                value={deliveryChatIdInput}
+                onChange={(e) => setDeliveryChatIdInput(e.target.value)}
+              />
+              <Button onClick={handleLinkDeliveryChat} disabled={deliveryLinking || !deliveryChatIdInput.trim()}>
+                {deliveryLinking ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Users className="h-4 w-4 mr-2" />}
+                Link
+              </Button>
+            </div>
 
             <div className="space-y-2">
               {!deliveryChats?.length ? (

@@ -15,6 +15,44 @@ import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import crypto from "crypto";
 
 const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME ?? "Targenixbot";
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
+
+async function getBotId(): Promise<number | null> {
+  if (!BOT_TOKEN) return null;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getMe`);
+    const data = (await res.json()) as { ok: boolean; result?: { id: number } };
+    return data.ok && data.result?.id ? data.result.id : null;
+  } catch {
+    return null;
+  }
+}
+
+async function getChatInfo(chatId: string): Promise<{ title?: string | null; username?: string | null; type?: string | null } | null> {
+  if (!BOT_TOKEN) return null;
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getChat?chat_id=${encodeURIComponent(chatId)}`);
+    const data = (await res.json()) as { ok: boolean; result?: { title?: string; username?: string; type?: string } };
+    if (!data.ok || !data.result) return null;
+    return { title: data.result.title ?? null, username: data.result.username ?? null, type: data.result.type ?? null };
+  } catch {
+    return null;
+  }
+}
+
+async function getBotStatusInChat(chatId: string, botId: number): Promise<string | null> {
+  if (!BOT_TOKEN) return null;
+  try {
+    const res = await fetch(
+      `https://api.telegram.org/bot${BOT_TOKEN}/getChatMember?chat_id=${encodeURIComponent(chatId)}&user_id=${botId}`,
+    );
+    const data = (await res.json()) as { ok: boolean; result?: { status?: string } };
+    if (!data.ok) return null;
+    return data.result?.status ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export const telegramRouter = router({
   /** Get the current user's Telegram connection status */
@@ -104,6 +142,47 @@ export const telegramRouter = router({
     const botUrlPrivate = `https://t.me/${BOT_USERNAME}?start=${token}`;
     return { token, botUrl, botUrlPrivate, expiresAt };
   }),
+
+  /**
+   * Link a delivery chat by chatId entered on the website.
+   * Server verifies:
+   * - chat exists
+   * - bot is administrator in that chat
+   * - chatId is not linked to another user
+   */
+  linkDeliveryChatById: protectedProcedure
+    .input(z.object({ chatId: z.string().trim().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+      const chatId = input.chatId.trim();
+
+      const [existing] = await db.select().from(telegramChats).where(eq(telegramChats.chatId, chatId)).limit(1);
+      if (existing) throw new Error("This chat is already linked.");
+
+      const botId = await getBotId();
+      if (!botId) throw new Error("Bot is not configured (missing TELEGRAM_BOT_TOKEN).");
+
+      const status = await getBotStatusInChat(chatId, botId);
+      if (status !== "administrator") {
+        throw new Error("Bot must be administrator in that group/channel.");
+      }
+
+      const info = await getChatInfo(chatId);
+      if (!info) throw new Error("Chat not found or bot has no access.");
+
+      await db.insert(telegramChats).values({
+        userId: ctx.user.id,
+        chatId,
+        type: "DELIVERY",
+        title: info.title ?? null,
+        username: info.username ?? null,
+        connectedAt: new Date(),
+        createdAt: new Date(),
+      });
+
+      return { success: true, chatId, title: info.title ?? null, username: info.username ?? null, type: info.type ?? null };
+    }),
 
   /** List delivery chats owned by the current user */
   listDeliveryChats: protectedProcedure.query(async ({ ctx }) => {
