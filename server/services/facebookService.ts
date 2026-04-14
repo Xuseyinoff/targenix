@@ -133,17 +133,21 @@ export interface PollLeadsResponse {
 export async function fetchLeadsFromForm(
   formId: string,
   accessToken: string,
-  options: { limit?: number; after?: string } = {}
+  options: { limit?: number; after?: string; hoursBack?: number } = {}
 ): Promise<PollLeadItem[]> {
   const allLeads: PollLeadItem[] = [];
   let afterCursor: string | undefined = options.after;
   let page = 0;
   const maxPages = 10; // Safety cap to avoid infinite loops
+  const hoursBack = options.hoursBack ?? null;
+  const cutoff = hoursBack != null ? new Date(Date.now() - hoursBack * 60 * 60 * 1000) : null;
 
   await log.info("FACEBOOK", `→ fetchLeadsFromForm(${formId}) started`, {
     formId,
     accessToken: maskToken(accessToken),
     limit: options.limit ?? 100,
+    hoursBack: hoursBack ?? undefined,
+    cutoffIso: cutoff ? cutoff.toISOString() : undefined,
   });
 
   const totalStart = Date.now();
@@ -165,17 +169,38 @@ export async function fetchLeadsFromForm(
       });
       const duration = Date.now() - startAt;
 
-      const batch = response.data.data ?? [];
-      allLeads.push(...batch);
+      const rawBatch = response.data.data ?? [];
+      // Best-effort: ensure newest→oldest within the batch (so cutoff stop is deterministic).
+      const batch = rawBatch
+        .slice()
+        .sort((a, b) => new Date(b.created_time).getTime() - new Date(a.created_time).getTime());
 
-      await log.info("FACEBOOK", `← fetchLeadsFromForm(${formId}) page ${page + 1}: ${batch.length} leads (${duration}ms)`, {
+      let included = 0;
+      let stoppedByCutoff = false;
+      for (const item of batch) {
+        if (cutoff) {
+          const t = new Date(item.created_time);
+          if (Number.isFinite(t.getTime()) && t < cutoff) {
+            stoppedByCutoff = true;
+            break;
+          }
+        }
+        allLeads.push(item);
+        included++;
+      }
+
+      await log.info("FACEBOOK", `← fetchLeadsFromForm(${formId}) page ${page + 1}: +${included}/${batch.length} leads (${duration}ms)`, {
         formId,
         page: page + 1,
         batchSize: batch.length,
+        included,
         totalSoFar: allLeads.length,
         duration,
         hasNext: !!response.data.paging?.next,
+        stoppedByCutoff,
       });
+
+      if (stoppedByCutoff) break;
 
       afterCursor = response.data.paging?.cursors?.after;
       const hasNext = !!response.data.paging?.next && batch.length > 0;
@@ -201,6 +226,7 @@ export async function fetchLeadsFromForm(
     totalLeads: allLeads.length,
     pages: page + 1,
     totalDuration,
+    hoursBack: hoursBack ?? undefined,
   });
 
   return allLeads;

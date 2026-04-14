@@ -46,8 +46,9 @@ export default function Leads() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const [syncOpen, setSyncOpen] = useState(false);
-  const [syncFormId, setSyncFormId] = useState("");
   const [syncPageId, setSyncPageId] = useState("");
+  const [syncFormId, setSyncFormId] = useState("");
+  const [syncHoursBack, setSyncHoursBack] = useState<number>(24);
   const [syncResult, setSyncResult] = useState<{
     synced: number;
     skipped: number;
@@ -101,6 +102,16 @@ export default function Leads() {
     onError: (err) => toast.error(err.message),
   });
 
+  const syncPageForms = useMemo(() => {
+    if (!formsIndex || !syncPageId) return [];
+    return formsIndex.filter((f) => f.pageId === syncPageId);
+  }, [formsIndex, syncPageId]);
+
+  const selectedSyncForm = useMemo(() => {
+    if (!syncFormId || !formsIndex) return null;
+    return formsIndex.find((f) => f.formId === syncFormId) ?? null;
+  }, [formsIndex, syncFormId]);
+
   const totalPages = Math.ceil((data?.total ?? 0) / PAGE_SIZE);
   const leads = data?.items ?? [];
 
@@ -147,10 +158,11 @@ export default function Leads() {
   ).length;
 
   const handleSync = () => {
-    if (!syncFormId.trim()) { toast.error("Please enter a Form ID"); return; }
     if (!syncPageId.trim()) { toast.error("Please select a Page"); return; }
+    if (!syncFormId.trim()) { toast.error("Please select a Form"); return; }
+    if (!Number.isFinite(syncHoursBack) || syncHoursBack <= 0) { toast.error("Hours back must be greater than 0"); return; }
     setSyncResult(null);
-    pollMutation.mutate({ formId: syncFormId.trim(), pageId: syncPageId.trim() });
+    pollMutation.mutate({ formId: syncFormId.trim(), pageId: syncPageId.trim(), hoursBack: syncHoursBack });
   };
 
   const handleExportCSV = () => {
@@ -379,15 +391,22 @@ export default function Leads() {
               Sync Leads from Facebook
             </DialogTitle>
             <DialogDescription>
-              Pull all leads from a specific Facebook Lead Form directly via Graph API.
-              Duplicates are automatically skipped.
+              Pull leads from a specific Facebook Lead Form via Graph API.
+              Only leads from the last N hours are synced (duplicates skipped).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
               <Label>Facebook Page</Label>
               {connections && connections.length > 0 ? (
-                <Select value={syncPageId} onValueChange={setSyncPageId}>
+                <Select
+                  value={syncPageId}
+                  onValueChange={(val) => {
+                    setSyncPageId(val);
+                    setSyncFormId("");
+                    setSyncResult(null);
+                  }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Select a connected page..." />
                   </SelectTrigger>
@@ -407,14 +426,53 @@ export default function Leads() {
               )}
             </div>
             <div className="space-y-1.5">
-              <Label>Form ID</Label>
-              <Input
-                placeholder="e.g. 1234567890123456"
+              <Label>Lead Form</Label>
+              <Select
                 value={syncFormId}
-                onChange={(e) => setSyncFormId(e.target.value)}
+                onValueChange={(val) => { setSyncFormId(val); setSyncResult(null); }}
+                disabled={!syncPageId}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={syncPageId ? "Select a form..." : "Select a page first"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {syncPageForms.length === 0 ? (
+                    <div className="px-3 py-2 text-sm text-muted-foreground">
+                      No forms found for this page yet.
+                    </div>
+                  ) : (
+                    syncPageForms.map((f) => (
+                      <SelectItem key={f.formId} value={f.formId}>
+                        {f.formName}{" "}
+                        <span className="text-muted-foreground ml-1 text-xs">
+                          ({f.platform} · {f.formId})
+                        </span>
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+              {selectedSyncForm && (
+                <p className="text-xs text-muted-foreground">
+                  Selected: <span className="font-mono">{selectedSyncForm.formId}</span>
+                </p>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <Label>Hours back</Label>
+              <Input
+                type="number"
+                min={1}
+                max={720}
+                value={String(syncHoursBack)}
+                onChange={(e) => {
+                  const n = Number(e.target.value);
+                  setSyncHoursBack(Number.isFinite(n) ? n : 24);
+                  setSyncResult(null);
+                }}
               />
               <p className="text-xs text-muted-foreground">
-                Find it in Ads Manager → Lead Ads Forms.
+                Example: 1, 10, 24. We will stop syncing once we reach older leads.
               </p>
             </div>
             {syncResult && (
@@ -432,7 +490,7 @@ export default function Leads() {
             <Button variant="outline" onClick={() => setSyncOpen(false)}>Cancel</Button>
             <Button
               onClick={handleSync}
-              disabled={pollMutation.isPending || !syncFormId || !syncPageId}
+              disabled={pollMutation.isPending || !syncFormId || !syncPageId || syncPageForms.length === 0}
             >
               {pollMutation.isPending
                 ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Syncing...</>

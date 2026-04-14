@@ -287,6 +287,8 @@ export const leadsRouter = router({
       z.object({
         formId: z.string().min(1, "Form ID is required"),
         pageId: z.string().min(1, "Page ID is required"),
+        /** Only sync leads newer than now - hoursBack */
+        hoursBack: z.number().min(1).max(720).default(24),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -303,7 +305,7 @@ export const leadsRouter = router({
       }
 
       const accessToken = decrypt(connection.accessToken);
-      const polledLeads = await fetchLeadsFromForm(input.formId, accessToken);
+      const polledLeads = await fetchLeadsFromForm(input.formId, accessToken, { hoursBack: input.hoursBack });
 
       if (polledLeads.length === 0) {
         return { synced: 0, skipped: 0, message: "No leads found in this form." };
