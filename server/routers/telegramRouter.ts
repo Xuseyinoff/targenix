@@ -10,7 +10,7 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { telegramChats, targetWebsites, users } from "../../drizzle/schema";
+import { integrations, telegramChats, targetWebsites, users } from "../../drizzle/schema";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import crypto from "crypto";
 
@@ -98,20 +98,36 @@ export const telegramRouter = router({
     return { token, botUrl };
   }),
 
-  /** Disconnect Telegram — clears chat_id, username, connected_at, and any pending token */
+  /**
+   * Disconnect Telegram and remove all Telegram-related data for this user:
+   * - clears system chat link on users
+   * - deletes all DELIVERY chats owned by the user
+   * - clears mappings that reference delivery chats (integrations/targets)
+   */
   disconnect: protectedProcedure.mutation(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error("DB unavailable");
 
-    await db
-      .update(users)
-      .set({
-        telegramChatId: null,
-        telegramUsername: null,
-        telegramConnectedAt: null,
-        telegramConnectToken: null,
-      })
-      .where(eq(users.id, ctx.user.id));
+    await db.transaction(async (tx) => {
+      // Clear mappings first (leads must stop delivering)
+      await tx.update(integrations).set({ telegramChatId: null }).where(eq(integrations.userId, ctx.user.id));
+      await tx.update(targetWebsites).set({ telegramChatId: null }).where(eq(targetWebsites.userId, ctx.user.id));
+
+      // Remove all delivery chats owned by the user
+      await tx.delete(telegramChats).where(eq(telegramChats.userId, ctx.user.id));
+
+      // Finally clear system chat link & token
+      await tx
+        .update(users)
+        .set({
+          telegramUserId: null,
+          telegramChatId: null,
+          telegramUsername: null,
+          telegramConnectedAt: null,
+          telegramConnectToken: null,
+        })
+        .where(eq(users.id, ctx.user.id));
+    });
 
     return { success: true };
   }),

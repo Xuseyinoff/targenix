@@ -56,6 +56,7 @@ export default function Settings() {
   const [connecting, setConnecting] = useState(false);
   const [deliveryChatIdInput, setDeliveryChatIdInput] = useState("");
   const [deliveryLinking, setDeliveryLinking] = useState(false);
+  const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState("");
 
@@ -213,7 +214,7 @@ export default function Settings() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => disconnectMutation.mutate()}
+                  onClick={() => setShowDisconnectDialog(true)}
                   disabled={disconnectMutation.isPending}
                   className="text-destructive hover:text-destructive"
                 >
@@ -482,6 +483,42 @@ export default function Settings() {
             >
               {deleteAccountMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Delete permanently
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Disconnect Telegram Dialog */}
+      <Dialog open={showDisconnectDialog} onOpenChange={(v) => setShowDisconnectDialog(v)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-destructive">Disconnect Telegram?</DialogTitle>
+            <DialogDescription>
+              This will remove <strong>all Telegram data</strong> from your account:
+              <ul className="list-disc list-inside mt-2 space-y-1">
+                <li>Disconnect your system chat</li>
+                <li>Delete all linked delivery chats</li>
+                <li>Clear all delivery mappings (destinations/integrations)</li>
+              </ul>
+              <p className="mt-2">
+                After disconnecting, leads will <strong>stop</strong> delivering to Telegram until you connect again.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowDisconnectDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={disconnectMutation.isPending}
+              onClick={() => {
+                disconnectMutation.mutate();
+                setShowDisconnectDialog(false);
+              }}
+            >
+              {disconnectMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Disconnect
             </Button>
           </DialogFooter>
         </DialogContent>
