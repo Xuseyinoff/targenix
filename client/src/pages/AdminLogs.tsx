@@ -111,7 +111,7 @@ export default function AdminLogs() {
   // Redirect non-admins
   useEffect(() => {
     if (user && user.role !== "admin") {
-      setLocation("/logs");
+      setLocation("/overview");
     }
   }, [user, setLocation]);
 

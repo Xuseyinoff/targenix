@@ -31,7 +31,6 @@ import {
   MonitorCheck,
   PanelLeft,
   Plug,
-  ScrollText,
   SendHorizonal,
   Settings,
   Shield,
@@ -68,11 +67,6 @@ const navGroups: NavGroup[] = [
       { icon: Facebook, label: "Connections", path: "/connections" },
       { icon: Plug, label: "Integrations", path: "/integrations" },
       { icon: Globe, label: "Destinations", path: "/destinations" },
-    ],
-  },
-  {
-    items: [
-      { icon: ScrollText, label: "Activity", path: "/activity" },
     ],
   },
 ];

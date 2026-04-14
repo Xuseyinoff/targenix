@@ -458,7 +458,7 @@ export default function Settings() {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground mb-4">
-              This will permanently delete your account, all leads, integrations, Facebook connections, destinations, and activity logs. <strong>This action cannot be undone.</strong>
+              This will permanently delete your account, all leads, integrations, Facebook connections, destinations, and stored logs. <strong>This action cannot be undone.</strong>
             </p>
             <Button
               variant="destructive"

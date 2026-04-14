@@ -19,7 +19,6 @@ import LeadRoutingWizard from "./pages/LeadRoutingWizard";
 import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
 import DataDeletion from "./pages/DataDeletion";
-import Logs from "./pages/Logs";
 import AdminLogs from "./pages/AdminLogs";
 import AdminBackfill from "./pages/AdminBackfill";
 import AdminTemplates from "./pages/AdminTemplates";
@@ -98,6 +97,19 @@ function RootRoute() {
   return <LandingPage />;
 }
 
+/** Old Activity / logs URLs — send users to overview (page removed). */
+function LegacyLogsRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    setLocation("/overview");
+  }, [setLocation]);
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+    </div>
+  );
+}
+
 function Router() {
   return (
     <Switch>
@@ -115,8 +127,8 @@ function Router() {
       <Route path="/facebook-accounts" component={Connections} />
       <Route path="/destinations" component={TargetWebsites} />
       <Route path="/target-websites" component={TargetWebsites} />
-      <Route path="/activity" component={Logs} />
-      <Route path="/logs" component={Logs} />
+      <Route path="/activity" component={LegacyLogsRedirect} />
+      <Route path="/logs" component={LegacyLogsRedirect} />
       <Route path="/admin/logs" component={AdminLogs} />
       <Route path="/admin/leads" component={AdminLeads} />
       <Route path="/admin/backfill" component={AdminBackfill} />
