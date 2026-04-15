@@ -333,10 +333,13 @@ export async function createIntegration(data: {
   if (!db) throw new Error("DB not available");
   // Populate dedicated columns from config (source of truth during creation)
   const cfg = data.config as Record<string, unknown> | null;
-  const pageId = data.type === "LEAD_ROUTING" ? (String(cfg?.pageId ?? "") || null) : null;
-  const formId = data.type === "LEAD_ROUTING" ? (String(cfg?.formId ?? "") || null) : null;
-  const pageName = data.type === "LEAD_ROUTING" ? (String(cfg?.pageName ?? "") || null) : null;
-  const formName = data.type === "LEAD_ROUTING" ? (String(cfg?.formName ?? "") || null) : null;
+  const isLR = data.type === "LEAD_ROUTING";
+  const pageId = isLR ? (String(cfg?.pageId ?? "") || null) : null;
+  const formId = isLR ? (String(cfg?.formId ?? "") || null) : null;
+  const pageName = isLR ? (String(cfg?.pageName ?? "") || null) : null;
+  const formName = isLR ? (String(cfg?.formName ?? "") || null) : null;
+  const rawFbId = isLR ? (cfg?.facebookAccountId ?? cfg?.accountId) : undefined;
+  const facebookAccountId = typeof rawFbId === "number" && rawFbId > 0 ? rawFbId : null;
   await db.insert(integrations).values({
     userId: data.userId,
     type: data.type,
@@ -348,6 +351,7 @@ export async function createIntegration(data: {
     formId,
     pageName,
     formName,
+    facebookAccountId,
   });
 }
 
@@ -362,6 +366,8 @@ export async function updateIntegration(id: number, data: Partial<{ name: string
     updateData.formId = String(cfg?.formId ?? "") || null;
     updateData.pageName = String(cfg?.pageName ?? "") || null;
     updateData.formName = String(cfg?.formName ?? "") || null;
+    const rawFbId = cfg?.facebookAccountId ?? cfg?.accountId;
+    updateData.facebookAccountId = typeof rawFbId === "number" && rawFbId > 0 ? rawFbId : null;
   }
   await db.update(integrations).set(updateData).where(eq(integrations.id, id));
 }

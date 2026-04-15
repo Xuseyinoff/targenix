@@ -21,6 +21,7 @@ import {
   facebookAccounts,
   facebookConnections,
   facebookForms,
+  integrations,
   adAccountsCache,
   campaignsCache,
   adSetsCache,
@@ -416,7 +417,7 @@ export const facebookAccountsRouter = router({
       }
 
       try {
-        const { pagesDisconnected, fbUserId, fbUserName } = await db.transaction(async (tx) => {
+        const { pagesDisconnected, integrationsDeleted, fbUserId, fbUserName } = await db.transaction(async (tx) => {
           const [acct] = await tx
             .select()
             .from(facebookAccounts)
@@ -487,12 +488,25 @@ export const facebookAccountsRouter = router({
             }
           }
 
+          // Delete all LEAD_ROUTING integrations tied to this FB account (indexed column).
+          // Without this, orphaned integrations remain in the DB but fail token resolution silently.
+          const [intCountRow] = await tx
+            .select({ c: count() })
+            .from(integrations)
+            .where(and(eq(integrations.userId, userId), eq(integrations.facebookAccountId, input.id)));
+          const integrationsDeleted = Number(intCountRow?.c ?? 0);
+
+          await tx
+            .delete(integrations)
+            .where(and(eq(integrations.userId, userId), eq(integrations.facebookAccountId, input.id)));
+
           await tx
             .delete(facebookAccounts)
             .where(and(eq(facebookAccounts.id, input.id), eq(facebookAccounts.userId, userId)));
 
           return {
             pagesDisconnected,
+            integrationsDeleted,
             fbUserId: acct.fbUserId,
             fbUserName: acct.fbUserName,
           };
@@ -503,7 +517,7 @@ export const facebookAccountsRouter = router({
           category: "FACEBOOK",
           eventType: "FACEBOOK_ACCOUNT_DISCONNECTED",
           source: "manual",
-          message: `FACEBOOK_ACCOUNT_DISCONNECTED: facebookAccountId=${input.id}, pages=${pagesDisconnected}`,
+          message: `FACEBOOK_ACCOUNT_DISCONNECTED: facebookAccountId=${input.id}, pages=${pagesDisconnected}, integrations=${integrationsDeleted}`,
           userId,
           meta: {
             action: "FACEBOOK_ACCOUNT_DISCONNECTED",
@@ -511,10 +525,11 @@ export const facebookAccountsRouter = router({
             fbUserId,
             fbUserName,
             pagesDisconnected,
+            integrationsDeleted,
           },
         });
 
-        return { success: true as const, pagesDisconnected };
+        return { success: true as const, pagesDisconnected, integrationsDeleted };
       } catch (err) {
         if (err instanceof TRPCError) throw err;
         console.error("[facebookAccounts.disconnect]", err);
@@ -523,6 +538,31 @@ export const facebookAccountsRouter = router({
           message: err instanceof Error ? err.message : "Failed to disconnect Facebook account",
         });
       }
+    }),
+
+  // ── Count pages + integrations that would be removed on disconnect ───────────
+  countAffectedOnDisconnect: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) return { pages: 0, integrations: 0 };
+
+      const [[pageRow], [intRow]] = await Promise.all([
+        db
+          .select({ c: count() })
+          .from(facebookConnections)
+          .where(and(eq(facebookConnections.userId, userId), eq(facebookConnections.facebookAccountId, input.id))),
+        db
+          .select({ c: count() })
+          .from(integrations)
+          .where(and(eq(integrations.userId, userId), eq(integrations.facebookAccountId, input.id))),
+      ]);
+
+      return {
+        pages: Number(pageRow?.c ?? 0),
+        integrations: Number(intRow?.c ?? 0),
+      };
     }),
 
   // ── List pages for an account ─────────────────────────────────────────────

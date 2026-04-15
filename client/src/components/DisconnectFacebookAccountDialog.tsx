@@ -26,6 +26,19 @@ type Props = {
   pageCount?: number;
 };
 
+function AffectedCounts({ facebookAccountId }: { facebookAccountId: number }) {
+  const { data } = trpc.facebookAccounts.countAffectedOnDisconnect.useQuery(
+    { id: facebookAccountId },
+    { enabled: facebookAccountId > 0 }
+  );
+  if (!data || data.integrations === 0) return null;
+  return (
+    <li className="text-amber-600 dark:text-amber-400">
+      {data.integrations} lead routing rule{data.integrations === 1 ? "" : "s"} tied to this account will also be deleted.
+    </li>
+  );
+}
+
 /**
  * Destructive confirmation: user must type DISCONNECT. DB-only disconnect (no Meta API).
  */
@@ -41,10 +54,15 @@ export function DisconnectFacebookAccountDialog({
 
   const mutation = trpc.facebookAccounts.disconnect.useMutation({
     onSuccess: (data) => {
-      toast.success(`Facebook account disconnected (${data.pagesDisconnected} page${data.pagesDisconnected === 1 ? "" : "s"}).`);
+      const parts = [`${data.pagesDisconnected} page${data.pagesDisconnected === 1 ? "" : "s"}`];
+      if (data.integrationsDeleted > 0) {
+        parts.push(`${data.integrationsDeleted} lead routing rule${data.integrationsDeleted === 1 ? "" : "s"}`);
+      }
+      toast.success(`Facebook account disconnected (${parts.join(", ")} removed).`);
       void utils.facebookAccounts.getAccountsWithPages.invalidate();
       void utils.facebookAccounts.listConnectedPages.invalidate();
       void utils.facebookAccounts.list.invalidate();
+      void utils.integrations.list.invalidate();
       setPhrase("");
       onOpenChange(false);
     },
@@ -95,6 +113,9 @@ export function DisconnectFacebookAccountDialog({
                     <ul className="list-disc space-y-1 pl-4 text-xs leading-relaxed">
                       <li>New leads will stop being processed for these pages.</li>
                       <li>All related connections are removed from our database.</li>
+                      {facebookAccountId != null && facebookAccountId > 0 && (
+                        <AffectedCounts facebookAccountId={facebookAccountId} />
+                      )}
                       <li>You can reconnect this Facebook profile anytime.</li>
                     </ul>
                     <p className="text-xs text-muted-foreground/90">

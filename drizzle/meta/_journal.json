@@ -253,6 +253,13 @@
       "when": 1776200000000,
       "tag": "0035_fb_multi_account_per_page",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "5",
+      "when": 1776210000000,
+      "tag": "0036_integrations_fb_account_id",
+      "breakpoints": true
     }
   ]
 }

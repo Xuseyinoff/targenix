@@ -271,6 +271,10 @@ export const integrations = mysqlTable("integrations", {
   formName: varchar("formName", { length: 255 }),
   /** Dedicated FK column extracted from config.targetWebsiteId for efficient JOIN and index. */
   targetWebsiteId: int("targetWebsiteId"),
+  /** Dedicated FK column extracted from config.facebookAccountId for efficient disconnect cleanup.
+   *  Nullable — populated by backfill for existing rows; always set on new LEAD_ROUTING integrations.
+   *  NULL for TELEGRAM / AFFILIATE types. */
+  facebookAccountId: int("facebookAccountId"),
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (t) => ({
@@ -278,6 +282,8 @@ export const integrations = mysqlTable("integrations", {
   idxUserPageForm: index("idx_integrations_user_page_form").on(t.userId, t.isActive, t.pageId, t.formId),
   // FK-style index for JOIN with target_websites
   idxTargetWebsite: index("idx_integrations_target_website_id").on(t.targetWebsiteId),
+  // Index for disconnect cleanup: find all integrations tied to a given FB account
+  idxFbAccount: index("idx_integrations_fb_account_id").on(t.facebookAccountId),
 }));
 
 export type Integration = typeof integrations.$inferSelect;
