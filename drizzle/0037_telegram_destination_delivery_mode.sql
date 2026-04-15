@@ -3,6 +3,5 @@
 
 ALTER TABLE `users`
   ADD COLUMN `telegramDestinationDeliveryMode` varchar(16) NOT NULL DEFAULT 'MANUAL' AFTER `telegramConnectToken`,
-  ADD COLUMN `telegramDestinationDefaultChatId` varchar(64) NULL AFTER `telegramDestinationDeliveryMode`;
-
-CREATE INDEX `idx_users_telegram_destination_mode` ON `users` (`telegramDestinationDeliveryMode`);
+  ADD COLUMN `telegramDestinationDefaultChatId` varchar(64) NULL AFTER `telegramDestinationDeliveryMode`,
+  ADD INDEX `idx_users_telegram_destination_mode` (`telegramDestinationDeliveryMode`);
