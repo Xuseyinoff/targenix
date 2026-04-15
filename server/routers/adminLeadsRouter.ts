@@ -9,6 +9,7 @@ import { adminProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { integrations, leads, orders, targetWebsites, users } from "../../drizzle/schema";
 import { and, count, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { retryAllFailedLeads, retryStuckPendingLeads } from "../services/retryScheduler";
 
 const AdminLeadListInput = z.object({
   limit: z.number().min(1).max(200).default(50),
@@ -197,6 +198,23 @@ export const adminLeadsRouter = router({
     });
 
     return { total: Number(total ?? 0), leads: rows };
+  }),
+
+  /**
+   * Manually trigger the stuck-pending retry (for leads the worker failed to process).
+   * This is idempotent — safe to call multiple times.
+   */
+  retryStuckPending: adminProcedure.mutation(async () => {
+    const result = await retryStuckPendingLeads();
+    return { retried: result.retried };
+  }),
+
+  /**
+   * Trigger full retry — graph errors + stuck pending + due order deliveries.
+   */
+  retryAll: adminProcedure.mutation(async () => {
+    const result = await retryAllFailedLeads();
+    return { retried: result.retried };
   }),
 });
 
