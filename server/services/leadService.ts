@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, lt, lte } from "drizzle-orm";
+import { and, desc, eq, isNotNull, lt, lte } from "drizzle-orm";
 import { facebookConnections, facebookAccounts, facebookForms, leads, orders, integrations, users, targetWebsites } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { decrypt } from "../encryption";
@@ -152,10 +152,17 @@ async function resolvePageAccessToken(
 
   // 3. Legacy fallback: facebookConnections — MUST include userId to prevent
   //    cross-user token access when multiple users share the same Facebook page.
+  //    After migration 0035 one page can have multiple connections (one per FB account).
+  //    Filter isActive=true and take the most recently created one to avoid stale tokens.
   const [connection] = await db
     .select()
     .from(facebookConnections)
-    .where(and(eq(facebookConnections.pageId, pageId), eq(facebookConnections.userId, userId)))
+    .where(and(
+      eq(facebookConnections.userId, userId),
+      eq(facebookConnections.pageId, pageId),
+      eq(facebookConnections.isActive, true),
+    ))
+    .orderBy(desc(facebookConnections.createdAt))
     .limit(1);
   if (connection) {
     return decrypt(connection.accessToken);
