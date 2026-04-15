@@ -28,8 +28,8 @@ let _pool: mysql.Pool | null = null;
  */
 function resolveDatabaseUrl(): string | undefined {
   const candidates = [
-    process.env.MYSQL_PUBLIC_URL,  // Railway public TCP URL (preferred)
-    process.env.MYSQL_URL,          // Railway internal TCP URL
+    process.env.MYSQL_URL,          // Railway internal TCP URL (preferred: more reliable inside Railway)
+    process.env.MYSQL_PUBLIC_URL,  // Railway public TCP URL
     process.env.DATABASE_URL,       // Generic fallback
   ];
 
