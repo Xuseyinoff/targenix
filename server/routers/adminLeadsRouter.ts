@@ -20,6 +20,10 @@ const AdminLeadListInput = z.object({
   pageId: z.string().trim().min(1).max(128).optional(),
   formId: z.string().trim().min(1).max(128).optional(),
   integrationId: z.number().optional(),
+  /** Filter by dataStatus */
+  dataStatus: z.enum(["PENDING", "ENRICHED", "ERROR"]).optional(),
+  /** Filter by deliveryStatus */
+  deliveryStatus: z.enum(["PENDING", "PROCESSING", "SUCCESS", "FAILED", "PARTIAL"]).optional(),
   /** If true, only show leads with at least one delivery attempt (orders.attempts > 0) */
   onlyRouted: z.boolean().default(false),
 });
@@ -62,6 +66,8 @@ export const adminLeadsRouter = router({
     if (input.userId != null) conditions.push(eq(leads.userId, input.userId));
     if (input.pageId) conditions.push(eq(leads.pageId, input.pageId));
     if (input.formId) conditions.push(eq(leads.formId, input.formId));
+    if (input.dataStatus) conditions.push(eq(leads.dataStatus, input.dataStatus));
+    if (input.deliveryStatus) conditions.push(eq(leads.deliveryStatus, input.deliveryStatus));
 
     if (input.onlyRouted) {
       conditions.push(

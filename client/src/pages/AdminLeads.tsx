@@ -5,9 +5,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
-import { Shield, Search, ChevronLeft, ChevronRight, RefreshCw, Users, Route } from "lucide-react";
+import { Shield, Search, ChevronLeft, ChevronRight, RefreshCw, Users, Route, Clock } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
+
+type DataStatusFilter = "PENDING" | "ENRICHED" | "ERROR" | "";
+type DeliveryStatusFilter = "PENDING" | "PROCESSING" | "SUCCESS" | "FAILED" | "PARTIAL" | "";
 
 const PAGE_SIZE = 50;
 
@@ -38,7 +41,9 @@ export default function AdminLeads() {
   const [pageId, setPageId] = useState("");
   const [formId, setFormId] = useState("");
   const [integrationId, setIntegrationId] = useState<string>("");
-  const [onlyRouted, setOnlyRouted] = useState(true);
+  const [dataStatus, setDataStatus] = useState<DataStatusFilter>("");
+  const [deliveryStatus, setDeliveryStatus] = useState<DeliveryStatusFilter>("");
+  const [onlyRouted, setOnlyRouted] = useState(false);
   const [page, setPage] = useState(0);
 
   const queryInput = useMemo(() => {
@@ -50,9 +55,11 @@ export default function AdminLeads() {
       ...(pageId.trim() ? { pageId: pageId.trim() } : {}),
       ...(formId.trim() ? { formId: formId.trim() } : {}),
       ...(integrationId.trim() ? { integrationId: parseInt(integrationId.trim(), 10) } : {}),
+      ...(dataStatus ? { dataStatus } : {}),
+      ...(deliveryStatus ? { deliveryStatus } : {}),
       onlyRouted,
     };
-  }, [search, userId, pageId, formId, integrationId, onlyRouted, page]);
+  }, [search, userId, pageId, formId, integrationId, dataStatus, deliveryStatus, onlyRouted, page]);
 
   const { data, isLoading, isFetching, refetch } = trpc.adminLeads.list.useQuery(queryInput, {
     enabled: user?.role === "admin",
@@ -88,6 +95,12 @@ export default function AdminLeads() {
             </div>
             <p className="text-muted-foreground text-sm mt-1">
               All users' leads with user/page/form/integration/delivery context
+              {data && dataStatus === "PENDING" && (
+                <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
+                  <Clock className="h-3 w-3" />
+                  {data.total} PENDING
+                </span>
+              )}
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
@@ -139,6 +152,32 @@ export default function AdminLeads() {
             type="number"
           />
 
+          {/* dataStatus filter */}
+          <select
+            value={dataStatus}
+            onChange={(e) => { setDataStatus(e.target.value as DataStatusFilter); setPage(0); }}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <option value="">All dataStatus</option>
+            <option value="PENDING">PENDING</option>
+            <option value="ENRICHED">ENRICHED</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+
+          {/* deliveryStatus filter */}
+          <select
+            value={deliveryStatus}
+            onChange={(e) => { setDeliveryStatus(e.target.value as DeliveryStatusFilter); setPage(0); }}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            <option value="">All deliveryStatus</option>
+            <option value="PENDING">PENDING</option>
+            <option value="PROCESSING">PROCESSING</option>
+            <option value="SUCCESS">SUCCESS</option>
+            <option value="FAILED">FAILED</option>
+            <option value="PARTIAL">PARTIAL</option>
+          </select>
+
           <Button
             variant={onlyRouted ? "default" : "outline"}
             size="sm"
@@ -147,6 +186,17 @@ export default function AdminLeads() {
           >
             <Route className="h-4 w-4 mr-1.5" />
             only routed
+          </Button>
+
+          {/* Quick: show only PENDING */}
+          <Button
+            variant={dataStatus === "PENDING" ? "default" : "outline"}
+            size="sm"
+            onClick={() => { setDataStatus(dataStatus === "PENDING" ? "" : "PENDING"); setOnlyRouted(false); setPage(0); }}
+            className="whitespace-nowrap"
+          >
+            <Clock className="h-4 w-4 mr-1.5" />
+            PENDING
           </Button>
         </div>
 
