@@ -99,6 +99,40 @@ export const telegramRouter = router({
   }),
 
   /**
+   * Debug helper: return Telegram webhook status for this bot.
+   * Useful to verify that production is pointing Telegram to the same origin as APP_URL.
+   */
+  getWebhookInfo: protectedProcedure.query(async () => {
+    if (!BOT_TOKEN) {
+      return {
+        ok: false,
+        error: "TELEGRAM_BOT_TOKEN not set",
+        botUsername: BOT_USERNAME,
+        appUrl: process.env.APP_URL ?? null,
+        webhookUrl: null as string | null,
+      };
+    }
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`);
+      const data = (await res.json()) as { ok: boolean; result?: { url?: string } };
+      return {
+        ok: Boolean(data.ok),
+        botUsername: BOT_USERNAME,
+        appUrl: process.env.APP_URL ?? null,
+        webhookUrl: data.result?.url ?? null,
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: String(err),
+        botUsername: BOT_USERNAME,
+        appUrl: process.env.APP_URL ?? null,
+        webhookUrl: null as string | null,
+      };
+    }
+  }),
+
+  /**
    * Disconnect Telegram and remove all Telegram-related data for this user:
    * - clears system chat link on users
    * - deletes all DELIVERY chats owned by the user
