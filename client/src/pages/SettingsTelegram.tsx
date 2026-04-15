@@ -85,6 +85,25 @@ export default function SettingsTelegram() {
   const { data: destinationMappings, refetch: refetchMappings, isFetching: mappingsFetching } =
     trpc.telegram.listDestinationMappings.useQuery(undefined, { staleTime: 5_000 });
 
+  const { data: destDeliverySettings, refetch: refetchDestDeliverySettings, isFetching: settingsFetching } =
+    trpc.telegram.getDestinationDeliverySettings.useQuery();
+
+  const setDestDeliverySettingsMutation = trpc.telegram.setDestinationDeliverySettings.useMutation({
+    onSuccess: async () => {
+      await Promise.all([refetchDestDeliverySettings(), refetchMappings()]);
+      toast.success("Saved.");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  const deliveryMode = destDeliverySettings?.mode ?? "MANUAL";
+  const [autoDefaultChatId, setAutoDefaultChatId] = useState<string>("none");
+
+  useEffect(() => {
+    const v = destDeliverySettings?.defaultChatId ? String(destDeliverySettings.defaultChatId) : "none";
+    setAutoDefaultChatId(v);
+  }, [destDeliverySettings?.defaultChatId]);
+
   const setDestinationChatMutation = trpc.telegram.setDestinationChat.useMutation({
     onSuccess: () => {
       void refetchMappings();
@@ -362,67 +381,128 @@ export default function SettingsTelegram() {
                     <div>
                       <CardTitle className="text-base">Delivery Mapping</CardTitle>
                       <CardDescription>
-                        Assign a delivery chat per affiliate destination/template (leads are sent only if mapped)
+                        Choose Auto (one chat for all) or Manual (map each destination).
                       </CardDescription>
                     </div>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => { void refetchMappings(); void refetchDeliveryChats(); }}
-                      disabled={mappingsFetching || deliveryFetching}
+                      onClick={() => { void refetchMappings(); void refetchDeliveryChats(); void refetchDestDeliverySettings(); }}
+                      disabled={mappingsFetching || deliveryFetching || settingsFetching}
                     >
-                      <RefreshCw className={`h-4 w-4 mr-1.5 ${(mappingsFetching || deliveryFetching) ? "animate-spin" : ""}`} />
+                      <RefreshCw className={`h-4 w-4 mr-1.5 ${(mappingsFetching || deliveryFetching || settingsFetching) ? "animate-spin" : ""}`} />
                       Refresh
                     </Button>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {!destinationMappings?.length ? (
-                    <p className="text-sm text-muted-foreground">No destinations/templates found.</p>
-                  ) : (
-                    <div className="space-y-2">
-                      {destinationMappings.map((t) => {
-                        const current = t.chat?.chatId != null ? String(t.chat.chatId) : "none";
-                        return (
-                          <div key={t.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
-                            <div className="min-w-0">
-                              <p className="text-sm font-medium truncate">{t.name}</p>
-                              <p className="text-xs text-muted-foreground font-mono">
-                                destinationId: {t.id}
-                                {t.templateId ? ` · templateId:${t.templateId}` : ` · ${t.templateType}`}
-                              </p>
-                            </div>
-                            <div className="w-[240px]">
-                              <Select
-                                value={current}
-                                onValueChange={(val) => {
-                                  const chatId = val === "none" ? null : val;
-                                  setDestinationChatMutation.mutate({ targetWebsiteId: t.id, telegramChatId: chatId });
-                                }}
-                                disabled={setDestinationChatMutation.isPending}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue placeholder="Select delivery chat" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="none">No delivery chat</SelectItem>
-                                  {(deliveryChats ?? []).map((c) => (
-                                    <SelectItem key={c.chatId} value={String(c.chatId)}>
-                                      {c.title ?? c.chatId}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                              {t.chat?.chatId && (
-                                <p className="text-[11px] text-muted-foreground font-mono mt-1 truncate">
-                                  {t.chat.chatId}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant={deliveryMode === "ALL" ? "secondary" : "outline"}
+                        size="sm"
+                        className="h-9"
+                        onClick={() =>
+                          setDestDeliverySettingsMutation.mutate({ mode: "ALL", defaultChatId: autoDefaultChatId === "none" ? null : autoDefaultChatId })
+                        }
+                        disabled={setDestDeliverySettingsMutation.isPending}
+                      >
+                        Auto (all)
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={deliveryMode === "MANUAL" ? "secondary" : "outline"}
+                        size="sm"
+                        className="h-9"
+                        onClick={() => setDestDeliverySettingsMutation.mutate({ mode: "MANUAL" })}
+                        disabled={setDestDeliverySettingsMutation.isPending}
+                      >
+                        Manual
+                      </Button>
                     </div>
+                    {deliveryMode === "ALL" && (
+                      <div className="w-full sm:w-[260px]">
+                        <Select value={autoDefaultChatId} onValueChange={setAutoDefaultChatId}>
+                          <SelectTrigger className="h-9">
+                            <SelectValue placeholder="Default delivery chat" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Select chat…</SelectItem>
+                            {(deliveryChats ?? []).map((c) => (
+                              <SelectItem key={c.chatId} value={String(c.chatId)}>
+                                {c.title ?? c.chatId}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          className="mt-2 w-full h-9"
+                          onClick={() =>
+                            setDestDeliverySettingsMutation.mutate({
+                              mode: "ALL",
+                              defaultChatId: autoDefaultChatId === "none" ? null : autoDefaultChatId,
+                            })
+                          }
+                          disabled={setDestDeliverySettingsMutation.isPending || autoDefaultChatId === "none"}
+                        >
+                          {setDestDeliverySettingsMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                          Apply to all destinations
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
+                  {deliveryMode === "MANUAL" && (
+                    <>
+                      {!destinationMappings?.length ? (
+                        <p className="text-sm text-muted-foreground">No destinations/templates found.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {destinationMappings.map((t) => {
+                            const current = t.chat?.chatId != null ? String(t.chat.chatId) : "none";
+                            return (
+                              <div key={t.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-medium truncate">{t.name}</p>
+                                  <p className="text-xs text-muted-foreground font-mono">
+                                    destinationId: {t.id}
+                                    {t.templateId ? ` · templateId:${t.templateId}` : ` · ${t.templateType}`}
+                                  </p>
+                                </div>
+                                <div className="w-[240px]">
+                                  <Select
+                                    value={current}
+                                    onValueChange={(val) => {
+                                      const chatId = val === "none" ? null : val;
+                                      setDestinationChatMutation.mutate({ targetWebsiteId: t.id, telegramChatId: chatId });
+                                    }}
+                                    disabled={setDestinationChatMutation.isPending}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Select delivery chat" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="none">No delivery chat</SelectItem>
+                                      {(deliveryChats ?? []).map((c) => (
+                                        <SelectItem key={c.chatId} value={String(c.chatId)}>
+                                          {c.title ?? c.chatId}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  {t.chat?.chatId && (
+                                    <p className="text-[11px] text-muted-foreground font-mono mt-1 truncate">
+                                      {t.chat.chatId}
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </>
                   )}
                 </CardContent>
               </Card>

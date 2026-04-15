@@ -17,7 +17,7 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { targetWebsites, destinationTemplates } from "../../drizzle/schema";
+import { targetWebsites, destinationTemplates, users } from "../../drizzle/schema";
 import { eq, desc, and } from "drizzle-orm";
 import { encrypt, decrypt } from "../encryption";
 import {
@@ -161,6 +161,17 @@ export const targetWebsitesRouter = router({
       const db = await getDb();
       if (!db) throw new Error("DB not available");
 
+      const [me] = await db
+        .select({
+          mode: users.telegramDestinationDeliveryMode,
+          defaultChatId: users.telegramDestinationDefaultChatId,
+        })
+        .from(users)
+        .where(eq(users.id, ctx.user.id))
+        .limit(1);
+      const autoChatId =
+        me?.mode === "ALL" && me.defaultChatId ? String(me.defaultChatId) : null;
+
       // Build URL (pre-filled for known templates)
       let url = "";
       if (input.templateType === "sotuvchi") url = "https://sotuvchi.com/api/v2/order";
@@ -196,6 +207,7 @@ export const targetWebsitesRouter = router({
         url,
         templateType: input.templateType,
         templateConfig: config,
+        ...(autoChatId ? { telegramChatId: autoChatId } : {}),
         isActive: true,
       });
       return { success: true };
@@ -450,6 +462,17 @@ export const targetWebsitesRouter = router({
       const db = await getDb();
       if (!db) throw new Error("DB not available");
 
+      const [me] = await db
+        .select({
+          mode: users.telegramDestinationDeliveryMode,
+          defaultChatId: users.telegramDestinationDefaultChatId,
+        })
+        .from(users)
+        .where(eq(users.id, ctx.user.id))
+        .limit(1);
+      const autoChatId =
+        me?.mode === "ALL" && me.defaultChatId ? String(me.defaultChatId) : null;
+
       const [template] = await db
         .select()
         .from(destinationTemplates)
@@ -476,6 +499,7 @@ export const targetWebsitesRouter = router({
           secrets: encryptedSecrets,
           variables: {},
         },
+        ...(autoChatId ? { telegramChatId: autoChatId } : {}),
         isActive: true,
       });
       return { success: true };

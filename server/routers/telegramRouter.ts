@@ -269,6 +269,85 @@ export const telegramRouter = router({
     }));
   }),
 
+  /** Get destinations delivery mapping settings (AUTO vs MANUAL) */
+  getDestinationDeliverySettings: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+
+    const [me] = await db
+      .select({
+        mode: users.telegramDestinationDeliveryMode,
+        defaultChatId: users.telegramDestinationDefaultChatId,
+      })
+      .from(users)
+      .where(eq(users.id, ctx.user.id))
+      .limit(1);
+
+    return {
+      mode: me?.mode ?? "MANUAL",
+      defaultChatId: me?.defaultChatId ? String(me.defaultChatId) : null,
+    } as const;
+  }),
+
+  /**
+   * Set destinations delivery mapping settings.
+   * - ALL: requires defaultChatId (DELIVERY chat owned by user), bulk-applies to all destinations
+   * - MANUAL: clears defaultChatId, keeps existing per-destination mappings
+   */
+  setDestinationDeliverySettings: protectedProcedure
+    .input(
+      z.object({
+        mode: z.enum(["ALL", "MANUAL"]),
+        defaultChatId: z.string().trim().min(1).nullable().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+
+      if (input.mode === "ALL") {
+        const chatId = (input.defaultChatId ?? "").trim();
+        if (!chatId) throw new Error("Please select a delivery chat");
+
+        // Validate delivery chat ownership
+        const [chat] = await db
+          .select({ chatId: telegramChats.chatId, userId: telegramChats.userId, type: telegramChats.type })
+          .from(telegramChats)
+          .where(and(eq(telegramChats.chatId, chatId), eq(telegramChats.userId, ctx.user.id)))
+          .limit(1);
+        if (!chat || chat.type !== "DELIVERY") throw new Error("Delivery chat not found");
+
+        await db.transaction(async (tx) => {
+          await tx
+            .update(users)
+            .set({
+              telegramDestinationDeliveryMode: "ALL",
+              telegramDestinationDefaultChatId: chatId,
+            })
+            .where(eq(users.id, ctx.user.id));
+
+          // Bulk-apply mapping to all destinations/templates for this user
+          await tx
+            .update(targetWebsites)
+            .set({ telegramChatId: chatId })
+            .where(eq(targetWebsites.userId, ctx.user.id));
+        });
+
+        return { success: true };
+      }
+
+      // MANUAL
+      await db
+        .update(users)
+        .set({
+          telegramDestinationDeliveryMode: "MANUAL",
+          telegramDestinationDefaultChatId: null,
+        })
+        .where(eq(users.id, ctx.user.id));
+
+      return { success: true };
+    }),
+
   /** Set destination → delivery chat mapping (stored on target_websites.telegramChatId) */
   setDestinationChat: protectedProcedure
     .input(z.object({ targetWebsiteId: z.number(), telegramChatId: z.string().trim().min(1).nullable() }))

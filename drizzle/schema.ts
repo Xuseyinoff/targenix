@@ -29,6 +29,12 @@ export const users = mysqlTable("users", {
   telegramConnectedAt: timestamp("telegramConnectedAt"),
   /** One-time token used to link a Telegram chat to this user account */
   telegramConnectToken: varchar("telegramConnectToken", { length: 128 }),
+  /** Destinations delivery mapping mode: ALL (auto-map) or MANUAL (per-destination). */
+  telegramDestinationDeliveryMode: mysqlEnum("telegramDestinationDeliveryMode", ["ALL", "MANUAL"])
+    .default("MANUAL")
+    .notNull(),
+  /** Default DELIVERY chat id used when mode = ALL. */
+  telegramDestinationDefaultChatId: varchar("telegramDestinationDefaultChatId", { length: 64 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
