@@ -731,4 +731,11 @@ export const facebookAccountsRouter = router({
       await unsubscribePageFromApp(input.pageId, page.access_token);
       return { success: true };
     }),
+
+  // ── Webhook URL ───────────────────────────────────────────────────────────
+  webhookUrl: protectedProcedure.query(() => {
+    let base = (process.env.APP_URL || "https://targenix.uz").replace(/\/+$/, "");
+    base = base.replace(/\/api\/webhooks\/facebook.*$/, "");
+    return { url: `${base}/api/webhooks/facebook` };
+  }),
 });

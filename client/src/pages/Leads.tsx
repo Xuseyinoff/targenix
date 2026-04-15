@@ -75,7 +75,7 @@ export default function Leads() {
   );
 
   const { data: formsIndex } = trpc.leads.getFormsIndex.useQuery();
-  const { data: connections } = trpc.facebook.listConnections.useQuery();
+  const { data: connections } = trpc.facebookAccounts.listConnectedPages.useQuery();
 
   const pageOptions = useMemo(() => {
     if (!formsIndex) return [];
@@ -421,7 +421,7 @@ export default function Leads() {
                 </Select>
               ) : (
                 <div className="text-sm text-muted-foreground p-3 rounded-lg border bg-muted/30">
-                  No connected pages. Add one in <strong>FB Connections</strong> first.
+                  No connected pages. Add one in <strong>Facebook Accounts</strong> first.
                 </div>
               )}
             </div>

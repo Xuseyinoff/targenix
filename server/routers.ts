@@ -2,7 +2,6 @@ import { router } from "./_core/trpc";
 import { authRouter } from "./routers/emailAuthRouter";
 import { leadsRouter } from "./routers/leadsRouter";
 import { integrationsRouter } from "./routers/integrationsRouter";
-import { facebookRouter } from "./routers/facebookRouter";
 import { facebookAccountsRouter } from "./routers/facebookAccountsRouter";
 import { targetWebsitesRouter } from "./routers/targetWebsitesRouter";
 import { webhookRouter } from "./routers/webhookRouter";
@@ -19,7 +18,6 @@ export const appRouter = router({
   auth: authRouter,
   leads: leadsRouter,
   integrations: integrationsRouter,
-  facebook: facebookRouter,
   facebookAccounts: facebookAccountsRouter,
   targetWebsites: targetWebsitesRouter,
   webhook: webhookRouter,

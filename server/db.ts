@@ -7,12 +7,10 @@ import {
   leads,
   orders,
   integrations,
-  facebookConnections,
   webhookEvents,
   type Lead,
   type Order,
   type Integration,
-  type FacebookConnection,
   type WebhookEvent,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -376,30 +374,6 @@ export async function deleteIntegration(id: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
   await db.delete(integrations).where(eq(integrations.id, id));
-}
-
-// ─── Facebook Connections ─────────────────────────────────────────────────────
-export async function getFacebookConnections(userId: number): Promise<FacebookConnection[]> {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(facebookConnections).where(eq(facebookConnections.userId, userId)).orderBy(desc(facebookConnections.createdAt));
-}
-
-export async function createFacebookConnection(data: {
-  userId: number;
-  pageId: string;
-  pageName: string;
-  accessToken: string;
-}): Promise<void> {
-  const db = await getDb();
-  if (!db) throw new Error("DB not available");
-  await db.insert(facebookConnections).values({ ...data, isActive: true });
-}
-
-export async function deleteFacebookConnection(id: number): Promise<void> {
-  const db = await getDb();
-  if (!db) throw new Error("DB not available");
-  await db.delete(facebookConnections).where(eq(facebookConnections.id, id));
 }
 
 // ─── Webhook Events ───────────────────────────────────────────────────────────

@@ -135,7 +135,7 @@ export default function WebhookHealth() {
     undefined,
     { refetchInterval: 8000, enabled: user?.role === "admin" }
   );
-  const { data: webhookInfo } = trpc.facebook.webhookUrl.useQuery();
+  const { data: webhookInfo } = trpc.facebookAccounts.webhookUrl.useQuery();
 
   // SSE real-time connection
   useEffect(() => {

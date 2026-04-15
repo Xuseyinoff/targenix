@@ -9,10 +9,9 @@ import {
   getOrdersByLeadId,
   getOrderStats,
   getTodayIntegrationLeadStats,
-  getFacebookConnections,
   getDb,
 } from "../db";
-import { leads, orders, integrations, targetWebsites, facebookForms } from "../../drizzle/schema";
+import { leads, orders, integrations, targetWebsites, facebookForms, facebookConnections } from "../../drizzle/schema";
 import { getLeadSourceInfo, getUserFormsIndex } from "../services/facebookFormsService";
 import { decrypt } from "../encryption";
 import {
@@ -296,11 +295,19 @@ export const leadsRouter = router({
       const db = await getDb();
       if (!db) throw new Error("Database not available");
 
-      const connections = await getFacebookConnections(userId);
-      const connection = connections.find((c) => c.pageId === input.pageId);
+      const [connection] = await db
+        .select()
+        .from(facebookConnections)
+        .where(and(
+          eq(facebookConnections.userId, userId),
+          eq(facebookConnections.pageId, input.pageId),
+          eq(facebookConnections.isActive, true),
+        ))
+        .orderBy(desc(facebookConnections.createdAt))
+        .limit(1);
       if (!connection) {
         throw new Error(
-          `No Facebook connection found for Page ID: ${input.pageId}. Please add it in FB Connections.`
+          `No Facebook connection found for Page ID: ${input.pageId}. Please connect the page via Facebook Accounts.`
         );
       }
 
