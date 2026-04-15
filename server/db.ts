@@ -33,14 +33,15 @@ function resolveDatabaseUrl(): string | undefined {
     process.env.DATABASE_URL,       // Generic fallback
   ];
 
-  for (const url of candidates) {
+  for (const raw of candidates) {
+    const url = raw?.trim();
     if (url && url.startsWith("mysql://")) {
       return url;
     }
   }
 
   // Last resort: return DATABASE_URL even if it's a socket (will fail gracefully)
-  return process.env.DATABASE_URL;
+  return process.env.DATABASE_URL?.trim();
 }
 
 export async function getDb() {

@@ -25,9 +25,9 @@ export function validateEnv(): void {
 
   // Database URL: accept any of these three (Railway uses different names)
   const hasDb =
-    process.env.MYSQL_PUBLIC_URL ||
-    process.env.MYSQL_URL ||
-    process.env.DATABASE_URL;
+    process.env.MYSQL_PUBLIC_URL?.trim() ||
+    process.env.MYSQL_URL?.trim() ||
+    process.env.DATABASE_URL?.trim();
   if (!hasDb) {
     missing.push("DATABASE_URL (or MYSQL_PUBLIC_URL / MYSQL_URL)");
   }

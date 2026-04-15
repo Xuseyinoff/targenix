@@ -28,9 +28,9 @@ if (!process.env.REDIS_URL) {
 // - Railway exposes MySQL plugin URLs as MYSQL_PUBLIC_URL / MYSQL_URL (preferred)
 // - Some setups also provide DATABASE_URL; in Railway it can sometimes be a socket path.
 const hasDb =
-  Boolean(process.env.MYSQL_PUBLIC_URL) ||
-  Boolean(process.env.MYSQL_URL) ||
-  Boolean(process.env.DATABASE_URL);
+  Boolean(process.env.MYSQL_PUBLIC_URL?.trim()) ||
+  Boolean(process.env.MYSQL_URL?.trim()) ||
+  Boolean(process.env.DATABASE_URL?.trim());
 if (!hasDb) {
   console.error("[Worker] FATAL: Database URL is required (MYSQL_PUBLIC_URL / MYSQL_URL / DATABASE_URL).");
   process.exit(1);
