@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Zap, Eye, EyeOff, Loader2, ArrowLeft } from "lucide-react";
+import { useT } from "@/hooks/useT";
 
 declare const FB: {
   login: (
@@ -17,13 +18,14 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [fbLoading, setFbLoading] = useState(false);
+  const t = useT();
 
   const utils = trpc.useUtils();
 
   const loginMutation = trpc.auth.login.useMutation({
     onSuccess: async () => {
       await utils.auth.me.invalidate();
-      toast.success("Logged in successfully");
+      toast.success(t("auth.loggedInSuccess"));
       setLocation("/");
     },
     onError: (err) => toast.error(err.message),
@@ -32,7 +34,7 @@ export default function Login() {
   const facebookLoginMutation = trpc.auth.facebookLogin.useMutation({
     onSuccess: async () => {
       await utils.auth.me.invalidate();
-      toast.success("Logged in with Facebook");
+      toast.success(t("auth.loggedInFacebook"));
       setLocation("/");
     },
     onError: (err) => {
@@ -44,7 +46,7 @@ export default function Login() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
-      toast.error("Please fill in all fields");
+      toast.error(t("auth.fillAllFields"));
       return;
     }
     loginMutation.mutate({ email, password });
@@ -52,7 +54,7 @@ export default function Login() {
 
   const handleFacebookLogin = () => {
     if (typeof FB === "undefined") {
-      toast.error("Facebook SDK not loaded. Please refresh and try again.");
+      toast.error(t("auth.fbSdkNotLoaded"));
       return;
     }
     setFbLoading(true);
@@ -62,7 +64,7 @@ export default function Login() {
           facebookLoginMutation.mutate({ accessToken: response.authResponse.accessToken });
         } else {
           setFbLoading(false);
-          toast.error("Facebook login was cancelled.");
+          toast.error(t("auth.fbLoginCancelled"));
         }
       },
       { scope: "public_profile,email" }
@@ -95,7 +97,7 @@ export default function Login() {
           className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors mb-8"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
-          Back to home
+          {t("auth.backToHome")}
         </button>
 
         {/* Logo */}
@@ -108,7 +110,7 @@ export default function Login() {
           </div>
           <div className="text-center">
             <h1 className="text-2xl font-bold text-white tracking-tight">Targenix.uz</h1>
-            <p className="text-sm text-slate-400 mt-1">Sign in to your account</p>
+            <p className="text-sm text-slate-400 mt-1">{t("auth.signInSubtitle")}</p>
           </div>
         </div>
 
@@ -125,7 +127,7 @@ export default function Login() {
             {/* Email */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-300" htmlFor="email">
-                Email
+                {t("auth.email")}
               </label>
               <input
                 id="email"
@@ -146,14 +148,14 @@ export default function Login() {
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-medium text-slate-300" htmlFor="password">
-                  Password
+                  {t("auth.password")}
                 </label>
                 <button
                   type="button"
                   onClick={() => setLocation("/forgot-password")}
                   className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
                 >
-                  Forgot password?
+                  {t("auth.forgotPassword")}
                 </button>
               </div>
               <div className="relative">
@@ -189,7 +191,7 @@ export default function Login() {
               style={{ background: "linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)" }}
             >
               {loginMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Sign In
+              {loginMutation.isPending ? t("auth.signingIn") : t("auth.signIn")}
             </button>
           </form>
 
@@ -200,7 +202,7 @@ export default function Login() {
             </div>
             <div className="relative flex justify-center">
               <span className="px-3 text-xs text-slate-500" style={{ background: "rgba(13,20,40,0.95)" }}>
-                or
+                {t("auth.or")}
               </span>
             </div>
           </div>
@@ -220,17 +222,17 @@ export default function Login() {
                 <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
               </svg>
             )}
-            Continue with Facebook
+            {t("auth.continueWithFacebook")}
           </button>
         </div>
 
         <p className="text-center text-sm text-slate-500 mt-6">
-          Don't have an account?{" "}
+          {t("auth.noAccount")}{" "}
           <button
             className="text-blue-400 hover:text-blue-300 transition-colors font-medium"
             onClick={() => setLocation("/register")}
           >
-            Create one
+            {t("auth.createOne")}
           </button>
         </p>
       </div>

@@ -39,6 +39,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/useMobile";
 import { cn } from "@/lib/utils";
+import { useT } from "@/hooks/useT";
 import {
   Facebook,
   Loader2,
@@ -94,6 +95,7 @@ function ConnectionsSkeleton() {
  */
 export default function Connections() {
   const isMobile = useIsMobile();
+  const t = useT();
   const [connecting, setConnecting] = useState(false);
   const [connectResult, setConnectResult] = useState<{
     fbUserName: string;
@@ -137,7 +139,7 @@ export default function Connections() {
 
   const deleteMutation = trpc.facebookAccounts.deletePageConnection.useMutation({
     onSuccess: () => {
-      toast.success("Page removed.");
+      toast.success(t("connections.pageRemoved"));
       utils.facebookAccounts.getAccountsWithPages.invalidate();
       utils.facebookAccounts.listConnectedPages.invalidate();
       setDeleteTarget(null);
@@ -192,11 +194,11 @@ export default function Connections() {
       const subscribed = pages.filter((p) => p.subscribed).length;
       const newPages = pages.filter((p) => p.isNew).length;
       toast.success(
-        `Connected as ${msg.fbUserName as string} — ${subscribed}/${pages.length} pages subscribed${newPages > 0 ? `, ${newPages} new` : ""}.`
+        `${t("connections.connectedAs", { name: String(msg.fbUserName ?? "") })} — ${t("connections.pagesSubscribed", { subscribed, total: pages.length })}${newPages > 0 ? `, ${newPages} new` : ""}.`
       );
     } else {
       setConnecting(false);
-      toast.error((msg.error as string) ?? "Facebook connection failed.");
+      toast.error((msg.error as string) ?? t("connections.facebookConnectFailed"));
     }
   };
 
@@ -232,8 +234,8 @@ export default function Connections() {
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: "Failed to initiate OAuth" }));
-        throw new Error(errorData.error ?? "Failed to initiate OAuth");
+        const errorData = await response.json().catch(() => ({ error: t("connections.oauthInitiateFailed") }));
+        throw new Error(errorData.error ?? t("connections.oauthInitiateFailed"));
       }
 
       const { oauthUrl } = await response.json();
@@ -250,7 +252,7 @@ export default function Connections() {
       );
 
       if (!popup) {
-        throw new Error("Popup was blocked. Please allow popups for this site and try again.");
+        throw new Error(t("connections.popupBlocked"));
       }
 
       popupRef.current = popup;
@@ -270,13 +272,13 @@ export default function Connections() {
           bcRef.current = null;
         }
         setConnecting((prev) => {
-          if (prev) toast.error("Facebook connection timed out. Please try again.");
+          if (prev) toast.error(t("connections.oauthTimedOut"));
           return false;
         });
       }, 30_000);
     } catch (err) {
       setConnecting(false);
-      toast.error(err instanceof Error ? err.message : "Failed to connect Facebook account.");
+      toast.error(err instanceof Error ? err.message : t("connections.connectAccountFailed"));
     }
   }, [connecting]);
 
@@ -299,7 +301,7 @@ export default function Connections() {
       )}
     >
       {connecting ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <Plus className="h-4 w-4 shrink-0" />}
-      {connecting ? "Connecting…" : "Connect Facebook"}
+      {connecting ? t("connections.connecting") : t("connections.connectFacebook")}
     </Button>
   );
 
@@ -316,34 +318,29 @@ export default function Connections() {
           <SheetHeader className="text-left border-b border-border/60 pb-4">
             <SheetTitle className="flex items-center gap-2 text-lg">
               <Facebook className="h-5 w-5 text-[#1877F2]" />
-              How it works
+              {t("connections.howTitle")}
             </SheetTitle>
             <SheetDescription className="text-left text-sm leading-relaxed">
-              Secure Facebook login; we subscribe your pages for lead webhooks.
+              {t("connections.howSubtitle")}
             </SheetDescription>
           </SheetHeader>
           <ul className="mt-4 space-y-3 text-sm text-muted-foreground">
             <li className="flex gap-3">
               <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-              <span>
-                Tap <strong className="text-foreground">Connect Facebook</strong> — a popup opens with Facebook&apos;s
-                official login.
-              </span>
+              <span>{t("connections.howStep1")}</span>
+            </li>
+            <li className="flex gap-3">
+              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+              <span>{t("connections.howStep2")}</span>
             </li>
             <li className="flex gap-3">
               <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
               <span>
-                After you approve, we pull pages you manage (including Business Manager) and register webhooks.
-              </span>
-            </li>
-            <li className="flex gap-3">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-              <span>
-                Use{" "}
+                {t("connections.howStep3Prefix")}{" "}
                 <Link href="/integrations" className="font-medium text-primary hover:underline">
-                  Integrations
+                  {t("connections.howStep3Link")}
                 </Link>{" "}
-                to route each page to Telegram, affiliate, or custom destinations.
+                {t("connections.howStep3Suffix")}
               </span>
             </li>
           </ul>
@@ -356,7 +353,7 @@ export default function Connections() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
             <div className="min-w-0 flex-1 space-y-1">
               <div className="flex items-start justify-between gap-2 md:block">
-                <h1 className="text-xl font-semibold tracking-tight text-foreground md:text-2xl">Connections</h1>
+                <h1 className="text-xl font-semibold tracking-tight text-foreground md:text-2xl">{t("connections.title")}</h1>
                 <div className="flex shrink-0 items-center gap-1.5 md:hidden">
                   <Button
                     type="button"
@@ -382,11 +379,11 @@ export default function Connections() {
                 </div>
               </div>
               <p className="text-xs leading-snug text-muted-foreground md:text-sm md:leading-relaxed md:max-w-md">
-                Link Facebook to sync pages and receive lead webhooks — then route in{" "}
+                {t("connections.subtitlePrefix")}{" "}
                 <Link href="/integrations" className="text-primary font-medium hover:underline">
-                  Integrations
+                  {t("connections.subtitleLink")}
                 </Link>
-                .
+                {t("connections.subtitleSuffix")}
               </p>
             </div>
             <div className="hidden shrink-0 flex-col gap-2 sm:flex-row md:flex">
@@ -398,7 +395,7 @@ export default function Connections() {
                 disabled={isLoading}
               >
                 <RefreshCw className={cn("h-4 w-4 sm:mr-2", isLoading && "animate-spin")} />
-                <span className="hidden sm:inline">Refresh</span>
+                <span className="hidden sm:inline">{t("connections.refresh")}</span>
               </Button>
               {fbConnectButton}
             </div>
@@ -412,15 +409,15 @@ export default function Connections() {
           >
             <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" />
             <span className="text-[11px] leading-snug text-muted-foreground">
-              <span className="font-medium text-foreground/90">OAuth on the server</span> — tokens never touch your
-              browser. <span className="text-primary">Learn more</span>
+              <span className="font-medium text-foreground/90">{t("connections.oauthBadgeTitle")}</span> —{" "}
+              {t("connections.oauthBadgeBody")} <span className="text-primary">{t("connections.learnMore")}</span>
             </span>
           </button>
 
           <div className="hidden flex-wrap items-center gap-2 md:flex">
             <div className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-3 py-1 text-xs text-muted-foreground">
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-              <span>OAuth on server — tokens never in the browser</span>
+              <span>{t("connections.oauthBadgeTitle")} — {t("connections.oauthBadgeBody")}</span>
             </div>
             <Button
               type="button"
@@ -430,7 +427,7 @@ export default function Connections() {
               onClick={() => setHowOpen(true)}
             >
               <LifeBuoy className="h-3.5 w-3.5" />
-              How it works
+              {t("connections.howTitle")}
             </Button>
           </div>
         </header>
@@ -438,11 +435,11 @@ export default function Connections() {
         {isError && (
           <Alert variant="destructive" className="rounded-2xl">
             <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Couldn&apos;t load connections</AlertTitle>
+            <AlertTitle>{t("connections.loadErrorTitle")}</AlertTitle>
             <AlertDescription className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <span>{queryError?.message ?? "Please try again."}</span>
+              <span>{queryError?.message ?? t("connections.tryAgain")}</span>
               <Button variant="outline" size="sm" className="shrink-0 border-destructive/40" onClick={() => refetch()}>
-                Retry
+                {t("connections.retry")}
               </Button>
             </AlertDescription>
           </Alert>
@@ -452,11 +449,13 @@ export default function Connections() {
           <div className="rounded-2xl border border-emerald-200/80 bg-emerald-50/80 p-4 dark:border-emerald-900/50 dark:bg-emerald-950/25">
             <div className="flex items-center gap-2 font-medium text-sm text-emerald-900 dark:text-emerald-100">
               <CheckCircle2 className="h-4 w-4 shrink-0" />
-              Connected as {connectResult.fbUserName}
+              {t("connections.connectedAs", { name: connectResult.fbUserName })}
             </div>
             <p className="mt-1 text-sm text-emerald-800/90 dark:text-emerald-200/90">
-              {connectResult.pages.filter((p) => p.subscribed).length} of {connectResult.pages.length} pages
-              subscribed.
+              {t("connections.pagesSubscribed", {
+                subscribed: connectResult.pages.filter((p) => p.subscribed).length,
+                total: connectResult.pages.length,
+              })}
             </p>
             {connectResult.pages.some((p) => !p.subscribed) && (
               <ul className="mt-2 space-y-1 text-xs text-amber-800 dark:text-amber-200/90">
@@ -476,7 +475,7 @@ export default function Connections() {
         )}
 
         <div className="flex items-baseline justify-between gap-2">
-          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">Your accounts</h2>
+          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">{t("connections.yourAccounts")}</h2>
           {!isLoading && accountsWithPages.length > 0 && (
             <span className="text-xs tabular-nums text-muted-foreground">
               {accountsWithPages.length} account{accountsWithPages.length !== 1 ? "s" : ""} · {totalPages} page
@@ -492,9 +491,9 @@ export default function Connections() {
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#1877F2]/10">
               <Facebook className="h-7 w-7 text-[#1877F2]" />
             </div>
-            <p className="text-base font-medium text-foreground">No Facebook accounts yet</p>
+            <p className="text-base font-medium text-foreground">{t("connections.noAccountsTitle")}</p>
             <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-              Connect once — we&apos;ll list your pages so you can enable lead delivery per page.
+              {t("connections.noAccountsBody")}
             </p>
             <div className="mt-6 w-full max-w-xs md:hidden">{fbConnectButton}</div>
             <div className="mt-6 hidden md:block">{fbConnectButton}</div>
@@ -580,11 +579,11 @@ export default function Connections() {
                           className="cursor-pointer md:hidden"
                           onClick={() => {
                             void navigator.clipboard.writeText(account.fbUserId);
-                            toast.success("User ID copied");
+                            toast.success(t("connections.userIdCopied"));
                           }}
                         >
                           <Fingerprint className="mr-2 h-4 w-4" />
-                          Copy user ID
+                          {t("connections.copyUserId")}
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="cursor-pointer text-destructive focus:text-destructive"
@@ -597,7 +596,7 @@ export default function Connections() {
                           }
                         >
                           <Unlink className="mr-2 h-4 w-4" />
-                          Disconnect account…
+                          {t("connections.disconnectAccount")}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -622,7 +621,7 @@ export default function Connections() {
                   <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
                     <div className="border-t border-border/60 bg-muted/5 px-2 pb-2 pt-1 sm:px-3">
                       {account.pages.length === 0 ? (
-                        <p className="py-8 text-center text-sm text-muted-foreground">No pages for this account.</p>
+                        <p className="py-8 text-center text-sm text-muted-foreground">{t("connections.noPagesForAccount")}</p>
                       ) : (
                         <ul className="space-y-2 py-2">
                           {account.pages.map((page) => (
@@ -637,30 +636,30 @@ export default function Connections() {
                                     <Badge
                                       variant="outline"
                                       className="border-amber-300 bg-amber-50 text-amber-800 text-[10px] uppercase dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
-                                      title={page.subscriptionError ?? "Subscription failed"}
+                                      title={page.subscriptionError ?? t("connections.subscriptionFailed")}
                                     >
-                                      Webhook issue
+                                      {t("connections.webhookIssue")}
                                     </Badge>
                                   )}
                                   {page.isActive ? (
                                     <Badge className="border-0 bg-emerald-100 text-emerald-800 hover:bg-emerald-100 text-[10px] uppercase tracking-wide dark:bg-emerald-950/50 dark:text-emerald-300">
-                                      Active
+                                      {t("connections.active")}
                                     </Badge>
                                   ) : (
                                     <Badge variant="secondary" className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                                      Inactive
+                                      {t("connections.inactive")}
                                     </Badge>
                                   )}
                                 </div>
                                 <div className="text-xs text-muted-foreground">
-                                  <span>Added {formatShortDate(page.createdAt)}</span>
+                                  <span>{t("connections.added", { date: formatShortDate(page.createdAt) })}</span>
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <button
                                         type="button"
                                         className="ml-2 inline text-primary underline-offset-2 hover:underline"
                                       >
-                                        Page ID
+                                        {t("connections.pageId")}
                                       </button>
                                     </TooltipTrigger>
                                     <TooltipContent className="max-w-xs font-mono text-xs">{page.pageId}</TooltipContent>
@@ -670,7 +669,7 @@ export default function Connections() {
 
                               <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3 sm:border-t-0 sm:pt-0">
                                 <div className="flex items-center gap-2 sm:flex-col sm:items-end">
-                                  <span className="text-xs text-muted-foreground sm:hidden">Receive leads</span>
+                                  <span className="text-xs text-muted-foreground sm:hidden">{t("connections.receiveLeads")}</span>
                                   <Switch
                                     checked={page.isActive}
                                     onCheckedChange={(checked) =>
@@ -699,18 +698,18 @@ export default function Connections() {
                                       className="cursor-pointer"
                                       onClick={() => {
                                         void navigator.clipboard.writeText(page.pageId);
-                                        toast.success("Page ID copied");
+                                        toast.success(t("connections.pageIdCopied"));
                                       }}
                                     >
                                       <Fingerprint className="mr-2 h-4 w-4" />
-                                      Copy page ID
+                                      {t("connections.copyPageId")}
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
                                       className="cursor-pointer text-destructive focus:text-destructive"
                                       onClick={() => setDeleteTarget({ id: page.id, name: page.pageName })}
                                     >
                                       <Trash2 className="mr-2 h-4 w-4" />
-                                      Remove page…
+                                      {t("connections.removePage")}
                                     </DropdownMenuItem>
                                   </DropdownMenuContent>
                                 </DropdownMenu>
@@ -737,19 +736,20 @@ export default function Connections() {
         <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
           <AlertDialogContent className="rounded-2xl">
             <AlertDialogHeader>
-              <AlertDialogTitle>Remove this page?</AlertDialogTitle>
+              <AlertDialogTitle>{t("connections.removePageTitle")}</AlertDialogTitle>
               <AlertDialogDescription>
-                <strong className="text-foreground">{deleteTarget?.name}</strong> will stop receiving leads in
-                Targenix. This cannot be undone.
+                <strong className="text-foreground">{deleteTarget?.name}</strong>{" "}
+                {t("connections.removePageBodyPrefix", { name: deleteTarget?.name ?? "" })}{" "}
+                {t("connections.removePageBodySuffix")}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter className="gap-2 sm:gap-0">
-              <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
+              <AlertDialogCancel className="rounded-xl">{t("connections.cancel")}</AlertDialogCancel>
               <AlertDialogAction
                 className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 onClick={() => deleteTarget && deleteMutation.mutate({ connectionId: deleteTarget.id })}
               >
-                Remove
+                {t("connections.remove")}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

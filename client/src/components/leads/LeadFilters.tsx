@@ -20,6 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useState, useMemo } from "react";
 import type { LeadFilters } from "@/hooks/useLeadFilters";
+import { useT } from "@/hooks/useT";
 
 export interface FormsIndexItem {
   pageId: string;
@@ -60,14 +61,15 @@ function Chip({
   onClick: () => void;
   children: React.ReactNode;
 }) {
+  const t = useT();
   return (
     <button
       onClick={onClick}
       className={cn(
         "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border shrink-0",
         active
-          ? "bg-primary text-primary-foreground border-primary"
-          : "bg-background text-muted-foreground border-border hover:border-primary/50 hover:text-foreground"
+          ? "bg-primary/20 text-foreground border-primary/40 hover:bg-primary/25"
+          : "bg-muted/30 text-muted-foreground border-border/70 hover:border-border hover:text-foreground hover:bg-muted/45"
       )}
     >
       {children}
@@ -86,9 +88,10 @@ function PagesDropdown({
   onChange: (v: string) => void;
   options: FormsIndexItem[];
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const selected = options.find((p) => p.pageId === value);
-  const label = selected ? (selected.pageName ?? selected.pageId) : "All Pages";
+  const label = selected ? (selected.pageName ?? selected.pageId) : t("leads.filters.pagesAll");
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -119,7 +122,7 @@ function PagesDropdown({
                 className="gap-2"
               >
                 <Check className={cn("h-4 w-4 shrink-0", value === "ALL" ? "opacity-100" : "opacity-0")} />
-                <span className="text-sm">All Pages</span>
+                <span className="text-sm">{t("leads.filters.pagesAll")}</span>
               </CommandItem>
               {options.map((p) => (
                 <CommandItem
@@ -154,11 +157,12 @@ function FormsDropdown({
   options: FormsIndexItem[];
   allFormsIndex: FormsIndexItem[];
 }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
 
   // Find selected form label from full index (not just filtered options)
   const selected = allFormsIndex.find((f) => f.formId === value);
-  const label = selected ? (selected.formName ?? selected.formId) : "All Forms";
+  const label = selected ? (selected.formName ?? selected.formId) : t("leads.filters.formsAll");
 
   // Group options by page
   const groups = useMemo(() => {
@@ -202,7 +206,7 @@ function FormsDropdown({
                 className="gap-2"
               >
                 <Check className={cn("h-4 w-4 shrink-0", value === "ALL" ? "opacity-100" : "opacity-0")} />
-                <span className="text-sm">All Forms</span>
+                <span className="text-sm">{t("leads.filters.formsAll")}</span>
               </CommandItem>
             </CommandGroup>
 
@@ -240,6 +244,7 @@ function FormsDropdown({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }: LeadFiltersProps) {
+  const t = useT();
   const {
     search, platformFilter, statusFilter, hasActiveFilters,
     pageIdFilter, formIdFilter,
@@ -253,7 +258,7 @@ export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }
       <div className="relative">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
         <Input
-          placeholder="Search name, phone..."
+          placeholder={t("leads.filters.searchPlaceholder")}
           className="pl-9 h-9 md:max-w-[500px]"
           value={search}
           onChange={(e) => handleSearchChange(e.target.value)}
@@ -266,41 +271,41 @@ export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }
           active={platformFilter === "ALL" && statusFilter === "ALL"}
           onClick={() => { handlePlatformChange("ALL"); handleStatusChange("ALL"); }}
         >
-          All
+          {t("leads.filters.all")}
         </Chip>
         <Chip
           active={platformFilter === "ig"}
           onClick={() => handlePlatformChange(platformFilter === "ig" ? "ALL" : "ig")}
         >
-          <Instagram className="h-3 w-3" />Instagram
+          <Instagram className="h-3 w-3" />{t("leads.filters.instagram")}
         </Chip>
         <Chip
           active={platformFilter === "fb"}
           onClick={() => handlePlatformChange(platformFilter === "fb" ? "ALL" : "fb")}
         >
-          <Facebook className="h-3 w-3" />Facebook
+          <Facebook className="h-3 w-3" />{t("leads.filters.facebook")}
         </Chip>
         <Chip
           active={statusFilter === "RECEIVED"}
           onClick={() => handleStatusChange(statusFilter === "RECEIVED" ? "ALL" : "RECEIVED")}
         >
-          Delivered
+          {t("leads.filters.delivered")}
         </Chip>
         <Chip
           active={statusFilter === "PENDING"}
           onClick={() => handleStatusChange(statusFilter === "PENDING" ? "ALL" : "PENDING")}
         >
-          Pending
+          {t("leads.filters.pending")}
         </Chip>
         <Chip
           active={statusFilter === "FAILED"}
           onClick={() => handleStatusChange(statusFilter === "FAILED" ? "ALL" : "FAILED")}
         >
-          Issues
+          {t("leads.filters.issues")}
         </Chip>
         {hasActiveFilters && (
           <Chip active={false} onClick={clearFilters}>
-            <X className="h-3 w-3" />Clear
+            <X className="h-3 w-3" />{t("leads.filters.clear")}
           </Chip>
         )}
       </div>
@@ -310,18 +315,18 @@ export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }
         {/* Platform — simple 3-item select, no search needed */}
         <Select value={platformFilter} onValueChange={handlePlatformChange}>
           <SelectTrigger className="w-[130px] h-9">
-            <SelectValue placeholder="Platform" />
+            <SelectValue placeholder={t("leads.filters.platformPlaceholder")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="ALL">All Platforms</SelectItem>
+            <SelectItem value="ALL">{t("leads.filters.allPlatforms")}</SelectItem>
             <SelectItem value="fb">
               <span className="flex items-center gap-2">
-                <Facebook className="h-3.5 w-3.5 text-blue-600" />Facebook
+                <Facebook className="h-3.5 w-3.5 text-blue-600" />{t("leads.filters.facebook")}
               </span>
             </SelectItem>
             <SelectItem value="ig">
               <span className="flex items-center gap-2">
-                <Instagram className="h-3.5 w-3.5 text-pink-500" />Instagram
+                <Instagram className="h-3.5 w-3.5 text-pink-500" />{t("leads.filters.instagram")}
               </span>
             </SelectItem>
           </SelectContent>
@@ -349,13 +354,13 @@ export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }
         {/* Status — simple 4-item select */}
         <Select value={statusFilter} onValueChange={handleStatusChange}>
           <SelectTrigger className="w-[120px] h-9">
-            <SelectValue placeholder="Status" />
+            <SelectValue placeholder={t("leads.filters.statusPlaceholder")} />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="ALL">All Status</SelectItem>
-            <SelectItem value="PENDING">Pending</SelectItem>
-            <SelectItem value="RECEIVED">Delivered</SelectItem>
-            <SelectItem value="FAILED">Issues</SelectItem>
+            <SelectItem value="ALL">{t("leads.filters.allStatus")}</SelectItem>
+            <SelectItem value="PENDING">{t("leads.filters.pending")}</SelectItem>
+            <SelectItem value="RECEIVED">{t("leads.filters.delivered")}</SelectItem>
+            <SelectItem value="FAILED">{t("leads.filters.issues")}</SelectItem>
           </SelectContent>
         </Select>
 
@@ -366,7 +371,7 @@ export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }
             className="h-9 px-2 text-muted-foreground"
             onClick={clearFilters}
           >
-            Clear
+            {t("leads.filters.clear")}
           </Button>
         )}
       </div>

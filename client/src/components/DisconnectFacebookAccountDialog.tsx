@@ -14,6 +14,7 @@ import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useT } from "@/hooks/useT";
 
 const CONFIRM_PHRASE = "DISCONNECT";
 
@@ -51,6 +52,7 @@ export function DisconnectFacebookAccountDialog({
 }: Props) {
   const [phrase, setPhrase] = useState("");
   const utils = trpc.useUtils();
+  const t = useT();
 
   const mutation = trpc.facebookAccounts.disconnect.useMutation({
     onSuccess: (data) => {
@@ -92,7 +94,7 @@ export function DisconnectFacebookAccountDialog({
                 <AlertTriangle className="h-4 w-4 text-destructive" />
               </div>
               <div className="min-w-0 space-y-1">
-                <DialogTitle className="text-lg font-semibold leading-tight">Disconnect Facebook account</DialogTitle>
+                <DialogTitle className="text-lg font-semibold leading-tight">{t("connections.disconnectAccount").replace("…","")}</DialogTitle>
                 <DialogDescription asChild>
                   <div className="space-y-2 pt-1 text-sm text-muted-foreground">
                     <p>
@@ -159,7 +161,7 @@ export function DisconnectFacebookAccountDialog({
             onClick={() => onOpenChange(false)}
             disabled={mutation.isPending}
           >
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             type="button"
@@ -177,7 +179,7 @@ export function DisconnectFacebookAccountDialog({
                 Disconnecting…
               </span>
             ) : (
-              "Disconnect account"
+              t("connections.disconnectAccount").replace("…", "")
             )}
           </Button>
         </DialogFooter>

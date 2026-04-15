@@ -3,11 +3,13 @@ import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Zap, ArrowLeft, Loader2, CheckCircle2 } from "lucide-react";
+import { useT } from "@/hooks/useT";
 
 export default function ForgotPassword() {
   const [, setLocation] = useLocation();
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
+  const t = useT();
 
   const mutation = trpc.auth.forgotPassword.useMutation({
     onSuccess: () => setSent(true),
@@ -16,7 +18,7 @@ export default function ForgotPassword() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) { toast.error("Please enter your email"); return; }
+    if (!email) { toast.error(t("auth.forgot.enterEmail")); return; }
     mutation.mutate({ email });
   };
 
@@ -30,7 +32,7 @@ export default function ForgotPassword() {
 
       <div className="relative z-10 w-full max-w-sm">
         <button onClick={() => setLocation("/login")} className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors mb-8">
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to login
+          <ArrowLeft className="h-3.5 w-3.5" /> {t("auth.forgot.backToLogin")}
         </button>
 
         <div className="flex flex-col items-center gap-3 mb-8">
@@ -38,8 +40,8 @@ export default function ForgotPassword() {
             <Zap className="h-6 w-6 text-white" />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold text-white tracking-tight">Forgot password?</h1>
-            <p className="text-sm text-slate-400 mt-1">We'll send you a reset link</p>
+            <h1 className="text-2xl font-bold text-white tracking-tight">{t("auth.forgot.title")}</h1>
+            <p className="text-sm text-slate-400 mt-1">{t("auth.forgot.subtitle")}</p>
           </div>
         </div>
 
@@ -47,22 +49,22 @@ export default function ForgotPassword() {
           {sent ? (
             <div className="flex flex-col items-center gap-3 py-4 text-center">
               <CheckCircle2 className="h-10 w-10 text-green-400" />
-              <p className="text-white font-medium">Check your email</p>
+              <p className="text-white font-medium">{t("auth.forgot.checkEmailTitle")}</p>
               <p className="text-sm text-slate-400">
-                If an account exists for <span className="text-slate-200">{email}</span>, we've sent a password reset link. It expires in 1 hour.
+                {t("auth.forgot.checkEmailBody", { email })}
               </p>
               <button onClick={() => setLocation("/login")} className="mt-2 text-sm text-blue-400 hover:text-blue-300 transition-colors">
-                Back to login
+                {t("auth.forgot.backToLogin")}
               </button>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-slate-300" htmlFor="email">Email address</label>
+                <label className="text-xs font-medium text-slate-300" htmlFor="email">{t("auth.forgot.emailLabel")}</label>
                 <input
                   id="email"
                   type="email"
-                  placeholder="you@example.com"
+                  placeholder={t("auth.forgot.emailPlaceholder")}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   autoComplete="email"
@@ -80,7 +82,7 @@ export default function ForgotPassword() {
                 style={{ background: "linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)" }}
               >
                 {mutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                Send reset link
+                {mutation.isPending ? t("auth.forgot.sending") : t("auth.forgot.sendLink")}
               </button>
             </form>
           )}

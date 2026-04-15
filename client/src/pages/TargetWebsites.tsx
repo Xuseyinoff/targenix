@@ -18,6 +18,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useT } from "@/hooks/useT";
 import {
   Select,
   SelectContent,
@@ -236,10 +237,11 @@ interface TestResult {
 function TestResultPanel({ result, onClose }: { result: TestResult; onClose: () => void }) {
   const [showReq, setShowReq] = useState(true);
   const [showRes, setShowRes] = useState(true);
+  const t = useT();
 
   function copyJson(val: unknown) {
     navigator.clipboard.writeText(JSON.stringify(val, null, 2));
-    toast.success("Copied to clipboard");
+    toast.success(t("destinations.toast.copied"));
   }
 
   return (
@@ -247,7 +249,7 @@ function TestResultPanel({ result, onClose }: { result: TestResult; onClose: () 
       {/* Status bar */}
       <div className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium ${result.success ? "bg-green-500/10 text-green-700 dark:text-green-400" : "bg-red-500/10 text-red-700 dark:text-red-400"}`}>
         <span className={`w-2 h-2 rounded-full ${result.success ? "bg-green-500" : "bg-red-500"}`} />
-        {result.success ? "✓ Test passed" : "✗ Test failed"}
+        {result.success ? t("destinations.testPanel.passed") : t("destinations.testPanel.failed")}
         <span className="ml-auto text-xs opacity-70">{result.durationMs}ms</span>
         <button onClick={onClose} className="ml-2 text-muted-foreground hover:text-foreground text-xs">✕</button>
       </div>
@@ -259,7 +261,7 @@ function TestResultPanel({ result, onClose }: { result: TestResult; onClose: () 
             className="w-full flex items-center justify-between px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted/50 transition-colors"
             onClick={() => setShowReq((v) => !v)}
           >
-            <span>REQUEST SENT</span>
+            <span>{t("destinations.testPanel.requestSent")}</span>
             {showReq ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
           </button>
           {showReq && (
@@ -270,7 +272,7 @@ function TestResultPanel({ result, onClose }: { result: TestResult; onClose: () 
               </div>
               {Object.keys(result.requestPreview.headers).length > 0 && (
                 <div>
-                  <p className="text-xs text-muted-foreground mb-1">Headers:</p>
+                  <p className="text-xs text-muted-foreground mb-1">{t("destinations.testPanel.headers")}</p>
                   <div className="bg-background rounded border p-2 text-xs font-mono space-y-0.5">
                     {Object.entries(result.requestPreview.headers).map(([k, v]) => (
                       <div key={k}><span className="text-blue-500">{k}</span>: {v}</div>
@@ -281,9 +283,9 @@ function TestResultPanel({ result, onClose }: { result: TestResult; onClose: () 
               {result.requestPreview.body !== null && (
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <p className="text-xs text-muted-foreground">Body:</p>
+                    <p className="text-xs text-muted-foreground">{t("destinations.testPanel.body")}</p>
                     <button onClick={() => copyJson(result.requestPreview!.body)} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
-                      <Copy className="w-3 h-3" /> Copy
+                      <Copy className="w-3 h-3" /> {t("destinations.testPanel.copy")}
                     </button>
                   </div>
                   <pre className="bg-background rounded border p-2 text-xs font-mono overflow-auto max-h-32 whitespace-pre-wrap">
@@ -302,7 +304,7 @@ function TestResultPanel({ result, onClose }: { result: TestResult; onClose: () 
           className="w-full flex items-center justify-between px-4 py-2 text-xs font-semibold text-muted-foreground hover:bg-muted/50 transition-colors"
           onClick={() => setShowRes((v) => !v)}
         >
-          <span>RESPONSE</span>
+          <span>{t("destinations.testPanel.response")}</span>
           {showRes ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
         </button>
         {showRes && (
@@ -312,9 +314,9 @@ function TestResultPanel({ result, onClose }: { result: TestResult; onClose: () 
             ) : (
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <p className="text-xs text-muted-foreground">Raw response:</p>
+                  <p className="text-xs text-muted-foreground">{t("destinations.testPanel.rawResponse")}</p>
                   <button onClick={() => copyJson(result.responseData)} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
-                    <Copy className="w-3 h-3" /> Copy
+                    <Copy className="w-3 h-3" /> {t("destinations.testPanel.copy")}
                   </button>
                 </div>
                 <pre className="bg-background rounded border p-2 text-xs font-mono overflow-auto max-h-40 whitespace-pre-wrap">
@@ -346,6 +348,7 @@ function TagInput({
   placeholder: string;
 }) {
   const [draft, setDraft] = useState("");
+  const t = useT();
   function addTag() {
     const v = draft.trim();
     if (!v || values.includes(v)) { setDraft(""); return; }
@@ -369,7 +372,7 @@ function TagInput({
         ))}
         <input
           className="flex-1 min-w-[80px] bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-          placeholder={values.length === 0 ? placeholder : "+ add"}
+          placeholder={values.length === 0 ? placeholder : t("destinations.tagInput.add")}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(); } }}
@@ -382,6 +385,7 @@ function TagInput({
 
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function TargetWebsites() {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [mode, setMode] = useState<FormMode>("select-template");
@@ -406,7 +410,7 @@ export default function TargetWebsites() {
     onSuccess: () => {
       utils.targetWebsites.list.invalidate();
       setOpen(false);
-      toast.success("Target website saved");
+      toast.success(t("destinations.toast.targetWebsiteSaved"));
     },
     onError: (e) => toast.error(e.message),
   });
@@ -415,7 +419,7 @@ export default function TargetWebsites() {
     onSuccess: () => {
       utils.targetWebsites.list.invalidate();
       setOpen(false);
-      toast.success("Updated");
+      toast.success(t("destinations.toast.updated"));
     },
     onError: (e) => toast.error(e.message),
   });
@@ -423,7 +427,7 @@ export default function TargetWebsites() {
   const deleteMutation = trpc.targetWebsites.delete.useMutation({
     onSuccess: () => {
       utils.targetWebsites.list.invalidate();
-      toast.success("Deleted");
+      toast.success(t("destinations.toast.deleted"));
     },
     onError: (e) => toast.error(e.message),
   });
@@ -437,14 +441,14 @@ export default function TargetWebsites() {
     onSuccess: (data) => {
       setTestResult(data as TestResult);
     },
-    onError: (e) => toast.error(`Test failed: ${e.message}`),
+    onError: (e) => toast.error(t("destinations.toast.testFailed", { message: e.message })),
   });
 
   const createFromTemplateMutation = trpc.targetWebsites.createFromTemplate.useMutation({
     onSuccess: () => {
       utils.targetWebsites.list.invalidate();
       setOpen(false);
-      toast.success("Destination saved");
+      toast.success(t("destinations.toast.saved"));
     },
     onError: (e) => toast.error(e.message),
   });
@@ -453,7 +457,7 @@ export default function TargetWebsites() {
     onSuccess: () => {
       utils.targetWebsites.list.invalidate();
       setOpen(false);
-      toast.success("Updated");
+      toast.success(t("destinations.toast.updated"));
     },
     onError: (e) => toast.error(e.message),
   });
@@ -511,10 +515,10 @@ export default function TargetWebsites() {
   }
 
   function handleDynSubmit() {
-    if (!dynName.trim()) { toast.error("Name is required"); return; }
+    if (!dynName.trim()) { toast.error(t("destinations.validation.nameRequired")); return; }
     if (!selectedDynTemplate) return;
     for (const key of selectedDynTemplate.userVisibleFields) {
-      if (!dynSecrets[key]?.trim()) { toast.error(`"${key}" is required`); return; }
+      if (!dynSecrets[key]?.trim()) { toast.error(t("destinations.validation.fieldRequired", { field: key })); return; }
     }
     createFromTemplateMutation.mutate({
       templateId: selectedDynTemplate.id,
@@ -575,7 +579,7 @@ export default function TargetWebsites() {
   }
 
   function handleEditDynSubmit() {
-    if (!dynName.trim()) { toast.error("Name is required"); return; }
+    if (!dynName.trim()) { toast.error(t("destinations.validation.nameRequired")); return; }
     if (!editId) return;
     updateFromTemplateMutation.mutate({
       id: editId,
@@ -598,15 +602,15 @@ export default function TargetWebsites() {
   }
 
   function handleSubmit() {
-    if (!form.name.trim()) { toast.error("Name is required"); return; }
-    if (isCustom && !form.url.trim()) { toast.error("Endpoint URL is required"); return; }
+    if (!form.name.trim()) { toast.error(t("destinations.validation.nameRequired")); return; }
+    if (isCustom && !form.url.trim()) { toast.error(t("destinations.validation.endpointRequired")); return; }
 
     // Validate apiKey for non-custom templates (required on create, optional on edit)
     if (!isCustom) {
       for (const sf of selectedTemplate.savedFields) {
         if (sf.key === "apiKey" && editId) continue;
         if (!form.fields[sf.key]?.trim()) {
-          toast.error(`"${sf.label}" is required`);
+          toast.error(t("destinations.validation.fieldRequired", { field: sf.label }));
           return;
         }
       }
@@ -615,7 +619,7 @@ export default function TargetWebsites() {
     // Validate JSON template if contentType = json
     if (isCustom && form.contentType === "json" && form.bodyTemplate.trim()) {
       try { JSON.parse(form.bodyTemplate); } catch {
-        toast.error("Body template is not valid JSON. Check for syntax errors.");
+        toast.error(t("destinations.validation.invalidJson"));
         return;
       }
     }
@@ -651,7 +655,7 @@ export default function TargetWebsites() {
 
   function handleTest() {
     if (!editId) {
-      toast.info("Save the website first, then test it");
+      toast.info(t("destinations.validation.saveFirstThenTest"));
       return;
     }
     setTestResult(null);
@@ -667,14 +671,14 @@ export default function TargetWebsites() {
         {/* Header */}
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <h1 className="text-xl font-bold">Destinations</h1>
+            <h1 className="text-xl font-bold">{t("destinations.title")}</h1>
             <p className="text-muted-foreground text-xs mt-0.5 hidden sm:block">
-              Reusable affiliate site configurations — set up once, use in many Lead Routings
+              {t("destinations.subtitle")}
             </p>
           </div>
           <Button size="sm" className="h-10 px-3 shrink-0" onClick={openAdd}>
             <Plus className="w-4 h-4" />
-            <span className="hidden sm:inline ml-1.5">Add Website</span>
+            <span className="hidden sm:inline ml-1.5">{t("destinations.addWebsite")}</span>
           </Button>
         </div>
 
@@ -685,7 +689,7 @@ export default function TargetWebsites() {
               <Input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search destinations…"
+                placeholder={t("destinations.searchPlaceholder")}
                 className="h-10"
               />
             </div>
@@ -697,7 +701,7 @@ export default function TargetWebsites() {
                 className="h-9 shrink-0"
                 onClick={() => setFilter("all")}
               >
-                All
+                {t("destinations.filterAll")}
               </Button>
               <Button
                 type="button"
@@ -706,7 +710,7 @@ export default function TargetWebsites() {
                 className="h-9 shrink-0"
                 onClick={() => setFilter("active")}
               >
-                Active
+                {t("destinations.filterActive")}
               </Button>
               <Button
                 type="button"
@@ -715,7 +719,7 @@ export default function TargetWebsites() {
                 className="h-9 shrink-0"
                 onClick={() => setFilter("inactive")}
               >
-                Inactive
+                {t("destinations.filterInactive")}
               </Button>
               <Button
                 type="button"
@@ -724,7 +728,7 @@ export default function TargetWebsites() {
                 className="h-9 shrink-0"
                 onClick={() => setFilter("template")}
               >
-                Template
+                {t("destinations.filterTemplate")}
               </Button>
               <Button
                 type="button"
@@ -733,7 +737,7 @@ export default function TargetWebsites() {
                 className="h-9 shrink-0"
                 onClick={() => setFilter("custom")}
               >
-                Custom
+                {t("destinations.filterCustom")}
               </Button>
             </div>
           </div>
@@ -748,10 +752,10 @@ export default function TargetWebsites() {
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-16 gap-3">
               <Globe className="w-10 h-10 text-muted-foreground/40" />
-              <p className="text-muted-foreground text-sm">No target websites yet</p>
+              <p className="text-muted-foreground text-sm">{t("destinations.emptyTitle")}</p>
               <Button variant="outline" size="sm" onClick={openAdd}>
                 <Plus className="w-4 h-4 mr-2" />
-                Add your first website
+                {t("destinations.emptyCta")}
               </Button>
             </CardContent>
           </Card>
@@ -770,24 +774,28 @@ export default function TargetWebsites() {
                       <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                         <span className="font-semibold text-sm">{site.name}</span>
                         <Badge variant={isDynamic ? "secondary" : templateBadgeVariant(site.templateType)} className="text-xs shrink-0">
-                          {isDynamic ? (dynName ?? "Template") : templateLabel(site.templateType)}
+                          {isDynamic ? (dynName ?? t("destinations.filterTemplate")) : templateLabel(site.templateType)}
                         </Badge>
-                        {!site.isActive && <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">Inactive</Badge>}
+                        {!site.isActive && (
+                          <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">
+                            {t("destinations.inactiveBadge")}
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-xs text-muted-foreground truncate">
                         {site.url || (config.url as string) || tpl?.endpoint || "—"}
                       </p>
                       {Boolean(config.apiKeyMasked) && (
-                        <p className="text-xs text-muted-foreground mt-0.5">API Key configured</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{t("destinations.labels.apiKeyConfigured")}</p>
                       )}
                       {isDynamic && typeof config.secrets === "object" && config.secrets !== null && Object.keys(config.secrets as Record<string, unknown>).length > 0 && (
-                        <p className="text-xs text-muted-foreground mt-0.5">Secrets configured</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{t("destinations.labels.secretsConfigured")}</p>
                       )}
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <div className="hidden sm:flex items-center gap-2">
                         <span className="text-xs text-muted-foreground w-12 text-right">
-                          {site.isActive ? "Active" : "Off"}
+                          {site.isActive ? t("destinations.statusActive") : t("destinations.statusOff")}
                         </span>
                         <Switch
                           checked={site.isActive}
@@ -798,7 +806,7 @@ export default function TargetWebsites() {
                       </div>
                       <div className="sm:hidden flex flex-col items-end gap-1">
                         <span className="text-[11px] text-muted-foreground">
-                          {site.isActive ? "Active" : "Off"}
+                          {site.isActive ? t("destinations.statusActive") : t("destinations.statusOff")}
                         </span>
                         <Switch
                           checked={site.isActive}
@@ -813,7 +821,7 @@ export default function TargetWebsites() {
                             variant="ghost"
                             size="icon"
                             className="h-11 w-11"
-                            aria-label="More actions"
+                            aria-label={t("destinations.moreActions")}
                           >
                             <MoreVertical className="w-5 h-5" />
                           </Button>
@@ -821,17 +829,17 @@ export default function TargetWebsites() {
                         <DropdownMenuContent align="end" className="w-44">
                           <DropdownMenuItem onClick={() => openEdit(site)} className="cursor-pointer">
                             <Pencil className="mr-2 h-4 w-4" />
-                            Edit
+                            {t("destinations.edit")}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             onClick={() => {
-                              if (confirm("Delete this destination?")) deleteMutation.mutate({ id: site.id });
+                              if (confirm(t("destinations.confirmDelete"))) deleteMutation.mutate({ id: site.id });
                             }}
                             className="cursor-pointer text-destructive focus:text-destructive"
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
-                            Delete
+                            {t("destinations.delete")}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -851,55 +859,55 @@ export default function TargetWebsites() {
         wideDesktop={mode !== "select-template"}
         headerTitle={
           mode === "select-template"
-            ? "Add Website"
+            ? t("destinations.dialog.addTitle")
             : mode === "configure-dynamic"
-              ? `New ${selectedDynTemplate?.name ?? "Website"}`
+              ? t("destinations.dialog.newTitle", { name: selectedDynTemplate?.name ?? "Website" })
               : mode === "edit-dynamic"
-                ? `Edit: ${dynName || "Website"}`
+                ? t("destinations.dialog.editTitle", { name: dynName || "Website" })
                 : editId
-                  ? `Edit: ${form.name || "Website"}`
-                  : `New ${selectedTemplate?.label ?? "Website"}`
+                  ? t("destinations.dialog.editTitle", { name: form.name || "Website" })
+                  : t("destinations.dialog.newTitle", { name: selectedTemplate?.label ?? "Website" })
         }
         headerDescription={
           mode === "select-template"
-            ? "Select how you want to connect"
+            ? t("destinations.dialog.addSubtitle")
             : mode === "configure-dynamic"
-              ? selectedDynTemplate?.endpointUrl ?? "Configure your destination"
+              ? selectedDynTemplate?.endpointUrl ?? t("destinations.dialog.configureSubtitle")
               : mode === "edit-dynamic"
-                ? editDynUrl || "Update name and API secrets"
+                ? editDynUrl || t("destinations.dialog.editDynamicSubtitle")
                 : editId
-                  ? "Update your target website configuration"
-                  : "Configure a new target website for lead routing"
+                  ? t("destinations.dialog.editSubtitle")
+                  : t("destinations.dialog.newSubtitle")
         }
         footer={
           mode === "configure-dynamic" ? (
             <DialogFooter className="gap-2 sm:justify-end">
               <Button variant="outline" onClick={() => setOpen(false)}>
-                Cancel
+                {t("destinations.dialog.cancel")}
               </Button>
               <Button onClick={handleDynSubmit} disabled={isSaving}>
                 {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Save Website
+                {t("destinations.dialog.saveWebsite")}
               </Button>
             </DialogFooter>
           ) : mode === "edit-dynamic" ? (
             <DialogFooter className="gap-2 sm:justify-end">
               <Button variant="outline" onClick={() => setOpen(false)}>
-                Cancel
+                {t("destinations.dialog.cancel")}
               </Button>
               <Button onClick={handleEditDynSubmit} disabled={isSaving}>
                 {isSaving && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Save Changes
+                {t("destinations.dialog.saveChanges")}
               </Button>
             </DialogFooter>
           ) : mode === "configure" ? (
             <DialogFooter className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
               <Button variant="outline" className="h-10 w-full sm:w-auto" onClick={() => setOpen(false)}>
-                Cancel
+                {t("destinations.dialog.cancel")}
               </Button>
               <Button className="h-10 w-full shadow-sm sm:w-auto sm:min-w-[9rem]" onClick={handleSubmit} disabled={isSaving}>
                 {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                {editId ? "Save Changes" : "Save Website"}
+                {editId ? t("destinations.dialog.saveChanges") : t("destinations.dialog.saveWebsite")}
               </Button>
             </DialogFooter>
           ) : undefined
@@ -925,14 +933,16 @@ export default function TargetWebsites() {
                 onClick={() => setMode("select-template")}
               >
                 <ArrowLeft className="h-4 w-4" />
-                Back to templates
+                {t("destinations.dynamic.backToTemplates")}
               </Button>
 
               {/* Name */}
               <div className="space-y-1.5">
-                <Label>Name <span className="text-destructive">*</span></Label>
+                <Label>
+                  {t("destinations.form.nameLabel")} <span className="text-destructive">*</span>
+                </Label>
                 <Input
-                  placeholder={`e.g. ${selectedDynTemplate.name} — Main Campaign`}
+                  placeholder={t("destinations.dynamic.nameExampleWithName", { name: selectedDynTemplate.name })}
                   value={dynName}
                   onChange={(e) => setDynName(e.target.value)}
                 />
@@ -947,7 +957,10 @@ export default function TargetWebsites() {
                   </Label>
                   <div className="relative">
                     <Input
-                      placeholder={`Your ${selectedDynTemplate.name} ${key.replace(/_/g, " ")}`}
+                      placeholder={t("destinations.dynamic.secretPlaceholder", {
+                        name: selectedDynTemplate.name,
+                        key: key.replace(/_/g, " "),
+                      })}
                       value={dynSecrets[key] ?? ""}
                       onChange={(e) => setDynSecrets(s => ({ ...s, [key]: e.target.value }))}
                       type={dynShowSecret[key] ? "text" : "password"}
@@ -971,7 +984,9 @@ export default function TargetWebsites() {
                     <Info className="w-3 h-3" /> Per-routing fields
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    You'll fill <code className="bg-background px-1 rounded">{selectedDynTemplate.variableFields.join(", ")}</code> when setting up each Lead Routing rule.
+                    {t("destinations.dynamic.variableFieldsInfo", {
+                      fields: selectedDynTemplate.variableFields.join(", "),
+                    })}
                   </p>
                 </div>
               )}
@@ -980,7 +995,7 @@ export default function TargetWebsites() {
               {selectedDynTemplate.autoMappedFields.length > 0 && (
                 <div className="rounded-lg bg-muted/40 border p-3 space-y-1">
                   <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                    <Info className="w-3 h-3" /> Auto-mapped from lead
+                    <Info className="w-3 h-3" /> {t("destinations.dynamic.autoMappedFromLead")}
                   </p>
                   {selectedDynTemplate.autoMappedFields.map((f) => (
                     <p key={f.key} className="text-xs text-muted-foreground">
@@ -997,9 +1012,11 @@ export default function TargetWebsites() {
             <div className="space-y-5 py-2">
               {/* Name */}
               <div className="space-y-1.5">
-                <Label>Affiliate Name <span className="text-destructive">*</span></Label>
+                <Label>
+                  {t("destinations.dynamic.affiliateName")} <span className="text-destructive">*</span>
+                </Label>
                 <Input
-                  placeholder="e.g. Sotuvchi — Main Campaign"
+                  placeholder={t("destinations.dynamic.nameExample")}
                   value={dynName}
                   onChange={(e) => setDynName(e.target.value)}
                 />
@@ -1010,11 +1027,13 @@ export default function TargetWebsites() {
                 <div key={key} className="space-y-1.5">
                   <Label>
                     {key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
-                    <span className="text-muted-foreground text-xs ml-1">(leave blank to keep existing)</span>
+                    <span className="text-muted-foreground text-xs ml-1">
+                      {t("destinations.dynamic.leaveBlankKeep")}
+                    </span>
                   </Label>
                   <div className="relative">
                     <Input
-                      placeholder="••••••••  (unchanged)"
+                      placeholder={t("destinations.dynamic.unchangedPlaceholder")}
                       value={dynSecrets[key] ?? ""}
                       onChange={(e) => setDynSecrets((s) => ({ ...s, [key]: e.target.value }))}
                       type={dynShowSecret[key] ? "text" : "password"}
@@ -1050,7 +1069,7 @@ export default function TargetWebsites() {
                   onClick={() => setMode("select-template")}
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  Back to templates
+                  {t("destinations.dynamic.backToTemplates")}
                 </Button>
               )}
 
@@ -1060,12 +1079,13 @@ export default function TargetWebsites() {
                     <Braces className="h-5 w-5" aria-hidden />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold tracking-tight text-foreground">Custom HTTP endpoint</p>
+                    <p className="text-sm font-semibold tracking-tight text-foreground">{t("destinations.custom.title")}</p>
                     <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                      POST with JSON, <code className="font-mono text-[11px]">application/x-www-form-urlencoded</code>, or{" "}
-                      <code className="font-mono text-[11px]">multipart/form-data</code>. Use{" "}
-                      <span className="font-mono text-[11px] text-foreground/80">{"{{ }}"}</span> placeholders in the body and
-                      headers.
+                      {t("destinations.custom.descPrefix")}{" "}
+                      <code className="font-mono text-[11px]">application/x-www-form-urlencoded</code>{" "}
+                      {t("destinations.custom.descMid")}{" "}
+                      <code className="font-mono text-[11px]">multipart/form-data</code>.{" "}
+                      {t("destinations.custom.descSuffix", { placeholder: "{{ }}" })}
                     </p>
                   </div>
                 </div>
@@ -1083,11 +1103,11 @@ export default function TargetWebsites() {
 
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">
-                  Name <span className="text-destructive">*</span>
+                  {t("destinations.form.nameLabel")} <span className="text-destructive">*</span>
                 </Label>
                 <Input
                   className="h-10 rounded-lg shadow-xs"
-                  placeholder={`e.g. ${selectedTemplate.label} — My Campaign`}
+                  placeholder={t("destinations.form.namePlaceholder", { label: selectedTemplate.label })}
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 />
@@ -1101,12 +1121,14 @@ export default function TargetWebsites() {
                     {sf.key !== "apiKey" || !editId ? (
                       <span className="text-destructive"> *</span>
                     ) : (
-                      <span className="text-muted-foreground text-xs ml-1">(leave blank to keep existing)</span>
+                      <span className="text-muted-foreground text-xs ml-1">{t("destinations.dynamic.leaveBlankKeep")}</span>
                     )}
                   </Label>
                   <div className="relative">
                     <Input
-                      placeholder={editId && sf.secret ? "••••••••  (unchanged)" : sf.placeholder}
+                      placeholder={
+                        editId && sf.secret ? t("destinations.dynamic.unchangedPlaceholder") : sf.placeholder
+                      }
                       value={form.fields[sf.key] ?? ""}
                       onChange={(e) => setField(sf.key, e.target.value)}
                       type={sf.secret && !form.showSecret[sf.key] ? "password" : "text"}
@@ -1129,7 +1151,7 @@ export default function TargetWebsites() {
               {!isCustom && Object.keys(selectedTemplate.autoMapped).length > 0 && (
                 <div className="rounded-lg bg-muted/40 border p-3 space-y-1">
                   <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                    <Info className="w-3 h-3" /> Auto-mapped fields
+                    <Info className="w-3 h-3" /> {t("destinations.legacy.autoMappedFields")}
                   </p>
                   {Object.entries(selectedTemplate.autoMapped).map(([k, v]) => (
                     <p key={k} className="text-xs text-muted-foreground">
@@ -1152,7 +1174,7 @@ export default function TargetWebsites() {
                       />
                       <Input
                         className="h-10 rounded-lg pl-9 font-mono text-sm shadow-xs"
-                        placeholder="https://your-crm.com/api/leads"
+                        placeholder={t("destinations.form.urlPlaceholder")}
                         value={form.url}
                         onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
                       />
@@ -1161,19 +1183,23 @@ export default function TargetWebsites() {
 
                   <div className="grid gap-3 rounded-xl border border-border/80 bg-muted/15 p-3 sm:grid-cols-2 sm:gap-4">
                     <div className="space-y-1.5">
-                      <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Method</Label>
+                      <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        {t("destinations.form.method")}
+                      </Label>
                       <div className="flex h-10 items-center rounded-lg border border-dashed border-muted-foreground/25 bg-background/80 px-3 font-mono text-xs font-semibold tracking-wide text-muted-foreground">
                         POST
                       </div>
                     </div>
                     <div className="space-y-1.5">
-                      <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Content-Type</Label>
+                      <Label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                        {t("destinations.form.contentType")}
+                      </Label>
                       <Select
                         value={form.contentType}
                         onValueChange={(v) => setForm((f) => ({ ...f, contentType: v as ContentType }))}
                       >
                         <SelectTrigger className="h-10 w-full rounded-lg shadow-xs">
-                          <SelectValue placeholder="Format" />
+                          <SelectValue placeholder={t("destinations.form.formatPlaceholder")} />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="json">application/json</SelectItem>
@@ -1190,9 +1216,9 @@ export default function TargetWebsites() {
                         <Sparkles className="h-4 w-4 text-violet-600 dark:text-violet-400" aria-hidden />
                       </div>
                       <div className="min-w-0">
-                        <p className="text-sm font-medium text-foreground">Template variables</p>
+                        <p className="text-sm font-medium text-foreground">{t("destinations.form.templateVarsTitle")}</p>
                         <p className="text-xs leading-snug text-muted-foreground">
-                          Click a tag to copy. Paste into the JSON body, form fields, or headers.
+                          {t("destinations.form.templateVarsSubtitle")}
                         </p>
                       </div>
                     </div>
@@ -1205,7 +1231,7 @@ export default function TargetWebsites() {
                           className="inline-flex items-center gap-1 rounded-full border border-border/90 bg-background px-3 py-1.5 font-mono text-[11px] font-medium shadow-sm transition hover:border-primary/35 hover:bg-primary/5 hover:shadow-md active:scale-[0.98]"
                           onClick={() => {
                             void navigator.clipboard.writeText(v.key);
-                            toast.success(`Copied ${v.key}`);
+                            toast.success(t("destinations.toast.copiedKey", { key: v.key }));
                           }}
                         >
                           {v.key}
@@ -1222,7 +1248,9 @@ export default function TargetWebsites() {
                     <div className="flex items-center gap-2">
                       <Braces className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
                       <Label className="text-sm font-medium">
-                        {form.contentType === "json" ? "Body (JSON)" : "Body fields"}
+                        {form.contentType === "json"
+                          ? t("destinations.form.bodyJson")
+                          : t("destinations.form.bodyFields")}
                       </Label>
                     </div>
 
@@ -1235,8 +1263,9 @@ export default function TargetWebsites() {
                           onChange={(e) => setForm((f) => ({ ...f, bodyTemplate: e.target.value }))}
                         />
                         <p className="text-xs text-muted-foreground">
-                          Use <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{"{{variable}}"}</code> for
-                          dynamic values. Body must be valid JSON.
+                          {t("destinations.form.bodyHintPrefix")}{" "}
+                          <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{"{{variable}}"}</code>{" "}
+                          {t("destinations.form.bodyHintSuffix")}
                         </p>
                       </div>
                     ) : (
@@ -1244,7 +1273,7 @@ export default function TargetWebsites() {
                         {form.bodyFields.map((bf, i) => (
                           <div key={i} className="flex items-center gap-2">
                             <Input
-                              placeholder="key"
+                              placeholder={t("destinations.form.keyPlaceholder")}
                               value={bf.key}
                               className="h-9 w-28 rounded-md font-mono text-xs sm:w-32"
                               onChange={(e) => {
@@ -1255,7 +1284,7 @@ export default function TargetWebsites() {
                             />
                             <span className="shrink-0 text-xs text-muted-foreground">→</span>
                             <Input
-                              placeholder="{{name}} or static value"
+                              placeholder={t("destinations.form.valuePlaceholder")}
                               value={bf.value}
                               className="h-9 min-w-0 flex-1 rounded-md font-mono text-xs"
                               onChange={(e) => {
@@ -1283,7 +1312,7 @@ export default function TargetWebsites() {
                           className="mt-1 h-8 text-xs"
                           onClick={() => setForm((f) => ({ ...f, bodyFields: [...f.bodyFields, { key: "", value: "" }] }))}
                         >
-                          <Plus className="mr-1 h-3 w-3" /> Add field
+                          <Plus className="mr-1 h-3 w-3" /> {t("destinations.form.addField")}
                         </Button>
                       </div>
                     )}
@@ -1294,7 +1323,10 @@ export default function TargetWebsites() {
                       <div className="flex items-center gap-2">
                         <Layers className="h-4 w-4 text-muted-foreground" aria-hidden />
                         <Label className="text-sm font-medium">
-                          Headers <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+                          {t("destinations.form.headers")}{" "}
+                          <span className="text-xs font-normal text-muted-foreground">
+                            {t("destinations.form.optional")}
+                          </span>
                         </Label>
                       </div>
                       <Button
@@ -1303,19 +1335,19 @@ export default function TargetWebsites() {
                         className="h-8 shrink-0 text-xs"
                         onClick={() => setForm((f) => ({ ...f, customHeaders: [...f.customHeaders, { key: "", value: "" }] }))}
                       >
-                        <Plus className="mr-1 h-3 w-3" /> Add
+                        <Plus className="mr-1 h-3 w-3" /> {t("destinations.form.headersAdd")}
                       </Button>
                     </div>
                     {form.customHeaders.length === 0 && (
                       <p className="text-xs italic text-muted-foreground">
-                        Content-Type is set from your selection above. Add Authorization or other headers here if needed.
+                        {t("destinations.form.headersEmptyHint")}
                       </p>
                     )}
                     <div className="space-y-2 pt-1">
                       {form.customHeaders.map((h, i) => (
                         <div key={i} className="flex items-center gap-2">
                           <Input
-                            placeholder="Header-Name"
+                            placeholder={t("destinations.form.headerNamePlaceholder")}
                             value={h.key}
                             className="h-9 w-36 rounded-md text-xs sm:w-44"
                             onChange={(e) => {
@@ -1326,7 +1358,7 @@ export default function TargetWebsites() {
                           />
                           <span className="shrink-0 text-muted-foreground">:</span>
                           <Input
-                            placeholder="Bearer {{api_key}}"
+                            placeholder={t("destinations.form.headerValuePlaceholder")}
                             value={h.value}
                             className="h-9 min-w-0 flex-1 rounded-md font-mono text-xs"
                             onChange={(e) => {
@@ -1352,15 +1384,15 @@ export default function TargetWebsites() {
                   </div>
 
                   <TagInput
-                    label="Variable fields"
-                    hint="Filled per Lead Routing rule (e.g. offer_id, stream). Press Enter or comma to add."
+                    label={t("destinations.form.variableFieldsLabel")}
+                    hint={t("destinations.form.variableFieldsHint")}
                     values={form.customVariableFields}
                     onChange={(vals) => setForm((f) => ({ ...f, customVariableFields: vals }))}
-                    placeholder="offer_id, stream..."
+                    placeholder={t("destinations.form.variableFieldsPlaceholder")}
                   />
 
                   <div className="space-y-2 rounded-xl border border-border/70 bg-muted/10 p-3.5">
-                    <Label className="text-sm font-medium">Success condition</Label>
+                    <Label className="text-sm font-medium">{t("destinations.form.successCondition")}</Label>
                     <Select
                       value={form.successCondition}
                       onValueChange={(v) =>
@@ -1371,21 +1403,21 @@ export default function TargetWebsites() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="http_2xx">HTTP 2xx response (default)</SelectItem>
-                        <SelectItem value="json_field">JSON field equals value</SelectItem>
+                        <SelectItem value="http_2xx">{t("destinations.form.successHttp2xx")}</SelectItem>
+                        <SelectItem value="json_field">{t("destinations.form.successJsonField")}</SelectItem>
                       </SelectContent>
                     </Select>
                     {form.successCondition === "json_field" && (
                       <div className="flex flex-wrap items-center gap-2 pt-1">
                         <Input
-                          placeholder="Field name (e.g. status)"
+                          placeholder={t("destinations.form.jsonFieldPlaceholder")}
                           value={form.jsonField}
                           className="h-9 min-w-[8rem] flex-1 rounded-md font-mono text-xs"
                           onChange={(e) => setForm((f) => ({ ...f, jsonField: e.target.value }))}
                         />
                         <span className="text-xs font-medium text-muted-foreground">=</span>
                         <Input
-                          placeholder="Expected value (e.g. ok)"
+                          placeholder={t("destinations.form.jsonValuePlaceholder")}
                           value={form.jsonValue}
                           className="h-9 min-w-[8rem] flex-1 rounded-md font-mono text-xs"
                           onChange={(e) => setForm((f) => ({ ...f, jsonValue: e.target.value }))}
@@ -1403,19 +1435,19 @@ export default function TargetWebsites() {
                         onClick={handleTest}
                         disabled={isTesting || !editId}
                         className="h-9 gap-2"
-                        title={!editId ? "Save this destination first to run a test" : undefined}
+                        title={!editId ? t("destinations.form.testSaveFirstTitle") : undefined}
                       >
                         {isTesting ? (
                           <Loader2 className="h-4 w-4 animate-spin" />
                         ) : (
                           <FlaskConical className="h-4 w-4" />
                         )}
-                        {isTesting ? "Testing…" : "Test integration"}
+                        {isTesting ? t("destinations.form.testing") : t("destinations.form.testIntegration")}
                       </Button>
                       <p className="text-xs text-muted-foreground sm:pl-1">
                         {editId
-                          ? "Sends a sample lead payload to your endpoint and shows the response."
-                          : "Save this destination first, then you can send a sample request to verify the integration."}
+                          ? t("destinations.form.testDescReady")
+                          : t("destinations.form.testDescLocked")}
                       </p>
                     </div>
                     {testResult && editId ? (

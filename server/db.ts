@@ -1,6 +1,7 @@
 import { eq, desc, count, and, sql, inArray, gte, lt, or, ne } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
+import mysql from "mysql2";
 import {
   InsertUser,
   users,
@@ -17,6 +18,7 @@ import { ENV } from "./_core/env";
 import { getDashboardDayUtcBounds } from "./lib/dashboardTimezone";
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _pool: mysql.Pool | null = null;
 
 /**
  * Resolves the MySQL connection URL from environment variables.
@@ -46,13 +48,22 @@ export async function getDb() {
     const url = resolveDatabaseUrl();
     if (url) {
       try {
-        _db = drizzle(url);
+        // Force UTF-8 end-to-end to avoid mojibake when storing non-Latin lead fields.
+        // MySQL server defaults (and some dumps) can fall back to latin1 unless explicitly set.
+        _pool = mysql.createPool({
+          uri: url,
+          charset: "utf8mb4",
+          // Keep behavior predictable across environments.
+          decimalNumbers: true,
+        });
+        _db = drizzle(_pool);
         console.log("[Database] Connected via", url.startsWith("mysql://")
           ? url.replace(/:\/\/[^@]+@/, "://<credentials>@")
           : "(socket)");
       } catch (error) {
         console.warn("[Database] Failed to connect:", error);
         _db = null;
+        _pool = null;
       }
     }
   }

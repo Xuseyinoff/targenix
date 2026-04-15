@@ -32,6 +32,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
+import { useT } from "@/hooks/useT";
 
 function routingBadgeClass(isActive: boolean) {
   if (!isActive) {
@@ -50,6 +51,7 @@ function routingIconBg(isActive: boolean) {
 export default function Integrations() {
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
+  const t = useT();
   const { data: integrations, isLoading } = trpc.integrations.list.useQuery();
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
@@ -82,7 +84,7 @@ export default function Integrations() {
 
   const deleteMutation = trpc.integrations.delete.useMutation({
     onSuccess: () => {
-      toast.success("Integration deleted");
+      toast.success(t("integrations.integrationDeleted"));
       utils.integrations.list.invalidate();
       setDeleteId(null);
     },
@@ -99,14 +101,14 @@ export default function Integrations() {
       const integration = routingIntegrations.find((i) => i.id === variables.id);
       setTestResult({
         integrationId: variables.id,
-        integrationName: integration?.name ?? "Integration",
+        integrationName: integration?.name ?? t("integrations.title"),
         success: data.success,
         responseData: data.responseData,
         error: data.error,
         durationMs: data.durationMs,
       });
     },
-    onError: (err) => toast.error(`Test failed: ${err.message}`),
+    onError: (err) => toast.error(t("integrations.testFailed", { message: err.message })),
   });
 
   const filteredIntegrations = useMemo(() => {
@@ -136,9 +138,9 @@ export default function Integrations() {
       <div className="max-w-4xl space-y-4">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <h1 className="text-xl font-bold tracking-tight">Integrations</h1>
+            <h1 className="text-xl font-bold tracking-tight">{t("integrations.title")}</h1>
             <p className="text-muted-foreground mt-0.5 hidden text-xs sm:block">
-              Connect Facebook forms to destinations via Lead Routing rules
+              {t("integrations.subtitle")}
             </p>
           </div>
           <div className="flex shrink-0 gap-1.5">
@@ -146,10 +148,10 @@ export default function Integrations() {
               size="sm"
               className="h-8 px-2"
               onClick={() => navigate("/integrations/new-routing")}
-              title="New Lead Routing"
+              title={t("integrations.newLeadRouting")}
             >
               <Plus className="h-4 w-4" />
-              <span className="ml-1.5 hidden sm:inline">Lead Routing</span>
+              <span className="ml-1.5 hidden sm:inline">{t("integrations.leadRouting")}</span>
             </Button>
           </div>
         </div>
@@ -162,7 +164,7 @@ export default function Integrations() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input
                 className="pl-9 pr-9 h-9 text-sm bg-background"
-                placeholder="Search by name, page, form, destination…"
+                placeholder={t("integrations.searchPlaceholder")}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -190,14 +192,14 @@ export default function Integrations() {
                         : "text-muted-foreground hover:text-foreground"
                     )}
                   >
-                    {s === "ALL" ? "All Status" : s === "ACTIVE" ? "Active" : "Inactive"}
+                    {s === "ALL" ? t("integrations.allStatus") : s === "ACTIVE" ? t("integrations.active") : t("integrations.inactive")}
                   </button>
                 ))}
               </div>
               <span className="text-muted-foreground ml-auto shrink-0 text-xs">
                 {filteredIntegrations.length === routingIntegrations.length
-                  ? `${routingIntegrations.length} routing rules`
-                  : `${filteredIntegrations.length} of ${routingIntegrations.length}`}
+                  ? t("integrations.routingRules", { count: routingIntegrations.length })
+                  : t("integrations.routingRulesOf", { filtered: filteredIntegrations.length, total: routingIntegrations.length })}
               </span>
             </div>
           </div>
@@ -214,13 +216,13 @@ export default function Integrations() {
                 <Zap className="h-6 w-6 text-orange-600" />
               </div>
               <div>
-                <p className="font-semibold text-base">Create Lead Routing</p>
+                <p className="font-semibold text-base">{t("integrations.createRoutingTitle")}</p>
                 <p className="text-xs text-muted-foreground mt-1 max-w-[260px]">
-                  Map a Facebook page and form to a destination (Sotuvchi, 100k, custom API, or admin template).
+                  {t("integrations.createRoutingBody")}
                 </p>
               </div>
               <Button size="sm" className="mt-1">
-                Get started
+                {t("integrations.getStarted")}
                 <ArrowRight className="h-4 w-4 ml-1.5" />
               </Button>
             </CardContent>
@@ -238,8 +240,8 @@ export default function Integrations() {
               <Search className="h-5 w-5 text-muted-foreground" />
             </div>
             <div>
-              <p className="text-sm font-medium">No routing rules match</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Try adjusting your search or filters</p>
+              <p className="text-sm font-medium">{t("integrations.noMatchTitle")}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{t("integrations.noMatchBody")}</p>
             </div>
             <Button
               variant="ghost"
@@ -247,7 +249,7 @@ export default function Integrations() {
               className="text-xs h-7"
               onClick={() => { setSearchQuery(""); setFilterStatus("ALL"); }}
             >
-              Clear filters
+              {t("integrations.clearFilters")}
             </Button>
           </div>
         ) : (
@@ -320,7 +322,7 @@ export default function Integrations() {
                                   routingBadgeClass(integration.isActive),
                                 )}
                               >
-                                Routing
+                                {t("integrations.routing")}
                               </span>
                             </div>
                             <p
@@ -351,7 +353,7 @@ export default function Integrations() {
                             variant="ghost"
                             size="icon"
                             className="text-muted-foreground hover:text-foreground h-8 w-8"
-                            title="Edit routing"
+                            title={t("integrations.editRouting")}
                             onClick={() => navigate(`/integrations/edit-routing/${integration.id}`)}
                           >
                             <Pencil className="h-3.5 w-3.5" />
@@ -360,7 +362,7 @@ export default function Integrations() {
                             variant="ghost"
                             size="icon"
                             className="text-muted-foreground hover:text-foreground h-8 w-8"
-                            title="Test lead"
+                            title={t("integrations.testLead")}
                             disabled={
                               testLeadMutation.isPending &&
                               testLeadMutation.variables?.id === integration.id
@@ -393,9 +395,9 @@ export default function Integrations() {
                         >
                           <div className="pt-3 space-y-2">
                             <div className="text-xs text-muted-foreground">
-                              Page: <span className="font-medium text-foreground">{String(integration.pageName ?? "—")}</span>
+                              {t("integrations.page")}: <span className="font-medium text-foreground">{String(integration.pageName ?? "—")}</span>
                               {" · "}
-                              Form: <span className="font-medium text-foreground">{String(integration.formName ?? "—")}</span>
+                              {t("integrations.form")}: <span className="font-medium text-foreground">{String(integration.formName ?? "—")}</span>
                             </div>
                             {targetWebsiteName.trim() !== "" && (
                               <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -417,7 +419,7 @@ export default function Integrations() {
                               </div>
                             )}
                             <p className="text-xs text-muted-foreground/50">
-                              Added {new Date(integration.createdAt).toLocaleDateString()}
+                              {t("integrations.added", { date: new Date(integration.createdAt).toLocaleDateString() })}
                             </p>
 
                             {/* Action buttons */}
@@ -426,7 +428,7 @@ export default function Integrations() {
                                 variant="outline"
                                 size="sm"
                                 className="h-8 text-xs"
-                                title="Send test lead"
+                                title={t("integrations.testLead")}
                                 disabled={testLeadMutation.isPending && testLeadMutation.variables?.id === integration.id}
                                 onClick={() => testLeadMutation.mutate({ id: integration.id })}
                               >
@@ -435,17 +437,17 @@ export default function Integrations() {
                                 ) : (
                                   <FlaskConical className="mr-1.5 h-3.5 w-3.5" />
                                 )}
-                                Test Lead
+                                {t("integrations.testLeadButton")}
                               </Button>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 className="h-8 text-xs"
-                                title="Edit routing"
+                                title={t("integrations.editRouting")}
                                 onClick={() => navigate(`/integrations/edit-routing/${integration.id}`)}
                               >
                                 <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                                Edit
+                                {t("integrations.edit")}
                               </Button>
                               <Button
                                 variant="ghost"
@@ -454,7 +456,7 @@ export default function Integrations() {
                                 onClick={() => setDeleteId(integration.id)}
                               >
                                 <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                                Delete
+                                {t("integrations.delete")}
                               </Button>
                             </div>
                           </div>
@@ -519,10 +521,10 @@ export default function Integrations() {
               ) : (
                 <XCircle className="h-5 w-5 text-red-500" />
               )}
-              Test Lead — {testResult?.integrationName}
+              {t("integrations.testModalTitle", { name: testResult?.integrationName ?? "" })}
             </DialogTitle>
             <DialogDescription>
-              Synthetic lead: Test Foydalanuvchi · +998901234567
+              {t("integrations.testModalSubtitle")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
@@ -534,23 +536,23 @@ export default function Integrations() {
               <p className={`text-sm font-semibold ${
                 testResult?.success ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"
               }`}>
-                {testResult?.success ? "Success" : "Failed"}
+                {testResult?.success ? t("integrations.success") : t("integrations.failed")}
               </p>
               {testResult?.durationMs !== undefined && (
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Time: {(testResult.durationMs / 1000).toFixed(2)}s
+                  {t("integrations.time", { seconds: (testResult.durationMs / 1000).toFixed(2) })}
                 </p>
               )}
             </div>
             {testResult?.error && (
               <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/20 dark:border-red-800 p-3">
-                <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-1">Error</p>
+                <p className="text-xs font-medium text-red-700 dark:text-red-400 mb-1">{t("integrations.error")}</p>
                 <p className="text-xs text-red-600 dark:text-red-300 font-mono break-all">{testResult.error}</p>
               </div>
             )}
             {testResult?.responseData !== null && testResult?.responseData !== undefined && (
               <div className="rounded-lg border bg-muted/50 p-3">
-                <p className="text-xs font-medium text-muted-foreground mb-1">Response</p>
+                <p className="text-xs font-medium text-muted-foreground mb-1">{t("integrations.response")}</p>
                 <pre className="text-xs font-mono break-all whitespace-pre-wrap max-h-40 overflow-y-auto">
                   {typeof testResult.responseData === "string"
                     ? testResult.responseData
@@ -560,7 +562,7 @@ export default function Integrations() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setTestResult(null)}>Close</Button>
+            <Button variant="outline" onClick={() => setTestResult(null)}>{t("integrations.close")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -569,18 +571,18 @@ export default function Integrations() {
       <Dialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Delete Integration</DialogTitle>
-            <DialogDescription>This integration will stop forwarding leads.</DialogDescription>
+            <DialogTitle>{t("integrations.deleteDialogTitle")}</DialogTitle>
+            <DialogDescription>{t("integrations.deleteDialogBody")}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteId(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setDeleteId(null)}>{t("common.cancel")}</Button>
             <Button
               variant="destructive"
               onClick={() => deleteId && deleteMutation.mutate({ id: deleteId })}
               disabled={deleteMutation.isPending}
             >
               {deleteMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-              Delete
+              {t("common.delete")}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Zap, Eye, EyeOff, Loader2, ArrowLeft, CheckCircle } from "lucide-react";
+import { useT } from "@/hooks/useT";
 
 declare const FB: {
   login: (
@@ -20,13 +21,14 @@ export default function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [fbLoading, setFbLoading] = useState(false);
+  const t = useT();
 
   const utils = trpc.useUtils();
 
   const registerMutation = trpc.auth.register.useMutation({
     onSuccess: async () => {
       await utils.auth.me.invalidate();
-      toast.success("Account created successfully");
+      toast.success(t("auth.accountCreated"));
       setLocation("/");
     },
     onError: (err) => toast.error(err.message),
@@ -35,7 +37,7 @@ export default function Register() {
   const facebookLoginMutation = trpc.auth.facebookLogin.useMutation({
     onSuccess: async () => {
       await utils.auth.me.invalidate();
-      toast.success("Logged in with Facebook");
+      toast.success(t("auth.loggedInFacebook"));
       setLocation("/");
     },
     onError: (err) => {
@@ -47,15 +49,15 @@ export default function Register() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password || !confirmPassword) {
-      toast.error("Please fill in all required fields");
+      toast.error(t("auth.fillAllRequired"));
       return;
     }
     if (password.length < 8) {
-      toast.error("Password must be at least 8 characters");
+      toast.error(t("auth.passwordTooShort"));
       return;
     }
     if (password !== confirmPassword) {
-      toast.error("Passwords do not match");
+      toast.error(t("auth.passwordsNoMatch"));
       return;
     }
     registerMutation.mutate({ email, password, name: name || undefined });
@@ -63,7 +65,7 @@ export default function Register() {
 
   const handleFacebookLogin = () => {
     if (typeof FB === "undefined") {
-      toast.error("Facebook SDK not loaded. Please refresh and try again.");
+      toast.error(t("auth.fbSdkNotLoaded"));
       return;
     }
     setFbLoading(true);
@@ -73,7 +75,7 @@ export default function Register() {
           facebookLoginMutation.mutate({ accessToken: response.authResponse.accessToken });
         } else {
           setFbLoading(false);
-          toast.error("Facebook login was cancelled.");
+          toast.error(t("auth.fbLoginCancelled"));
         }
       },
       { scope: "public_profile,email" }
@@ -122,7 +124,7 @@ export default function Register() {
           className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-300 transition-colors mb-8"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
-          Back to home
+          {t("auth.backToHome")}
         </button>
 
         {/* Logo */}
@@ -134,8 +136,8 @@ export default function Register() {
             <Zap className="h-6 w-6 text-white" />
           </div>
           <div className="text-center">
-            <h1 className="text-2xl font-bold text-white tracking-tight">Create your account</h1>
-            <p className="text-sm text-slate-400 mt-1">Start automating your Facebook leads</p>
+            <h1 className="text-2xl font-bold text-white tracking-tight">{t("auth.createAccountTitle")}</h1>
+            <p className="text-sm text-slate-400 mt-1">{t("auth.createAccountSubtitle")}</p>
           </div>
         </div>
 
@@ -152,12 +154,13 @@ export default function Register() {
             {/* Full Name */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-300" htmlFor="name">
-                Full Name <span className="text-slate-600">(optional)</span>
+                {t("auth.fullName")}{" "}
+                <span className="text-slate-600">{t("auth.optional")}</span>
               </label>
               <input
                 id="name"
                 type="text"
-                placeholder="Your name"
+                placeholder={t("auth.namePlaceholder")}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 autoComplete="name"
@@ -172,7 +175,7 @@ export default function Register() {
             {/* Email */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-300" htmlFor="email">
-                Email <span className="text-red-400">*</span>
+                {t("auth.email")} <span className="text-red-400">*</span>
               </label>
               <input
                 id="email"
@@ -192,13 +195,13 @@ export default function Register() {
             {/* Password */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-300" htmlFor="password">
-                Password <span className="text-red-400">*</span>
+                {t("auth.password")} <span className="text-red-400">*</span>
               </label>
               <div className="relative">
                 <input
                   id="password"
                   type={showPassword ? "text" : "password"}
-                  placeholder="Min. 8 characters"
+                  placeholder={t("auth.passwordMin")}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="new-password"
@@ -222,13 +225,13 @@ export default function Register() {
             {/* Confirm Password */}
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-slate-300" htmlFor="confirmPassword">
-                Confirm Password <span className="text-red-400">*</span>
+                {t("auth.confirmPassword")} <span className="text-red-400">*</span>
               </label>
               <div className="relative">
                 <input
                   id="confirmPassword"
                   type={showConfirm ? "text" : "password"}
-                  placeholder="Re-enter your password"
+                  placeholder={t("auth.confirmPasswordPlaceholder")}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   autoComplete="new-password"
@@ -261,7 +264,7 @@ export default function Register() {
                 </button>
               </div>
               {passwordsMismatch && (
-                <p className="text-xs text-red-400">Passwords do not match</p>
+                <p className="text-xs text-red-400">{t("auth.passwordsNoMatch")}</p>
               )}
             </div>
 
@@ -273,7 +276,7 @@ export default function Register() {
               style={{ background: "linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)" }}
             >
               {registerMutation.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-              Create Account
+              {registerMutation.isPending ? t("auth.creatingAccount") : t("auth.createAccount")}
             </button>
           </form>
 
@@ -284,7 +287,7 @@ export default function Register() {
             </div>
             <div className="relative flex justify-center">
               <span className="px-3 text-xs text-slate-500" style={{ background: "rgba(13,20,40,0.95)" }}>
-                or
+                {t("auth.or")}
               </span>
             </div>
           </div>
@@ -304,17 +307,17 @@ export default function Register() {
                 <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" />
               </svg>
             )}
-            Continue with Facebook
+            {t("auth.continueWithFacebook")}
           </button>
         </div>
 
         <p className="text-center text-sm text-slate-500 mt-6">
-          Already have an account?{" "}
+          {t("auth.alreadyHaveAccount")}{" "}
           <button
             className="text-blue-400 hover:text-blue-300 transition-colors font-medium"
             onClick={() => setLocation("/login")}
           >
-            Sign in
+            {t("auth.signInLink")}
           </button>
         </p>
       </div>

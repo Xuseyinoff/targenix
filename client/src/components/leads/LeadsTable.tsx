@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { leadIsRetryable, type LeadPipelineFields } from "@/lib/leadPipelineBadgeModel";
 import { LeadPipelineBadge, OrderIntegrationBadge } from "@/components/leads/PipelineBadges";
+import { useT } from "@/hooks/useT";
 
 interface Order {
   id: number;
@@ -73,14 +74,14 @@ function formatDate(d: Date): string {
   return `${day} ${month}, ${time}`;
 }
 
-function CopyPhoneButton({ phone }: { phone: string }) {
+function CopyPhoneButton({ phone, title }: { phone: string; title: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <Button
       variant="ghost"
       size="icon"
       className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
-      title="Copy phone"
+      title={title}
       onClick={(e) => {
         e.stopPropagation();
         navigator.clipboard.writeText(phone);
@@ -107,6 +108,7 @@ export function LeadsTable({
   leads, onRowClick, retryingIds, onRetry,
   selectedIds, onSelectId, onSelectAll,
 }: LeadsTableProps) {
+  const t = useT();
   const allSelected = leads.length > 0 && leads.every((l) => selectedIds.has(l.id));
   const someSelected = leads.some((l) => selectedIds.has(l.id));
 
@@ -127,13 +129,19 @@ export function LeadsTable({
                     onChange={(e) => onSelectAll(e.target.checked)}
                   />
                 </th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Name</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">{t("leads.table.name")}</th>
                 {/* Contact col — desktop only */}
-                <th className="hidden lg:table-cell text-left px-4 py-3 font-medium text-muted-foreground">Contact</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Source</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">Date</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground w-[110px]">Actions</th>
+                <th className="hidden lg:table-cell text-left px-4 py-3 font-medium text-muted-foreground">
+                  {t("leads.table.contact")}
+                </th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">{t("leads.table.source")}</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground">{t("leads.table.status")}</th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">
+                  {t("leads.table.date")}
+                </th>
+                <th className="text-left px-4 py-3 font-medium text-muted-foreground w-[110px]">
+                  {t("leads.table.actions")}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -172,7 +180,7 @@ export function LeadsTable({
                         <LeadAvatar name={lead.fullName} />
                         <div className="min-w-0">
                           <p className="font-medium truncate max-w-[140px]">
-                            {lead.fullName || "Unknown"}
+                            {lead.fullName || t("leads.table.unknown")}
                           </p>
                           {/* Show phone inline on tablet (md but not lg) */}
                           {lead.phone && (
@@ -256,19 +264,19 @@ export function LeadsTable({
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
-                              title="Call"
+                              title={t("leads.table.call")}
                               onClick={() => window.location.href = `tel:${lead.phone}`}
                             >
                               <Phone className="h-3.5 w-3.5" />
                             </Button>
-                            <CopyPhoneButton phone={lead.phone} />
+                            <CopyPhoneButton phone={lead.phone} title={t("leads.table.copyPhone")} />
                           </>
                         )}
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="View"
+                          title={t("leads.table.view")}
                           onClick={() => onRowClick(lead)}
                         >
                           <Eye className="h-3.5 w-3.5" />
@@ -280,7 +288,7 @@ export function LeadsTable({
                             className="h-7 w-7 text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30 opacity-0 group-hover:opacity-100 transition-opacity"
                             disabled={retryingIds.has(lead.id)}
                             onClick={() => onRetry(lead.id)}
-                            title="Retry"
+                            title={t("leads.table.retry")}
                           >
                             {retryingIds.has(lead.id)
                               ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
