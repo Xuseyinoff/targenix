@@ -28,8 +28,8 @@ let _pool: mysql.Pool | null = null;
  */
 function resolveDatabaseUrl(): string | undefined {
   const candidates = [
-    process.env.MYSQL_URL,          // Railway internal TCP URL (preferred: more reliable inside Railway)
-    process.env.MYSQL_PUBLIC_URL,  // Railway public TCP URL
+    process.env.MYSQL_PUBLIC_URL,  // Railway public TCP URL (preferred: works from both web + worker)
+    process.env.MYSQL_URL,          // Railway internal TCP URL (fallback)
     process.env.DATABASE_URL,       // Generic fallback
   ];
 
@@ -58,11 +58,14 @@ export async function getDb() {
           decimalNumbers: true,
         });
         _db = drizzle(_pool);
+        // Verify the pool actually reaches the server — createPool/drizzle are lazy.
+        await _db.execute(sql`SELECT 1`);
         console.log("[Database] Connected via", url.startsWith("mysql://")
           ? url.replace(/:\/\/[^@]+@/, "://<credentials>@")
           : "(socket)");
       } catch (error) {
-        console.warn("[Database] Failed to connect:", error);
+        const msg = error instanceof Error ? error.message : String(error);
+        console.error("[Database] Connection failed:", msg, "| URL:", url.startsWith("mysql://") ? url.replace(/:\/\/[^@]+@/, "://<hidden>@") : "(non-tcp)");
         _db = null;
         _pool = null;
       }
