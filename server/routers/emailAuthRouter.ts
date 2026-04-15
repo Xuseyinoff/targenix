@@ -147,6 +147,91 @@ export const authRouter = router({
       return { success: true, email: normalizedEmail, name: user.name };
     }),
 
+  // ── Update Profile (Name / Email) ────────────────────────────────────────────
+  updateProfile: protectedProcedure
+    .input(
+      z.object({
+        name: z.string().trim().min(1).max(128).optional(),
+        email: z.string().trim().email().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+
+      const nextName = input.name !== undefined ? input.name.trim() : undefined;
+      const nextEmail = input.email !== undefined ? input.email.toLowerCase().trim() : undefined;
+
+      if (nextName === undefined && nextEmail === undefined) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "No changes provided." });
+      }
+
+      // Reload user from DB (ctx.user can be stale)
+      const [user] = await db.select().from(users).where(eq(users.id, ctx.user.id)).limit(1);
+      if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "User not found." });
+
+      // Only email/password accounts can change email (openId derives from email)
+      if (nextEmail !== undefined) {
+        if (user.loginMethod !== "email" || !user.passwordHash) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Email can only be changed for email/password accounts." });
+        }
+        const newOpenId = emailToOpenId(nextEmail);
+        const [existing] = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.openId, newOpenId))
+          .limit(1);
+        if (existing && existing.id !== user.id) {
+          throw new TRPCError({ code: "CONFLICT", message: "An account with this email already exists." });
+        }
+        await db.update(users).set({ openId: newOpenId, email: nextEmail }).where(eq(users.id, user.id));
+      }
+
+      if (nextName !== undefined) {
+        await db.update(users).set({ name: nextName }).where(eq(users.id, user.id));
+      }
+
+      // Re-issue session cookie to reflect updated openId/name
+      const effectiveEmail = nextEmail ?? (user.email ?? null);
+      const effectiveOpenId = nextEmail ? emailToOpenId(nextEmail) : user.openId;
+      const effectiveName = nextName ?? (user.name ?? (effectiveEmail ? effectiveEmail.split("@")[0] : ""));
+      const sessionToken = await sdk.createSessionToken(effectiveOpenId, {
+        name: effectiveName,
+        expiresInMs: SESSION_EXPIRATION_MS,
+      });
+      const cookieOptions = getSessionCookieOptions(ctx.req);
+      ctx.res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: SESSION_EXPIRATION_MS });
+
+      return { success: true, name: effectiveName, email: effectiveEmail };
+    }),
+
+  // ── Change Password (Email accounts) ─────────────────────────────────────────
+  changePassword: protectedProcedure
+    .input(
+      z.object({
+        currentPassword: z.string().min(1),
+        newPassword: z.string().min(8, "Password must be at least 8 characters"),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+
+      const [user] = await db.select().from(users).where(eq(users.id, ctx.user.id)).limit(1);
+      if (!user) throw new TRPCError({ code: "NOT_FOUND", message: "User not found." });
+      if (user.loginMethod !== "email" || !user.passwordHash) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Password can only be changed for email/password accounts." });
+      }
+
+      const ok = await bcrypt.compare(input.currentPassword, user.passwordHash);
+      if (!ok) throw new TRPCError({ code: "UNAUTHORIZED", message: "Current password is incorrect." });
+
+      const passwordHash = await bcrypt.hash(input.newPassword, BCRYPT_ROUNDS);
+      await db.update(users).set({ passwordHash }).where(eq(users.id, user.id));
+
+      return { success: true };
+    }),
+
   // ── Facebook Login ────────────────────────────────────────────────────────────
   // Frontend calls window.FB.login() to get a short-lived access token,
   // then sends it here. We verify it via the Graph API and create/find the user.

@@ -26,6 +26,8 @@ import AdminTemplates from "./pages/AdminTemplates";
 import AdminLeads from "./pages/AdminLeads";
 import LeadDetail from "./pages/LeadDetail";
 import Settings from "./pages/Settings";
+import SettingsProfile from "./pages/SettingsProfile";
+import SettingsTelegram from "./pages/SettingsTelegram";
 import AdAccounts from "./pages/AdAccounts";
 import Analytics from "./pages/Analytics";
 import Campaigns from "./pages/Campaigns";
@@ -136,6 +138,8 @@ function Router() {
       <Route path="/admin/destination-templates" component={AdminTemplates} />
       <Route path="/leads/:id" component={LeadDetail} />
       <Route path="/settings" component={Settings} />
+      <Route path="/settings/profile" component={SettingsProfile} />
+      <Route path="/settings/telegram" component={SettingsTelegram} />
       {/* Business Tools routes (admin-only UI + deep-link guard) */}
       <Route path="/business/ad-accounts" component={businessToolsPage(AdAccounts)} />
       <Route path="/business/ad-accounts/:id/campaigns" component={businessToolsPage(Campaigns)} />
