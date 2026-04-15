@@ -34,14 +34,15 @@ function resolveDatabaseUrl(): string | undefined {
   ];
 
   for (const raw of candidates) {
-    const url = raw?.trim();
+    // Strip leading '=' that Railway sometimes prepends to variable values
+    const url = raw?.trim().replace(/^=+/, "");
     if (url && url.startsWith("mysql://")) {
       return url;
     }
   }
 
   // Last resort: return DATABASE_URL even if it's a socket (will fail gracefully)
-  return process.env.DATABASE_URL?.trim();
+  return process.env.DATABASE_URL?.trim().replace(/^=+/, "");
 }
 
 export async function getDb() {
