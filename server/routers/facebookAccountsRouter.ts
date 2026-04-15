@@ -258,7 +258,7 @@ export const facebookAccountsRouter = router({
         const existingConn = await db
           .select({ id: facebookConnections.id })
           .from(facebookConnections)
-          .where(and(eq(facebookConnections.userId, userId), eq(facebookConnections.pageId, page.id)))
+          .where(and(eq(facebookConnections.userId, userId), eq(facebookConnections.facebookAccountId, accountId), eq(facebookConnections.pageId, page.id)))
           .limit(1);
 
         const isNew = existingConn.length === 0;
@@ -651,13 +651,13 @@ export const facebookAccountsRouter = router({
        const existing = await db
         .select({ id: facebookConnections.id })
         .from(facebookConnections)
-        .where(and(eq(facebookConnections.pageId, input.pageId), eq(facebookConnections.userId, userId)))
+        .where(and(eq(facebookConnections.userId, userId), eq(facebookConnections.facebookAccountId, input.accountId), eq(facebookConnections.pageId, input.pageId)))
         .limit(1);
       if (existing.length > 0) {
         await db
           .update(facebookConnections)
           .set({ accessToken: encryptedPageToken, pageName: pageName ?? undefined, isActive: true, facebookAccountId: input.accountId })
-          .where(and(eq(facebookConnections.pageId, input.pageId), eq(facebookConnections.userId, userId)));
+          .where(and(eq(facebookConnections.userId, userId), eq(facebookConnections.facebookAccountId, input.accountId), eq(facebookConnections.pageId, input.pageId)));
       } else {
         await db.insert(facebookConnections).values({
           userId,
