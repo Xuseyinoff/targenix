@@ -23,6 +23,7 @@ import {
 import { useIsMobile } from "@/hooks/useMobile";
 import { useLocale } from "@/contexts/LocaleContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useT } from "@/hooks/useT";
 import {
   Activity,
   BarChart3,
@@ -61,55 +62,60 @@ import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 
-const navGroups: NavGroup[] = [
-  {
-    items: [
-      { icon: LayoutDashboard, label: "Overview", path: "/overview" },
-      { icon: Zap, label: "Leads", path: "/leads" },
-    ],
-  },
-  {
-    label: "Facebook",
-    items: [
-      { icon: Facebook, label: "Connections", path: "/connections" },
-      { icon: Plug, label: "Integrations", path: "/integrations" },
-      { icon: Globe, label: "Destinations", path: "/destinations" },
-    ],
-  },
-];
+function buildNavGroups(t: (k: string) => string): NavGroup[] {
+  return [
+    {
+      items: [
+        { icon: LayoutDashboard, label: t("nav.overview"), path: "/overview" },
+        { icon: Zap, label: t("nav.leads"), path: "/leads" },
+      ],
+    },
+    {
+      label: t("nav.facebook"),
+      items: [
+        { icon: Facebook, label: t("nav.connections"), path: "/connections" },
+        { icon: Plug, label: t("nav.integrations"), path: "/integrations" },
+        { icon: Globe, label: t("nav.destinations"), path: "/destinations" },
+      ],
+    },
+  ];
+}
 
-const adminMenuItems = [
-  { icon: Webhook, label: "Webhook Health", path: "/webhook" },
-  { icon: Shield, label: "Admin Logs", path: "/admin/logs" },
-  { icon: Users, label: "Admin Leads", path: "/admin/leads" },
-  { icon: SendHorizonal, label: "Lead Backfill", path: "/admin/backfill" },
-  { icon: Globe, label: "Dest. Templates", path: "/admin/destination-templates" },
-];
+function buildAdminMenuItems(t: (k: string) => string) {
+  return [
+    { icon: Webhook, label: t("nav.webhookHealth"), path: "/webhook" },
+    { icon: Shield, label: t("nav.adminLogs"), path: "/admin/logs" },
+    { icon: Users, label: t("nav.adminLeads"), path: "/admin/leads" },
+    { icon: SendHorizonal, label: t("nav.leadBackfill"), path: "/admin/backfill" },
+    { icon: Globe, label: t("nav.destTemplates"), path: "/admin/destination-templates" },
+  ];
+}
 
-// Business Tools sub-menu items
-const businessToolsItems = [
-  {
-    icon: Activity,
-    label: "Ad Accounts",
-    path: "/business/ad-accounts",
-    active: true,
-    placeholder: false,
-  },
-  {
-    icon: BarChart3,
-    label: "Lead Analytics",
-    path: "/business/analytics",
-    active: true,
-    placeholder: false,
-  },
-  {
-    icon: MonitorCheck,
-    label: "Integrations Health",
-    path: "/business/integrations",
-    active: false,
-    placeholder: true,
-  },
-];
+function buildBusinessToolsItems(t: (k: string) => string) {
+  return [
+    {
+      icon: Activity,
+      label: t("nav.adAccounts"),
+      path: "/business/ad-accounts",
+      active: true,
+      placeholder: false,
+    },
+    {
+      icon: BarChart3,
+      label: t("nav.leadAnalytics"),
+      path: "/business/analytics",
+      active: true,
+      placeholder: false,
+    },
+    {
+      icon: MonitorCheck,
+      label: "Integrations Health",
+      path: "/business/integrations",
+      active: false,
+      placeholder: true,
+    },
+  ];
+}
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const BUSINESS_TOOLS_EXPAND_KEY = "targenix.sidebar.businessToolsExpanded";
@@ -185,23 +191,27 @@ function DashboardLayoutContent({
   const isCollapsed = state === "collapsed";
   const { toggleTheme, theme, switchable } = useTheme();
   const { locale, setLocale } = useLocale();
+  const t = useT();
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
+  const navGroups = useMemo(() => buildNavGroups(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
+  const adminMenuItems = useMemo(() => buildAdminMenuItems(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
+  const businessToolsItems = useMemo(() => buildBusinessToolsItems(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
   const allItems = navGroups.flatMap((g) => g.items);
   const activeMenuItem = allItems.find((item) => item.path === location);
   const activeGroupLabel = useMemo(() => {
     for (const g of navGroups) {
-      if (g.items.some((it) => it.path === location)) return g.label ?? "General";
+      if (g.items.some((it) => it.path === location)) return g.label ?? t("nav.overview");
     }
-    return location.startsWith("/business/") ? "Business Tools" : undefined;
-  }, [location]);
+    return location.startsWith("/business/") ? t("nav.businessTools") : undefined;
+  }, [location, navGroups]); // eslint-disable-line react-hooks/exhaustive-deps
   const isMobile = useIsMobile();
   const [navQuery, setNavQuery] = useState("");
 
   /** Sidebar only lists shipped tools; placeholders stay in data for routes/flags. */
   const visibleBusinessToolsItems = useMemo(
     () => businessToolsItems.filter((item) => !item.placeholder),
-    []
+    [businessToolsItems]
   );
 
   const [businessToolsExpanded, setBusinessToolsExpanded] = useState(
@@ -381,7 +391,7 @@ function DashboardLayoutContent({
                     {!isCollapsed && (
                       <>
                         <span className="flex-1 text-xs font-semibold uppercase tracking-widest text-sidebar-foreground/50 select-none">
-                          Business Tools
+                          {t("nav.businessTools")}
                         </span>
                         <ChevronDown
                           className={`h-3.5 w-3.5 text-sidebar-foreground/40 transition-transform duration-200 ${businessToolsExpanded ? "rotate-0" : "-rotate-90"}`}
@@ -455,7 +465,7 @@ function DashboardLayoutContent({
                 {!isCollapsed && <div className="mx-3 my-1 border-t border-sidebar-border/50" />}
                 <div className="px-3 py-1.5 mt-1">
                   <span className="text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/40">
-                    Admin
+                    {t("nav.admin")}
                   </span>
                 </div>
                 <SidebarMenu className="px-2 py-1">
@@ -510,7 +520,7 @@ function DashboardLayoutContent({
                     className="cursor-pointer text-destructive focus:text-destructive"
                   >
                     <LogOut className="mr-2 h-4 w-4" />
-                    <span>Sign out</span>
+                    <span>{t("nav.signOut")}</span>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -583,7 +593,7 @@ function DashboardLayoutContent({
                       if (!firstNavMatch) return;
                       setLocation(firstNavMatch.path);
                     }}
-                    placeholder={locale === "uz" ? "Qidirish..." : "Search..."}
+                    placeholder={t("nav.search")}
                     className="pl-9 bg-background/60"
                   />
                 </div>
@@ -592,16 +602,19 @@ function DashboardLayoutContent({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="sm" className="h-9 px-2">
-                  {locale === "uz" ? "UZ" : "EN"}
+                  {locale === "uz" ? "🇺🇿 UZ" : locale === "ru" ? "🇷🇺 RU" : "🇬🇧 EN"}
                   <ChevronDown className="ml-1 h-4 w-4 opacity-60" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40">
+              <DropdownMenuContent align="end" className="w-44">
                 <DropdownMenuItem onClick={() => setLocale("uz")} className="cursor-pointer">
-                  O‘zbekcha
+                  🇺🇿 O’zbekcha
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setLocale("ru")} className="cursor-pointer">
+                  🇷🇺 Русский
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setLocale("en")} className="cursor-pointer">
-                  English
+                  🇬🇧 English
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -652,14 +665,14 @@ function DashboardLayoutContent({
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuItem onClick={() => setLocation("/settings")} className="cursor-pointer">
                   <Settings className="mr-2 h-4 w-4" />
-                  Settings
+                  {t("nav.settings")}
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={logout}
                   className="cursor-pointer text-destructive focus:text-destructive"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  Sign out
+                  {t("nav.signOut")}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

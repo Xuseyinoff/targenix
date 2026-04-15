@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 
-export type Locale = "uz" | "en";
+export type Locale = "uz" | "en" | "ru";
 
 type LocaleContextValue = {
   locale: Locale;
@@ -15,7 +15,7 @@ function readStoredLocale(): Locale | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(LOCALE_STORAGE_KEY);
-    if (raw === "uz" || raw === "en") return raw;
+    if (raw === "uz" || raw === "en" || raw === "ru") return raw;
     return null;
   } catch {
     return null;

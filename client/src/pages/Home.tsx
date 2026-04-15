@@ -18,6 +18,7 @@ import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import type { LeadPipelineFields } from "@/lib/leadPipelineBadgeModel";
 import { LeadPipelineBadge } from "@/components/leads/PipelineBadges";
+import { useT } from "@/hooks/useT";
 
 function StatCard({
   title,
@@ -62,6 +63,7 @@ function StatCard({
 export default function Home() {
   const [, setLocation] = useLocation();
   const { user } = useAuth();
+  const t = useT();
   const isAdmin = user?.role === "admin";
   const refetchOpts = { refetchInterval: 5_000 };
   const { data: stats, isLoading } = trpc.leads.stats.useQuery(undefined, refetchOpts);
@@ -76,39 +78,39 @@ export default function Home() {
       <div className="space-y-6 max-w-7xl">
         {/* Header */}
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Overview</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t("home.title")}</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Real-time Facebook Lead Ads processing dashboard
+            {t("home.subtitle")}
           </p>
         </div>
 
         {/* Delivery & setup — first */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
-            title="Orders sent today"
+            title={t("home.ordersSentToday")}
             value={isLoading ? "—" : (stats?.orders.sentToday ?? 0)}
-            description="Successful deliveries today"
+            description={t("home.ordersSentTodayDesc")}
             icon={Calendar}
             variant="success"
           />
           <StatCard
-            title="Total orders sent"
+            title={t("home.totalOrdersSent")}
             value={isLoading ? "—" : (stats?.orders.sent ?? 0)}
-            description="All time, delivered to integrations"
+            description={t("home.totalOrdersSentDesc")}
             icon={TrendingUp}
             variant="success"
           />
           <StatCard
-            title="Active Integrations"
+            title={t("home.activeIntegrations")}
             value={activeIntegrations}
-            description="Telegram + Affiliate"
+            description={t("home.activeIntegrationsDesc")}
             icon={Plug}
           />
           {isAdmin && (
             <StatCard
-              title="Webhook Events"
+              title={t("home.webhookEvents")}
               value={webhookStats?.total ?? 0}
-              description="Total received"
+              description={t("home.webhookEventsDesc")}
               icon={Webhook}
             />
           )}
@@ -117,16 +119,16 @@ export default function Home() {
         {/* Today: lead-level integration outcomes (distinct leads) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <StatCard
-            title="Leads with a delivery today"
+            title={t("home.leadsWithDeliveryToday")}
             value={isLoading ? "—" : (stats?.todayIntegrationLeads?.leadsWithDeliveryToday ?? 0)}
-            description="Unique leads with ≥1 integration send today"
+            description={t("home.leadsWithDeliveryTodayDesc")}
             icon={Send}
             variant="success"
           />
           <StatCard
-            title="Leads with a failed delivery today"
+            title={t("home.leadsWithFailedToday")}
             value={isLoading ? "—" : (stats?.todayIntegrationLeads?.leadsWithFailedDeliveryToday ?? 0)}
-            description="Unique leads with ≥1 failed integration attempt today"
+            description={t("home.leadsWithFailedTodayDesc")}
             icon={AlertTriangle}
             variant="danger"
           />
@@ -135,29 +137,29 @@ export default function Home() {
         {/* Lead pipeline */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
-            title="Total Leads"
+            title={t("home.totalLeads")}
             value={isLoading ? "—" : (stats?.leads.total ?? 0)}
-            description="All time"
+            description={t("home.totalLeadsDesc")}
             icon={Zap}
           />
           <StatCard
-            title="Delivered"
+            title={t("home.delivered")}
             value={isLoading ? "—" : (stats?.leads.received ?? 0)}
-            description="Graph OK and all integrations succeeded"
+            description={t("home.deliveredDesc")}
             icon={CheckCircle2}
             variant="success"
           />
           <StatCard
-            title="Pending"
+            title={t("home.pending")}
             value={isLoading ? "—" : (stats?.leads.pending ?? 0)}
-            description="Queued or sending"
+            description={t("home.pendingDesc")}
             icon={Clock}
             variant="warning"
           />
           <StatCard
-            title="Issues"
+            title={t("home.issues")}
             value={isLoading ? "—" : (stats?.leads.failed ?? 0)}
-            description="Graph error or failed/partial delivery"
+            description={t("home.issuesDesc")}
             icon={AlertCircle}
             variant="danger"
           />
@@ -168,24 +170,24 @@ export default function Home() {
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base font-semibold">Recent Leads</CardTitle>
+                <CardTitle className="text-base font-semibold">{t("home.recentLeads")}</CardTitle>
                 <span
                   onClick={() => setLocation("/leads")}
                   className="text-xs text-primary hover:underline cursor-pointer"
                   role="link"
                 >
-                  View all →
+                  {t("common.viewAll")}
                 </span>
               </div>
-              <CardDescription>Latest incoming leads from Facebook</CardDescription>
+              <CardDescription>{t("home.recentLeadsSubtitle")}</CardDescription>
             </CardHeader>
             <CardContent>
               {!leadsData?.items.length ? (
                 <div className="flex flex-col items-center justify-center py-8 text-center">
                   <Zap className="h-8 w-8 text-muted-foreground/40 mb-2" />
-                  <p className="text-sm text-muted-foreground">No leads yet</p>
+                  <p className="text-sm text-muted-foreground">{t("home.noLeadsYet")}</p>
                   <p className="text-xs text-muted-foreground/60 mt-1">
-                    Leads will appear here once your webhook is connected
+                    {t("home.noLeadsWebhook")}
                   </p>
                 </div>
               ) : (
@@ -216,39 +218,39 @@ export default function Home() {
           {isAdmin && <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-base font-semibold">Webhook Health</CardTitle>
+                <CardTitle className="text-base font-semibold">{t("home.webhookHealth")}</CardTitle>
                 <span
                   onClick={() => setLocation("/webhook")}
                   className="text-xs text-primary hover:underline cursor-pointer"
                   role="link"
                 >
-                  View details →
+                  {t("home.viewDetails")}
                 </span>
               </div>
-              <CardDescription>Signature verification and processing stats</CardDescription>
+              <CardDescription>{t("home.webhookHealthSubtitle")}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
                 <HealthRow
-                  label="Total Events"
+                  label={t("home.totalEvents")}
                   value={webhookStats?.total ?? 0}
                   icon={Activity}
                 />
                 <HealthRow
-                  label="Verified"
+                  label={t("home.verified")}
                   value={webhookStats?.verified ?? 0}
                   icon={CheckCircle2}
                   positive
                 />
                 <HealthRow
-                  label="Processed"
+                  label={t("home.processed")}
                   value={webhookStats?.processed ?? 0}
                   icon={TrendingUp}
                   positive
                 />
               </div>
               <div className="mt-4 pt-4 border-t">
-                <p className="text-xs text-muted-foreground">Webhook URL:</p>
+                <p className="text-xs text-muted-foreground">{t("home.webhookUrl")}</p>
                 <code className="text-xs bg-muted px-2 py-1 rounded mt-1 block truncate">
                   /api/webhooks/facebook
                 </code>

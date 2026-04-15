@@ -37,6 +37,7 @@ import { useLeadFilters } from "@/hooks/useLeadFilters";
 import { LeadFilters } from "@/components/leads/LeadFilters";
 import { LeadCard } from "@/components/leads/LeadCard";
 import { LeadsTable } from "@/components/leads/LeadsTable";
+import { useT } from "@/hooks/useT";
 
 const PAGE_SIZE = 20;
 
@@ -44,6 +45,7 @@ export default function Leads() {
   const filters = useLeadFilters();
   const [, setLocation] = useLocation();
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const t = useT();
 
   const [syncOpen, setSyncOpen] = useState(false);
   const [syncPageId, setSyncPageId] = useState("");
@@ -125,7 +127,7 @@ export default function Leads() {
         s.delete(id);
         return s;
       });
-      toast.success("Lead queued for retry");
+      toast.success(t("leads.retryQueued"));
       refetch();
     },
     onError: (err, { id }) => {
@@ -142,8 +144,8 @@ export default function Leads() {
     onSuccess: (result) => {
       toast.success(
         result.retried > 0
-          ? `${result.retried} failed lead(s) queued for retry`
-          : "No failed leads to retry"
+          ? t("leads.retryAllQueued", { count: result.retried })
+          : t("leads.noFailedLeads")
       );
       refetch();
     },
@@ -158,15 +160,15 @@ export default function Leads() {
   ).length;
 
   const handleSync = () => {
-    if (!syncPageId.trim()) { toast.error("Please select a Page"); return; }
-    if (!syncFormId.trim()) { toast.error("Please select a Form"); return; }
-    if (!Number.isFinite(syncHoursBack) || syncHoursBack <= 0) { toast.error("Hours back must be greater than 0"); return; }
+    if (!syncPageId.trim()) { toast.error(t("leads.pleaseSelectPage")); return; }
+    if (!syncFormId.trim()) { toast.error(t("leads.pleaseSelectForm")); return; }
+    if (!Number.isFinite(syncHoursBack) || syncHoursBack <= 0) { toast.error(t("leads.hoursBackPositive")); return; }
     setSyncResult(null);
     pollMutation.mutate({ formId: syncFormId.trim(), pageId: syncPageId.trim(), hoursBack: syncHoursBack });
   };
 
   const handleExportCSV = () => {
-    if (leads.length === 0) { toast.error("No leads to export"); return; }
+    if (leads.length === 0) { toast.error(t("leads.noLeadsExport")); return; }
     const header = ["ID", "Name", "Phone", "Email", "Platform", "Page", "Form", "Lead ID", "Data status", "Delivery status", "Created At"];
     const rows = leads.map((l) => [
       l.id,
@@ -191,7 +193,7 @@ export default function Leads() {
     a.download = `leads-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success(`Exported ${leads.length} leads`);
+    toast.success(t("leads.exportedLeads", { count: leads.length }));
   };
 
   const handleSelectId = useCallback((id: number) => {
@@ -224,9 +226,9 @@ export default function Leads() {
         {/* Header */}
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <h1 className="text-xl font-bold tracking-tight">Leads</h1>
+            <h1 className="text-xl font-bold tracking-tight">{t("leads.title")}</h1>
             <p className="text-muted-foreground text-xs mt-0.5 flex items-center gap-1.5">
-              {data?.total ?? 0} total
+              {data?.total ?? 0} {t("common.total")}
               {isFetching && !isLoading && <RefreshCw className="h-3 w-3 animate-spin" />}
             </p>
           </div>
@@ -238,12 +240,12 @@ export default function Leads() {
                 onClick={() => retryAllMutation.mutate()}
                 disabled={retryAllMutation.isPending}
                 className="border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30 h-8 px-2"
-                title={`Retry All Failed (${failedCount})`}
+                title={`${t("leads.retryAll")} (${failedCount})`}
               >
                 {retryAllMutation.isPending
                   ? <Loader2 className="h-4 w-4 animate-spin" />
                   : <RotateCcw className="h-4 w-4" />}
-                <span className="hidden sm:inline ml-1.5">Retry ({failedCount})</span>
+                <span className="hidden sm:inline ml-1.5">{t("leads.retryAll")} ({failedCount})</span>
               </Button>
             )}
             <Button
@@ -252,27 +254,27 @@ export default function Leads() {
               onClick={handleExportCSV}
               disabled={!leads.length}
               className="h-8 px-2"
-              title="Export CSV"
+              title={t("common.export")}
             >
               <FileDown className="h-4 w-4" />
-              <span className="hidden sm:inline ml-1.5">Export</span>
+              <span className="hidden sm:inline ml-1.5">{t("common.export")}</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={() => { setSyncOpen(true); setSyncResult(null); }}
               className="h-8 px-2"
-              title="Sync from Facebook"
+              title={t("common.sync")}
             >
               <Download className="h-4 w-4" />
-              <span className="hidden sm:inline ml-1.5">Sync</span>
+              <span className="hidden sm:inline ml-1.5">{t("common.sync")}</span>
             </Button>
             <Button
               variant="outline"
               size="sm"
               onClick={() => refetch()}
               className="h-8 px-2"
-              title="Refresh"
+              title={t("common.refresh")}
             >
               <RefreshCw className="h-4 w-4" />
             </Button>
@@ -282,14 +284,16 @@ export default function Leads() {
         {/* Bulk action bar */}
         {selectedIds.size > 0 && (
           <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/20">
-            <span className="text-sm font-medium text-primary">{selectedIds.size} selected</span>
+            <span className="text-sm font-medium text-primary">
+              {selectedIds.size} {t("common.selected")}
+            </span>
             <Button
               variant="outline"
               size="sm"
               className="h-7 text-xs"
               onClick={() => setSelectedIds(new Set())}
             >
-              Deselect all
+              {t("common.deselectAll")}
             </Button>
           </div>
         )}
@@ -311,11 +315,11 @@ export default function Leads() {
           <Card>
             <CardContent className="flex flex-col items-center justify-center py-16 text-center">
               <Zap className="h-10 w-10 text-muted-foreground/30 mb-3" />
-              <p className="text-muted-foreground font-medium">No leads found</p>
+              <p className="text-muted-foreground font-medium">{t("leads.noLeadsFound")}</p>
               <p className="text-xs text-muted-foreground/60 mt-1">
                 {filters.hasActiveFilters
-                  ? "Try adjusting your search or filters."
-                  : "Leads will appear here once your Facebook webhook is configured."}
+                  ? t("leads.noLeadsFilter")
+                  : t("leads.noLeadsWebhook")}
               </p>
             </CardContent>
           </Card>
@@ -353,7 +357,11 @@ export default function Leads() {
         {totalPages > 1 && (
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              {filters.page + 1} / {totalPages} &nbsp;·&nbsp; {data?.total ?? 0} leads
+              {t("leads.pagePagination", {
+                current: filters.page + 1,
+                total: totalPages,
+                count: data?.total ?? 0,
+              })}
             </p>
             <div className="flex gap-1.5">
               <Button
@@ -388,16 +396,15 @@ export default function Leads() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Download className="h-5 w-5 text-primary" />
-              Sync Leads from Facebook
+              {t("leads.syncTitle")}
             </DialogTitle>
             <DialogDescription>
-              Pull leads from a specific Facebook Lead Form via Graph API.
-              Only leads from the last N hours are synced (duplicates skipped).
+              {t("leads.syncDesc")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
-              <Label>Facebook Page</Label>
+              <Label>{t("leads.facebookPage")}</Label>
               {connections && connections.length > 0 ? (
                 <Select
                   value={syncPageId}
@@ -408,7 +415,7 @@ export default function Leads() {
                   }}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select a connected page..." />
+                    <SelectValue placeholder={t("leads.selectConnectedPage")} />
                   </SelectTrigger>
                   <SelectContent>
                     {connections.map((c) => (
@@ -421,24 +428,26 @@ export default function Leads() {
                 </Select>
               ) : (
                 <div className="text-sm text-muted-foreground p-3 rounded-lg border bg-muted/30">
-                  No connected pages. Add one in <strong>Facebook Accounts</strong> first.
+                  {t("leads.noConnectedPages")}{" "}
+                  <strong>{t("leads.noConnectedPagesFB")}</strong>{" "}
+                  {t("leads.noConnectedPagesEnd")}
                 </div>
               )}
             </div>
             <div className="space-y-1.5">
-              <Label>Lead Form</Label>
+              <Label>{t("leads.leadForm")}</Label>
               <Select
                 value={syncFormId}
                 onValueChange={(val) => { setSyncFormId(val); setSyncResult(null); }}
                 disabled={!syncPageId}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder={syncPageId ? "Select a form..." : "Select a page first"} />
+                  <SelectValue placeholder={syncPageId ? t("leads.selectForm") : t("leads.selectPageFirst")} />
                 </SelectTrigger>
                 <SelectContent>
                   {syncPageForms.length === 0 ? (
                     <div className="px-3 py-2 text-sm text-muted-foreground">
-                      No forms found for this page yet.
+                      {t("leads.noFormsFound")}
                     </div>
                   ) : (
                     syncPageForms.map((f) => (
@@ -454,12 +463,13 @@ export default function Leads() {
               </Select>
               {selectedSyncForm && (
                 <p className="text-xs text-muted-foreground">
-                  Selected: <span className="font-mono">{selectedSyncForm.formId}</span>
+                  {t("leads.selectedForm")}{" "}
+                  <span className="font-mono">{selectedSyncForm.formId}</span>
                 </p>
               )}
             </div>
             <div className="space-y-1.5">
-              <Label>Hours back</Label>
+              <Label>{t("leads.hoursBack")}</Label>
               <Input
                 type="number"
                 min={1}
@@ -472,13 +482,13 @@ export default function Leads() {
                 }}
               />
               <p className="text-xs text-muted-foreground">
-                Example: 1, 10, 24. We will stop syncing once we reach older leads.
+                {t("leads.hoursBackHint")}
               </p>
             </div>
             {syncResult && (
               <div className="p-3 rounded-lg border bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-800">
                 <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400 font-medium text-sm">
-                  <CheckCircle2 className="h-4 w-4" />Sync complete
+                  <CheckCircle2 className="h-4 w-4" />{t("leads.syncComplete")}
                 </div>
                 <p className="text-sm text-emerald-600 dark:text-emerald-500 mt-1">
                   {syncResult.message}
@@ -487,14 +497,14 @@ export default function Leads() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSyncOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setSyncOpen(false)}>{t("common.cancel")}</Button>
             <Button
               onClick={handleSync}
               disabled={pollMutation.isPending || !syncFormId || !syncPageId || syncPageForms.length === 0}
             >
               {pollMutation.isPending
-                ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />Syncing...</>
-                : <><Download className="h-4 w-4 mr-2" />Sync Now</>}
+                ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" />{t("leads.syncing")}</>
+                : <><Download className="h-4 w-4 mr-2" />{t("leads.syncNow")}</>}
             </Button>
           </DialogFooter>
         </DialogContent>
