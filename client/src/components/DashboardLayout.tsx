@@ -281,14 +281,14 @@ function DashboardLayoutContent({
         items: g.items.filter((it) => it.label.toLowerCase().includes(q)),
       }))
       .filter((g) => g.items.length > 0);
-  }, [navQuery]);
+  }, [navQuery, navGroups]);
 
   const firstNavMatch = useMemo(() => {
     const q = navQuery.trim().toLowerCase();
     if (!q) return null;
     const all = navGroups.flatMap((g) => g.items);
     return all.find((it) => it.label.toLowerCase().includes(q)) ?? null;
-  }, [navQuery]);
+  }, [navQuery, navGroups]);
 
   return (
     <>
