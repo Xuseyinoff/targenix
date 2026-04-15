@@ -127,6 +127,9 @@ export default function SettingsTelegram() {
     linkDeliveryChatMutation.mutate({ chatId: deliveryChatIdInput });
   };
 
+  const isConnected = Boolean(telegramStatus?.connected);
+  const hasDeliveryChats = (deliveryChats?.length ?? 0) > 0;
+
   return (
     <DashboardLayout>
       <div className="p-6 max-w-2xl space-y-6">
@@ -285,141 +288,161 @@ export default function SettingsTelegram() {
           </CardContent>
         </Card>
 
-        {/* ─── Delivery Chats (Groups / Channels) ─────────────────────────── */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="h-10 w-10 rounded-lg bg-violet-500/10 flex items-center justify-center">
-                  <Users className="h-5 w-5 text-violet-600" />
+        {isConnected && (
+          <>
+            {/* ─── Delivery Chats (Groups / Channels) ─────────────────────────── */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                      <Users className="h-5 w-5 text-violet-600" />
+                    </div>
+                    <div>
+                      <CardTitle className="text-base">Delivery Chats</CardTitle>
+                      <CardDescription>
+                        Add a Telegram group/channel for lead delivery (leads will NOT go to your system chat)
+                      </CardDescription>
+                    </div>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => refetchDeliveryChats()} disabled={deliveryFetching}>
+                    <RefreshCw className={`h-4 w-4 mr-1.5 ${deliveryFetching ? "animate-spin" : ""}`} />
+                    Refresh
+                  </Button>
                 </div>
-                <div>
-                  <CardTitle className="text-base">Delivery Chats</CardTitle>
-                  <CardDescription>
-                    Add a Telegram group/channel for lead delivery (leads will NOT go to your system chat)
-                  </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800 p-4 space-y-2">
+                  <p className="text-sm font-medium text-violet-800 dark:text-violet-300">Steps:</p>
+                  <ol className="text-sm text-violet-700 dark:text-violet-400 space-y-1 list-decimal list-inside">
+                    <li>Add the bot to your group/channel</li>
+                    <li>Make the bot an <strong>administrator</strong></li>
+                    <li>The bot will post the <strong>Chat ID</strong> in that chat</li>
+                    <li>Paste the Chat ID below and link</li>
+                  </ol>
                 </div>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => refetchDeliveryChats()} disabled={deliveryFetching}>
-                <RefreshCw className={`h-4 w-4 mr-1.5 ${deliveryFetching ? "animate-spin" : ""}`} />
-                Refresh
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800 p-4 space-y-2">
-              <p className="text-sm font-medium text-violet-800 dark:text-violet-300">Steps:</p>
-              <ol className="text-sm text-violet-700 dark:text-violet-400 space-y-1 list-decimal list-inside">
-                <li>Add the bot to your group/channel</li>
-                <li>Make the bot an <strong>administrator</strong></li>
-                <li>The bot will post the <strong>Chat ID</strong> in that chat</li>
-                <li>Paste the Chat ID below and link</li>
-              </ol>
-            </div>
 
-            <div className="flex items-center gap-2">
-              <Input
-                placeholder="Paste Telegram Chat ID (e.g. -1001234567890)"
-                value={deliveryChatIdInput}
-                onChange={(e) => setDeliveryChatIdInput(e.target.value)}
-              />
-              <Button onClick={handleLinkDeliveryChat} disabled={deliveryLinking || !deliveryChatIdInput.trim()}>
-                {deliveryLinking ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Users className="h-4 w-4 mr-2" />}
-                Link
-              </Button>
-            </div>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Paste Telegram Chat ID (e.g. -1001234567890)"
+                    value={deliveryChatIdInput}
+                    onChange={(e) => setDeliveryChatIdInput(e.target.value)}
+                  />
+                  <Button onClick={handleLinkDeliveryChat} disabled={deliveryLinking || !deliveryChatIdInput.trim()}>
+                    {deliveryLinking ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Users className="h-4 w-4 mr-2" />}
+                    Link
+                  </Button>
+                </div>
 
-            <div className="space-y-2">
-              {!deliveryChats?.length ? (
-                <p className="text-sm text-muted-foreground">No delivery chats connected yet.</p>
-              ) : (
                 <div className="space-y-2">
-                  {deliveryChats.map((c) => (
-                    <div key={c.id} className="flex items-center justify-between border rounded-md px-3 py-2">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{c.title ?? `Chat ${c.chatId}`}</p>
-                        <p className="text-xs text-muted-foreground font-mono truncate">{c.chatId}</p>
-                      </div>
-                      <Badge variant="secondary" className="font-mono text-xs">DELIVERY</Badge>
+                  {!deliveryChats?.length ? (
+                    <p className="text-sm text-muted-foreground">No delivery chats connected yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {deliveryChats.map((c) => (
+                        <div key={c.id} className="flex items-center justify-between border rounded-md px-3 py-2">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{c.title ?? `Chat ${c.chatId}`}</p>
+                            <p className="text-xs text-muted-foreground font-mono truncate">{c.chatId}</p>
+                          </div>
+                          <Badge variant="secondary" className="font-mono text-xs">DELIVERY</Badge>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        {/* ─── Delivery Mapping (Destination/Template → Chat) ────────────── */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <CardTitle className="text-base">Delivery Mapping</CardTitle>
-                <CardDescription>
-                  Assign a delivery chat per affiliate destination/template (leads are sent only if mapped)
-                </CardDescription>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => { void refetchMappings(); void refetchDeliveryChats(); }}
-                disabled={mappingsFetching || deliveryFetching}
-              >
-                <RefreshCw className={`h-4 w-4 mr-1.5 ${(mappingsFetching || deliveryFetching) ? "animate-spin" : ""}`} />
-                Refresh
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {!destinationMappings?.length ? (
-              <p className="text-sm text-muted-foreground">No destinations/templates found.</p>
-            ) : (
-              <div className="space-y-2">
-                {destinationMappings.map((t) => {
-                  const current = t.chat?.chatId != null ? String(t.chat.chatId) : "none";
-                  return (
-                    <div key={t.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{t.name}</p>
-                        <p className="text-xs text-muted-foreground font-mono">
-                          destinationId: {t.id}
-                          {t.templateId ? ` · templateId:${t.templateId}` : ` · ${t.templateType}`}
-                        </p>
-                      </div>
-                      <div className="w-[240px]">
-                        <Select
-                          value={current}
-                          onValueChange={(val) => {
-                            const chatId = val === "none" ? null : val;
-                            setDestinationChatMutation.mutate({ targetWebsiteId: t.id, telegramChatId: chatId });
-                          }}
-                          disabled={setDestinationChatMutation.isPending}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select delivery chat" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">No delivery chat</SelectItem>
-                            {(deliveryChats ?? []).map((c) => (
-                              <SelectItem key={c.chatId} value={String(c.chatId)}>
-                                {c.title ?? c.chatId}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        {t.chat?.chatId && (
-                          <p className="text-[11px] text-muted-foreground font-mono mt-1 truncate">
-                            {t.chat.chatId}
-                          </p>
-                        )}
-                      </div>
+            {/* ─── Delivery Mapping (Destination/Template → Chat) ────────────── */}
+            {hasDeliveryChats ? (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <CardTitle className="text-base">Delivery Mapping</CardTitle>
+                      <CardDescription>
+                        Assign a delivery chat per affiliate destination/template (leads are sent only if mapped)
+                      </CardDescription>
                     </div>
-                  );
-                })}
-              </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => { void refetchMappings(); void refetchDeliveryChats(); }}
+                      disabled={mappingsFetching || deliveryFetching}
+                    >
+                      <RefreshCw className={`h-4 w-4 mr-1.5 ${(mappingsFetching || deliveryFetching) ? "animate-spin" : ""}`} />
+                      Refresh
+                    </Button>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {!destinationMappings?.length ? (
+                    <p className="text-sm text-muted-foreground">No destinations/templates found.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {destinationMappings.map((t) => {
+                        const current = t.chat?.chatId != null ? String(t.chat.chatId) : "none";
+                        return (
+                          <div key={t.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{t.name}</p>
+                              <p className="text-xs text-muted-foreground font-mono">
+                                destinationId: {t.id}
+                                {t.templateId ? ` · templateId:${t.templateId}` : ` · ${t.templateType}`}
+                              </p>
+                            </div>
+                            <div className="w-[240px]">
+                              <Select
+                                value={current}
+                                onValueChange={(val) => {
+                                  const chatId = val === "none" ? null : val;
+                                  setDestinationChatMutation.mutate({ targetWebsiteId: t.id, telegramChatId: chatId });
+                                }}
+                                disabled={setDestinationChatMutation.isPending}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select delivery chat" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">No delivery chat</SelectItem>
+                                  {(deliveryChats ?? []).map((c) => (
+                                    <SelectItem key={c.chatId} value={String(c.chatId)}>
+                                      {c.title ?? c.chatId}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              {t.chat?.chatId && (
+                                <p className="text-[11px] text-muted-foreground font-mono mt-1 truncate">
+                                  {t.chat.chatId}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            ) : (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Delivery Mapping</CardTitle>
+                  <CardDescription>
+                    Add at least one delivery chat first — then you can map destinations/templates to chats.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-muted-foreground">
+                    Mapping is disabled until you link a delivery chat in the section above.
+                  </p>
+                </CardContent>
+              </Card>
             )}
-          </CardContent>
-        </Card>
+          </>
+        )}
       </div>
 
       {/* Disconnect Telegram Dialog */}

@@ -1,6 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
-import { Zap, ArrowRight, CheckCircle, Link2, BarChart3, RefreshCw, Bell, Shield, Clock } from "lucide-react";
+import {
+  Zap,
+  ArrowRight,
+  CheckCircle,
+  Link2,
+  BarChart3,
+  RefreshCw,
+  Bell,
+  Shield,
+  Clock,
+  Workflow,
+  Webhook,
+  Users,
+  Layers,
+  Database,
+} from "lucide-react";
 
 // ─── Scroll animation hook ────────────────────────────────────────────────────
 function useInView(threshold = 0.15) {
@@ -159,16 +174,45 @@ function Hero() {
           No credit card required · Free to start · Official Meta Webhooks API
         </p>
 
-        {/* Stats row */}
-        <div className="mt-14 grid grid-cols-3 gap-6 max-w-lg mx-auto">
+        {/* Value props row (trust-friendly) */}
+        <div className="mt-14 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-3xl mx-auto">
           {[
-            { value: "2,000+", label: "Leads processed" },
-            { value: "< 1s", label: "Delivery time" },
-            { value: "99.9%", label: "Uptime" },
-          ].map(({ value, label }) => (
-            <div key={label} className="text-center">
-              <div className="text-2xl font-bold text-white">{value}</div>
-              <div className="text-xs text-slate-500 mt-0.5">{label}</div>
+            {
+              icon: Webhook,
+              title: "Official Meta Webhooks",
+              desc: "Real-time lead capture (no polling).",
+              color: "#3b82f6",
+            },
+            {
+              icon: Shield,
+              title: "Encrypted tokens",
+              desc: "AES-256-CBC at rest + HTTPS in transit.",
+              color: "#10b981",
+            },
+            {
+              icon: Clock,
+              title: "Fast delivery",
+              desc: "Instant routing to Telegram & endpoints.",
+              color: "#f59e0b",
+            },
+          ].map((it) => (
+            <div
+              key={it.title}
+              className="rounded-2xl px-5 py-4 text-left"
+              style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}
+            >
+              <div className="flex items-start gap-3">
+                <div
+                  className="h-10 w-10 rounded-xl flex items-center justify-center shrink-0"
+                  style={{ background: `${it.color}15`, border: `1px solid ${it.color}25` }}
+                >
+                  <it.icon className="h-5 w-5" style={{ color: it.color }} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-white">{it.title}</p>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">{it.desc}</p>
+                </div>
+              </div>
             </div>
           ))}
         </div>
@@ -260,6 +304,168 @@ function HowItWorks() {
                 </div>
                 <h3 className="text-xl font-bold text-white mb-3">{step.title}</h3>
                 <p className="text-slate-400 text-sm leading-relaxed">{step.description}</p>
+              </div>
+            </FadeIn>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── What you get today (truth-first) ─────────────────────────────────────────
+function AvailableToday() {
+  const items = [
+    {
+      icon: Webhook,
+      title: "Real-time lead capture",
+      description: "We receive leadgen events instantly and process them asynchronously to avoid retries.",
+      color: "#3b82f6",
+    },
+    {
+      icon: Workflow,
+      title: "Lead routing (no-code)",
+      description: "Send leads to Telegram and affiliate / custom endpoints based on your rules and templates.",
+      color: "#8b5cf6",
+    },
+    {
+      icon: Bell,
+      title: "Telegram delivery system",
+      description: "System chat + delivery chats + per-destination delivery mapping with full control.",
+      color: "#229ED9",
+    },
+    {
+      icon: BarChart3,
+      title: "Dashboard + logs",
+      description: "Pipeline statuses, delivery outcomes, retries, and structured logs for debugging.",
+      color: "#06b6d4",
+    },
+    {
+      icon: RefreshCw,
+      title: "Automatic retries",
+      description: "Failed deliveries retry automatically (up to 3 times) so leads don’t get lost.",
+      color: "#f43f5e",
+    },
+    {
+      icon: Shield,
+      title: "Security by default",
+      description: "Encrypted tokens, signature verification, and per-user data isolation.",
+      color: "#10b981",
+    },
+  ];
+
+  return (
+    <section className="py-24" style={{ background: "#080a14" }}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6">
+        <FadeIn className="text-center mb-14">
+          <div
+            className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-1 rounded-full mb-4"
+            style={{ background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.3)", color: "#6ee7b7" }}
+          >
+            <CheckCircle className="h-3.5 w-3.5" />
+            Available today
+          </div>
+          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
+            Everything you can use right now
+          </h2>
+          <p className="text-slate-400 max-w-2xl mx-auto">
+            No “vaporware”. These features are already live in the product — built for speed, reliability, and clarity.
+          </p>
+        </FadeIn>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {items.map((it, i) => (
+            <FadeIn key={it.title} delay={i * 70}>
+              <div
+                className="p-6 rounded-2xl"
+                style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}
+              >
+                <div
+                  className="h-10 w-10 rounded-xl flex items-center justify-center mb-4"
+                  style={{ background: `${it.color}15`, border: `1px solid ${it.color}25` }}
+                >
+                  <it.icon className="h-5 w-5" style={{ color: it.color }} />
+                </div>
+                <h3 className="text-base font-semibold text-white mb-2">{it.title}</h3>
+                <p className="text-sm text-slate-400 leading-relaxed">{it.description}</p>
+              </div>
+            </FadeIn>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ─── Roadmap / Coming soon (confidence without overclaim) ────────────────────
+function Roadmap() {
+  const upcoming = [
+    {
+      icon: Database,
+      title: "Native CRM integrations",
+      description: "Bitrix24, amoCRM, HubSpot (and more) with guided setup and field mapping.",
+    },
+    {
+      icon: Users,
+      title: "Teams & roles",
+      description: "Invite teammates, set access levels, and manage multi-operator workflows.",
+    },
+    {
+      icon: Layers,
+      title: "Advanced routing",
+      description: "Round-robin, schedules, quotas, and per-campaign smart rules for scale.",
+    },
+    {
+      icon: Bell,
+      title: "More channels",
+      description: "WhatsApp / SMS alerts, plus multi-chat fallbacks for critical deliveries.",
+    },
+  ];
+
+  return (
+    <section className="py-24" style={{ background: "linear-gradient(180deg, #080a14 0%, #0a0d1a 100%)" }}>
+      <div className="max-w-6xl mx-auto px-4 sm:px-6">
+        <FadeIn className="text-center mb-14">
+          <div
+            className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-1 rounded-full mb-4"
+            style={{ background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.3)", color: "#c4b5fd" }}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Coming soon
+          </div>
+          <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
+            What we’re building next
+          </h2>
+          <p className="text-slate-400 max-w-2xl mx-auto">
+            These are in progress and will ship step-by-step. We’ll keep the product stable while adding power features.
+          </p>
+        </FadeIn>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {upcoming.map((it, i) => (
+            <FadeIn key={it.title} delay={i * 80}>
+              <div
+                className="p-6 rounded-2xl flex items-start gap-4"
+                style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}
+              >
+                <div
+                  className="h-11 w-11 rounded-xl flex items-center justify-center shrink-0"
+                  style={{ background: "rgba(139,92,246,0.14)", border: "1px solid rgba(139,92,246,0.25)" }}
+                >
+                  <it.icon className="h-5 w-5" style={{ color: "#a78bfa" }} />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-white">{it.title}</p>
+                    <span
+                      className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                      style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", color: "#cbd5e1" }}
+                    >
+                      Planned
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-400 mt-1 leading-relaxed">{it.description}</p>
+                </div>
               </div>
             </FadeIn>
           ))}
@@ -486,6 +692,8 @@ export default function LandingPage() {
       <Navbar />
       <Hero />
       <HowItWorks />
+      <AvailableToday />
+      <Roadmap />
       <Features />
       <TrustSection />
       <Footer />
