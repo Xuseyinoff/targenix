@@ -133,7 +133,7 @@ async function resolvePageAccessToken(
     const intFormId = integration.formId ?? "";
     if (intPageId === pageId && intFormId === formId) {
       // Use the account token — MUST verify userId to prevent cross-user token access
-      const accountId = config.accountId as number | undefined;
+      const accountId = (config.facebookAccountId ?? config.accountId) as number | undefined;
       if (accountId) {
         const [account] = await db
           .select()
