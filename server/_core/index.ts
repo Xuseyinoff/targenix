@@ -114,7 +114,9 @@ async function startServer() {
     })
   );
 
-  // Rate limiting — auth endpoints (login / register / facebook): 10 attempts per 15 min per IP
+  // ── Rate Limiting (layered: specific → global, webhooks excluded from global) ──
+
+  // Auth endpoints: 10 req per 15 min per IP (brute-force protection)
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 10,
@@ -125,8 +127,9 @@ async function startServer() {
   app.use("/api/trpc/auth.login", authLimiter);
   app.use("/api/trpc/auth.register", authLimiter);
   app.use("/api/trpc/auth.facebookLogin", authLimiter);
+  app.use("/api/auth/facebook", authLimiter);
 
-  // Rate limiting — password reset: 5 requests per hour per IP to prevent email spam/abuse
+  // Password reset: 5 req per hour per IP (email spam prevention)
   const passwordResetLimiter = rateLimit({
     windowMs: 60 * 60 * 1000,
     max: 5,
@@ -137,15 +140,27 @@ async function startServer() {
   app.use("/api/trpc/auth.forgotPassword", passwordResetLimiter);
   app.use("/api/trpc/auth.resetPassword", passwordResetLimiter);
 
-  // Rate limiting — webhook endpoint: 100 req per min per IP (DDoS protection)
+  // Webhooks: 500 req per min per IP (Facebook sends bursts; HMAC protects integrity)
   const webhookLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 100,
+    max: 500,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: "Too many webhook requests." },
   });
   app.use("/api/webhooks", webhookLimiter);
+  app.use("/api/telegram", webhookLimiter);
+
+  // Global API: 200 req per min per IP (skip webhooks — they have their own limit)
+  const globalApiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => req.path.startsWith("/api/webhooks") || req.path.startsWith("/api/telegram"),
+    message: { error: "Too many requests. Please slow down." },
+  });
+  app.use("/api", globalApiLimiter);
 
   // Capture raw body for webhook signature verification BEFORE json parsing
   app.use((req, _res, next) => {
@@ -157,9 +172,10 @@ async function startServer() {
     next();
   });
 
-  // Configure body parser with larger size limit
-  app.use(express.json({ limit: "50mb" }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  // Body parser — 2 MB default, 10 MB for webhook payloads (Facebook can send large batches)
+  app.use("/api/webhooks", express.json({ limit: "10mb" }));
+  app.use(express.json({ limit: "2mb" }));
+  app.use(express.urlencoded({ limit: "2mb", extended: true }));
 
   // HTTP request/response logging (after body parsers so body is available)
   app.use(httpLogger);
