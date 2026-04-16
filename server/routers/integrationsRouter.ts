@@ -11,6 +11,7 @@ import { sendAffiliateOrderByTemplate, sendLeadViaTemplate, type TemplateType, t
 import { sendLeadTelegramNotification } from "../services/leadService";
 import { targetWebsites, destinationTemplates } from "../../drizzle/schema";
 import { eq, and } from "drizzle-orm";
+import { checkUserRateLimit } from "../lib/userRateLimit";
 
 export const integrationsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
@@ -99,6 +100,7 @@ export const integrationsRouter = router({
   testLead: protectedProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
+      checkUserRateLimit(ctx.user.id, "testLead", { max: 5, windowMs: 60_000, message: "Too many test requests. Max 5 per minute." });
       const list = await getIntegrations(ctx.user.id);
       const integration = list.find((i) => i.id === input.id);
       if (!integration) throw new Error("Integration not found");

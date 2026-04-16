@@ -20,6 +20,7 @@ import {
 } from "../services/facebookService";
 import { extractWithMappingForPoll } from "../services/leadService";
 import { processLead } from "../services/leadService";
+import { checkUserRateLimit } from "../lib/userRateLimit";
 
 export const leadsRouter = router({
   list: protectedProcedure
@@ -291,6 +292,7 @@ export const leadsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      checkUserRateLimit(ctx.user.id, "pollFromForm", { max: 3, windowMs: 60_000, message: "Too many poll requests. Max 3 per minute." });
       const userId = ctx.user.id;
       const db = await getDb();
       if (!db) throw new Error("Database not available");

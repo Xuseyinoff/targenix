@@ -33,6 +33,7 @@ import {
 } from "../services/affiliateService";
 
 import { assertSafeOutboundUrl } from "../lib/urlSafety";
+import { checkUserRateLimit } from "../lib/userRateLimit";
 
 async function validateTargetUrl(url: string): Promise<void> {
   await assertSafeOutboundUrl(url);
@@ -547,6 +548,7 @@ export const targetWebsitesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      checkUserRateLimit(ctx.user.id, "testIntegration", { max: 5, windowMs: 60_000, message: "Too many test requests. Max 5 per minute." });
       const db = await getDb();
       if (!db) throw new Error("DB not available");
 

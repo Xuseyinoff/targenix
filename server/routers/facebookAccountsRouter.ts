@@ -42,6 +42,7 @@ import {
   unsubscribePageFromApp,
 } from "../services/facebookGraphService";
 import { upsertFormsForPage } from "../services/facebookFormsService";
+import { checkUserRateLimit } from "../lib/userRateLimit";
 
 function getAppCredentials() {
   const appId = process.env.FACEBOOK_APP_ID ?? "";
@@ -145,6 +146,7 @@ export const facebookAccountsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      checkUserRateLimit(ctx.user.id, "fbConnect", { max: 3, windowMs: 5 * 60_000, message: "Too many connect attempts. Max 3 per 5 minutes." });
       const userId = ctx.user.id;
       const db = await getDb();
       if (!db) throw new Error("DB not available");

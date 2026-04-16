@@ -33,6 +33,7 @@ import {
 } from "../services/adsSyncService";
 import { notifyOwner } from "../_core/notification";
 import { fetchAdAccountInsights } from "../services/adAccountsService";
+import { checkUserRateLimit } from "../lib/userRateLimit";
 
 // ─── Date preset validation ───────────────────────────────────────────────────
 const DATE_PRESETS = ["today", "yesterday", "last_7d", "last_30d"] as const;
@@ -428,6 +429,7 @@ export const adAnalyticsRouter = router({
       fbAccountId: z.number().int().positive(),
     }))
     .mutation(async ({ ctx, input }) => {
+      checkUserRateLimit(ctx.user.id, "adSyncNow", { max: 3, windowMs: 5 * 60_000, message: "Too many sync requests. Max 3 per 5 minutes." });
       const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
       try {
         const result = await syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken);
