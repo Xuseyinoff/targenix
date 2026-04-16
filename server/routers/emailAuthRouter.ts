@@ -45,7 +45,19 @@ function emailToOpenId(email: string): string {
 
 export const authRouter = router({
   // ── Me ──────────────────────────────────────────────────────────────────────
-  me: publicProcedure.query((opts) => opts.ctx.user),
+  me: publicProcedure.query((opts) => {
+    const u = opts.ctx.user;
+    if (!u) return null;
+    return {
+      id: u.id,
+      openId: u.openId,
+      name: u.name,
+      email: u.email,
+      loginMethod: u.loginMethod,
+      role: u.role,
+      createdAt: u.createdAt,
+    };
+  }),
 
   // ── Logout ──────────────────────────────────────────────────────────────────
   logout: publicProcedure.mutation(({ ctx }) => {
