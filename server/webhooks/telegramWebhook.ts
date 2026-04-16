@@ -15,6 +15,7 @@ import { eq } from "drizzle-orm";
 import { log } from "../services/appLogger";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
+const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET ?? "";
 
 /** Send a Telegram message via Bot API */
 export async function sendTelegramMessage(
@@ -60,7 +61,11 @@ export async function registerTelegramWebhook(appUrl: string): Promise<void> {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: webhookUrl, allowed_updates: [...allowedUpdates] }),
+      body: JSON.stringify({
+        url: webhookUrl,
+        allowed_updates: [...allowedUpdates],
+        ...(WEBHOOK_SECRET ? { secret_token: WEBHOOK_SECRET } : {}),
+      }),
     });
     const data = (await res.json()) as { ok: boolean; description?: string };
     await log.info("TELEGRAM", `setWebhook → ${data.ok ? "OK" : data.description}`, {
@@ -74,6 +79,14 @@ export async function registerTelegramWebhook(appUrl: string): Promise<void> {
 
 /** Express handler for POST /api/telegram/webhook */
 export async function handleTelegramWebhook(req: Request, res: Response): Promise<void> {
+  if (WEBHOOK_SECRET) {
+    const header = req.headers["x-telegram-bot-api-secret-token"];
+    if (header !== WEBHOOK_SECRET) {
+      res.status(403).json({ ok: false });
+      return;
+    }
+  }
+
   // Always respond 200 immediately so Telegram doesn't retry
   res.status(200).json({ ok: true });
 
