@@ -8,11 +8,23 @@ import { saveIncomingLead } from "../services/leadService";
 import { dispatchLeadProcessing } from "../services/leadDispatch";
 import { addSseClient, emitWebhookEvent } from "./sseEmitter";
 import { log } from "../services/appLogger";
+import { sdk } from "../_core/sdk";
 
 const router: Router = createRouter();
 
-// ─── GET /api/webhooks/events/stream — SSE real-time event stream ─────────────
-router.get("/events/stream", (req: Request, res: Response) => {
+// ─── GET /api/webhooks/events/stream — SSE real-time event stream (admin only) ─
+router.get("/events/stream", async (req: Request, res: Response) => {
+  try {
+    const user = await sdk.authenticateRequest(req);
+    if (user.role !== "admin") {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
