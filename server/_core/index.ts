@@ -203,8 +203,8 @@ async function startServer() {
   registerFacebookOAuthRoutes(app);
   // Facebook Login/Register OAuth (separate from connection flow)
   registerFacebookLoginRoutes(app);
-  // Chat API with streaming and tool calling
-  registerChatRoutes(app);
+  // Chat API disabled — no auth guard; re-enable with session check when needed
+  // registerChatRoutes(app);
   // tRPC API
   app.use(
     "/api/trpc",
