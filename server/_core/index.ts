@@ -106,10 +106,41 @@ async function startServer() {
   // to let express-rate-limit and req.ip behave correctly with X-Forwarded-For.
   app.set("trust proxy", 1);
 
-  // Security headers
+  // Security headers with Content Security Policy
+  const analyticsHost = process.env.VITE_ANALYTICS_ENDPOINT
+    ? new URL(process.env.VITE_ANALYTICS_ENDPOINT).origin
+    : null;
+  const forgeHost = process.env.VITE_FRONTEND_FORGE_API_URL
+    ? new URL(process.env.VITE_FRONTEND_FORGE_API_URL).origin
+    : "https://forge.butterfly-effect.dev";
+
   app.use(
     helmet({
-      contentSecurityPolicy: false, // Vite/React inline scripts require this off
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: [
+            "'self'", "'unsafe-inline'",
+            "https://connect.facebook.net",
+            forgeHost,
+            ...(analyticsHost ? [analyticsHost] : []),
+          ],
+          styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+          fontSrc: ["'self'", "https://fonts.gstatic.com"],
+          imgSrc: ["'self'", "data:", "https:"],
+          connectSrc: [
+            "'self'",
+            "https://graph.facebook.com", "https://*.facebook.com",
+            forgeHost,
+            ...(analyticsHost ? [analyticsHost] : []),
+          ],
+          frameSrc: ["https://www.facebook.com"],
+          objectSrc: ["'none'"],
+          baseUri: ["'self'"],
+          formAction: ["'self'"],
+          frameAncestors: ["'none'"],
+        },
+      },
       crossOriginEmbedderPolicy: false,
     })
   );
