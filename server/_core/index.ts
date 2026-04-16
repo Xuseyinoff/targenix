@@ -50,10 +50,16 @@ function httpLogger(req: Request, res: Response, next: NextFunction): void {
   res.on("finish", () => {
     const duration = Date.now() - startAt;
     const level = res.statusCode >= 500 ? "ERROR" : res.statusCode >= 400 ? "WARN" : "INFO";
-    const bodyPreview =
-      req.body && typeof req.body === "object" && Object.keys(req.body).length > 0
-        ? JSON.stringify(req.body).slice(0, 300)
-        : undefined;
+    let bodyPreview: string | undefined;
+    if (req.body && typeof req.body === "object" && Object.keys(req.body).length > 0) {
+      const REDACTED_KEYS = ["password", "currentPassword", "newPassword", "confirmNewPassword", "token", "secret", "accessToken"];
+      const safe = Object.fromEntries(
+        Object.entries(req.body as Record<string, unknown>).map(([k, v]) =>
+          REDACTED_KEYS.includes(k) ? [k, "[REDACTED]"] : [k, v]
+        ),
+      );
+      bodyPreview = JSON.stringify(safe).slice(0, 300);
+    }
 
     void log[level.toLowerCase() as "info" | "warn" | "error"](
       "HTTP",
