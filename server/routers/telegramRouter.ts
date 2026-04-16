@@ -86,8 +86,10 @@ export const telegramRouter = router({
     const db = await getDb();
     if (!db) throw new Error("DB unavailable");
 
-    // 32-byte random token, URL-safe base64
-    const token = crypto.randomBytes(32).toString("base64url");
+    // 32-byte random token (URL-safe base64) + embedded expiry timestamp (ms)
+    // Format: <random>.<expiresAtMs>. This allows enforcing token expiry without schema changes.
+    const expiresAtMs = Date.now() + 10 * 60 * 1000; // 10 minutes
+    const token = `${crypto.randomBytes(32).toString("base64url")}.${expiresAtMs}`;
 
     await db
       .update(users)

@@ -131,7 +131,13 @@ export function buildVariableContext(
  * Unknown variables are replaced with empty string.
  */
 export function injectVariables(template: string, ctx: Record<string, string>): string {
-  return template.replace(/\{\{([^}]+)\}\}/g, (_, key) => ctx[key.trim()] ?? "");
+  const safeCtx = Object.create(null) as Record<string, string>;
+  for (const [k, v] of Object.entries(ctx)) safeCtx[k] = v;
+  return template.replace(/\{\{([^}]+)\}\}/g, (_, key) => {
+    const k = key.trim();
+    if (!Object.prototype.hasOwnProperty.call(safeCtx, k)) return "";
+    return safeCtx[k];
+  });
 }
 
 /**
@@ -361,35 +367,7 @@ function buildHeaders(
   return result;
 }
 
-// ─── SSRF protection ─────────────────────────────────────────────────────────
-/**
- * Validate that a URL is safe to send outbound HTTP requests to.
- * Blocks non-HTTPS, localhost, and all RFC1918 / link-local address ranges.
- * Throws an Error if the URL is blocked.
- */
-function assertSafeOutboundUrl(url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`Invalid URL: ${url}`);
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error(`Outbound URL must use HTTPS (got ${parsed.protocol})`);
-  }
-  const host = parsed.hostname.toLowerCase();
-  // Block loopback, link-local, and all RFC1918 private ranges
-  const blocked = [
-    "localhost", "127.0.0.1", "0.0.0.0", "::1",
-    "169.254.",           // link-local (AWS/Azure/GCP metadata)
-    "10.",                // RFC1918
-    "192.168.",           // RFC1918
-    ...Array.from({ length: 16 }, (_, i) => `172.${16 + i}.`), // RFC1918 172.16-31
-  ];
-  if (blocked.some((b) => host === b.replace(/\.$/, "") || host.startsWith(b))) {
-    throw new Error(`Outbound URL targets a private/internal address: ${host}`);
-  }
-}
+import { assertSafeOutboundUrl } from "../lib/urlSafety";
 
 // ─── Main dispatcher ─────────────────────────────────────────────────────────
 /**
@@ -419,7 +397,7 @@ export async function sendAffiliateOrderByTemplate(
     // SSRF protection: reject localhost, RFC1918, and non-HTTPS URLs before
     // issuing the outbound HTTP request. Without this, a user could point their
     // target website at an internal Railway service or cloud metadata endpoint.
-    assertSafeOutboundUrl(url);
+    await assertSafeOutboundUrl(url);
 
     const method = (cfg.method as string) ?? "POST";
 
@@ -474,7 +452,7 @@ export async function sendLeadViaTemplate(
   const cfg = (templateConfig ?? {}) as Record<string, unknown>;
 
   try {
-    assertSafeOutboundUrl(template.endpointUrl);
+    await assertSafeOutboundUrl(template.endpointUrl);
 
     // Build variable context from lead
     const varCtx = buildVariableContext(lead, variableValues);

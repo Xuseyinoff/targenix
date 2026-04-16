@@ -32,30 +32,10 @@ import {
   type TemplateConfig,
 } from "../services/affiliateService";
 
-/**
- * Validate a custom target website URL before storing it.
- * Must be HTTPS and must not target private/internal addresses (SSRF prevention).
- */
-function validateTargetUrl(url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("Invalid URL format");
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error("Target website URL must use HTTPS");
-  }
-  const host = parsed.hostname.toLowerCase();
-  const blocked = [
-    "localhost", "127.0.0.1", "0.0.0.0", "::1",
-    "169.254.",
-    "10.", "192.168.",
-    ...Array.from({ length: 16 }, (_, i) => `172.${16 + i}.`),
-  ];
-  if (blocked.some((b) => host === b.replace(/\.$/, "") || host.startsWith(b))) {
-    throw new Error("Target website URL must not point to internal or private addresses");
-  }
+import { assertSafeOutboundUrl } from "../lib/urlSafety";
+
+async function validateTargetUrl(url: string): Promise<void> {
+  await assertSafeOutboundUrl(url);
 }
 
 // ─── Variable field definitions per template ──────────────────────────────────
@@ -89,6 +69,48 @@ function maskConfig(config: unknown): unknown {
     }
     c.secrets = masked;
   }
+
+  // Custom templates: user can put secret-like values directly into bodyFields / headers.
+  // Mask common secret-bearing keys to prevent leaking credentials to the frontend.
+  const isSecretKey = (k: string): boolean => {
+    const kk = k.toLowerCase();
+    return (
+      kk.includes("api_key") ||
+      kk.includes("apikey") ||
+      kk.includes("authorization") ||
+      kk.includes("secret") ||
+      kk.includes("token") ||
+      kk.includes("password")
+    );
+  };
+
+  if (Array.isArray(c.bodyFields)) {
+    const maskedBodyFields = (c.bodyFields as Array<Record<string, unknown>>).map((f) => {
+      const key = String(f.key ?? "");
+      const value = f.value;
+      const keyLooksSecret = isSecretKey(key);
+      const valueIsString = typeof value === "string";
+      const isTemplateVar = valueIsString ? (value as string).includes("{{") : false;
+      return {
+        ...f,
+        value:
+          keyLooksSecret && valueIsString && !isTemplateVar ? "••••••••" : value,
+      };
+    });
+    c.bodyFields = maskedBodyFields;
+  }
+
+  if (c.headers && typeof c.headers === "object") {
+    const headers = { ...(c.headers as Record<string, unknown>) };
+    for (const [hk, hv] of Object.entries(headers)) {
+      if (!isSecretKey(hk)) continue;
+      if (typeof hv === "string" && !hv.includes("{{")) {
+        headers[hk] = "••••••••";
+      }
+    }
+    c.headers = headers;
+  }
+
   return c;
 }
 
@@ -180,7 +202,7 @@ export const targetWebsitesRouter = router({
 
       // For custom templates the user provides the URL — validate it before storing
       if (input.templateType === "custom" && url) {
-        validateTargetUrl(url);
+        await validateTargetUrl(url);
       }
 
       // Build templateConfig
@@ -286,17 +308,17 @@ export const targetWebsitesRouter = router({
           if (input.templateType === "sotuvchi") updates.url = "https://sotuvchi.com/api/v2/order";
           else if (input.templateType === "100k") updates.url = "https://api.100k.uz/api/shop/v1/orders/target";
           else if (input.url) {
-            validateTargetUrl(input.url);
+            await validateTargetUrl(input.url);
             updates.url = input.url;
           }
         } else if (input.url) {
           const effectiveType = site.templateType;
-          if (effectiveType === "custom") validateTargetUrl(input.url);
+          if (effectiveType === "custom") await validateTargetUrl(input.url);
           updates.url = input.url;
         }
       }
 
-      await db.update(targetWebsites).set(updates).where(eq(targetWebsites.id, input.id));
+      await db.update(targetWebsites).set(updates).where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)));
       return { success: true };
     }),
 
@@ -427,7 +449,7 @@ export const targetWebsitesRouter = router({
         updates.templateConfig = { ...existingConfig, secrets: updatedSecrets };
       }
 
-      await db.update(targetWebsites).set(updates).where(eq(targetWebsites.id, input.id));
+      await db.update(targetWebsites).set(updates).where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)));
       return { success: true };
     }),
 

@@ -246,33 +246,10 @@ function extractWithMapping(
   return { ...base, extra };
 }
 
-/**
- * Validate that a target URL is safe to send requests to.
- * Rejects non-HTTPS, localhost, and RFC1918 private ranges to prevent SSRF.
- */
-function assertSafeTargetUrl(url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error("targetUrl is not a valid URL");
-  }
-  if (parsed.protocol !== "https:") {
-    throw new Error("targetUrl must use HTTPS — plain HTTP is not allowed");
-  }
-  const host = parsed.hostname.toLowerCase();
-  const blocked = [
-    "localhost", "127.0.0.1", "0.0.0.0", "::1",
-    // Link-local
-    "169.254.",
-    // RFC1918 private ranges
-    "10.", "192.168.",
-    // RFC1918 172.16.0.0/12
-    ...Array.from({ length: 16 }, (_, i) => `172.${16 + i}.`),
-  ];
-  if (blocked.some((b) => host === b.replace(/\.$/, "") || host.startsWith(b))) {
-    throw new Error("targetUrl must not target internal or private network addresses");
-  }
+import { assertSafeOutboundUrl } from "../lib/urlSafety";
+
+async function assertSafeTargetUrl(url: string): Promise<void> {
+  await assertSafeOutboundUrl(url);
 }
 
 /**
@@ -302,7 +279,7 @@ async function sendLeadToTargetWebsite(
   }
 
   try {
-    assertSafeTargetUrl(targetUrl);
+    await assertSafeTargetUrl(targetUrl);
   } catch (err) {
     return { success: false, error: `Invalid targetUrl: ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -701,14 +678,17 @@ async function runOrderIntegrationSend(params: {
   return result;
 }
 
-export async function recalculateLeadDeliveryStatus(leadId: number): Promise<void> {
+export async function recalculateLeadDeliveryStatus(leadId: number, userId?: number): Promise<void> {
   const db = await getDb();
   if (!db) return;
   const rows = await db.select({ status: orders.status }).from(orders).where(eq(orders.leadId, leadId));
   const deliveryStatus = aggregateLeadDeliveryFromOrderStatuses(
     rows.map((r) => r.status as "PENDING" | "SENT" | "FAILED"),
   );
-  await db.update(leads).set({ deliveryStatus }).where(eq(leads.id, leadId));
+  const whereClause = userId
+    ? and(eq(leads.id, leadId), eq(leads.userId, userId))
+    : eq(leads.id, leadId);
+  await db.update(leads).set({ deliveryStatus }).where(whereClause);
 }
 
 /**
@@ -762,7 +742,7 @@ export async function processLead(params: {
         pageName,
         formName,
       })
-      .where(eq(leads.id, params.leadId));
+      .where(and(eq(leads.id, params.leadId), eq(leads.userId, params.userId)));
     return;
   }
 
@@ -777,7 +757,7 @@ export async function processLead(params: {
         pageName,
         formName,
       })
-      .where(eq(leads.id, params.leadId));
+      .where(and(eq(leads.id, params.leadId), eq(leads.userId, params.userId)));
     return;
   }
 
@@ -863,7 +843,7 @@ export async function processLead(params: {
       adName:       rawDataRecord?.ad_name       as string | null ?? null,
       extraFields:  extraFieldsJson,
     })
-    .where(eq(leads.id, params.leadId));
+    .where(and(eq(leads.id, params.leadId), eq(leads.userId, params.userId)));
 
   const [leadRow] = await db.select().from(leads).where(eq(leads.id, params.leadId)).limit(1);
   if (!leadRow) throw new Error("Lead row missing after enrichment");
@@ -960,7 +940,7 @@ export async function processLead(params: {
     }
   }
 
-  await recalculateLeadDeliveryStatus(params.leadId);
+  await recalculateLeadDeliveryStatus(params.leadId, params.userId);
 
   await log.info("LEAD", `Processing complete — leadId=${params.leadId} fullName=${fullName ?? "unknown"} phone=${phone ?? "none"}`, { leadId: params.leadId, fullName, phone, email, pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
 }

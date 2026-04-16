@@ -10,7 +10,7 @@ import {
 import { sendAffiliateOrderByTemplate, sendLeadViaTemplate, type TemplateType, type TemplateConfig } from "../services/affiliateService";
 import { sendLeadTelegramNotification } from "../services/leadService";
 import { targetWebsites, destinationTemplates } from "../../drizzle/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 
 export const integrationsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
@@ -27,7 +27,7 @@ export const integrationsRouter = router({
         const [tw] = await db
           .select({ id: targetWebsites.id, name: targetWebsites.name })
           .from(targetWebsites)
-          .where(eq(targetWebsites.id, twId))
+          .where(and(eq(targetWebsites.id, twId), eq(targetWebsites.userId, ctx.user.id)))
           .limit(1);
         return { ...integration, targetWebsiteName: tw?.name ?? (cfg?.targetWebsiteName as string | undefined) ?? null };
       })
@@ -134,9 +134,9 @@ export const integrationsRouter = router({
           const [tw] = await db
             .select()
             .from(targetWebsites)
-            .where(eq(targetWebsites.id, twId))
+            .where(and(eq(targetWebsites.id, twId), eq(targetWebsites.userId, ctx.user.id)))
             .limit(1);
-          if (!tw) throw new Error("Target website not found");
+          if (!tw) throw new Error("Target website not found or not owned by you");
 
           let result: { success: boolean; responseData?: unknown; error?: string };
           if (tw.templateId) {

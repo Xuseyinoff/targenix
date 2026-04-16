@@ -149,6 +149,24 @@ async function handleStartWithToken(chatId: string, token: string, from?: Telegr
   const db = await getDb();
   if (!db) return;
 
+  // Token replay/expiry protection (format: <random>.<expiresAtMs>)
+  const parts = token.split(".");
+  if (parts.length >= 2) {
+    const expiresAtMs = Number(parts[parts.length - 1]);
+    const expiresValid = Number.isFinite(expiresAtMs) && expiresAtMs > 0;
+    if (expiresValid && Date.now() > expiresAtMs) {
+      await log.warn("TELEGRAM", "Connect token expired", { token: token.slice(0, 8) + "..." });
+      // Clear so it can't be reused after expiry (best-effort)
+      void db.update(users).set({ telegramConnectToken: null }).where(eq(users.telegramConnectToken, token));
+      await sendTelegramMessage(
+        chatId,
+        "❌ Token topilmadi yoki muddati o'tgan. Iltimos, Targenix.uz saytidan qaytadan urinib ko'ring.",
+        "HTML",
+      );
+      return;
+    }
+  }
+
   const [user] = await db.select().from(users).where(eq(users.telegramConnectToken, token)).limit(1);
   if (!user) {
     await log.warn("TELEGRAM", "No user found for connect token", { token: token.slice(0, 8) + "..." });

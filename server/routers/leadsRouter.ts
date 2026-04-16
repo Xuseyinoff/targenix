@@ -374,7 +374,7 @@ export const leadsRouter = router({
         const [saved] = await db
           .select({ id: leads.id })
           .from(leads)
-          .where(eq(leads.leadgenId, item.id))
+          .where(and(eq(leads.leadgenId, item.id), eq(leads.userId, userId)))
           .limit(1);
 
         if (saved) {

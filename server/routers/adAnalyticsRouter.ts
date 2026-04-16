@@ -87,7 +87,8 @@ function classifyFbError(err: unknown): TRPCError {
       message: "Facebook token expired or insufficient permissions. Please reconnect your account.",
     });
   }
-  return new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Failed to fetch data: ${msg}` });
+  console.error("[adAnalytics] Internal error:", msg);
+  return new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to fetch analytics data. Please try again later." });
 }
 
 // ─── Shared mapper ───────────────────────────────────────────────────────────

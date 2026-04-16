@@ -116,19 +116,15 @@ router.post("/facebook", async (req: Request, res: Response) => {
     }
   }
 
-  // Determine if this is a Facebook test payload (no signature sent by Facebook)
-  const isTestPayload = !!payload?.sample;
-  const isRealLeadgenEvent = payload?.object === "page" && Array.isArray(payload?.entry);
-
-  if (!verified && appSecret && signatureHeader && !isTestPayload) {
-    void log.warn("WEBHOOK", "Invalid signature — request rejected", { signature: signatureHeader?.slice(0, 20) + "..." });
-    emitWebhookEvent({ type: "error", error: "Invalid signature", timestamp: new Date().toISOString() });
-    return;
-  }
-
-  if (!verified && appSecret && !signatureHeader && !isTestPayload && !isRealLeadgenEvent) {
-    void log.warn("WEBHOOK", "No signature and unknown payload format — request skipped", { payloadKeys: Object.keys(payload || {}) });
-    emitWebhookEvent({ type: "error", error: "Unknown payload format", timestamp: new Date().toISOString() });
+  // When FACEBOOK_APP_SECRET is configured, REQUIRE valid HMAC on ALL payloads.
+  // Facebook always sends X-Hub-Signature-256 — any unsigned request is forged.
+  if (appSecret && !verified) {
+    const reason = signatureHeader ? "Invalid HMAC signature" : "Missing X-Hub-Signature-256 header";
+    void log.warn("WEBHOOK", `${reason} — request rejected`, {
+      signature: signatureHeader?.slice(0, 20),
+      payloadKeys: Object.keys(payload || {}),
+    });
+    emitWebhookEvent({ type: "error", error: reason, timestamp: new Date().toISOString() });
     return;
   }
 

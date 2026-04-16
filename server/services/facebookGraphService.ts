@@ -13,9 +13,17 @@
  */
 
 import axios from "axios";
+import crypto from "node:crypto";
 import { log } from "./appLogger";
 
 const GRAPH = "https://graph.facebook.com/v21.0";
+
+function computeAppSecretProof(accessToken: string): string | undefined {
+  const secret = (process.env.FACEBOOK_APP_SECRET ?? "").trim();
+  if (!secret) return undefined;
+  const token = (accessToken ?? "").trim().replace(/^\uFEFF/, "");
+  return crypto.createHmac("sha256", secret).update(token).digest("hex");
+}
 
 /** Mask an access token for safe logging — show only first/last 6 chars */
 function maskToken(token: string): string {
@@ -34,13 +42,20 @@ export async function graphRequest<T>(
     logLabel?: string;
   } = {}
 ): Promise<T> {
-  const { params = {}, data, timeout = 10000, logLabel } = options;
+  const { params: rawParams = {}, data, timeout = 10000, logLabel } = options;
   const label = logLabel ?? `${method} ${endpoint}`;
 
-  // Sanitize params for logging — mask access tokens
+  // Auto-inject appsecret_proof when access_token is present
+  const params = { ...rawParams };
+  if (typeof params.access_token === "string" && !params.appsecret_proof) {
+    const proof = computeAppSecretProof(params.access_token);
+    if (proof) params.appsecret_proof = proof;
+  }
+
+  // Sanitize params for logging — mask access tokens and proofs
   const safeParams: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(params)) {
-    safeParams[k] = k === "access_token" && typeof v === "string" ? maskToken(v) : v;
+    safeParams[k] = (k === "access_token" || k === "appsecret_proof") && typeof v === "string" ? maskToken(v) : v;
   }
 
   await log.info("FACEBOOK", `→ ${label}`, { method, endpoint, params: safeParams });
