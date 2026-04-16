@@ -13,6 +13,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import facebookWebhookRouter from "../webhooks/facebookWebhook";
 import { registerFacebookOAuthRoutes } from "../routes/facebookOAuthCallback";
+import { registerFacebookLoginRoutes } from "../routes/facebookLoginOAuth";
 import { handleTelegramWebhook, registerTelegramWebhook } from "../webhooks/telegramWebhook";
 import { log } from "../services/appLogger";
 import { getLeadDispatchMode } from "../services/leadDispatch";
@@ -200,6 +201,8 @@ async function startServer() {
 
   // Facebook Authorization Code Flow OAuth routes
   registerFacebookOAuthRoutes(app);
+  // Facebook Login/Register OAuth (separate from connection flow)
+  registerFacebookLoginRoutes(app);
   // Chat API with streaming and tool calling
   registerChatRoutes(app);
   // tRPC API

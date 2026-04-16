@@ -1,16 +1,9 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Zap, Eye, EyeOff, Loader2, ArrowLeft, CheckCircle } from "lucide-react";
 import { useT } from "@/hooks/useT";
-
-declare const FB: {
-  login: (
-    cb: (response: { authResponse?: { accessToken: string } }) => void,
-    opts: { scope: string }
-  ) => void;
-};
 
 export default function Register() {
   const [, setLocation] = useLocation();
@@ -34,18 +27,6 @@ export default function Register() {
     onError: (err) => toast.error(err.message),
   });
 
-  const facebookLoginMutation = trpc.auth.facebookLogin.useMutation({
-    onSuccess: async () => {
-      await utils.auth.me.invalidate();
-      toast.success(t("auth.loggedInFacebook"));
-      setLocation("/");
-    },
-    onError: (err) => {
-      setFbLoading(false);
-      toast.error(err.message);
-    },
-  });
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password || !confirmPassword) {
@@ -63,24 +44,44 @@ export default function Register() {
     registerMutation.mutate({ email, password, name: name || undefined });
   };
 
-  const handleFacebookLogin = () => {
-    if (typeof FB === "undefined") {
-      toast.error(t("auth.fbSdkNotLoaded"));
-      return;
-    }
+  const onFbSuccess = useCallback(async () => {
+    await utils.auth.me.invalidate();
+    toast.success(t("auth.loggedInFacebook"));
+    setLocation("/");
+  }, [utils, t, setLocation]);
+
+  const handleFacebookLogin = useCallback(async () => {
     setFbLoading(true);
-    FB.login(
-      (response) => {
-        if (response.authResponse?.accessToken) {
-          facebookLoginMutation.mutate({ accessToken: response.authResponse.accessToken });
-        } else {
-          setFbLoading(false);
-          toast.error(t("auth.fbLoginCancelled"));
-        }
-      },
-      { scope: "public_profile,email" }
-    );
-  };
+    try {
+      const res = await fetch("/api/auth/facebook/login", { credentials: "include" });
+      const data = await res.json();
+      if (!data.oauthUrl) { setFbLoading(false); toast.error("Failed to start Facebook login."); return; }
+
+      const popup = window.open(data.oauthUrl, "fb_login_popup", "width=600,height=700,scrollbars=yes");
+      if (!popup) { setFbLoading(false); toast.error(t("auth.fbLoginCancelled")); return; }
+    } catch {
+      setFbLoading(false);
+      toast.error("Failed to start Facebook login.");
+    }
+  }, [t]);
+
+  useEffect(() => {
+    const bc = new BroadcastChannel("targenix_fb_login");
+    const handler = (e: MessageEvent) => {
+      if (e.data?.type === "fb_login_success") { setFbLoading(false); onFbSuccess(); }
+      else if (e.data?.type === "fb_login_error") { setFbLoading(false); toast.error(e.data.error || t("auth.fbLoginCancelled")); }
+    };
+    bc.addEventListener("message", handler);
+
+    const msgHandler = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      if (e.data?.type === "fb_login_success") { setFbLoading(false); onFbSuccess(); }
+      else if (e.data?.type === "fb_login_error") { setFbLoading(false); toast.error(e.data.error || t("auth.fbLoginCancelled")); }
+    };
+    window.addEventListener("message", msgHandler);
+
+    return () => { bc.removeEventListener("message", handler); bc.close(); window.removeEventListener("message", msgHandler); };
+  }, [onFbSuccess, t]);
 
   const passwordsMatch = confirmPassword && password === confirmPassword;
   const passwordsMismatch = confirmPassword && password !== confirmPassword;
