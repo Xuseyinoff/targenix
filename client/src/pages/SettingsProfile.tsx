@@ -14,8 +14,10 @@ import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import { Loader2, Lock, Mail, User } from "lucide-react";
 import { useLocation } from "wouter";
+import { useT } from "@/hooks/useT";
 
 export default function SettingsProfile() {
+  const t = useT();
   const utils = trpc.useUtils();
   const [, setLocation] = useLocation();
   const { data: me } = trpc.auth.me.useQuery();
@@ -35,7 +37,7 @@ export default function SettingsProfile() {
   const updateProfileMutation = trpc.auth.updateProfile.useMutation({
     onSuccess: async () => {
       await utils.auth.me.invalidate();
-      toast.success("Profile updated.");
+      toast.success(t("profile.profileUpdated"));
     },
     onError: (e) => toast.error(e.message),
   });
@@ -49,7 +51,7 @@ export default function SettingsProfile() {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmNewPassword("");
-      toast.success("Password updated.");
+      toast.success(t("profile.passwordUpdated"));
     },
     onError: (e) => toast.error(e.message),
   });
@@ -59,9 +61,9 @@ export default function SettingsProfile() {
       <div className="p-6 max-w-2xl space-y-6">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight">Profile</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("profile.title")}</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Update your personal account details.
+              {t("profile.subtitle")}
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={() => setLocation("/settings")} className="shrink-0">
@@ -77,10 +79,10 @@ export default function SettingsProfile() {
               <User className="h-4 w-4" />
               Name
             </CardTitle>
-            <CardDescription>Your display name in the dashboard.</CardDescription>
+            <CardDescription>{t("profile.nameDesc")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder={t("profile.namePlaceholder")} />
             <div className="flex justify-end">
               <Button
                 onClick={() => updateProfileMutation.mutate({ name })}
@@ -100,19 +102,19 @@ export default function SettingsProfile() {
               Email
             </CardTitle>
             <CardDescription>
-              Change your login email. Only available for email/password accounts.
+              {t("profile.emailDesc")}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Input
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              placeholder={t("profile.emailPlaceholder")}
               disabled={!isEmailAccount}
             />
             {!isEmailAccount && (
               <p className="text-xs text-muted-foreground">
-                This account uses a social login method, so email can’t be changed here.
+                {t("profile.socialLoginNote")}
               </p>
             )}
             <div className="flex justify-end">
@@ -135,41 +137,41 @@ export default function SettingsProfile() {
               Password
             </CardTitle>
             <CardDescription>
-              Update your password. Only available for email/password accounts.
+              {t("profile.passwordDesc")}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             <Input
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
-              placeholder="Current password"
+              placeholder={t("profile.currentPassword")}
               type="password"
               disabled={!isEmailAccount}
             />
             <Input
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="New password (min 8 chars)"
+              placeholder={t("profile.newPassword")}
               type="password"
               disabled={!isEmailAccount}
             />
             <Input
               value={confirmNewPassword}
               onChange={(e) => setConfirmNewPassword(e.target.value)}
-              placeholder="Confirm new password"
+              placeholder={t("profile.confirmPassword")}
               type="password"
               disabled={!isEmailAccount}
             />
             {!isEmailAccount && (
               <p className="text-xs text-muted-foreground">
-                This account uses a social login method, so password can’t be changed here.
+                {t("profile.socialPasswordNote")}
               </p>
             )}
             <div className="flex justify-end">
               <Button
                 onClick={() => {
                   if (newPassword !== confirmNewPassword) {
-                    toast.error("New passwords do not match.");
+                    toast.error(t("profile.passwordsNoMatch"));
                     return;
                   }
                   changePasswordMutation.mutate({ currentPassword, newPassword });

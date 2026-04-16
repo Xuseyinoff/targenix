@@ -38,8 +38,10 @@ import {
   Users,
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { useT } from "@/hooks/useT";
 
 export default function SettingsTelegram() {
+  const t = useT();
   const utils = trpc.useUtils();
   const [, setLocation] = useLocation();
 
@@ -74,7 +76,7 @@ export default function SettingsTelegram() {
     onSuccess: () => {
       setConnectUrl(null);
       utils.telegram.getStatus.invalidate();
-      toast.success("Telegram disconnected.");
+      toast.success(t("telegram.disconnected"));
     },
     onError: (err) => toast.error(err.message),
   });
@@ -91,7 +93,7 @@ export default function SettingsTelegram() {
   const setDestDeliverySettingsMutation = trpc.telegram.setDestinationDeliverySettings.useMutation({
     onSuccess: async () => {
       await Promise.all([refetchDestDeliverySettings(), refetchMappings()]);
-      toast.success("Saved.");
+      toast.success(t("telegram.saved"));
     },
     onError: (err) => toast.error(err.message),
   });
@@ -107,7 +109,7 @@ export default function SettingsTelegram() {
   const setDestinationChatMutation = trpc.telegram.setDestinationChat.useMutation({
     onSuccess: () => {
       void refetchMappings();
-      toast.success("Saved.");
+      toast.success(t("telegram.saved"));
     },
     onError: (err: { message?: string } | Error) =>
       toast.error(err instanceof Error ? err.message : (err.message ?? "Failed")),
@@ -118,7 +120,7 @@ export default function SettingsTelegram() {
       setDeliveryChatIdInput("");
       setDeliveryLinking(false);
       await refetchDeliveryChats();
-      toast.success("Delivery chat linked.");
+      toast.success(t("telegram.deliveryChatLinked"));
     },
     onError: (err) => {
       toast.error(err.message);
@@ -155,9 +157,9 @@ export default function SettingsTelegram() {
         {/* Page header */}
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h1 className="text-2xl font-semibold tracking-tight">Telegram Settings</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("telegram.title")}</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Connect Telegram and manage delivery chats for lead notifications.
+              {t("telegram.subtitle")}
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={() => setLocation("/settings")} className="shrink-0">
@@ -176,9 +178,9 @@ export default function SettingsTelegram() {
                   <Send className="h-5 w-5 text-[#229ED9]" />
                 </div>
                 <div>
-                  <CardTitle className="text-base">Telegram Notifications</CardTitle>
+                  <CardTitle className="text-base">{t("telegram.notifications")}</CardTitle>
                   <CardDescription>
-                    Connect your Telegram account to receive lead notifications instantly
+                    {t("telegram.notificationsDesc")}
                   </CardDescription>
                 </div>
               </div>
@@ -204,7 +206,7 @@ export default function SettingsTelegram() {
               <div className="space-y-4">
                 <div className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-4 space-y-1">
                   <p className="text-sm font-medium text-green-800 dark:text-green-300">
-                    ✅ Telegram account connected
+                    {t("telegram.accountConnected")}
                   </p>
                   {telegramStatus.username && (
                     <p className="text-sm text-green-700 dark:text-green-400">
@@ -249,12 +251,12 @@ export default function SettingsTelegram() {
               <div className="space-y-4">
                 <div className="rounded-lg bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800 p-4 space-y-3">
                   <p className="text-sm font-medium text-blue-800 dark:text-blue-300">
-                    Follow these steps to connect:
+                    {t("telegram.connectStepsTitle")}
                   </p>
                   <ol className="text-sm text-blue-700 dark:text-blue-400 space-y-1 list-decimal list-inside">
-                    <li>Click the button below — Telegram opens</li>
-                    <li>Press <strong>Start</strong> in the Telegram chat</li>
-                    <li>This page will update automatically</li>
+                    <li>{t("telegram.connectStep1")}</li>
+                    <li>{t("telegram.connectStep2")}</li>
+                    <li>{t("telegram.connectStep3")}</li>
                   </ol>
                 </div>
 
@@ -281,7 +283,7 @@ export default function SettingsTelegram() {
                 </div>
 
                 <p className="text-xs text-muted-foreground">
-                  Waiting for connection… this page refreshes automatically every 5 seconds.
+                  {t("telegram.waitingConnection")}
                 </p>
               </div>
             ) : (
@@ -300,7 +302,7 @@ export default function SettingsTelegram() {
                   Connect Telegram
                 </Button>
                 <p className="text-xs text-muted-foreground">
-                  Click the button → Telegram opens → Press Start → Done
+                  {t("telegram.connectHint")}
                 </p>
               </div>
             )}
@@ -318,9 +320,9 @@ export default function SettingsTelegram() {
                       <Users className="h-5 w-5 text-violet-600" />
                     </div>
                     <div>
-                      <CardTitle className="text-base">Delivery Chats</CardTitle>
+                      <CardTitle className="text-base">{t("telegram.deliveryChats")}</CardTitle>
                       <CardDescription>
-                        Add a Telegram group/channel for lead delivery (leads will NOT go to your system chat)
+                        {t("telegram.deliveryChatsDesc")}
                       </CardDescription>
                     </div>
                   </div>
@@ -332,18 +334,18 @@ export default function SettingsTelegram() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800 p-4 space-y-2">
-                  <p className="text-sm font-medium text-violet-800 dark:text-violet-300">Steps:</p>
+                  <p className="text-sm font-medium text-violet-800 dark:text-violet-300">{t("telegram.stepsTitle")}</p>
                   <ol className="text-sm text-violet-700 dark:text-violet-400 space-y-1 list-decimal list-inside">
-                    <li>Add the bot to your group/channel</li>
-                    <li>Make the bot an <strong>administrator</strong></li>
-                    <li>The bot will post the <strong>Chat ID</strong> in that chat</li>
-                    <li>Paste the Chat ID below and link</li>
+                    <li>{t("telegram.deliveryStep1")}</li>
+                    <li>{t("telegram.deliveryStep2")}</li>
+                    <li>{t("telegram.deliveryStep3")}</li>
+                    <li>{t("telegram.deliveryStep4")}</li>
                   </ol>
                 </div>
 
                 <div className="flex items-center gap-2">
                   <Input
-                    placeholder="Paste Telegram Chat ID (e.g. -1001234567890)"
+                    placeholder={t("telegram.chatIdPlaceholder")}
                     value={deliveryChatIdInput}
                     onChange={(e) => setDeliveryChatIdInput(e.target.value)}
                   />
@@ -355,7 +357,7 @@ export default function SettingsTelegram() {
 
                 <div className="space-y-2">
                   {!deliveryChats?.length ? (
-                    <p className="text-sm text-muted-foreground">No delivery chats connected yet.</p>
+                    <p className="text-sm text-muted-foreground">{t("telegram.noDeliveryChats")}</p>
                   ) : (
                     <div className="space-y-2">
                       {deliveryChats.map((c) => (
@@ -379,9 +381,9 @@ export default function SettingsTelegram() {
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <CardTitle className="text-base">Delivery Mapping</CardTitle>
+                      <CardTitle className="text-base">{t("telegram.deliveryMapping")}</CardTitle>
                       <CardDescription>
-                        Choose Auto (one chat for all) or Manual (map each destination).
+                        {t("telegram.deliveryMappingDesc")}
                       </CardDescription>
                     </div>
                     <Button
@@ -425,10 +427,10 @@ export default function SettingsTelegram() {
                       <div className="w-full sm:w-[260px]">
                         <Select value={autoDefaultChatId} onValueChange={setAutoDefaultChatId}>
                           <SelectTrigger className="h-9">
-                            <SelectValue placeholder="Default delivery chat" />
+                            <SelectValue placeholder={t("telegram.defaultChat")} />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="none">Select chat…</SelectItem>
+                            <SelectItem value="none">{t("telegram.selectChat")}</SelectItem>
                             {(deliveryChats ?? []).map((c) => (
                               <SelectItem key={c.chatId} value={String(c.chatId)}>
                                 {c.title ?? c.chatId}
@@ -456,18 +458,18 @@ export default function SettingsTelegram() {
                   {deliveryMode === "MANUAL" && (
                     <>
                       {!destinationMappings?.length ? (
-                        <p className="text-sm text-muted-foreground">No destinations/templates found.</p>
+                        <p className="text-sm text-muted-foreground">{t("telegram.noDestinations")}</p>
                       ) : (
                         <div className="space-y-2">
-                          {destinationMappings.map((t) => {
-                            const current = t.chat?.chatId != null ? String(t.chat.chatId) : "none";
+                          {destinationMappings.map((dm) => {
+                            const current = dm.chat?.chatId != null ? String(dm.chat.chatId) : "none";
                             return (
-                              <div key={t.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
+                              <div key={dm.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
                                 <div className="min-w-0">
-                                  <p className="text-sm font-medium truncate">{t.name}</p>
+                                  <p className="text-sm font-medium truncate">{dm.name}</p>
                                   <p className="text-xs text-muted-foreground font-mono">
-                                    destinationId: {t.id}
-                                    {t.templateId ? ` · templateId:${t.templateId}` : ` · ${t.templateType}`}
+                                    destinationId: {dm.id}
+                                    {dm.templateId ? ` · templateId:${dm.templateId}` : ` · ${dm.templateType}`}
                                   </p>
                                 </div>
                                 <div className="w-[240px]">
@@ -475,15 +477,15 @@ export default function SettingsTelegram() {
                                     value={current}
                                     onValueChange={(val) => {
                                       const chatId = val === "none" ? null : val;
-                                      setDestinationChatMutation.mutate({ targetWebsiteId: t.id, telegramChatId: chatId });
+                                      setDestinationChatMutation.mutate({ targetWebsiteId: dm.id, telegramChatId: chatId });
                                     }}
                                     disabled={setDestinationChatMutation.isPending}
                                   >
                                     <SelectTrigger>
-                                      <SelectValue placeholder="Select delivery chat" />
+                                      <SelectValue placeholder={t("telegram.defaultChat")} />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      <SelectItem value="none">No delivery chat</SelectItem>
+                                      <SelectItem value="none">{t("telegram.noDeliveryChat")}</SelectItem>
                                       {(deliveryChats ?? []).map((c) => (
                                         <SelectItem key={c.chatId} value={String(c.chatId)}>
                                           {c.title ?? c.chatId}
@@ -491,9 +493,9 @@ export default function SettingsTelegram() {
                                       ))}
                                     </SelectContent>
                                   </Select>
-                                  {t.chat?.chatId && (
+                                  {dm.chat?.chatId && (
                                     <p className="text-[11px] text-muted-foreground font-mono mt-1 truncate">
-                                      {t.chat.chatId}
+                                      {dm.chat.chatId}
                                     </p>
                                   )}
                                 </div>
@@ -511,12 +513,12 @@ export default function SettingsTelegram() {
                 <CardHeader>
                   <CardTitle className="text-base">Delivery Mapping</CardTitle>
                   <CardDescription>
-                    Add at least one delivery chat first — then you can map destinations/templates to chats.
+                    Add at least one delivery chat first — 
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm text-muted-foreground">
-                    Mapping is disabled until you link a delivery chat in the section above.
+                    {t("telegram.deliveryMappingDisabledBody")}
                   </p>
                 </CardContent>
               </Card>
@@ -529,16 +531,16 @@ export default function SettingsTelegram() {
       <Dialog open={showDisconnectDialog} onOpenChange={(v) => setShowDisconnectDialog(v)}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-destructive">Disconnect Telegram?</DialogTitle>
+            <DialogTitle className="text-destructive">{t("telegram.disconnectTitle")}</DialogTitle>
             <DialogDescription>
-              This will remove <strong>all Telegram data</strong> from your account:
+              {t("telegram.disconnectBody1")}
               <ul className="list-disc list-inside mt-2 space-y-1">
-                <li>Disconnect your system chat</li>
-                <li>Delete all linked delivery chats</li>
-                <li>Clear all delivery mappings (destinations/integrations)</li>
+                <li>{t("telegram.disconnectItem1")}</li>
+                <li>{t("telegram.disconnectItem2")}</li>
+                <li>{t("telegram.disconnectItem3")}</li>
               </ul>
               <p className="mt-2">
-                After disconnecting, leads will <strong>stop</strong> delivering to Telegram until you connect again.
+                {t("telegram.disconnectBody2")}
               </p>
             </DialogDescription>
           </DialogHeader>

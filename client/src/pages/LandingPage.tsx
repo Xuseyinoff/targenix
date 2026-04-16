@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
+import { useT } from "@/hooks/useT";
+import { useLocale, type Locale } from "@/contexts/LocaleContext";
 import {
   Zap,
   ArrowRight,
@@ -10,6 +12,7 @@ import {
   Bell,
   Shield,
   Clock,
+  Globe,
   Workflow,
   Webhook,
   Users,
@@ -53,8 +56,64 @@ function FadeIn({ children, delay = 0, className = "" }: { children: React.React
 }
 
 // ─── Navbar ───────────────────────────────────────────────────────────────────
+function LangSwitcher() {
+  const { locale, setLocale } = useLocale();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const langs: { code: Locale; label: string; flag: string }[] = [
+    { code: "uz", label: "O'zbekcha", flag: "🇺🇿" },
+    { code: "ru", label: "Русский", flag: "🇷🇺" },
+    { code: "en", label: "English", flag: "🇬🇧" },
+  ];
+
+  const current = langs.find((l) => l.code === locale) ?? langs[0];
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 text-sm text-slate-300 hover:text-white transition-colors px-2 py-1.5 rounded-lg hover:bg-white/5"
+      >
+        <Globe className="h-4 w-4" />
+        <span className="hidden sm:inline">{current.flag}</span>
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-2 rounded-xl overflow-hidden shadow-xl z-50 min-w-[160px]"
+          style={{ background: "rgba(15, 18, 35, 0.97)", border: "1px solid rgba(255,255,255,0.08)", backdropFilter: "blur(20px)" }}
+        >
+          {langs.map((l) => (
+            <button
+              key={l.code}
+              onClick={() => { setLocale(l.code); setOpen(false); }}
+              className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-sm transition-colors ${
+                locale === l.code
+                  ? "text-blue-400 bg-blue-500/10"
+                  : "text-slate-300 hover:text-white hover:bg-white/5"
+              }`}
+            >
+              <span>{l.flag}</span>
+              <span>{l.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Navbar() {
   const [, setLocation] = useLocation();
+  const t = useT();
   const [scrolled, setScrolled] = useState(false);
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 20);
@@ -78,17 +137,18 @@ function Navbar() {
           <span className="font-bold text-white text-lg tracking-tight">Targenix.uz</span>
         </div>
         <div className="flex items-center gap-3">
+          <LangSwitcher />
           <button
             onClick={() => setLocation("/login")}
             className="text-sm text-slate-300 hover:text-white transition-colors px-3 py-1.5"
           >
-            Sign In
+            {t("landing.signIn")}
           </button>
           <button
             onClick={() => setLocation("/register")}
             className="text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-colors"
           >
-            Get Started Free
+            {t("landing.getStarted")}
           </button>
         </div>
       </div>
@@ -99,6 +159,7 @@ function Navbar() {
 // ─── Hero ─────────────────────────────────────────────────────────────────────
 function Hero() {
   const [, setLocation] = useLocation();
+  const t = useT();
   return (
     <section
       className="relative min-h-screen flex items-center justify-center overflow-hidden"
@@ -126,12 +187,12 @@ function Hero() {
           style={{ background: "rgba(59,130,246,0.12)", border: "1px solid rgba(59,130,246,0.3)", color: "#93c5fd" }}
         >
           <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" />
-          Facebook Lead Ads Automation Platform
+          {t("landing.badge")}
         </div>
 
         {/* Headline */}
         <h1 className="text-4xl sm:text-5xl md:text-6xl font-extrabold text-white leading-tight tracking-tight mb-6">
-          Turn Every Facebook Lead Into{" "}
+          {t("landing.heroTitle1")}{" "}
           <span
             className="relative"
             style={{
@@ -140,14 +201,14 @@ function Hero() {
               WebkitTextFillColor: "transparent",
             }}
           >
-            Revenue
+            {t("landing.heroTitle2")}
           </span>
-          {" "}— Automatically
+          {" "}{t("landing.heroTitle3")}
         </h1>
 
         {/* Subheadline */}
         <p className="text-lg sm:text-xl text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed">
-          Connect your Facebook Lead Ads to any platform. Every lead captured, routed, and delivered in real time — without lifting a finger.
+          {t("landing.heroSubtitle")}
         </p>
 
         {/* CTA buttons */}
@@ -157,7 +218,7 @@ function Hero() {
             className="group flex items-center gap-2 px-7 py-3.5 rounded-xl font-semibold text-white text-base transition-all duration-200 hover:scale-105 hover:shadow-lg hover:shadow-blue-500/25"
             style={{ background: "linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)" }}
           >
-            Get Started Free
+            {t("landing.getStarted")}
             <ArrowRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
           </button>
           <button
@@ -165,13 +226,13 @@ function Hero() {
             className="flex items-center gap-2 px-7 py-3.5 rounded-xl font-semibold text-slate-300 text-base border border-slate-700 hover:border-slate-500 hover:text-white transition-all duration-200"
             style={{ background: "rgba(255,255,255,0.04)" }}
           >
-            Sign In
+            {t("landing.signIn")}
           </button>
         </div>
 
         {/* Trust micro-copy */}
         <p className="mt-6 text-xs text-slate-500">
-          No credit card required · Free to start · Official Meta Webhooks API
+          {t("landing.trustMicro")}
         </p>
 
         {/* Value props row (trust-friendly) */}
@@ -179,20 +240,20 @@ function Hero() {
           {[
             {
               icon: Webhook,
-              title: "Official Meta Webhooks",
-              desc: "Real-time lead capture (no polling).",
+              title: t("landing.valueProp1Title"),
+              desc: t("landing.valueProp1Desc"),
               color: "#3b82f6",
             },
             {
               icon: Shield,
-              title: "Encrypted tokens",
-              desc: "AES-256-CBC at rest + HTTPS in transit.",
+              title: t("landing.valueProp2Title"),
+              desc: t("landing.valueProp2Desc"),
               color: "#10b981",
             },
             {
               icon: Clock,
-              title: "Fast delivery",
-              desc: "Instant routing to Telegram & endpoints.",
+              title: t("landing.valueProp3Title"),
+              desc: t("landing.valueProp3Desc"),
               color: "#f59e0b",
             },
           ].map((it) => (
@@ -229,26 +290,27 @@ function Hero() {
 
 // ─── How It Works ─────────────────────────────────────────────────────────────
 function HowItWorks() {
+  const t = useT();
   const steps = [
     {
       number: "01",
       icon: Link2,
-      title: "Connect",
-      description: "Link your Facebook account and pages in one click. We handle OAuth, tokens, and subscriptions automatically.",
+      title: t("landing.step1Title"),
+      description: t("landing.step1Desc"),
       color: "#3b82f6",
     },
     {
       number: "02",
       icon: BarChart3,
-      title: "Route",
-      description: "Set up where your leads should go — any CRM, affiliate network, Telegram, or custom endpoint. Full control.",
+      title: t("landing.step2Title"),
+      description: t("landing.step2Desc"),
       color: "#8b5cf6",
     },
     {
       number: "03",
       icon: Zap,
-      title: "Automate",
-      description: "Every new lead is instantly delivered. Real-time webhook processing, automatic retries, zero manual work.",
+      title: t("landing.step3Title"),
+      description: t("landing.step3Desc"),
       color: "#06b6d4",
     },
   ];
@@ -264,13 +326,13 @@ function HowItWorks() {
             className="inline-block text-xs font-semibold px-3 py-1 rounded-full mb-4"
             style={{ background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.3)", color: "#c4b5fd" }}
           >
-            How It Works
+            {t("landing.howBadge")}
           </div>
           <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
-            Three steps to full automation
+            {t("landing.howTitle")}
           </h2>
           <p className="text-slate-400 max-w-xl mx-auto">
-            From zero to automated lead delivery in minutes. No code required.
+            {t("landing.howSubtitle")}
           </p>
         </FadeIn>
 
@@ -315,41 +377,42 @@ function HowItWorks() {
 
 // ─── What you get today (truth-first) ─────────────────────────────────────────
 function AvailableToday() {
+  const t = useT();
   const items = [
     {
       icon: Webhook,
-      title: "Real-time lead capture",
-      description: "We receive leadgen events instantly and process them asynchronously to avoid retries.",
+      title: t("landing.feat1Title"),
+      description: t("landing.feat1Desc"),
       color: "#3b82f6",
     },
     {
       icon: Workflow,
-      title: "Lead routing (no-code)",
-      description: "Send leads to Telegram and affiliate / custom endpoints based on your rules and templates.",
+      title: t("landing.feat2Title"),
+      description: t("landing.feat2Desc"),
       color: "#8b5cf6",
     },
     {
       icon: Bell,
-      title: "Telegram delivery system",
-      description: "System chat + delivery chats + per-destination delivery mapping with full control.",
+      title: t("landing.feat3Title"),
+      description: t("landing.feat3Desc"),
       color: "#229ED9",
     },
     {
       icon: BarChart3,
-      title: "Dashboard + logs",
-      description: "Pipeline statuses, delivery outcomes, retries, and structured logs for debugging.",
+      title: t("landing.feat4Title"),
+      description: t("landing.feat4Desc"),
       color: "#06b6d4",
     },
     {
       icon: RefreshCw,
-      title: "Automatic retries",
-      description: "Failed deliveries retry automatically (up to 3 times) so leads don’t get lost.",
+      title: t("landing.feat5Title"),
+      description: t("landing.feat5Desc"),
       color: "#f43f5e",
     },
     {
       icon: Shield,
-      title: "Security by default",
-      description: "Encrypted tokens, signature verification, and per-user data isolation.",
+      title: t("landing.feat6Title"),
+      description: t("landing.feat6Desc"),
       color: "#10b981",
     },
   ];
@@ -363,13 +426,13 @@ function AvailableToday() {
             style={{ background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.3)", color: "#6ee7b7" }}
           >
             <CheckCircle className="h-3.5 w-3.5" />
-            Available today
+            {t("landing.availableBadge")}
           </div>
           <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
-            Everything you can use right now
+            {t("landing.availableTitle")}
           </h2>
           <p className="text-slate-400 max-w-2xl mx-auto">
-            No “vaporware”. These features are already live in the product — built for speed, reliability, and clarity.
+            {t("landing.availableSubtitle")}
           </p>
         </FadeIn>
 
@@ -397,28 +460,29 @@ function AvailableToday() {
   );
 }
 
-// ─── Roadmap / Coming soon (confidence without overclaim) ────────────────────
+// ─── Roadmap / {t("landing.roadmapBadge")} (confidence without overclaim) ────────────────────
 function Roadmap() {
+  const t = useT();
   const upcoming = [
     {
       icon: Database,
-      title: "Native CRM integrations",
-      description: "Bitrix24, amoCRM, HubSpot (and more) with guided setup and field mapping.",
+      title: t("landing.road1Title"),
+      description: t("landing.road1Desc"),
     },
     {
       icon: Users,
-      title: "Teams & roles",
-      description: "Invite teammates, set access levels, and manage multi-operator workflows.",
+      title: t("landing.road2Title"),
+      description: t("landing.road2Desc"),
     },
     {
       icon: Layers,
-      title: "Advanced routing",
-      description: "Round-robin, schedules, quotas, and per-campaign smart rules for scale.",
+      title: t("landing.road3Title"),
+      description: t("landing.road3Desc"),
     },
     {
       icon: Bell,
-      title: "More channels",
-      description: "WhatsApp / SMS alerts, plus multi-chat fallbacks for critical deliveries.",
+      title: t("landing.road4Title"),
+      description: t("landing.road4Desc"),
     },
   ];
 
@@ -434,10 +498,10 @@ function Roadmap() {
             Coming soon
           </div>
           <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
-            What we’re building next
+            {t("landing.roadmapTitle")}
           </h2>
           <p className="text-slate-400 max-w-2xl mx-auto">
-            These are in progress and will ship step-by-step. We’ll keep the product stable while adding power features.
+            {t("landing.roadmapSubtitle")}
           </p>
         </FadeIn>
 
@@ -461,7 +525,7 @@ function Roadmap() {
                       className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
                       style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.10)", color: "#cbd5e1" }}
                     >
-                      Planned
+                      {t("landing.planned")}
                     </span>
                   </div>
                   <p className="text-sm text-slate-400 mt-1 leading-relaxed">{it.description}</p>
@@ -477,41 +541,42 @@ function Roadmap() {
 
 // ─── Features ─────────────────────────────────────────────────────────────────
 function Features() {
+  const t = useT();
   const features = [
     {
       icon: Zap,
-      title: "Real-time delivery",
-      description: "Leads arrive and are sent within seconds via webhook. No polling, no delays — pure real-time.",
+      title: t("landing.featA1Title"),
+      description: t("landing.featA1Desc"),
       color: "#f59e0b",
     },
     {
       icon: Bell,
-      title: "Instant Telegram alerts",
-      description: "Get notified the moment a lead comes in — directly to your Telegram with full lead details.",
+      title: t("landing.featA2Title"),
+      description: t("landing.featA2Desc"),
       color: "#3b82f6",
     },
     {
       icon: Link2,
-      title: "Any platform",
-      description: "Send leads to any CRM, affiliate network, or custom endpoint. If it has an API, we can route to it.",
+      title: t("landing.featA3Title"),
+      description: t("landing.featA3Desc"),
       color: "#8b5cf6",
     },
     {
       icon: Shield,
-      title: "Secure by default",
-      description: "Tokens encrypted with AES-256-CBC, X-Hub-Signature-256 verified on every request, data isolated per user.",
+      title: t("landing.featA4Title"),
+      description: t("landing.featA4Desc"),
       color: "#10b981",
     },
     {
       icon: BarChart3,
-      title: "Full visibility",
-      description: "Track every lead, every order, every delivery in your dashboard. Real-time stats and detailed logs.",
+      title: t("landing.featA5Title"),
+      description: t("landing.featA5Desc"),
       color: "#06b6d4",
     },
     {
       icon: RefreshCw,
-      title: "Auto retry",
-      description: "Failed deliveries are retried automatically up to 3 times. Nothing slips through the cracks.",
+      title: t("landing.featA6Title"),
+      description: t("landing.featA6Desc"),
       color: "#f43f5e",
     },
   ];
@@ -530,10 +595,10 @@ function Features() {
             Features
           </div>
           <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
-            Everything you need to automate lead flow
+            {t("landing.featuresTitle")}
           </h2>
           <p className="text-slate-400 max-w-xl mx-auto">
-            Built for marketers and agencies who need reliability, speed, and full control.
+            {t("landing.featuresSubtitle")}
           </p>
         </FadeIn>
 
@@ -567,10 +632,11 @@ function Features() {
 // ─── Trust / Social Proof ─────────────────────────────────────────────────────
 function TrustSection() {
   const [, setLocation] = useLocation();
+  const t = useT();
   const items = [
-    { icon: Shield, label: "Built on official Meta Webhooks API", color: "#3b82f6" },
-    { icon: CheckCircle, label: "X-Hub-Signature-256 verified on every request", color: "#10b981" },
-    { icon: Clock, label: "Real-time processing — leads delivered in under 1 second", color: "#f59e0b" },
+    { icon: Shield, label: t("landing.trust1"), color: "#3b82f6" },
+    { icon: CheckCircle, label: t("landing.trust2"), color: "#10b981" },
+    { icon: Clock, label: t("landing.trust3"), color: "#f59e0b" },
   ];
 
   return (
@@ -590,7 +656,7 @@ function TrustSection() {
             Trust & Security
           </div>
           <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
-            Enterprise-grade security, built in
+            {t("landing.trustTitle")}
           </h2>
         </FadeIn>
 
@@ -626,20 +692,20 @@ function TrustSection() {
             }}
           >
             <h3 className="text-2xl sm:text-3xl font-bold text-white mb-3">
-              Ready to automate your lead flow?
+              {t("landing.ctaTitle")}
             </h3>
             <p className="text-slate-400 mb-8 max-w-md mx-auto">
-              Join businesses already using Targenix to capture and deliver every Facebook lead automatically.
+              {t("landing.ctaSubtitle")}
             </p>
             <button
               onClick={() => setLocation("/register")}
               className="group inline-flex items-center gap-2 px-8 py-3.5 rounded-xl font-semibold text-white text-base transition-all duration-200 hover:scale-105 hover:shadow-lg hover:shadow-blue-500/25"
               style={{ background: "linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)" }}
             >
-              Get Started Free
+              {t("landing.getStarted")}
               <ArrowRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
             </button>
-            <p className="mt-4 text-xs text-slate-500">No credit card required</p>
+            <p className="mt-4 text-xs text-slate-500">{t("landing.ctaNoCard")}</p>
           </div>
         </FadeIn>
       </div>
@@ -648,8 +714,13 @@ function TrustSection() {
 }
 
 // ─── Footer ───────────────────────────────────────────────────────────────────
+const LOCALE_LABELS: Record<Locale, string> = { uz: "O'zbekcha", en: "English", ru: "Русский" };
+
 function Footer() {
   const [, setLocation] = useLocation();
+  const t = useT();
+  const { locale, setLocale } = useLocale();
+
   return (
     <footer
       className="py-10 border-t"
@@ -666,19 +737,38 @@ function Footer() {
 
           <div className="flex items-center gap-6 text-xs text-slate-500">
             <button onClick={() => setLocation("/privacy")} className="hover:text-slate-300 transition-colors">
-              Privacy Policy
+              {t("landing.footerPrivacy")}
             </button>
             <button onClick={() => setLocation("/terms")} className="hover:text-slate-300 transition-colors">
-              Terms of Service
+              {t("landing.footerTerms")}
             </button>
             <button onClick={() => setLocation("/data-deletion")} className="hover:text-slate-300 transition-colors">
-              Data Deletion
+              {t("landing.footerData")}
             </button>
           </div>
 
-          <p className="text-xs text-slate-600">
-            © 2026 Targenix.uz. All rights reserved.
-          </p>
+          <div className="flex items-center gap-4">
+            {/* Language selector */}
+            <div className="relative flex items-center gap-1.5">
+              <Globe className="h-3.5 w-3.5 text-slate-500" />
+              <select
+                value={locale}
+                onChange={(e) => setLocale(e.target.value as Locale)}
+                className="appearance-none bg-transparent text-xs text-slate-400 hover:text-slate-200 cursor-pointer pr-4 outline-none transition-colors"
+                style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`, backgroundRepeat: "no-repeat", backgroundPosition: "right 0 center" }}
+              >
+                {(Object.keys(LOCALE_LABELS) as Locale[]).map((l) => (
+                  <option key={l} value={l} style={{ background: "#0a0d1a", color: "#cbd5e1" }}>
+                    {LOCALE_LABELS[l]}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <p className="text-xs text-slate-600">
+              {t("landing.footerCopyright")}
+            </p>
+          </div>
         </div>
       </div>
     </footer>
