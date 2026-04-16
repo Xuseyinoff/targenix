@@ -76,7 +76,7 @@ export function registerFacebookLoginRoutes(app: Express): void {
       const oauthUrl = new URL("https://www.facebook.com/v21.0/dialog/oauth");
       oauthUrl.searchParams.set("client_id", appId);
       oauthUrl.searchParams.set("redirect_uri", callbackUrl);
-      oauthUrl.searchParams.set("scope", "email,public_profile");
+      oauthUrl.searchParams.set("scope", "email,public_profile,pages_show_list");
       oauthUrl.searchParams.set("state", state);
       oauthUrl.searchParams.set("response_type", "code");
       oauthUrl.searchParams.set("display", "popup");
