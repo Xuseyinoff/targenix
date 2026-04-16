@@ -12,7 +12,7 @@ import {
   getDb,
 } from "../db";
 import { leads, orders, integrations, targetWebsites, facebookForms, facebookConnections } from "../../drizzle/schema";
-import { getLeadSourceInfo, getUserFormsIndex } from "../services/facebookFormsService";
+import { batchResolvePageFormDisplayNames, getUserFormsIndex, leadSourcePairKey } from "../services/facebookFormsService";
 import { decrypt } from "../encryption";
 import {
   fetchLeadsFromForm,
@@ -50,8 +50,23 @@ export const leadsRouter = router({
 
       if (items.length === 0) return { items: [], total };
 
+      // When leads.pageName / formName are null (webhook arrived before facebook_forms cache),
+      // resolve from facebook_forms or LEAD_ROUTING integration columns.
+      const displayNameByPair = await batchResolvePageFormDisplayNames(
+        userId,
+        items.map((l) => ({ pageId: l.pageId, formId: l.formId })),
+      );
+      const itemsWithNames = items.map((lead) => {
+        const resolved = displayNameByPair.get(leadSourcePairKey(lead.pageId, lead.formId));
+        return {
+          ...lead,
+          pageName: lead.pageName?.trim() ? lead.pageName : (resolved?.pageName ?? lead.pageName),
+          formName: lead.formName?.trim() ? lead.formName : (resolved?.formName ?? lead.formName),
+        };
+      });
+
       // Batch-load orders for all leads in one query (eliminates N+1)
-      const leadIds = items.map((l) => l.id);
+      const leadIds = itemsWithNames.map((l) => l.id);
       const allOrders = await db
         .select({
           id:            orders.id,
@@ -74,8 +89,7 @@ export const leadsRouter = router({
         ordersByLead.set(order.leadId, existing);
       }
 
-      // pageName/formName/platform are now denormalized in leads table — no extra queries
-      const itemsWithOrders = items.map((lead) => ({
+      const itemsWithOrders = itemsWithNames.map((lead) => ({
         ...lead,
         orders: ordersByLead.get(lead.id) ?? [],
       }));
@@ -97,7 +111,16 @@ export const leadsRouter = router({
         throw new Error("Lead not found");
       }
       const orders = await getOrdersByLeadId(input.id);
-      return { lead, orders };
+      const displayNameByPair = await batchResolvePageFormDisplayNames(userId, [
+        { pageId: lead.pageId, formId: lead.formId },
+      ]);
+      const resolved = displayNameByPair.get(leadSourcePairKey(lead.pageId, lead.formId));
+      const leadWithNames = {
+        ...lead,
+        pageName: lead.pageName?.trim() ? lead.pageName : (resolved?.pageName ?? lead.pageName),
+        formName: lead.formName?.trim() ? lead.formName : (resolved?.formName ?? lead.formName),
+      };
+      return { lead: leadWithNames, orders };
     }),
 
   stats: protectedProcedure.query(async ({ ctx }) => {

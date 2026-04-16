@@ -10,6 +10,7 @@ import { getDb } from "../db";
 import { integrations, leads, orders, targetWebsites, users } from "../../drizzle/schema";
 import { and, count, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { retryAllFailedLeads, retryStuckPendingLeads } from "../services/retryScheduler";
+import { batchResolvePageFormDisplayNames, leadSourcePairKey } from "../services/facebookFormsService";
 
 const AdminLeadListInput = z.object({
   limit: z.number().min(1).max(200).default(50),
@@ -140,6 +141,19 @@ export const adminLeadsRouter = router({
       .limit(input.limit)
       .offset(input.offset);
 
+    const byUserPairs = new Map<number, Array<{ pageId: string; formId: string }>>();
+    for (const r of leadRows) {
+      if (r.pageName?.trim() && r.formName?.trim()) continue;
+      const list = byUserPairs.get(r.userId) ?? [];
+      list.push({ pageId: r.pageId, formId: r.formId });
+      byUserPairs.set(r.userId, list);
+    }
+    const displayNamesByUser = new Map<number, Map<string, { pageName: string | null; formName: string | null }>>();
+    for (const [uid, pairs] of Array.from(byUserPairs.entries())) {
+      const m = await batchResolvePageFormDisplayNames(uid, pairs);
+      displayNamesByUser.set(uid, m);
+    }
+
     const lastIntegrationIds = Array.from(
       new Set(leadRows.map((r) => r.lastIntegrationId).filter((x): x is number => typeof x === "number")),
     );
@@ -172,6 +186,7 @@ export const adminLeadsRouter = router({
       const intg = r.lastIntegrationId != null ? integrationById.get(r.lastIntegrationId) : undefined;
       const twId = intg?.targetWebsiteId ?? null;
       const tw = twId != null ? targetWebsiteById.get(twId) : undefined;
+      const resolvedNames = displayNamesByUser.get(r.userId)?.get(leadSourcePairKey(r.pageId, r.formId));
 
       return {
         leadId: r.leadId,
@@ -185,8 +200,8 @@ export const adminLeadsRouter = router({
         email: r.email ?? null,
         pageId: r.pageId,
         formId: r.formId,
-        pageName: r.pageName ?? null,
-        formName: r.formName ?? null,
+        pageName: r.pageName?.trim() ? r.pageName : (resolvedNames?.pageName ?? r.pageName ?? null),
+        formName: r.formName?.trim() ? r.formName : (resolvedNames?.formName ?? r.formName ?? null),
         user: { id: r.userId, name: r.userName ?? null, email: r.userEmail ?? null },
         deliveries: {
           total: Number(r.deliveriesTotal ?? 0),

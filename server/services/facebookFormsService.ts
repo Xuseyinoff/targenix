@@ -8,9 +8,9 @@
  *  - If Graph API fails (expired token etc.) → return pageId/formId as fallback text
  */
 
-import { eq, and } from "drizzle-orm";
+import { eq, and, or } from "drizzle-orm";
 import { getDb } from "../db";
-import { facebookConnections, facebookForms } from "../../drizzle/schema";
+import { facebookConnections, facebookForms, integrations } from "../../drizzle/schema";
 import { decrypt } from "../encryption";
 import { listPageLeadForms, graphRequest } from "./facebookGraphService";
 import { log } from "./appLogger";
@@ -232,6 +232,91 @@ export async function getLeadSourceInfo(params: {
   }
 
   return { pageName, formName, platform };
+}
+
+/** Stable key for (pageId, formId) pairs in batch maps */
+export function leadSourcePairKey(pageId: string, formId: string): string {
+  return `${pageId}\0${formId}`;
+}
+
+/**
+ * Resolve human-readable page/form names for a batch of leads when `leads.pageName`
+ * / `leads.formName` are null (webhook saved before `facebook_forms` cache existed).
+ * Priority: facebook_forms → LEAD_ROUTING integrations dedicated columns.
+ */
+export async function batchResolvePageFormDisplayNames(
+  userId: number,
+  pairs: Array<{ pageId: string; formId: string }>,
+): Promise<Map<string, { pageName: string | null; formName: string | null }>> {
+  const out = new Map<string, { pageName: string | null; formName: string | null }>();
+  const unique = new Map<string, { pageId: string; formId: string }>();
+  for (const p of pairs) {
+    if (!p.pageId?.trim() || !p.formId?.trim()) continue;
+    const k = leadSourcePairKey(p.pageId, p.formId);
+    if (!unique.has(k)) unique.set(k, { pageId: p.pageId, formId: p.formId });
+  }
+  if (unique.size === 0) return out;
+
+  const db = await getDb();
+  if (!db) return out;
+
+  const pairList = Array.from(unique.values());
+  const formOr = or(
+    ...pairList.map((p) => and(eq(facebookForms.pageId, p.pageId), eq(facebookForms.formId, p.formId))),
+  );
+
+  const formRows = await db
+    .select({
+      pageId: facebookForms.pageId,
+      formId: facebookForms.formId,
+      pageName: facebookForms.pageName,
+      formName: facebookForms.formName,
+    })
+    .from(facebookForms)
+    .where(and(eq(facebookForms.userId, userId), formOr));
+
+  for (const r of formRows) {
+    out.set(leadSourcePairKey(r.pageId, r.formId), {
+      pageName: r.pageName ?? null,
+      formName: r.formName ?? null,
+    });
+  }
+
+  const stillNeedIntegration = pairList.filter((p) => {
+    const cur = out.get(leadSourcePairKey(p.pageId, p.formId));
+    return !cur?.pageName?.trim() || !cur?.formName?.trim();
+  });
+  if (stillNeedIntegration.length === 0) return out;
+
+  const intOr = or(
+    ...stillNeedIntegration.map((p) =>
+      and(eq(integrations.pageId, p.pageId), eq(integrations.formId, p.formId)),
+    ),
+  );
+
+  const intRows = await db
+    .select({
+      pageId: integrations.pageId,
+      formId: integrations.formId,
+      pageName: integrations.pageName,
+      formName: integrations.formName,
+    })
+    .from(integrations)
+    .where(
+      and(eq(integrations.userId, userId), eq(integrations.type, "LEAD_ROUTING"), intOr),
+    );
+
+  for (const r of intRows) {
+    if (!r.pageId || !r.formId) continue;
+    const k = leadSourcePairKey(r.pageId, r.formId);
+    const prev = out.get(k) ?? { pageName: null, formName: null };
+    out.set(k, {
+      pageName: prev.pageName?.trim() || r.pageName?.trim() || null,
+      formName: prev.formName?.trim() || r.formName?.trim() || null,
+    });
+  }
+
+  return out;
 }
 
 // ─── Get all pages+forms for a user (for filter dropdowns) ───────────────────
