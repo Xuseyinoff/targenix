@@ -1,8 +1,8 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 
 function getKey(): Buffer {
-  const raw = process.env.ENCRYPTION_KEY || "default-insecure-key-change-in-prod";
-  // Derive a 32-byte key from whatever string is provided
+  const raw = process.env.ENCRYPTION_KEY;
+  if (!raw) throw new Error("ENCRYPTION_KEY environment variable is required");
   return createHash("sha256").update(raw).digest();
 }
 
