@@ -35,6 +35,8 @@ import {
 import { notifyOwner } from "../_core/notification";
 import { fetchAdAccountInsights } from "../services/adAccountsService";
 import { checkUserRateLimit } from "../lib/userRateLimit";
+import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
+import { gte, lt } from "drizzle-orm";
 
 // ─── Date preset validation ───────────────────────────────────────────────────
 const DATE_PRESETS = ["today", "yesterday", "last_7d", "last_30d"] as const;
@@ -516,11 +518,15 @@ export const adAnalyticsRouter = router({
 
       const { dateRange } = input;
 
+      // Use Tashkent-aware UTC bounds (same as getOrderStats) so "today" means
+      // the same calendar day across all dashboard cards, regardless of MySQL server TZ.
+      const todayBounds = getDashboardDayUtcBounds();
+      const yesterdayBounds = getDashboardDayUtcBounds(new Date(todayBounds.start.getTime() - 1));
       const dateCondition = {
-        today:     sql`DATE(${leads.createdAt}) = CURDATE()`,
-        yesterday: sql`DATE(${leads.createdAt}) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)`,
-        last_7d:   sql`${leads.createdAt} >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)`,
-        last_30d:  sql`${leads.createdAt} >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)`,
+        today:     and(gte(leads.createdAt, todayBounds.start),     lt(leads.createdAt, todayBounds.end)),
+        yesterday: and(gte(leads.createdAt, yesterdayBounds.start), lt(leads.createdAt, yesterdayBounds.end)),
+        last_7d:   gte(leads.createdAt, new Date(todayBounds.start.getTime() - 6 * 24 * 60 * 60 * 1000)),
+        last_30d:  gte(leads.createdAt, new Date(todayBounds.start.getTime() - 29 * 24 * 60 * 60 * 1000)),
       }[dateRange];
 
       // 1. Lead counts per campaignId broken down by deliveryStatus — scoped to this user only
