@@ -80,6 +80,12 @@ async function getUserFbAccounts(userId: number) {
     .orderBy(desc(facebookAccounts.createdAt));
 }
 
+// ─── Helper: assert authenticated user id (defence-in-depth) ─────────────────
+function requireUserId(ctx: { user?: { id: number } | null }): number {
+  if (!ctx.user?.id) throw new TRPCError({ code: "UNAUTHORIZED" });
+  return ctx.user.id;
+}
+
 // ─── Helper: classify Facebook API errors ────────────────────────────────────
 function classifyFbError(err: unknown): TRPCError {
   const msg = err instanceof Error ? err.message : String(err);
@@ -499,15 +505,16 @@ export const adAnalyticsRouter = router({
   getLeadCostSummary: adminProcedure
     .input(z.object({
       dateRange: z.enum(DATE_PRESETS).default("today"),
-      // Optional: filter to a specific connected FB account (facebookAccounts.id)
       fbAccountId: z.number().int().positive().optional(),
     }))
     .query(async ({ ctx, input }) => {
+      const userId = requireUserId(ctx);
       const db = await getDb();
-      if (!db) return { dateRange: input.dateRange, campaigns: [], totals: { leads: 0, spend: 0, cpl: 0 }, syncedAt: null };
+
+      const emptyTotals = { totalLeads: 0, sentLeads: 0, failedLeads: 0, pendingLeads: 0, spend: 0, cplTotal: null as number | null, cplSent: null as number | null };
+      if (!db) return { dateRange: input.dateRange, campaigns: [], totals: emptyTotals, lastSyncedAt: null, isStale: true };
 
       const { dateRange } = input;
-      const userId = ctx.user.id;
 
       const dateCondition = {
         today:     sql`DATE(${leads.createdAt}) = CURDATE()`,
@@ -516,18 +523,21 @@ export const adAnalyticsRouter = router({
         last_30d:  sql`${leads.createdAt} >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)`,
       }[dateRange];
 
-      // 1. Lead counts per campaignId — scoped to this user only
+      // 1. Lead counts per campaignId broken down by deliveryStatus — scoped to this user only
       const leadCounts = await db
         .select({
-          campaignId: leads.campaignId,
-          count: sql<number>`COUNT(*)`,
+          campaignId:   leads.campaignId,
+          totalLeads:   sql<number>`COUNT(*)`,
+          sentLeads:    sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} = 'SUCCESS' THEN 1 ELSE 0 END)`,
+          failedLeads:  sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} = 'FAILED' THEN 1 ELSE 0 END)`,
+          pendingLeads: sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} IN ('PENDING','PROCESSING') THEN 1 ELSE 0 END)`,
         })
         .from(leads)
         .where(and(eq(leads.userId, userId), isNotNull(leads.campaignId), dateCondition))
         .groupBy(leads.campaignId);
 
       if (leadCounts.length === 0) {
-        return { dateRange, campaigns: [], totals: { leads: 0, spend: 0, cpl: 0 }, syncedAt: null };
+        return { dateRange, campaigns: [], totals: emptyTotals, lastSyncedAt: null, isStale: true };
       }
 
       const campaignIds = leadCounts.map((l) => l.campaignId!).filter(Boolean);
@@ -578,38 +588,62 @@ export const adAnalyticsRouter = router({
 
       const campaigns = leadCounts.map((l) => {
         const insight = insightMap.get(l.campaignId!);
-        const spend = insight ? parseFloat(insight.spend) : 0;
-        const leadCount = Number(l.count);
-        const cpl = leadCount > 0 && spend > 0 ? spend / leadCount : 0;
+        const spendAvailable = !!insight;
+        const spendRaw = insight ? parseFloat(insight.spend) : null;
+        const spend = spendRaw !== null ? Math.round(spendRaw * 100) / 100 : null;
+        const totalLeads   = Number(l.totalLeads);
+        const sentLeads    = Number(l.sentLeads ?? 0);
+        const failedLeads  = Number(l.failedLeads ?? 0);
+        const pendingLeads = Number(l.pendingLeads ?? 0);
+        // Zero-division guarded: null when divisor is 0
+        const cplTotal = spendRaw !== null && totalLeads > 0 ? Math.round((spendRaw / totalLeads) * 100) / 100 : null;
+        const cplSent  = spendRaw !== null && sentLeads  > 0 ? Math.round((spendRaw / sentLeads)  * 100) / 100 : null;
         return {
           campaignId: l.campaignId!,
           campaignName: nameMap.get(l.campaignId!) ?? l.campaignId!,
-          leadCount,
-          spend: Math.round(spend * 100) / 100,
-          cpl: Math.round(cpl * 100) / 100,
+          totalLeads,
+          sentLeads,
+          failedLeads,
+          pendingLeads,
+          spend,
+          spendAvailable,
+          spendNote: !spendAvailable ? ("not_synced_yet" as const) : null,
+          cplTotal,
+          cplSent,
           currency: insight ? (currencyMap.get(insight.fbAdAccountId) ?? "USD") : "USD",
-          hasSpendData: !!insight,
         };
-      }).sort((a, b) => b.leadCount - a.leadCount);
+      }).sort((a, b) => b.totalLeads - a.totalLeads);
 
-      const totalLeads = campaigns.reduce((s, r) => s + r.leadCount, 0);
-      const totalSpend = campaigns.reduce((s, r) => s + r.spend, 0);
-      const avgCpl = totalLeads > 0 && totalSpend > 0 ? totalSpend / totalLeads : 0;
+      const totTotalLeads   = campaigns.reduce((s, r) => s + r.totalLeads,   0);
+      const totSentLeads    = campaigns.reduce((s, r) => s + r.sentLeads,    0);
+      const totFailedLeads  = campaigns.reduce((s, r) => s + r.failedLeads,  0);
+      const totPendingLeads = campaigns.reduce((s, r) => s + r.pendingLeads, 0);
+      const totSpend = campaigns.reduce((s, r) => s + (r.spend ?? 0), 0);
+      const totCplTotal = totTotalLeads > 0 && totSpend > 0 ? Math.round((totSpend / totTotalLeads) * 100) / 100 : null;
+      const totCplSent  = totSentLeads  > 0 && totSpend > 0 ? Math.round((totSpend / totSentLeads)  * 100) / 100 : null;
 
       const latestSyncedAt = insightRows
         .map((r) => r.syncedAt)
         .filter(Boolean)
         .sort((a, b) => new Date(b!).getTime() - new Date(a!).getTime())[0] ?? null;
 
+      const STALE_MS = 60 * 60 * 1000; // 1 hour
+      const cacheIsStale = !latestSyncedAt || Date.now() - latestSyncedAt.getTime() > STALE_MS;
+
       return {
         dateRange,
         campaigns,
         totals: {
-          leads: totalLeads,
-          spend: Math.round(totalSpend * 100) / 100,
-          cpl: Math.round(avgCpl * 100) / 100,
+          totalLeads: totTotalLeads,
+          sentLeads: totSentLeads,
+          failedLeads: totFailedLeads,
+          pendingLeads: totPendingLeads,
+          spend: Math.round(totSpend * 100) / 100,
+          cplTotal: totCplTotal,
+          cplSent: totCplSent,
         },
-        syncedAt: latestSyncedAt?.toISOString() ?? null,
+        lastSyncedAt: latestSyncedAt?.toISOString() ?? null,
+        isStale: cacheIsStale,
       };
     }),
 

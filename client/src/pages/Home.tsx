@@ -276,28 +276,37 @@ export default function Home() {
                 <div className="flex items-center gap-2">
                   <DollarSign className="h-4 w-4 text-muted-foreground" />
                   <CardTitle className="text-base font-semibold">Lead Cost Summary</CardTitle>
+                  {leadCostData?.isStale && (
+                    <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
+                      Stale
+                    </Badge>
+                  )}
                 </div>
-                <div className="flex gap-1">
-                  {(["today", "yesterday", "last_7d", "last_30d"] as const).map((r) => (
-                    <button
-                      key={r}
-                      onClick={() => setLeadCostRange(r)}
-                      className={`text-xs px-2 py-1 rounded border transition-colors ${
-                        leadCostRange === r
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "text-muted-foreground border-border hover:bg-muted"
-                      }`}
-                    >
-                      {r === "today" ? "Today" : r === "yesterday" ? "Yesterday" : r === "last_7d" ? "7d" : "30d"}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-2">
+                  {leadCostData?.lastSyncedAt && (
+                    <span className="text-xs text-muted-foreground">
+                      Updated {Math.round((Date.now() - new Date(leadCostData.lastSyncedAt).getTime()) / 60000)}m ago
+                    </span>
+                  )}
+                  <div className="flex gap-1">
+                    {(["today", "yesterday", "last_7d", "last_30d"] as const).map((r) => (
+                      <button
+                        key={r}
+                        onClick={() => setLeadCostRange(r)}
+                        className={`text-xs px-2 py-1 rounded border transition-colors ${
+                          leadCostRange === r
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "text-muted-foreground border-border hover:bg-muted"
+                        }`}
+                      >
+                        {r === "today" ? "Today" : r === "yesterday" ? "Yesterday" : r === "last_7d" ? "7d" : "30d"}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
               <CardDescription>
-                Leads received vs estimated ad spend — data from DB cache
-                {leadCostData?.syncedAt && (
-                  <span className="ml-1 text-xs">· synced {new Date(leadCostData.syncedAt).toLocaleTimeString()}</span>
-                )}
+                Leads received vs estimated ad spend — data from DB cache (CPL based on sent leads)
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -311,20 +320,30 @@ export default function Home() {
               ) : (
                 <>
                   {/* Totals row */}
-                  <div className="grid grid-cols-3 gap-3 mb-4 max-w-sm">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
                     <div className="rounded-lg bg-muted/40 p-3 text-center">
-                      <p className="text-xs text-muted-foreground mb-1">Leads</p>
-                      <p className="text-xl font-bold">{leadCostData.totals.leads}</p>
+                      <p className="text-xs text-muted-foreground mb-1">Total Leads</p>
+                      <p className="text-xl font-bold">{leadCostData.totals.totalLeads}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        ✓ {leadCostData.totals.sentLeads} sent · ✗ {leadCostData.totals.failedLeads} failed
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-muted/40 p-3 text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Pending</p>
+                      <p className="text-xl font-bold">{leadCostData.totals.pendingLeads}</p>
                     </div>
                     <div className="rounded-lg bg-muted/40 p-3 text-center">
                       <p className="text-xs text-muted-foreground mb-1">Est. Spend</p>
                       <p className="text-xl font-bold">${leadCostData.totals.spend.toFixed(2)}</p>
                     </div>
                     <div className="rounded-lg bg-muted/40 p-3 text-center">
-                      <p className="text-xs text-muted-foreground mb-1">Est. CPL</p>
+                      <p className="text-xs text-muted-foreground mb-1">Est. CPL (sent)</p>
                       <p className="text-xl font-bold">
-                        {leadCostData.totals.cpl > 0 ? `$${leadCostData.totals.cpl.toFixed(2)}` : "—"}
+                        {leadCostData.totals.cplSent != null ? `$${leadCostData.totals.cplSent.toFixed(2)}` : "—"}
                       </p>
+                      {leadCostData.totals.cplTotal != null && leadCostData.totals.cplTotal !== leadCostData.totals.cplSent && (
+                        <p className="text-xs text-muted-foreground mt-0.5">all: ${leadCostData.totals.cplTotal.toFixed(2)}</p>
+                      )}
                     </div>
                   </div>
                   {/* Campaign breakdown */}
@@ -335,13 +354,17 @@ export default function Home() {
                           {c.campaignName}
                         </p>
                         <div className="flex items-center gap-2 shrink-0">
-                          <Badge variant="secondary">{c.leadCount} leads</Badge>
-                          {c.hasSpendData ? (
-                            <span className="text-xs text-muted-foreground w-36 text-right">
-                              ${c.spend.toFixed(0)} spend · CPL ${c.cpl.toFixed(2)}
+                          <Badge variant="secondary">{c.totalLeads} leads</Badge>
+                          <span className="text-xs text-muted-foreground/70">
+                            ✓{c.sentLeads} ✗{c.failedLeads}
+                          </span>
+                          {c.spendAvailable ? (
+                            <span className="text-xs text-muted-foreground w-40 text-right">
+                              ${(c.spend ?? 0).toFixed(0)} ·{" "}
+                              CPL {c.cplSent != null ? `$${c.cplSent.toFixed(2)}` : "—"}
                             </span>
                           ) : (
-                            <span className="text-xs text-muted-foreground/50 w-36 text-right">no spend data</span>
+                            <span className="text-xs text-muted-foreground/40 w-40 text-right">no spend data</span>
                           )}
                         </div>
                       </div>
