@@ -264,6 +264,15 @@ function getSourceLabel(
   return FB_METADATA_LABELS[sourceField] ?? sourceField;
 }
 
+/** Radix Select only accepts values that exist in the list; custom typed keys stay in the Input only. */
+function formFieldSelectValue(
+  fieldKey: string,
+  formFields: Array<{ key: string }>
+): string | undefined {
+  if (!fieldKey.trim()) return undefined;
+  return formFields.some(f => f.key === fieldKey) ? fieldKey : undefined;
+}
+
 // ─── State ────────────────────────────────────────────────────────────────────
 
 interface WizardState {
@@ -1068,15 +1077,24 @@ export default function LeadRoutingWizard({
                   </p>
                 ) : (
                   <div className="space-y-2">
-                    {/* Full Name row */}
+                    <p className="text-xs text-muted-foreground">
+                      Full name and phone are auto-detected when possible. Pick a
+                      form field or type the field key; clear a row with delete
+                      if you need to remap.
+                    </p>
+
+                    {/* Full name — same row pattern as extra fields (source + key + delete) */}
                     <div className="flex items-center gap-2">
                       <div className="flex-1 rounded-lg border min-w-0">
                         <Select
-                          value={state.nameField}
+                          value={formFieldSelectValue(
+                            state.nameField,
+                            formFields
+                          )}
                           onValueChange={value => set({ nameField: value })}
                         >
                           <SelectTrigger className="border-0 shadow-none h-10 text-sm focus:ring-0">
-                            <SelectValue placeholder="Full name field..." />
+                            <SelectValue placeholder="Full name — select source..." />
                           </SelectTrigger>
                           <SelectContent>
                             {formFields.map(f => (
@@ -1087,22 +1105,37 @@ export default function LeadRoutingWizard({
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="flex-1 rounded-lg border min-w-0 h-10 flex items-center px-3 bg-muted/30">
-                        <span className="text-sm font-mono text-muted-foreground truncate">
-                          {state.nameField || "—"}
-                        </span>
+                      <div className="flex-1 rounded-lg border min-w-0">
+                        <Input
+                          className="border-0 shadow-none h-10 text-sm focus-visible:ring-0 font-mono"
+                          placeholder="value..."
+                          value={state.nameField}
+                          onChange={e => set({ nameField: e.target.value })}
+                          autoComplete="off"
+                        />
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => set({ nameField: "" })}
+                        className="h-10 w-8 shrink-0 flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
+                        aria-label="Clear full name mapping"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
 
-                    {/* Phone Number row */}
+                    {/* Phone — same row pattern */}
                     <div className="flex items-center gap-2">
                       <div className="flex-1 rounded-lg border min-w-0">
                         <Select
-                          value={state.phoneField}
+                          value={formFieldSelectValue(
+                            state.phoneField,
+                            formFields
+                          )}
                           onValueChange={value => set({ phoneField: value })}
                         >
                           <SelectTrigger className="border-0 shadow-none h-10 text-sm focus:ring-0">
-                            <SelectValue placeholder="Phone number field..." />
+                            <SelectValue placeholder="Phone — select source..." />
                           </SelectTrigger>
                           <SelectContent>
                             {formFields.map(f => (
@@ -1113,11 +1146,23 @@ export default function LeadRoutingWizard({
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="flex-1 rounded-lg border min-w-0 h-10 flex items-center px-3 bg-muted/30">
-                        <span className="text-sm font-mono text-muted-foreground truncate">
-                          {state.phoneField || "—"}
-                        </span>
+                      <div className="flex-1 rounded-lg border min-w-0">
+                        <Input
+                          className="border-0 shadow-none h-10 text-sm focus-visible:ring-0 font-mono"
+                          placeholder="value..."
+                          value={state.phoneField}
+                          onChange={e => set({ phoneField: e.target.value })}
+                          autoComplete="off"
+                        />
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => set({ phoneField: "" })}
+                        className="h-10 w-8 shrink-0 flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
+                        aria-label="Clear phone mapping"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
 
                     {/* Extra field rows */}
