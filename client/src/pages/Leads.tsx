@@ -32,7 +32,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useState, useCallback, useMemo } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { useLeadFilters } from "@/hooks/useLeadFilters";
 import { LeadFilters } from "@/components/leads/LeadFilters";
 import { LeadCard } from "@/components/leads/LeadCard";
@@ -44,6 +44,8 @@ const PAGE_SIZE = 20;
 export default function Leads() {
   const filters = useLeadFilters();
   const [, setLocation] = useLocation();
+  /** Preserve list filters on the detail URL so LeadDetail can return with useBackToLeads. */
+  const listSearch = useSearch();
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const t = useT();
 
@@ -331,7 +333,11 @@ export default function Leads() {
                 <LeadCard
                   key={lead.id}
                   lead={lead}
-                  onClick={() => setLocation(`/leads/${lead.id}`)}
+                  onClick={() =>
+                    setLocation(
+                      `/leads/${lead.id}${listSearch ? `?${listSearch}` : ""}`
+                    )
+                  }
                   onRetry={() => retryLeadMutation.mutate({ id: lead.id })}
                   isRetrying={retryingIds.has(lead.id)}
                 />
@@ -342,7 +348,11 @@ export default function Leads() {
             <div className="hidden md:block">
               <LeadsTable
                 leads={normalizedLeads}
-                onRowClick={(lead) => setLocation(`/leads/${lead.id}`)}
+                onRowClick={(lead) =>
+                  setLocation(
+                    `/leads/${lead.id}${listSearch ? `?${listSearch}` : ""}`
+                  )
+                }
                 retryingIds={retryingIds}
                 onRetry={(id) => retryLeadMutation.mutate({ id })}
                 selectedIds={selectedIds}

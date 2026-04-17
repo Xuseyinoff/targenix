@@ -1,4 +1,4 @@
-import { useParams, useLocation } from "wouter";
+import { useParams } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import {
 import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { LeadPipelineBadge, OrderIntegrationBadge } from "@/components/leads/PipelineBadges";
+import { useBackToLeads } from "@/hooks/useBackToLeads";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -160,7 +161,7 @@ function ResponseBlock({ data }: { data: unknown }) {
 
 export default function LeadDetail() {
   const params = useParams<{ id: string }>();
-  const [, setLocation] = useLocation();
+  const backToLeads = useBackToLeads();
   const leadId = parseInt(params.id ?? "0", 10);
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -190,7 +191,7 @@ export default function LeadDetail() {
         <div className="flex flex-col items-center justify-center py-24 gap-3">
           <XCircle className="h-10 w-10 text-muted-foreground/30" />
           <p className="text-muted-foreground text-sm">Lead not found or access denied.</p>
-          <Button variant="outline" size="sm" onClick={() => setLocation("/leads")}>
+          <Button variant="outline" size="sm" onClick={backToLeads}>
             <ArrowLeft className="h-4 w-4 mr-1" /> Back to Leads
           </Button>
         </div>
@@ -226,7 +227,7 @@ export default function LeadDetail() {
           variant="ghost"
           size="sm"
           className="-ml-2 text-muted-foreground hover:text-foreground"
-          onClick={() => setLocation("/leads")}
+          onClick={backToLeads}
         >
           <ArrowLeft className="h-4 w-4 mr-1" />
           Back to Leads
