@@ -263,8 +263,15 @@ export async function syncFbAccountData(
           30000,
         );
         rawInsights = res.data ?? [];
-      } catch (err) {
-        console.error(`[adsSyncService] Failed to fetch insights for ${adAccountId} (${preset}):`, err instanceof Error ? err.message : err);
+      } catch (err: unknown) {
+        const e = err as { response?: { status?: number; data?: { error?: { message?: string; code?: unknown; type?: string } } }; message?: string };
+        const fbError = e?.response?.data?.error?.message ?? "unknown";
+        const fbCode = e?.response?.data?.error?.code ?? "unknown";
+        const fbType = e?.response?.data?.error?.type ?? "unknown";
+        console.error(
+          `[adsSyncService] Failed insights ${adAccountId} (${preset}):`,
+          `FB Error: ${fbError} | Code: ${fbCode} | Type: ${fbType} | HTTP: ${e?.response?.status}`
+        );
         continue;
       }
 
