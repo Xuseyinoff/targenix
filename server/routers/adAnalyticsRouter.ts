@@ -483,7 +483,7 @@ export const adAnalyticsRouter = router({
     .query(async ({ ctx, input }) => {
       const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
       const FB_DATE_PRESET_MAP: Record<DatePreset, string> = {
-        today: "today", yesterday: "yesterday", last_7d: "last_7_days", last_30d: "last_30d",
+        today: "today", yesterday: "yesterday", last_7d: "last_7d", last_30d: "last_30d",
       };
       const fbDatePreset = FB_DATE_PRESET_MAP[input.datePreset];
       try {
