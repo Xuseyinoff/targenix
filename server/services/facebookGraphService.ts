@@ -45,11 +45,17 @@ export async function graphRequest<T>(
   const { params: rawParams = {}, data, timeout = 10000, logLabel } = options;
   const label = logLabel ?? `${method} ${endpoint}`;
 
-  // Auto-inject appsecret_proof when access_token is present
+  // Auto-inject appsecret_proof when access_token is present.
+  // MUST normalize the token first and send the same normalized value,
+  // otherwise Facebook rejects because HMAC(normalized) ≠ HMAC(original).
   const params = { ...rawParams };
   if (typeof params.access_token === "string" && !params.appsecret_proof) {
-    const proof = computeAppSecretProof(params.access_token);
-    if (proof) params.appsecret_proof = proof;
+    const normalizedToken = params.access_token.trim().replace(/^\uFEFF/, "");
+    const proof = computeAppSecretProof(normalizedToken);
+    if (proof) {
+      params.access_token = normalizedToken;
+      params.appsecret_proof = proof;
+    }
   }
 
   // Sanitize params for logging — mask access tokens and proofs
