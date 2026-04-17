@@ -117,6 +117,20 @@ export async function syncFbAccountData(
   if (!db) throw new Error("DB unavailable");
 
   const token = normalizeFacebookAccessToken(accessToken);
+
+  // TEMP DIAGNOSTIC — remove after root cause confirmed
+  console.log("[adsSyncDiag] userId=" + userId + " fbacc=" + facebookAccountId);
+  console.log("[adsSyncDiag] raw token length:", accessToken.length);
+  console.log("[adsSyncDiag] normalized token length:", token.length);
+  console.log("[adsSyncDiag] token first 10 chars:", token.substring(0, 10));
+  console.log("[adsSyncDiag] token last 6 chars:", token.slice(-6));
+  console.log("[adsSyncDiag] APP_SECRET exists:", !!process.env.FACEBOOK_APP_SECRET);
+  console.log("[adsSyncDiag] APP_SECRET length:", process.env.FACEBOOK_APP_SECRET?.length ?? 0);
+  console.log("[adsSyncDiag] APP_SECRET first 4:", (process.env.FACEBOOK_APP_SECRET ?? "").substring(0, 4));
+  console.log("[adsSyncDiag] ENCRYPTION_KEY exists:", !!process.env.ENCRYPTION_KEY);
+  console.log("[adsSyncDiag] process.title:", process.title);
+  // END TEMP DIAGNOSTIC
+
   const appsecretProof = generateAppSecretProof(token);
   const now = new Date();
   let accountsSynced = 0;
