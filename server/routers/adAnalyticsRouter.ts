@@ -15,7 +15,7 @@
 
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { decrypt } from "../encryption";
 import {
@@ -24,8 +24,9 @@ import {
   campaignsCache,
   campaignInsightsCache,
   adSetsCache,
+  leads,
 } from "../../drizzle/schema";
-import { eq, and, desc, asc, sql } from "drizzle-orm";
+import { eq, and, desc, asc, sql, inArray, isNotNull } from "drizzle-orm";
 import {
   syncFbAccountData,
   syncAdSetsForCampaign,
@@ -492,6 +493,111 @@ export const adAnalyticsRouter = router({
       } catch (err) {
         throw classifyFbError(err);
       }
+    }),
+
+  // ── Lead cost summary (admin only, DB-only, no FB API calls) ─────────────
+  getLeadCostSummary: adminProcedure
+    .input(z.object({
+      dateRange: z.enum(DATE_PRESETS).default("today"),
+    }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) return { dateRange: input.dateRange, campaigns: [], totals: { leads: 0, spend: 0, cpl: 0 }, syncedAt: null };
+
+      const { dateRange } = input;
+
+      const dateCondition = {
+        today:     sql`DATE(${leads.createdAt}) = CURDATE()`,
+        yesterday: sql`DATE(${leads.createdAt}) = DATE_SUB(CURDATE(), INTERVAL 1 DAY)`,
+        last_7d:   sql`${leads.createdAt} >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)`,
+        last_30d:  sql`${leads.createdAt} >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)`,
+      }[dateRange];
+
+      // 1. Lead counts per campaignId
+      const leadCounts = await db
+        .select({
+          campaignId: leads.campaignId,
+          count: sql<number>`COUNT(*)`,
+        })
+        .from(leads)
+        .where(and(isNotNull(leads.campaignId), dateCondition))
+        .groupBy(leads.campaignId);
+
+      if (leadCounts.length === 0) {
+        return { dateRange, campaigns: [], totals: { leads: 0, spend: 0, cpl: 0 }, syncedAt: null };
+      }
+
+      const campaignIds = leadCounts.map((l) => l.campaignId!).filter(Boolean);
+
+      // 2. Spend from campaignInsightsCache
+      const insightRows = await db
+        .select({
+          fbCampaignId: campaignInsightsCache.fbCampaignId,
+          fbAdAccountId: campaignInsightsCache.fbAdAccountId,
+          spend: campaignInsightsCache.spend,
+          syncedAt: campaignInsightsCache.syncedAt,
+        })
+        .from(campaignInsightsCache)
+        .where(and(
+          inArray(campaignInsightsCache.fbCampaignId, campaignIds),
+          eq(campaignInsightsCache.datePreset, dateRange),
+        ));
+
+      // 3. Campaign names
+      const campaignRows = await db
+        .select({ fbCampaignId: campaignsCache.fbCampaignId, name: campaignsCache.name })
+        .from(campaignsCache)
+        .where(inArray(campaignsCache.fbCampaignId, campaignIds));
+
+      // 4. Currency per ad account
+      const adAccountIds = [...new Set(insightRows.map((r) => r.fbAdAccountId))];
+      const currencyMap = new Map<string, string>();
+      if (adAccountIds.length > 0) {
+        const accountRows = await db
+          .select({ fbAdAccountId: adAccountsCache.fbAdAccountId, currency: adAccountsCache.currency })
+          .from(adAccountsCache)
+          .where(inArray(adAccountsCache.fbAdAccountId, adAccountIds));
+        for (const r of accountRows) currencyMap.set(r.fbAdAccountId, r.currency);
+      }
+
+      const insightMap = new Map(insightRows.map((r) => [r.fbCampaignId, r]));
+      const nameMap = new Map(campaignRows.map((r) => [r.fbCampaignId, r.name]));
+
+      const campaigns = leadCounts.map((l) => {
+        const insight = insightMap.get(l.campaignId!);
+        const spend = insight ? parseFloat(insight.spend) : 0;
+        const leadCount = Number(l.count);
+        const cpl = leadCount > 0 && spend > 0 ? spend / leadCount : 0;
+        return {
+          campaignId: l.campaignId!,
+          campaignName: nameMap.get(l.campaignId!) ?? l.campaignId!,
+          leadCount,
+          spend: Math.round(spend * 100) / 100,
+          cpl: Math.round(cpl * 100) / 100,
+          currency: insight ? (currencyMap.get(insight.fbAdAccountId) ?? "USD") : "USD",
+          hasSpendData: !!insight,
+        };
+      }).sort((a, b) => b.leadCount - a.leadCount);
+
+      const totalLeads = campaigns.reduce((s, r) => s + r.leadCount, 0);
+      const totalSpend = campaigns.reduce((s, r) => s + r.spend, 0);
+      const avgCpl = totalLeads > 0 && totalSpend > 0 ? totalSpend / totalLeads : 0;
+
+      const latestSyncedAt = insightRows
+        .map((r) => r.syncedAt)
+        .filter(Boolean)
+        .sort((a, b) => new Date(b!).getTime() - new Date(a!).getTime())[0] ?? null;
+
+      return {
+        dateRange,
+        campaigns,
+        totals: {
+          leads: totalLeads,
+          spend: Math.round(totalSpend * 100) / 100,
+          cpl: Math.round(avgCpl * 100) / 100,
+        },
+        syncedAt: latestSyncedAt?.toISOString() ?? null,
+      };
     }),
 
   // ── CPL alert check ────────────────────────────────────────────────────────

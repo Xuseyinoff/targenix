@@ -1,5 +1,6 @@
 import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
 import {
   Activity,
@@ -8,12 +9,14 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
+  DollarSign,
   Plug,
   Send,
   TrendingUp,
   Webhook,
   Zap,
 } from "lucide-react";
+import { useState } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
 import type { LeadPipelineFields } from "@/lib/leadPipelineBadgeModel";
@@ -70,6 +73,12 @@ export default function Home() {
   const { data: webhookStats } = trpc.webhook.stats.useQuery(undefined, { ...refetchOpts, enabled: isAdmin });
   const { data: integrations } = trpc.integrations.list.useQuery(undefined, refetchOpts);
   const { data: leadsData } = trpc.leads.list.useQuery({ limit: 5, offset: 0 }, refetchOpts);
+
+  const [leadCostRange, setLeadCostRange] = useState<"today" | "yesterday" | "last_7d" | "last_30d">("today");
+  const { data: leadCostData, isLoading: leadCostLoading } = trpc.adAnalytics.getLeadCostSummary.useQuery(
+    { dateRange: leadCostRange },
+    { enabled: isAdmin, refetchInterval: 60_000 },
+  );
 
   const activeIntegrations = integrations?.filter((i) => i.isActive).length ?? 0;
 
@@ -258,6 +267,96 @@ export default function Home() {
             </CardContent>
           </Card>}
         </div>
+
+        {/* Lead Cost Summary — admin only, full-width */}
+        {isAdmin && (
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <DollarSign className="h-4 w-4 text-muted-foreground" />
+                  <CardTitle className="text-base font-semibold">Lead Cost Summary</CardTitle>
+                </div>
+                <div className="flex gap-1">
+                  {(["today", "yesterday", "last_7d", "last_30d"] as const).map((r) => (
+                    <button
+                      key={r}
+                      onClick={() => setLeadCostRange(r)}
+                      className={`text-xs px-2 py-1 rounded border transition-colors ${
+                        leadCostRange === r
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "text-muted-foreground border-border hover:bg-muted"
+                      }`}
+                    >
+                      {r === "today" ? "Today" : r === "yesterday" ? "Yesterday" : r === "last_7d" ? "7d" : "30d"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <CardDescription>
+                Leads received vs estimated ad spend — data from DB cache
+                {leadCostData?.syncedAt && (
+                  <span className="ml-1 text-xs">· synced {new Date(leadCostData.syncedAt).toLocaleTimeString()}</span>
+                )}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {leadCostLoading ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">Loading…</p>
+              ) : !leadCostData || leadCostData.campaigns.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-6 text-center">
+                  <DollarSign className="h-7 w-7 text-muted-foreground/30 mb-2" />
+                  <p className="text-sm text-muted-foreground">No leads with campaign attribution for this period</p>
+                </div>
+              ) : (
+                <>
+                  {/* Totals row */}
+                  <div className="grid grid-cols-3 gap-3 mb-4 max-w-sm">
+                    <div className="rounded-lg bg-muted/40 p-3 text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Leads</p>
+                      <p className="text-xl font-bold">{leadCostData.totals.leads}</p>
+                    </div>
+                    <div className="rounded-lg bg-muted/40 p-3 text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Est. Spend</p>
+                      <p className="text-xl font-bold">${leadCostData.totals.spend.toFixed(2)}</p>
+                    </div>
+                    <div className="rounded-lg bg-muted/40 p-3 text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Est. CPL</p>
+                      <p className="text-xl font-bold">
+                        {leadCostData.totals.cpl > 0 ? `$${leadCostData.totals.cpl.toFixed(2)}` : "—"}
+                      </p>
+                    </div>
+                  </div>
+                  {/* Campaign breakdown */}
+                  <div className="space-y-2 max-w-2xl">
+                    {leadCostData.campaigns.slice(0, 8).map((c) => (
+                      <div key={c.campaignId} className="flex items-center justify-between text-sm gap-3">
+                        <p className="truncate text-muted-foreground flex-1 min-w-0" title={c.campaignName}>
+                          {c.campaignName}
+                        </p>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Badge variant="secondary">{c.leadCount} leads</Badge>
+                          {c.hasSpendData ? (
+                            <span className="text-xs text-muted-foreground w-36 text-right">
+                              ${c.spend.toFixed(0)} spend · CPL ${c.cpl.toFixed(2)}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground/50 w-36 text-right">no spend data</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {leadCostData.campaigns.length > 8 && (
+                      <p className="text-xs text-muted-foreground pt-1">
+                        +{leadCostData.campaigns.length - 8} more campaigns
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )}
       </div>
     </DashboardLayout>
   );
