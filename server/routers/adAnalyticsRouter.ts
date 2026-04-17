@@ -499,12 +499,15 @@ export const adAnalyticsRouter = router({
   getLeadCostSummary: adminProcedure
     .input(z.object({
       dateRange: z.enum(DATE_PRESETS).default("today"),
+      // Optional: filter to a specific connected FB account (facebookAccounts.id)
+      fbAccountId: z.number().int().positive().optional(),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) return { dateRange: input.dateRange, campaigns: [], totals: { leads: 0, spend: 0, cpl: 0 }, syncedAt: null };
 
       const { dateRange } = input;
+      const userId = ctx.user.id;
 
       const dateCondition = {
         today:     sql`DATE(${leads.createdAt}) = CURDATE()`,
@@ -513,14 +516,14 @@ export const adAnalyticsRouter = router({
         last_30d:  sql`${leads.createdAt} >= DATE_SUB(CURDATE(), INTERVAL 29 DAY)`,
       }[dateRange];
 
-      // 1. Lead counts per campaignId
+      // 1. Lead counts per campaignId — scoped to this user only
       const leadCounts = await db
         .select({
           campaignId: leads.campaignId,
           count: sql<number>`COUNT(*)`,
         })
         .from(leads)
-        .where(and(isNotNull(leads.campaignId), dateCondition))
+        .where(and(eq(leads.userId, userId), isNotNull(leads.campaignId), dateCondition))
         .groupBy(leads.campaignId);
 
       if (leadCounts.length === 0) {
@@ -529,7 +532,20 @@ export const adAnalyticsRouter = router({
 
       const campaignIds = leadCounts.map((l) => l.campaignId!).filter(Boolean);
 
-      // 2. Spend from campaignInsightsCache
+      // 2. Spend from campaignInsightsCache — scoped to this user only
+      const insightWhere = input.fbAccountId
+        ? and(
+            eq(campaignInsightsCache.userId, userId),
+            eq(campaignInsightsCache.facebookAccountId, input.fbAccountId),
+            inArray(campaignInsightsCache.fbCampaignId, campaignIds),
+            eq(campaignInsightsCache.datePreset, dateRange),
+          )
+        : and(
+            eq(campaignInsightsCache.userId, userId),
+            inArray(campaignInsightsCache.fbCampaignId, campaignIds),
+            eq(campaignInsightsCache.datePreset, dateRange),
+          );
+
       const insightRows = await db
         .select({
           fbCampaignId: campaignInsightsCache.fbCampaignId,
@@ -538,25 +554,22 @@ export const adAnalyticsRouter = router({
           syncedAt: campaignInsightsCache.syncedAt,
         })
         .from(campaignInsightsCache)
-        .where(and(
-          inArray(campaignInsightsCache.fbCampaignId, campaignIds),
-          eq(campaignInsightsCache.datePreset, dateRange),
-        ));
+        .where(insightWhere);
 
-      // 3. Campaign names
+      // 3. Campaign names — scoped to this user only
       const campaignRows = await db
         .select({ fbCampaignId: campaignsCache.fbCampaignId, name: campaignsCache.name })
         .from(campaignsCache)
-        .where(inArray(campaignsCache.fbCampaignId, campaignIds));
+        .where(and(eq(campaignsCache.userId, userId), inArray(campaignsCache.fbCampaignId, campaignIds)));
 
-      // 4. Currency per ad account
+      // 4. Currency per ad account — scoped to this user only
       const adAccountIds = Array.from(new Set(insightRows.map((r) => r.fbAdAccountId)));
       const currencyMap = new Map<string, string>();
       if (adAccountIds.length > 0) {
         const accountRows = await db
           .select({ fbAdAccountId: adAccountsCache.fbAdAccountId, currency: adAccountsCache.currency })
           .from(adAccountsCache)
-          .where(inArray(adAccountsCache.fbAdAccountId, adAccountIds));
+          .where(and(eq(adAccountsCache.userId, userId), inArray(adAccountsCache.fbAdAccountId, adAccountIds)));
         for (const r of accountRows) currencyMap.set(r.fbAdAccountId, r.currency);
       }
 
