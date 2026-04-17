@@ -199,6 +199,8 @@ type ExtraFieldDraft = {
   sourceType: "form" | "static";
   sourceField?: string;
   staticValue?: string;
+  /** True for "Custom" rows: type source key manually (no dropdown). */
+  manualSource?: boolean;
 };
 
 const FB_METADATA_FIELDS = [
@@ -222,7 +224,29 @@ function createEmptyExtraField(): ExtraFieldDraft {
     sourceType: "form",
     sourceField: "",
     staticValue: "",
+    manualSource: true,
   };
+}
+
+function isKnownFormOrMetaFieldKey(
+  key: string,
+  formFields: Array<{ key: string }>
+): boolean {
+  const k = key.trim();
+  if (!k) return false;
+  if (formFields.some(f => f.key === k)) return true;
+  return FB_METADATA_FIELDS.some(m => m.key === k);
+}
+
+/** Custom rows, or saved keys that are not in the form/metadata lists. */
+function shouldUseManualSourceInput(
+  field: ExtraFieldDraft,
+  formFields: Array<{ key: string }>
+): boolean {
+  if (field.sourceType !== "form") return false;
+  if (field.manualSource) return true;
+  const k = field.sourceField?.trim() ?? "";
+  return !!k && !isKnownFormOrMetaFieldKey(k, formFields);
 }
 
 function serializeExtraFields(extraFields: ExtraFieldDraft[]) {
@@ -1171,48 +1195,89 @@ export default function LeadRoutingWizard({
                       const isDuplicate =
                         !!trimmedDestKey &&
                         duplicateExtraDestKeys.has(trimmedDestKey);
+                      const manualSourceLeft =
+                        field.sourceType === "form" &&
+                        shouldUseManualSourceInput(field, formFields);
 
                       return (
                         <div
                           key={`${index}-${field.sourceField || field.destKey || "new"}`}
                           className={`flex items-center gap-2${isDuplicate ? " rounded-lg p-0.5 ring-1 ring-destructive/40" : ""}`}
                         >
-                          {/* Left block — source field dropdown */}
+                          {/* Left block — static value, manual source key, or dropdown */}
                           <div className="flex-1 rounded-lg border min-w-0">
-                            <Select
-                              value={field.sourceField || undefined}
-                              onValueChange={value =>
-                                updateExtraField(index, { sourceField: value })
-                              }
-                            >
-                              <SelectTrigger className="border-0 shadow-none h-10 text-sm focus:ring-0">
-                                <SelectValue placeholder="Select source..." />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectGroup>
-                                  <SelectLabel>Form fields</SelectLabel>
-                                  {formFields.map(option => (
-                                    <SelectItem
-                                      key={option.key}
-                                      value={option.key}
-                                    >
-                                      {option.label || option.key}
-                                    </SelectItem>
-                                  ))}
-                                </SelectGroup>
-                                <SelectGroup>
-                                  <SelectLabel>Facebook metadata</SelectLabel>
-                                  {FB_METADATA_FIELDS.map(option => (
-                                    <SelectItem
-                                      key={option.key}
-                                      value={option.key}
-                                    >
-                                      {option.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectGroup>
-                              </SelectContent>
-                            </Select>
+                            {field.sourceType === "static" ? (
+                              <Input
+                                className="border-0 shadow-none h-10 text-sm focus-visible:ring-0 font-mono"
+                                placeholder="Static value..."
+                                value={field.staticValue ?? ""}
+                                onChange={e =>
+                                  updateExtraField(index, {
+                                    staticValue: e.target.value,
+                                  })
+                                }
+                                autoComplete="off"
+                              />
+                            ) : manualSourceLeft ? (
+                              <Input
+                                className="border-0 shadow-none h-10 text-sm focus-visible:ring-0 font-mono"
+                                placeholder="Source field key..."
+                                value={field.sourceField ?? ""}
+                                onChange={e =>
+                                  updateExtraField(index, {
+                                    sourceField: e.target.value,
+                                    manualSource: true,
+                                  })
+                                }
+                                autoComplete="off"
+                              />
+                            ) : (
+                              <Select
+                                value={
+                                  field.sourceField &&
+                                  isKnownFormOrMetaFieldKey(
+                                    field.sourceField,
+                                    formFields
+                                  )
+                                    ? field.sourceField
+                                    : undefined
+                                }
+                                onValueChange={value =>
+                                  updateExtraField(index, {
+                                    sourceField: value,
+                                    manualSource: false,
+                                  })
+                                }
+                              >
+                                <SelectTrigger className="border-0 shadow-none h-10 text-sm focus:ring-0">
+                                  <SelectValue placeholder="Select source..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectGroup>
+                                    <SelectLabel>Form fields</SelectLabel>
+                                    {formFields.map(option => (
+                                      <SelectItem
+                                        key={option.key}
+                                        value={option.key}
+                                      >
+                                        {option.label || option.key}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectGroup>
+                                  <SelectGroup>
+                                    <SelectLabel>Facebook metadata</SelectLabel>
+                                    {FB_METADATA_FIELDS.map(option => (
+                                      <SelectItem
+                                        key={option.key}
+                                        value={option.key}
+                                      >
+                                        {option.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectGroup>
+                                </SelectContent>
+                              </Select>
+                            )}
                           </div>
 
                           {/* Right block — destination key (editable) */}
@@ -1288,6 +1353,7 @@ export default function LeadRoutingWizard({
                                           sourceType: "form",
                                           sourceField: f.key,
                                           staticValue: "",
+                                          manualSource: false,
                                         },
                                       ],
                                     }))
@@ -1316,6 +1382,7 @@ export default function LeadRoutingWizard({
                                       sourceType: "form",
                                       sourceField: f.key,
                                       staticValue: "",
+                                      manualSource: false,
                                     },
                                   ],
                                 }))
