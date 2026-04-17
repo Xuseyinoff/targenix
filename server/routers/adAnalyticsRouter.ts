@@ -550,7 +550,7 @@ export const adAnalyticsRouter = router({
         .where(inArray(campaignsCache.fbCampaignId, campaignIds));
 
       // 4. Currency per ad account
-      const adAccountIds = [...new Set(insightRows.map((r) => r.fbAdAccountId))];
+      const adAccountIds = Array.from(new Set(insightRows.map((r) => r.fbAdAccountId)));
       const currencyMap = new Map<string, string>();
       if (adAccountIds.length > 0) {
         const accountRows = await db
