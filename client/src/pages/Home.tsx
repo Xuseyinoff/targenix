@@ -10,7 +10,9 @@ import {
   CheckCircle2,
   Clock,
   DollarSign,
+  Info,
   Plug,
+  Plus,
   Send,
   TrendingUp,
   Webhook,
@@ -75,6 +77,7 @@ export default function Home() {
   const { data: leadsData } = trpc.leads.list.useQuery({ limit: 5, offset: 0 }, refetchOpts);
 
   const [leadCostRange, setLeadCostRange] = useState<"today" | "yesterday" | "last_7d" | "last_30d">("today");
+  const [showAllCampaigns, setShowAllCampaigns] = useState(false);
   const { data: leadCostData, isLoading: leadCostLoading } = trpc.adAnalytics.getLeadCostSummary.useQuery(
     { dateRange: leadCostRange },
     { enabled: isAdmin, refetchInterval: 60_000 },
@@ -270,33 +273,38 @@ export default function Home() {
 
         {/* Lead Cost Summary — admin only, full-width */}
         {isAdmin && (
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                  <DollarSign className="h-4 w-4 text-muted-foreground" />
-                  <CardTitle className="text-base font-semibold">Lead Cost Summary</CardTitle>
+          <Card className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+            {/* ── Header ── */}
+            <CardHeader className="pb-4">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                {/* Left: icon box + title + stale badge */}
+                <div className="flex items-center gap-2.5">
+                  <div className="h-8 w-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                    <DollarSign className="h-4 w-4 text-primary" />
+                  </div>
+                  <span className="text-[15px] font-bold tracking-tight">Lead Cost Summary</span>
                   {leadCostData?.isStale && (
-                    <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
-                      Stale
+                    <Badge variant="outline" className="text-xs text-amber-600 border-amber-300 bg-amber-50 dark:bg-amber-950/20">
+                      ⚠ Stale
                     </Badge>
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                {/* Right: freshness + pill tabs */}
+                <div className="flex items-center gap-3 flex-wrap">
                   {leadCostData?.lastSyncedAt && (
-                    <span className="text-xs text-muted-foreground">
-                      Updated {Math.round((Date.now() - new Date(leadCostData.lastSyncedAt).getTime()) / 60000)}m ago
+                    <span className="text-xs font-mono text-muted-foreground tabular-nums">
+                      Updated {Math.round((Date.now() - new Date(leadCostData.lastSyncedAt).getTime()) / 60_000)}m ago
                     </span>
                   )}
-                  <div className="flex gap-1">
+                  <div className="flex rounded-full border bg-muted/50 p-0.5 gap-0.5">
                     {(["today", "yesterday", "last_7d", "last_30d"] as const).map((r) => (
                       <button
                         key={r}
-                        onClick={() => setLeadCostRange(r)}
-                        className={`text-xs px-2 py-1 rounded border transition-colors ${
+                        onClick={() => { setLeadCostRange(r); setShowAllCampaigns(false); }}
+                        className={`text-xs px-3 py-1 rounded-full transition-all duration-150 ${
                           leadCostRange === r
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "text-muted-foreground border-border hover:bg-muted"
+                            ? "bg-background text-foreground shadow-sm font-medium"
+                            : "text-muted-foreground hover:text-foreground"
                         }`}
                       >
                         {r === "today" ? "Today" : r === "yesterday" ? "Yesterday" : r === "last_7d" ? "7d" : "30d"}
@@ -305,75 +313,136 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-              <CardDescription>
-                Leads received vs estimated ad spend — data from DB cache (CPL based on sent leads)
-              </CardDescription>
             </CardHeader>
-            <CardContent>
+
+            <CardContent className="pt-0">
               {leadCostLoading ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">Loading…</p>
+                <div className="py-10 text-center">
+                  <p className="text-sm text-muted-foreground">Loading…</p>
+                </div>
               ) : !leadCostData || leadCostData.campaigns.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-6 text-center">
-                  <DollarSign className="h-7 w-7 text-muted-foreground/30 mb-2" />
+                <div className="flex flex-col items-center justify-center py-10 text-center">
+                  <div className="h-10 w-10 rounded-full bg-muted/50 flex items-center justify-center mb-3">
+                    <DollarSign className="h-5 w-5 text-muted-foreground/30" />
+                  </div>
                   <p className="text-sm text-muted-foreground">No leads with campaign attribution for this period</p>
                 </div>
               ) : (
                 <>
-                  {/* Totals row */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                    <div className="rounded-lg bg-muted/40 p-3 text-center">
-                      <p className="text-xs text-muted-foreground mb-1">Total Leads</p>
-                      <p className="text-xl font-bold">{leadCostData.totals.totalLeads}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        ✓ {leadCostData.totals.sentLeads} sent · ✗ {leadCostData.totals.failedLeads} failed
+                  {/* ── Metrics row ── */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 border rounded-lg overflow-hidden mb-5">
+                    {/* Col 1 — Total Leads */}
+                    <div className="p-4 border-r border-b sm:border-b-0">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium mb-1.5">Total Leads</p>
+                      <p className="text-2xl font-bold tabular-nums">{leadCostData.totals.totalLeads}</p>
+                      <p className="text-xs mt-1 space-x-0.5">
+                        <span className="text-emerald-600">✓ {leadCostData.totals.sentLeads} sent</span>
+                        <span className="text-muted-foreground">·</span>
+                        <span className="text-red-500">✗ {leadCostData.totals.failedLeads} failed</span>
                       </p>
                     </div>
-                    <div className="rounded-lg bg-muted/40 p-3 text-center">
-                      <p className="text-xs text-muted-foreground mb-1">Pending</p>
-                      <p className="text-xl font-bold">{leadCostData.totals.pendingLeads}</p>
+                    {/* Col 2 — Pending */}
+                    <div className="p-4 border-b sm:border-b-0 sm:border-r">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium mb-1.5">Pending</p>
+                      <p className={`text-2xl font-bold tabular-nums ${leadCostData.totals.pendingLeads === 0 ? "text-muted-foreground" : ""}`}>
+                        {leadCostData.totals.pendingLeads}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">processing queue</p>
                     </div>
-                    <div className="rounded-lg bg-muted/40 p-3 text-center">
-                      <p className="text-xs text-muted-foreground mb-1">Est. Spend</p>
-                      <p className="text-xl font-bold">${leadCostData.totals.spend.toFixed(2)}</p>
+                    {/* Col 3 — Est. Spend */}
+                    <div className="p-4 border-r">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium mb-1.5">Est. Spend</p>
+                      <p className="text-2xl font-bold tabular-nums">
+                        ${leadCostData.totals.spend % 1 === 0
+                          ? leadCostData.totals.spend.toFixed(0)
+                          : leadCostData.totals.spend.toFixed(2)}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">estimated · campaign level</p>
                     </div>
-                    <div className="rounded-lg bg-muted/40 p-3 text-center">
-                      <p className="text-xs text-muted-foreground mb-1">Est. CPL (sent)</p>
-                      <p className="text-xl font-bold">
+                    {/* Col 4 — Est. CPL */}
+                    <div className="p-4">
+                      <p className="text-xs uppercase tracking-wide text-muted-foreground font-medium mb-1.5">Est. CPL</p>
+                      <p className={`text-2xl font-bold tabular-nums ${leadCostData.totals.cplSent != null ? getCplColor(leadCostData.totals.cplSent) : "text-muted-foreground"}`}>
                         {leadCostData.totals.cplSent != null ? `$${leadCostData.totals.cplSent.toFixed(2)}` : "—"}
                       </p>
-                      {leadCostData.totals.cplTotal != null && leadCostData.totals.cplTotal !== leadCostData.totals.cplSent && (
-                        <p className="text-xs text-muted-foreground mt-0.5">all: ${leadCostData.totals.cplTotal.toFixed(2)}</p>
-                      )}
+                      <p className="text-xs text-muted-foreground mt-1">per sent lead</p>
                     </div>
                   </div>
-                  {/* Campaign breakdown */}
-                  <div className="space-y-2 max-w-2xl">
-                    {leadCostData.campaigns.slice(0, 8).map((c) => (
-                      <div key={c.campaignId} className="flex items-center justify-between text-sm gap-3">
-                        <p className="truncate text-muted-foreground flex-1 min-w-0" title={c.campaignName}>
-                          {c.campaignName}
+
+                  {/* ── Campaign table ── */}
+                  <div className="rounded-lg border overflow-hidden">
+                    {/* Table header */}
+                    <div className="grid grid-cols-[1fr_72px_72px] sm:grid-cols-[1fr_90px_110px_80px] bg-muted/30 px-4 py-2 border-b">
+                      <span className="text-xs uppercase tracking-wide text-muted-foreground font-medium">Campaign</span>
+                      <span className="text-xs uppercase tracking-wide text-muted-foreground font-medium text-right">Leads</span>
+                      <span className="text-xs uppercase tracking-wide text-muted-foreground font-medium text-right hidden sm:block">Spend</span>
+                      <span className="text-xs uppercase tracking-wide text-muted-foreground font-medium text-right">CPL</span>
+                    </div>
+                    {/* Rows */}
+                    {(showAllCampaigns ? leadCostData.campaigns : leadCostData.campaigns.slice(0, 8)).map((c, i) => (
+                      <div
+                        key={c.campaignId}
+                        className="grid grid-cols-[1fr_72px_72px] sm:grid-cols-[1fr_90px_110px_80px] px-4 py-3 border-b last:border-0 hover:bg-muted/20 transition-colors animate-in fade-in duration-200"
+                        style={{ animationDelay: `${i * 30}ms` }}
+                      >
+                        {/* Campaign name */}
+                        <p
+                          className="text-sm truncate pr-4 max-w-[160px] sm:max-w-none"
+                          title={c.campaignName}
+                        >
+                          {c.campaignName.replace(/ [|l] /g, " · ")}
                         </p>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <Badge variant="secondary">{c.totalLeads} leads</Badge>
-                          <span className="text-xs text-muted-foreground/70">
-                            ✓{c.sentLeads} ✗{c.failedLeads}
-                          </span>
+                        {/* Leads */}
+                        <div className="text-right">
+                          <p className="text-sm font-bold tabular-nums">{c.totalLeads}</p>
+                          <p className="text-xs">
+                            <span className="text-emerald-600">✓{c.sentLeads}</span>{" "}
+                            <span className="text-red-500">✗{c.failedLeads}</span>
+                          </p>
+                        </div>
+                        {/* Spend — desktop only */}
+                        <div className="text-right hidden sm:block">
                           {c.spendAvailable ? (
-                            <span className="text-xs text-muted-foreground w-40 text-right">
-                              ${(c.spend ?? 0).toFixed(0)} ·{" "}
-                              CPL {c.cplSent != null ? `$${c.cplSent.toFixed(2)}` : "—"}
-                            </span>
+                            <p className="text-sm tabular-nums">
+                              ${(c.spend ?? 0) % 1 === 0
+                                ? (c.spend ?? 0).toFixed(0)
+                                : (c.spend ?? 0).toFixed(2)}
+                            </p>
                           ) : (
-                            <span className="text-xs text-muted-foreground/40 w-40 text-right">no spend data</span>
+                            <p className="text-xs text-muted-foreground/40">—</p>
+                          )}
+                        </div>
+                        {/* CPL */}
+                        <div className="text-right">
+                          {c.spendAvailable && c.cplSent != null ? (
+                            <p className={`text-sm font-bold tabular-nums ${getCplColor(c.cplSent)}`}>
+                              ${c.cplSent.toFixed(2)}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-muted-foreground/40">—</p>
                           )}
                         </div>
                       </div>
                     ))}
-                    {leadCostData.campaigns.length > 8 && (
-                      <p className="text-xs text-muted-foreground pt-1">
-                        +{leadCostData.campaigns.length - 8} more campaigns
-                      </p>
-                    )}
+                  </div>
+
+                  {/* ── Show more row ── */}
+                  {leadCostData.campaigns.length > 8 && !showAllCampaigns && (
+                    <button
+                      onClick={() => setShowAllCampaigns(true)}
+                      className="mt-2 w-full flex items-center justify-center gap-1.5 py-2.5 text-xs text-muted-foreground border border-dashed rounded-lg hover:border-border hover:text-foreground transition-colors"
+                    >
+                      <Plus className="h-3 w-3" />
+                      Show {leadCostData.campaigns.length - 8} more campaigns
+                    </button>
+                  )}
+
+                  {/* ── Footer note ── */}
+                  <div className="mt-4 pt-3 border-t flex items-start gap-1.5">
+                    <Info className="h-3 w-3 text-muted-foreground/40 mt-0.5 shrink-0" />
+                    <p className="text-xs text-muted-foreground/50">
+                      Estimated spend based on campaign-level insights cache · CPL on sent leads only
+                    </p>
                   </div>
                 </>
               )}
@@ -383,6 +452,12 @@ export default function Home() {
       </div>
     </DashboardLayout>
   );
+}
+
+function getCplColor(cpl: number): string {
+  if (cpl < 0.35) return "text-emerald-600";
+  if (cpl < 0.43) return "text-amber-600";
+  return "text-red-600";
 }
 
 function HomeLeadBadge({ lead }: { lead: LeadPipelineFields }) {
