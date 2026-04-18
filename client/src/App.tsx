@@ -30,6 +30,7 @@ import SettingsProfile from "./pages/SettingsProfile";
 import SettingsTelegram from "./pages/SettingsTelegram";
 import AdAccounts from "./pages/AdAccounts";
 import Analytics from "./pages/Analytics";
+import DestinationAnalytics from "./pages/DestinationAnalytics";
 import Campaigns from "./pages/Campaigns";
 import AdSets from "./pages/AdSets";
 import { useAuth } from "./_core/hooks/useAuth";
@@ -148,6 +149,7 @@ function Router() {
         component={businessToolsPage(AdSets)}
       />
       <Route path="/business/analytics" component={businessToolsPage(Analytics)} />
+      <Route path="/business/destinations" component={businessToolsPage(DestinationAnalytics)} />
       {/* Legacy /ad-accounts */}
       <Route path="/ad-accounts" component={businessToolsPage(AdAccounts)} />
       {/* Auth pages */}

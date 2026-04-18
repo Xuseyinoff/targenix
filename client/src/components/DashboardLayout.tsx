@@ -108,6 +108,13 @@ function buildBusinessToolsItems(t: (k: string) => string) {
       placeholder: false,
     },
     {
+      icon: Globe,
+      label: "Destination Performance",
+      path: "/business/destinations",
+      active: true,
+      placeholder: false,
+    },
+    {
       icon: MonitorCheck,
       label: "Integrations Health",
       path: "/business/integrations",

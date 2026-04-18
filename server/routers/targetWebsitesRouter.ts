@@ -17,8 +17,9 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { targetWebsites, destinationTemplates, users } from "../../drizzle/schema";
-import { eq, desc, and } from "drizzle-orm";
+import { targetWebsites, destinationTemplates, users, integrations, orders } from "../../drizzle/schema";
+import { eq, desc, and, sql, gte, lt } from "drizzle-orm";
+import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
 import { encrypt, decrypt } from "../encryption";
 import {
   sendAffiliateOrderByTemplate,
@@ -668,6 +669,167 @@ export const targetWebsitesRouter = router({
         error: result.error,
         durationMs,
         requestPreview,
+      };
+    }),
+
+  // ── Destination performance analytics ────────────────────────────────────
+  // Single aggregated query: targetWebsites → integrations → orders (LEFT JOIN)
+  // Returns today / last_7d / last_30d counts per destination, all users' destinations.
+  getDestinationStats: protectedProcedure
+    .query(async ({ ctx }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) return [];
+
+      const todayBounds = getDashboardDayUtcBounds();
+      const last7dStart  = new Date(todayBounds.start.getTime() - 6  * 24 * 60 * 60 * 1000);
+      const last30dStart = new Date(todayBounds.start.getTime() - 29 * 24 * 60 * 60 * 1000);
+
+      const rows = await db
+        .select({
+          destinationId: targetWebsites.id,
+          name:          targetWebsites.name,
+          templateType:  targetWebsites.templateType,
+          templateId:    targetWebsites.templateId,
+          color:         targetWebsites.color,
+          isActive:      targetWebsites.isActive,
+          // today
+          todayTotal:   sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${todayBounds.start} AND ${orders.createdAt} < ${todayBounds.end} THEN 1 ELSE 0 END), 0)`,
+          todaySuccess: sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${todayBounds.start} AND ${orders.createdAt} < ${todayBounds.end} AND ${orders.status} = 'SENT' THEN 1 ELSE 0 END), 0)`,
+          todayFailed:  sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${todayBounds.start} AND ${orders.createdAt} < ${todayBounds.end} AND ${orders.status} = 'FAILED' THEN 1 ELSE 0 END), 0)`,
+          // last_7d
+          last7dTotal:   sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${last7dStart} THEN 1 ELSE 0 END), 0)`,
+          last7dSuccess: sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${last7dStart} AND ${orders.status} = 'SENT' THEN 1 ELSE 0 END), 0)`,
+          last7dFailed:  sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${last7dStart} AND ${orders.status} = 'FAILED' THEN 1 ELSE 0 END), 0)`,
+          // last_30d
+          last30dTotal:   sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${last30dStart} THEN 1 ELSE 0 END), 0)`,
+          last30dSuccess: sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${last30dStart} AND ${orders.status} = 'SENT' THEN 1 ELSE 0 END), 0)`,
+          last30dFailed:  sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${last30dStart} AND ${orders.status} = 'FAILED' THEN 1 ELSE 0 END), 0)`,
+        })
+        .from(targetWebsites)
+        .leftJoin(
+          integrations,
+          and(eq(integrations.targetWebsiteId, targetWebsites.id), eq(integrations.userId, userId)),
+        )
+        .leftJoin(
+          orders,
+          and(eq(orders.integrationId, integrations.id), eq(orders.userId, userId)),
+        )
+        .where(eq(targetWebsites.userId, userId))
+        .groupBy(targetWebsites.id)
+        .orderBy(desc(sql`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${last30dStart} THEN 1 ELSE 0 END), 0)`));
+
+      return rows.map((r) => {
+        const total30d   = Number(r.last30dTotal);
+        const success30d = Number(r.last30dSuccess);
+        const type: "custom" | "template" =
+          r.templateType === "custom" && !r.templateId ? "custom" : "template";
+        return {
+          destinationId: r.destinationId,
+          name:          r.name,
+          type,
+          color:         r.color,
+          isActive:      r.isActive,
+          today:   { total: Number(r.todayTotal),   success: Number(r.todaySuccess),   failed: Number(r.todayFailed)   },
+          last7d:  { total: Number(r.last7dTotal),  success: Number(r.last7dSuccess),  failed: Number(r.last7dFailed)  },
+          last30d: { total: total30d,                success: success30d,               failed: Number(r.last30dFailed) },
+          successRate: total30d > 0 ? Math.round((success30d / total30d) * 100) : null,
+        };
+      });
+    }),
+
+  // ── Per-destination time series (drill-down chart) ────────────────────────
+  getDestinationTimeSeries: protectedProcedure
+    .input(z.object({
+      destinationId: z.number().int().positive(),
+      range: z.enum(["today", "last_7d", "last_30d"]).default("last_7d"),
+    }))
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) return { points: [] };
+
+      // Ownership check
+      const [dest] = await db
+        .select({ id: targetWebsites.id })
+        .from(targetWebsites)
+        .where(and(eq(targetWebsites.id, input.destinationId), eq(targetWebsites.userId, userId)))
+        .limit(1);
+      if (!dest) return { points: [] };
+
+      const todayBounds = getDashboardDayUtcBounds();
+
+      if (input.range === "today") {
+        const rows = await db
+          .select({
+            hour:   sql<number>`HOUR(CONVERT_TZ(${orders.createdAt}, '+00:00', '+05:00'))`,
+            total:  sql<number>`COUNT(*)`,
+            sent:   sql<number>`SUM(CASE WHEN ${orders.status} = 'SENT'   THEN 1 ELSE 0 END)`,
+            failed: sql<number>`SUM(CASE WHEN ${orders.status} = 'FAILED' THEN 1 ELSE 0 END)`,
+          })
+          .from(orders)
+          .innerJoin(
+            integrations,
+            and(
+              eq(orders.integrationId, integrations.id),
+              eq(integrations.userId, userId),
+              eq(integrations.targetWebsiteId, input.destinationId),
+            ),
+          )
+          .where(and(
+            eq(orders.userId, userId),
+            gte(orders.createdAt, todayBounds.start),
+            lt(orders.createdAt, todayBounds.end),
+          ))
+          .groupBy(sql`HOUR(CONVERT_TZ(${orders.createdAt}, '+00:00', '+05:00'))`)
+          .orderBy(sql`HOUR(CONVERT_TZ(${orders.createdAt}, '+00:00', '+05:00'))`);
+
+        const byHour = new Map(rows.map((r) => [Number(r.hour), r]));
+        return {
+          points: Array.from({ length: 24 }, (_, h) => ({
+            label:  `${String(h).padStart(2, "0")}:00`,
+            total:  Number(byHour.get(h)?.total  ?? 0),
+            sent:   Number(byHour.get(h)?.sent   ?? 0),
+            failed: Number(byHour.get(h)?.failed ?? 0),
+          })),
+        };
+      }
+
+      const days      = input.range === "last_7d" ? 7 : 30;
+      const startDate = new Date(todayBounds.start.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+
+      const rows = await db
+        .select({
+          day:    sql<string>`DATE(CONVERT_TZ(${orders.createdAt}, '+00:00', '+05:00'))`,
+          total:  sql<number>`COUNT(*)`,
+          sent:   sql<number>`SUM(CASE WHEN ${orders.status} = 'SENT'   THEN 1 ELSE 0 END)`,
+          failed: sql<number>`SUM(CASE WHEN ${orders.status} = 'FAILED' THEN 1 ELSE 0 END)`,
+        })
+        .from(orders)
+        .innerJoin(
+          integrations,
+          and(
+            eq(orders.integrationId, integrations.id),
+            eq(integrations.userId, userId),
+            eq(integrations.targetWebsiteId, input.destinationId),
+          ),
+        )
+        .where(and(eq(orders.userId, userId), gte(orders.createdAt, startDate)))
+        .groupBy(sql`DATE(CONVERT_TZ(${orders.createdAt}, '+00:00', '+05:00'))`)
+        .orderBy(sql`DATE(CONVERT_TZ(${orders.createdAt}, '+00:00', '+05:00'))`);
+
+      const byDay = new Map(rows.map((r) => [r.day, r]));
+      return {
+        points: Array.from({ length: days }, (_, i) => {
+          const tashkentD = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000 + 5 * 60 * 60 * 1000);
+          const dayStr    = tashkentD.toISOString().slice(0, 10);
+          return {
+            label:  dayStr.slice(5),
+            total:  Number(byDay.get(dayStr)?.total  ?? 0),
+            sent:   Number(byDay.get(dayStr)?.sent   ?? 0),
+            failed: Number(byDay.get(dayStr)?.failed ?? 0),
+          };
+        }),
       };
     }),
 });
