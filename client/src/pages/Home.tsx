@@ -117,18 +117,19 @@ function KpiCard({
           </div>
         </div>
         <p className="text-3xl font-bold tracking-tight tabular-nums">{value}</p>
-        {(trendPct !== undefined || sub) && (
+        {trendPct !== undefined && (
           <div className="mt-2 flex items-center gap-1.5">
-            {trendPct !== undefined && trendPct !== null && (
+            {trendPct !== null ? (
               <>
                 {trendIcon(trendPct)}
                 <span className={`text-xs font-medium ${trendClass(trendPct, trendPositive)}`}>
                   {trendLabel(trendPct)}
                 </span>
-                <span className="text-xs text-muted-foreground">vs yesterday</span>
+                <span className="text-xs text-muted-foreground">{sub ?? "vs yesterday"}</span>
               </>
+            ) : (
+              <span className="text-xs text-muted-foreground">{sub ?? "no trend data"}</span>
             )}
-            {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
           </div>
         )}
       </CardContent>
@@ -196,17 +197,18 @@ export default function Home() {
 
   const activeIntegrations = integrationsList?.filter((i) => i.isActive).length ?? 0;
 
-  // Trends from last_7d time series — last two points = yesterday and today
+  // Trends: compare yesterday (full day) vs day-before-yesterday (full day).
+  // Never compare today (partial) vs yesterday (full) — that causes misleading -98% at 8am.
   const ts7d = timeSeries?.range === "last_7d" ? timeSeries.points : null;
-  const todayPoint = ts7d?.at(-1);
-  const yesterdayPoint = ts7d?.at(-2);
-  function calcTrend(todayVal?: number, yestVal?: number): number | null {
-    if (todayVal == null || yestVal == null || yestVal === 0) return null;
-    return Math.round(((todayVal - yestVal) / yestVal) * 100);
+  const yesterdayPoint  = ts7d?.at(-2); // yesterday — full completed day
+  const dayBeforePoint  = ts7d?.at(-3); // day before yesterday — full completed day
+  function calcTrend(yestVal?: number, prevVal?: number): number | null {
+    if (yestVal == null || prevVal == null || prevVal === 0) return null;
+    return Math.round(((yestVal - prevVal) / prevVal) * 100);
   }
-  const leadTrend = calcTrend(todayPoint?.total, yesterdayPoint?.total);
-  const sentTrend = calcTrend(todayPoint?.sent, yesterdayPoint?.sent);
-  const failedTrend = calcTrend(todayPoint?.failed, yesterdayPoint?.failed);
+  const leadTrend   = calcTrend(yesterdayPoint?.total,  dayBeforePoint?.total);
+  const sentTrend   = calcTrend(yesterdayPoint?.sent,   dayBeforePoint?.sent);
+  const failedTrend = calcTrend(yesterdayPoint?.failed, dayBeforePoint?.failed);
 
   // Funnel data from all-time stats
   const totalLeads = stats?.leads.total ?? 0;
@@ -229,11 +231,15 @@ export default function Home() {
         </div>
 
         {/* ── KPI Strip ── */}
+        {/* "Today's Leads" reads from leads table (same source as chart) — not orders.
+            This keeps KPIs and chart consistent regardless of integration activity.
+            Trend compares yesterday vs day-before (both full days) — never partial today. */}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
           <KpiCard
-            title="Today's Leads"
-            value={isLoading ? "—" : (stats?.todayIntegrationLeads?.leadsWithDeliveryToday ?? 0) + (stats?.todayIntegrationLeads?.leadsWithFailedDeliveryToday ?? 0)}
+            title="Leads Today"
+            value={isLoading ? "—" : (stats?.leads.todayReceived ?? 0)}
             trendPct={chartRange === "last_7d" ? leadTrend : undefined}
+            sub="yesterday vs day before"
             icon={Zap}
             iconClass="bg-indigo-50 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400"
           />
@@ -241,6 +247,7 @@ export default function Home() {
             title="Sent Today"
             value={isLoading ? "—" : (stats?.orders.sentToday ?? 0)}
             trendPct={chartRange === "last_7d" ? sentTrend : undefined}
+            sub="yesterday vs day before"
             icon={Send}
             iconClass="bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400"
           />
@@ -249,6 +256,7 @@ export default function Home() {
             value={isLoading ? "—" : (stats?.todayIntegrationLeads?.leadsWithFailedDeliveryToday ?? 0)}
             trendPct={chartRange === "last_7d" ? failedTrend : undefined}
             trendPositive={false}
+            sub="yesterday vs day before"
             icon={AlertTriangle}
             iconClass="bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400"
           />

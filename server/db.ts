@@ -180,22 +180,54 @@ export async function getLeadById(id: number): Promise<Lead | undefined> {
 
 export async function getLeadStats(userId: number) {
   const db = await getDb();
-  if (!db) return { total: 0, pending: 0, received: 0, failed: 0 };
-  const [row] = await db
-    .select({
-      total: count(),
-      pending: sql<number>`SUM(CASE WHEN (${leads.dataStatus} != 'ERROR' AND (${leads.dataStatus} = 'PENDING' OR (${leads.dataStatus} = 'ENRICHED' AND ${leads.deliveryStatus} IN ('PENDING','PROCESSING')))) THEN 1 ELSE 0 END)`,
-      received: sql<number>`SUM(CASE WHEN ${leads.dataStatus} = 'ENRICHED' AND ${leads.deliveryStatus} = 'SUCCESS' THEN 1 ELSE 0 END)`,
-      failed: sql<number>`SUM(CASE WHEN ${leads.dataStatus} = 'ERROR' OR ${leads.deliveryStatus} IN ('FAILED','PARTIAL') THEN 1 ELSE 0 END)`,
-    })
-    .from(leads)
-    .where(
-      and(
+  if (!db) return { total: 0, pending: 0, received: 0, failed: 0, todayReceived: 0, yesterdayReceived: 0 };
+
+  const { start: todayStart, end: todayEnd } = getDashboardDayUtcBounds();
+  // Yesterday bounds: shift both bounds back by exactly 24 h
+  const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayEnd   = todayStart; // yesterday's end = today's start
+
+  const [[row], [todayRow], [yesterdayRow]] = await Promise.all([
+    // All-time pipeline stats (only leads that have been routed at least once)
+    db
+      .select({
+        total: count(),
+        pending:  sql<number>`SUM(CASE WHEN (${leads.dataStatus} != 'ERROR' AND (${leads.dataStatus} = 'PENDING' OR (${leads.dataStatus} = 'ENRICHED' AND ${leads.deliveryStatus} IN ('PENDING','PROCESSING')))) THEN 1 ELSE 0 END)`,
+        received: sql<number>`SUM(CASE WHEN ${leads.dataStatus} = 'ENRICHED' AND ${leads.deliveryStatus} = 'SUCCESS' THEN 1 ELSE 0 END)`,
+        failed:   sql<number>`SUM(CASE WHEN ${leads.dataStatus} = 'ERROR' OR ${leads.deliveryStatus} IN ('FAILED','PARTIAL') THEN 1 ELSE 0 END)`,
+      })
+      .from(leads)
+      .where(
+        and(
+          eq(leads.userId, userId),
+          sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
+        )
+      ),
+    // Leads received TODAY (raw webhook count — no delivery requirement)
+    db
+      .select({ n: count() })
+      .from(leads)
+      .where(and(
         eq(leads.userId, userId),
-        sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
-      )
-    );
-  return row ?? { total: 0, pending: 0, received: 0, failed: 0 };
+        gte(leads.createdAt, todayStart),
+        lt(leads.createdAt, todayEnd),
+      )),
+    // Leads received YESTERDAY (full completed day — used for trend comparison)
+    db
+      .select({ n: count() })
+      .from(leads)
+      .where(and(
+        eq(leads.userId, userId),
+        gte(leads.createdAt, yesterdayStart),
+        lt(leads.createdAt, yesterdayEnd),
+      )),
+  ]);
+
+  return {
+    ...(row ?? { total: 0, pending: 0, received: 0, failed: 0 }),
+    todayReceived:     Number(todayRow?.n     ?? 0),
+    yesterdayReceived: Number(yesterdayRow?.n ?? 0),
+  };
 }
 
 export async function getLeadsCount(
