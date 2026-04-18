@@ -107,8 +107,8 @@ export const leadsRouter = router({
     .input(z.object({ id: z.number() }))
     .query(async ({ ctx, input }) => {
       const userId = ctx.user.id;
-      const lead = await getLeadById(input.id);
-      if (!lead || lead.userId !== userId) {
+      const lead = await getLeadById(input.id, userId);
+      if (!lead) {
         throw new Error("Lead not found");
       }
       const orders = await getOrdersByLeadId(input.id);
@@ -190,7 +190,8 @@ export const leadsRouter = router({
             or(
               eq(leads.dataStatus, "ERROR"),
               inArray(leads.deliveryStatus, ["FAILED", "PARTIAL"])
-            )
+            ),
+            sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
           )
         );
 
@@ -205,7 +206,8 @@ export const leadsRouter = router({
             or(
               eq(leads.dataStatus, "ERROR"),
               inArray(leads.deliveryStatus, ["FAILED", "PARTIAL"])
-            )
+            ),
+            sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
           )
         );
 
@@ -241,6 +243,14 @@ export const leadsRouter = router({
         .limit(1);
 
       if (!lead) throw new Error("Lead not found");
+
+      // Verify this lead was actually routed for this user (same visibility rule as Leads page)
+      const [exists] = await db
+        .select({ n: sql<number>`1` })
+        .from(orders)
+        .where(and(eq(orders.leadId, lead.id), eq(orders.userId, userId), sql`${orders.attempts} > 0`))
+        .limit(1);
+      if (!exists) throw new Error("Lead not found");
 
       // Fetch orders — scope to both leadId AND userId for defense-in-depth
       const orderRows = await db
@@ -454,6 +464,7 @@ export const leadsRouter = router({
             eq(leads.userId, userId),
             gte(leads.createdAt, todayBounds.start),
             lt(leads.createdAt, todayBounds.end),
+            sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
           ))
           .groupBy(sql`HOUR(CONVERT_TZ(${leads.createdAt}, '+00:00', '+05:00'))`)
           .orderBy(sql`HOUR(CONVERT_TZ(${leads.createdAt}, '+00:00', '+05:00'))`);
@@ -479,7 +490,11 @@ export const leadsRouter = router({
           failed: sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} = 'FAILED' THEN 1 ELSE 0 END)`,
         })
         .from(leads)
-        .where(and(eq(leads.userId, userId), gte(leads.createdAt, startDate)))
+        .where(and(
+          eq(leads.userId, userId),
+          gte(leads.createdAt, startDate),
+          sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
+        ))
         .groupBy(sql`DATE(CONVERT_TZ(${leads.createdAt}, '+00:00', '+05:00'))`)
         .orderBy(sql`DATE(CONVERT_TZ(${leads.createdAt}, '+00:00', '+05:00'))`);
 
@@ -526,7 +541,11 @@ export const leadsRouter = router({
           failed: sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} = 'FAILED' THEN 1 ELSE 0 END)`,
         })
         .from(leads)
-        .where(and(eq(leads.userId, userId), gte(leads.createdAt, startDate)))
+        .where(and(
+          eq(leads.userId, userId),
+          gte(leads.createdAt, startDate),
+          sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
+        ))
         .groupBy(leads.pageId, leads.formId, leads.pageName, leads.formName)
         .orderBy(desc(sql`COUNT(*)`))
         .limit(8);

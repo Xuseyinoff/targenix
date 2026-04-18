@@ -25,6 +25,7 @@ import {
   campaignInsightsCache,
   adSetsCache,
   leads,
+  orders,
 } from "../../drizzle/schema";
 import { eq, and, desc, asc, sql, inArray, isNotNull } from "drizzle-orm";
 import {
@@ -539,7 +540,12 @@ export const adAnalyticsRouter = router({
           pendingLeads: sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} IN ('PENDING','PROCESSING') THEN 1 ELSE 0 END)`,
         })
         .from(leads)
-        .where(and(eq(leads.userId, userId), isNotNull(leads.campaignId), dateCondition))
+        .where(and(
+          eq(leads.userId, userId),
+          isNotNull(leads.campaignId),
+          dateCondition,
+          sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
+        ))
         .groupBy(leads.campaignId);
 
       if (leadCounts.length === 0) {

@@ -171,10 +171,13 @@ export async function getLeads(
     .offset(offset);
 }
 
-export async function getLeadById(id: number): Promise<Lead | undefined> {
+export async function getLeadById(id: number, userId?: number): Promise<Lead | undefined> {
   const db = await getDb();
   if (!db) return undefined;
-  const [lead] = await db.select().from(leads).where(eq(leads.id, id)).limit(1);
+  const condition = userId !== undefined
+    ? and(eq(leads.id, id), eq(leads.userId, userId))
+    : eq(leads.id, id);
+  const [lead] = await db.select().from(leads).where(condition).limit(1);
   return lead;
 }
 
@@ -203,7 +206,7 @@ export async function getLeadStats(userId: number) {
           sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
         )
       ),
-    // Leads received TODAY (raw webhook count — no delivery requirement)
+    // Leads received TODAY (integration-filtered — consistent with Leads page)
     db
       .select({ n: count() })
       .from(leads)
@@ -211,8 +214,9 @@ export async function getLeadStats(userId: number) {
         eq(leads.userId, userId),
         gte(leads.createdAt, todayStart),
         lt(leads.createdAt, todayEnd),
+        sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
       )),
-    // Leads received YESTERDAY (full completed day — used for trend comparison)
+    // Leads received YESTERDAY (integration-filtered — used for trend comparison)
     db
       .select({ n: count() })
       .from(leads)
@@ -220,6 +224,7 @@ export async function getLeadStats(userId: number) {
         eq(leads.userId, userId),
         gte(leads.createdAt, yesterdayStart),
         lt(leads.createdAt, yesterdayEnd),
+        sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
       )),
   ]);
 
