@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, and, inArray, desc, sql, count, or } from "drizzle-orm";
+import { eq, and, inArray, desc, sql, count, or, gte, lt } from "drizzle-orm";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
   getLeads,
@@ -21,6 +21,7 @@ import {
 import { extractWithMappingForPoll } from "../services/leadService";
 import { processLead } from "../services/leadService";
 import { checkUserRateLimit } from "../lib/userRateLimit";
+import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
 
 export const leadsRouter = router({
   list: protectedProcedure
@@ -426,5 +427,172 @@ export const leadsRouter = router({
         skipped,
         message: `${synced} new lead(s) synced, ${skipped} duplicate(s) skipped.`,
       };
+    }),
+
+  // ── Time-series lead counts (hourly for today, daily for 7d/30d) ──────────
+  getTimeSeries: protectedProcedure
+    .input(z.object({
+      range: z.enum(["today", "last_7d", "last_30d"]).default("last_7d"),
+    }))
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) return { points: [], range: input.range };
+
+      const todayBounds = getDashboardDayUtcBounds();
+
+      if (input.range === "today") {
+        const rows = await db
+          .select({
+            hour: sql<number>`HOUR(CONVERT_TZ(${leads.createdAt}, '+00:00', '+05:00'))`,
+            total: sql<number>`COUNT(*)`,
+            sent: sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} = 'SUCCESS' THEN 1 ELSE 0 END)`,
+            failed: sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} = 'FAILED' THEN 1 ELSE 0 END)`,
+          })
+          .from(leads)
+          .where(and(
+            eq(leads.userId, userId),
+            gte(leads.createdAt, todayBounds.start),
+            lt(leads.createdAt, todayBounds.end),
+          ))
+          .groupBy(sql`HOUR(CONVERT_TZ(${leads.createdAt}, '+00:00', '+05:00'))`)
+          .orderBy(sql`HOUR(CONVERT_TZ(${leads.createdAt}, '+00:00', '+05:00'))`);
+
+        const byHour = new Map(rows.map((r) => [Number(r.hour), r]));
+        const points = Array.from({ length: 24 }, (_, h) => ({
+          label: `${String(h).padStart(2, "0")}:00`,
+          total: Number(byHour.get(h)?.total ?? 0),
+          sent: Number(byHour.get(h)?.sent ?? 0),
+          failed: Number(byHour.get(h)?.failed ?? 0),
+        }));
+        return { points, range: input.range };
+      }
+
+      const days = input.range === "last_7d" ? 7 : 30;
+      const startDate = new Date(todayBounds.start.getTime() - (days - 1) * 24 * 60 * 60 * 1000);
+
+      const rows = await db
+        .select({
+          day: sql<string>`DATE(CONVERT_TZ(${leads.createdAt}, '+00:00', '+05:00'))`,
+          total: sql<number>`COUNT(*)`,
+          sent: sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} = 'SUCCESS' THEN 1 ELSE 0 END)`,
+          failed: sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} = 'FAILED' THEN 1 ELSE 0 END)`,
+        })
+        .from(leads)
+        .where(and(eq(leads.userId, userId), gte(leads.createdAt, startDate)))
+        .groupBy(sql`DATE(CONVERT_TZ(${leads.createdAt}, '+00:00', '+05:00'))`)
+        .orderBy(sql`DATE(CONVERT_TZ(${leads.createdAt}, '+00:00', '+05:00'))`);
+
+      const byDay = new Map(rows.map((r) => [r.day, r]));
+      const points = Array.from({ length: days }, (_, i) => {
+        const d = new Date(startDate.getTime() + i * 24 * 60 * 60 * 1000);
+        // Add 5h offset to get Tashkent local date
+        const tashkentD = new Date(d.getTime() + 5 * 60 * 60 * 1000);
+        const dayStr = tashkentD.toISOString().slice(0, 10);
+        return {
+          label: dayStr.slice(5), // "MM-DD"
+          total: Number(byDay.get(dayStr)?.total ?? 0),
+          sent: Number(byDay.get(dayStr)?.sent ?? 0),
+          failed: Number(byDay.get(dayStr)?.failed ?? 0),
+        };
+      });
+      return { points, range: input.range };
+    }),
+
+  // ── Top lead sources (page/form breakdown) ───────────────────────────────
+  getTopSources: protectedProcedure
+    .input(z.object({
+      range: z.enum(["today", "last_7d", "last_30d"]).default("last_7d"),
+    }))
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) return [];
+
+      const todayBounds = getDashboardDayUtcBounds();
+      const startDate =
+        input.range === "today" ? todayBounds.start :
+        input.range === "last_7d" ? new Date(todayBounds.start.getTime() - 6 * 24 * 60 * 60 * 1000) :
+        new Date(todayBounds.start.getTime() - 29 * 24 * 60 * 60 * 1000);
+
+      const rows = await db
+        .select({
+          pageId: leads.pageId,
+          formId: leads.formId,
+          pageName: leads.pageName,
+          formName: leads.formName,
+          total: sql<number>`COUNT(*)`,
+          sent: sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} = 'SUCCESS' THEN 1 ELSE 0 END)`,
+          failed: sql<number>`SUM(CASE WHEN ${leads.deliveryStatus} = 'FAILED' THEN 1 ELSE 0 END)`,
+        })
+        .from(leads)
+        .where(and(eq(leads.userId, userId), gte(leads.createdAt, startDate)))
+        .groupBy(leads.pageId, leads.formId, leads.pageName, leads.formName)
+        .orderBy(desc(sql`COUNT(*)`))
+        .limit(8);
+
+      return rows.map((r) => ({
+        pageId: r.pageId,
+        formId: r.formId,
+        label: (r.formName?.trim() || r.pageName?.trim() || r.formId).slice(0, 32),
+        total: Number(r.total),
+        sent: Number(r.sent),
+        failed: Number(r.failed),
+      }));
+    }),
+
+  // ── Delivery performance per integration ─────────────────────────────────
+  getDeliveryStats: protectedProcedure
+    .input(z.object({
+      range: z.enum(["today", "last_7d", "last_30d"]).default("last_7d"),
+    }))
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) return [];
+
+      const todayBounds = getDashboardDayUtcBounds();
+      const startDate =
+        input.range === "today" ? todayBounds.start :
+        input.range === "last_7d" ? new Date(todayBounds.start.getTime() - 6 * 24 * 60 * 60 * 1000) :
+        new Date(todayBounds.start.getTime() - 29 * 24 * 60 * 60 * 1000);
+
+      const rows = await db
+        .select({
+          integrationId: orders.integrationId,
+          total: sql<number>`COUNT(*)`,
+          sent: sql<number>`SUM(CASE WHEN ${orders.status} = 'SENT' THEN 1 ELSE 0 END)`,
+          failed: sql<number>`SUM(CASE WHEN ${orders.status} = 'FAILED' THEN 1 ELSE 0 END)`,
+        })
+        .from(orders)
+        .where(and(eq(orders.userId, userId), gte(orders.createdAt, startDate)))
+        .groupBy(orders.integrationId)
+        .orderBy(desc(sql`COUNT(*)`))
+        .limit(8);
+
+      if (rows.length === 0) return [];
+
+      const integrationIds = rows.map((r) => r.integrationId);
+      const intgRows = await db
+        .select({ id: integrations.id, name: integrations.name, type: integrations.type })
+        .from(integrations)
+        .where(and(eq(integrations.userId, userId), inArray(integrations.id, integrationIds)));
+
+      const intgMap = new Map(intgRows.map((i) => [i.id, i]));
+
+      return rows.map((r) => {
+        const total = Number(r.total);
+        const sent = Number(r.sent);
+        const intg = intgMap.get(r.integrationId);
+        return {
+          integrationId: r.integrationId,
+          name: intg?.name ?? `Integration #${r.integrationId}`,
+          type: intg?.type ?? null,
+          total,
+          sent,
+          failed: Number(r.failed),
+          successRate: total > 0 ? Math.round((sent / total) * 100) : 0,
+        };
+      });
     }),
 });
