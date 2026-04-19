@@ -174,8 +174,8 @@
     "delete": "Delete",
     "confirmDelete": "Delete this destination?",
     "dialog": {
-      "addTitle": "Add Website",
-      "addSubtitle": "Select how you want to connect",
+      "addTitle": "Add Destination",
+      "addSubtitle": "Choose where your leads should be sent",
       "newTitle": "New {{name}}",
       "editTitle": "Edit: {{name}}",
       "configureSubtitle": "Configure your destination",

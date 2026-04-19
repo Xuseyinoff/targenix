@@ -252,6 +252,10 @@ export const destinationTemplates = mysqlTable("destination_templates", {
   name: varchar("name", { length: 255 }).notNull(),
   description: varchar("description", { length: 500 }),
   color: varchar("color", { length: 7 }).default("#3B82F6").notNull(),
+  /** Product category for scalable Destinations UI; delivery unchanged. Default affiliate = legacy templates. */
+  category: mysqlEnum("category", ["messaging", "data", "webhooks", "affiliate", "crm"])
+    .default("affiliate")
+    .notNull(),
   endpointUrl: varchar("endpointUrl", { length: 500 }).notNull(),
   method: varchar("method", { length: 10 }).default("POST").notNull(),
   contentType: varchar("contentType", { length: 100 }).default("application/x-www-form-urlencoded").notNull(),

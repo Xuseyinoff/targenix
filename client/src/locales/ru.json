@@ -174,8 +174,8 @@
     "delete": "Удалить",
     "confirmDelete": "Удалить это назначение?",
     "dialog": {
-      "addTitle": "Добавить",
-      "addSubtitle": "Выберите способ подключения",
+      "addTitle": "Добавить назначение",
+      "addSubtitle": "Выберите, куда отправлять лиды",
       "newTitle": "Новое: {{name}}",
       "editTitle": "Редактировать: {{name}}",
       "configureSubtitle": "Настройте назначение",

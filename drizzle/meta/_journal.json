@@ -295,6 +295,13 @@
       "when": 1776260000000,
       "tag": "0041_google_accounts_type",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "5",
+      "when": 1776270000000,
+      "tag": "0042_destination_templates_category",
+      "breakpoints": true
     }
   ]
 }

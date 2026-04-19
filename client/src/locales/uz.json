@@ -174,8 +174,8 @@
     "delete": "O‘chirish",
     "confirmDelete": "Bu manzil o‘chirilsinmi?",
     "dialog": {
-      "addTitle": "Qo‘shish",
-      "addSubtitle": "Ulash usulini tanlang",
+      "addTitle": "Destinatsiya qo‘shish",
+      "addSubtitle": "Leadlarni qayerga yuborishni tanlang",
       "newTitle": "Yangi: {{name}}",
       "editTitle": "Tahrirlash: {{name}}",
       "configureSubtitle": "Manzilni sozlang",

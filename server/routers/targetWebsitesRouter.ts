@@ -18,7 +18,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { targetWebsites, destinationTemplates, users, integrations, orders } from "../../drizzle/schema";
-import { eq, desc, and, sql, gte, lt } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lt, inArray } from "drizzle-orm";
 import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
 import { encrypt, decrypt } from "../encryption";
 import {
@@ -122,6 +122,45 @@ function maskConfig(config: unknown): unknown {
   return c;
 }
 
+/** Allowed values for `targetWebsites.list` → `category` (matches `destination_templates.category`). */
+const DESTINATION_LIST_CATEGORIES = ["messaging", "data", "webhooks", "affiliate", "crm"] as const;
+type DestinationListCategory = (typeof DESTINATION_LIST_CATEGORIES)[number];
+
+function isDestinationListCategory(v: unknown): v is DestinationListCategory {
+  return typeof v === "string" && (DESTINATION_LIST_CATEGORIES as readonly string[]).includes(v);
+}
+
+/** When `templateId` is null — derive from legacy `templateType`. Unknown types → affiliate. */
+function categoryFromTemplateType(templateType: string): DestinationListCategory {
+  switch (templateType) {
+    case "telegram":
+      return "messaging";
+    case "custom":
+      return "webhooks";
+    case "sotuvchi":
+    case "100k":
+      return "affiliate";
+    default:
+      return "affiliate";
+  }
+}
+
+/**
+ * UI category for a destination row. Does not affect delivery.
+ * 1) If `templateId` is set and the template row has a valid `category` → use it.
+ * 2) Else derive from `templateType` (telegram → messaging, custom → webhooks, etc.).
+ */
+function resolveListDestinationCategory(
+  templateId: number | null | undefined,
+  dbCategory: string | null | undefined,
+  templateType: string,
+): DestinationListCategory {
+  if (templateId != null && isDestinationListCategory(dbCategory)) {
+    return dbCategory;
+  }
+  return categoryFromTemplateType(templateType);
+}
+
 /** Decrypt apiKey from templateConfig for server-side use */
 export function decryptApiKey(config: unknown): string | null {
   if (!config || typeof config !== "object") return null;
@@ -147,22 +186,36 @@ export const targetWebsitesRouter = router({
       .where(eq(targetWebsites.userId, ctx.user.id))
       .orderBy(desc(targetWebsites.createdAt));
 
-    // Enrich with template name for dynamic-template destinations
+    // Enrich with template name for dynamic-template destinations (active templates only — unchanged)
     const templateIds = Array.from(new Set(rows.map(r => r.templateId).filter((id): id is number => id !== null && id !== undefined)));
     let templateMap: Map<number, string> = new Map();
+    /** category from DB for rows with templateId (includes inactive templates; missing row → no entry) */
+    let templateCategoryById = new Map<number, string>();
     if (templateIds.length > 0) {
       const templates = await db
         .select({ id: destinationTemplates.id, name: destinationTemplates.name })
         .from(destinationTemplates)
         .where(eq(destinationTemplates.isActive, true));
       templateMap = new Map(templates.map(t => [t.id, t.name]));
+
+      const tplCategories = await db
+        .select({ id: destinationTemplates.id, category: destinationTemplates.category })
+        .from(destinationTemplates)
+        .where(inArray(destinationTemplates.id, templateIds));
+      templateCategoryById = new Map(tplCategories.map((t) => [t.id, t.category]));
     }
 
-    return rows.map((r) => ({
-      ...r,
-      templateConfig: maskConfig(r.templateConfig),
-      templateName: r.templateId ? (templateMap.get(r.templateId) ?? null) : null,
-    }));
+    return rows.map((r) => {
+      const dbCategory =
+        r.templateId != null ? templateCategoryById.get(r.templateId) : undefined;
+      const category = resolveListDestinationCategory(r.templateId, dbCategory, r.templateType);
+      return {
+        ...r,
+        templateConfig: maskConfig(r.templateConfig),
+        templateName: r.templateId ? (templateMap.get(r.templateId) ?? null) : null,
+        category,
+      };
+    });
   }),
 
   /** Create a new target website. apiKey / botToken is encrypted before saving. */

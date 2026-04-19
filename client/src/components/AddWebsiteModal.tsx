@@ -12,7 +12,20 @@ import {
   useDialogComposition,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { ChevronRight, Send, X } from "lucide-react";
+import {
+  ArrowRight,
+  Briefcase,
+  Building2,
+  FileText,
+  LayoutGrid,
+  MessageSquare,
+  Phone,
+  Puzzle,
+  Send,
+  Table2,
+  Webhook,
+  X,
+} from "lucide-react";
 
 export type AddWebsiteFormMode =
   | "select-template"
@@ -20,11 +33,20 @@ export type AddWebsiteFormMode =
   | "configure-dynamic"
   | "edit-dynamic";
 
+export type DestinationTemplateCategory =
+  | "messaging"
+  | "data"
+  | "webhooks"
+  | "affiliate"
+  | "crm";
+
 export interface DynTemplateListItem {
   id: number;
   name: string;
   description?: string | null;
   color: string;
+  /** From API `getTemplates`; omit or legacy → treat as affiliate in filters */
+  category?: DestinationTemplateCategory | string | null;
 }
 
 interface WebsiteFlowDialogProps {
@@ -129,7 +151,8 @@ export function WebsiteFlowDialog({
             >
               <DialogTitle
                 className={cn(
-                  "pr-10 text-lg font-semibold leading-tight tracking-tight",
+                  "pr-10 font-semibold leading-tight tracking-tight",
+                  isSelect && "text-xl md:text-xl",
                   !isSelect && "text-base md:text-lg"
                 )}
               >
@@ -137,7 +160,7 @@ export function WebsiteFlowDialog({
               </DialogTitle>
               <DialogDescription
                 className={cn(
-                  "mt-1 text-sm",
+                  "mt-1.5 text-sm leading-relaxed",
                   headerDescription
                     ? "text-muted-foreground"
                     : "sr-only"
@@ -161,7 +184,29 @@ export function WebsiteFlowDialog({
   );
 }
 
-type AddSiteTab = "affiliate" | "custom" | "telegram";
+export type AddSiteTab =
+  | "messaging"
+  | "data"
+  | "webhooks"
+  | "affiliate"
+  | "crm";
+
+/** Full labels on every breakpoint — emoji + name (scalable SaaS naming). */
+const CATEGORY_TABS: { id: AddSiteTab; emoji: string; label: string }[] = [
+  { id: "messaging", emoji: "📩", label: "Messaging" },
+  { id: "data", emoji: "📊", label: "Data" },
+  { id: "webhooks", emoji: "🌐", label: "Webhooks" },
+  { id: "affiliate", emoji: "🤝", label: "Affiliate" },
+  { id: "crm", emoji: "🧩", label: "CRM" },
+];
+
+function templateCategoryForFilter(t: DynTemplateListItem): DestinationTemplateCategory {
+  const c = t.category;
+  if (c === "messaging" || c === "data" || c === "webhooks" || c === "affiliate" || c === "crm") {
+    return c;
+  }
+  return "affiliate";
+}
 
 interface AddWebsiteSelectStepProps<T extends DynTemplateListItem> {
   open: boolean;
@@ -169,6 +214,71 @@ interface AddWebsiteSelectStepProps<T extends DynTemplateListItem> {
   onSelectAffiliate: (tpl: T) => void;
   onSelectCustom: () => void;
   onSelectTelegram: () => void;
+}
+
+/** Shared icon container — fixed size for alignment across cards */
+const CARD_ICON_WRAP =
+  "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-muted/40 text-muted-foreground transition-colors duration-200 [&_svg]:h-5 [&_svg]:w-5";
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-muted-foreground/80 mb-2 text-[10px] font-semibold uppercase tracking-[0.14em]">{children}</p>
+  );
+}
+
+function ComingSoonBadge() {
+  return (
+    <span className="bg-muted text-muted-foreground rounded-full px-2 py-0.5 text-xs font-medium">Coming soon</span>
+  );
+}
+
+/** Primary CTA — button-like, not plain text */
+function ConnectCta({ variant }: { variant: "primary" | "sky" }) {
+  const isSky = variant === "sky";
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold shadow-sm transition-all duration-200",
+        isSky
+          ? "bg-sky-600 text-white shadow-sky-500/25 group-hover:bg-sky-600/90 group-hover:shadow-sky-500/30 dark:bg-sky-500 dark:group-hover:bg-sky-500/90"
+          : "bg-primary text-primary-foreground group-hover:bg-primary/90 group-hover:shadow-md"
+      )}
+    >
+      Connect
+      <ArrowRight className="h-3.5 w-3.5 opacity-95" aria-hidden />
+    </span>
+  );
+}
+
+function ComingSoonCard({
+  icon,
+  title,
+  description,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div
+      role="note"
+      aria-label={`${title} — coming soon`}
+      className={cn(
+        "flex w-full min-w-0 cursor-not-allowed select-none items-center gap-4 rounded-2xl border border-dashed border-muted/50 bg-muted/20 p-4 text-left backdrop-blur-[1px]",
+        "opacity-55 saturate-[0.6]",
+        "shadow-none transition-opacity duration-200"
+      )}
+    >
+      <span className={cn(CARD_ICON_WRAP, "opacity-75")}>{icon}</span>
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-center gap-2">
+          <span className="text-base font-semibold tracking-tight text-foreground/75">{title}</span>
+          <ComingSoonBadge />
+        </span>
+        <span className="text-muted-foreground mt-1 block text-sm leading-relaxed">{description}</span>
+      </span>
+    </div>
+  );
 }
 
 export function AddWebsiteSelectStep<T extends DynTemplateListItem>({
@@ -180,207 +290,228 @@ export function AddWebsiteSelectStep<T extends DynTemplateListItem>({
 }: AddWebsiteSelectStepProps<T>) {
   const [tab, setTab] = React.useState<AddSiteTab>("affiliate");
 
+  const affiliateTemplates = React.useMemo(
+    () => templates.filter((t) => templateCategoryForFilter(t) === "affiliate"),
+    [templates]
+  );
+
   React.useEffect(() => {
     if (open) setTab("affiliate");
   }, [open]);
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-2">
-        <button
-          type="button"
-          onClick={() => setTab("affiliate")}
-          className={cn(
-            "flex min-h-[4.5rem] w-full items-start gap-2 rounded-[14px] border p-2.5 text-left transition-all duration-200",
-            tab === "affiliate"
-              ? "border-primary bg-primary/10"
-              : "border-border bg-background hover:border-muted-foreground/30"
-          )}
-        >
-          <span
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-100 text-sm dark:bg-orange-950/50"
-            aria-hidden
+    <div className="space-y-6">
+      {/* Category tabs — full labels; scroll on narrow viewports */}
+      <div className="-mx-0.5 flex snap-x snap-mandatory gap-2 overflow-x-auto scroll-smooth pb-1 pt-0.5 [scrollbar-width:thin] md:mx-0 md:gap-2">
+        {CATEGORY_TABS.map(({ id, emoji, label }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            className={cn(
+              "flex min-h-[3.75rem] min-w-[5.25rem] shrink-0 snap-start cursor-pointer flex-col items-center justify-center rounded-2xl border px-2.5 py-2 text-center",
+              "transition-all duration-200 ease-out md:min-w-0 md:flex-1 md:px-3",
+              tab === id
+                ? "border-primary/45 bg-primary/15 text-foreground shadow-lg shadow-primary/15 ring-2 ring-primary/25"
+                : "border-border/70 bg-muted/15 text-muted-foreground hover:-translate-y-0.5 hover:scale-[1.02] hover:border-border hover:bg-muted/40 hover:text-foreground hover:shadow-md"
+            )}
           >
-            ⚡
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-xs font-semibold">Affiliate</span>
-            <span className="text-muted-foreground mt-0.5 block text-[11px] leading-snug">
-              Ready-made
+            <span className="text-lg leading-none" aria-hidden>
+              {emoji}
             </span>
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("custom")}
-          className={cn(
-            "flex min-h-[4.5rem] w-full items-start gap-2 rounded-[14px] border p-2.5 text-left transition-all duration-200",
-            tab === "custom"
-              ? "border-primary bg-primary/10"
-              : "border-border bg-background hover:border-muted-foreground/30"
-          )}
-        >
-          <span
-            className="bg-muted text-muted-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm"
-            aria-hidden
-          >
-            ⚙️
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-xs font-semibold">Custom</span>
-            <span className="text-muted-foreground mt-0.5 block text-[11px] leading-snug">
-              Your own API
+            <span className="mt-1.5 max-w-[5.5rem] truncate text-[10px] font-semibold leading-tight text-inherit sm:max-w-[7rem] md:max-w-none md:text-[11px]">
+              {label}
             </span>
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setTab("telegram")}
-          className={cn(
-            "flex min-h-[4.5rem] w-full items-start gap-2 rounded-[14px] border p-2.5 text-left transition-all duration-200",
-            tab === "telegram"
-              ? "border-sky-400 bg-sky-500/10"
-              : "border-border bg-background hover:border-muted-foreground/30"
-          )}
-        >
-          <span
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-950/50"
-            aria-hidden
-          >
-            <Send className="h-4 w-4" />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block text-xs font-semibold">Telegram</span>
-            <span className="text-muted-foreground mt-0.5 block text-[11px] leading-snug">
-              Bot delivery
-            </span>
-          </span>
-        </button>
+          </button>
+        ))}
       </div>
 
-      {tab === "affiliate" ? (
-        <div className="space-y-2">
-          <p className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
-            Affiliate platforms
-          </p>
-          {templates.length === 0 ? (
-            <p className="text-muted-foreground py-4 text-center text-sm">
-              No affiliate platforms available yet. Try Custom or contact your
-              admin.
+      {tab === "messaging" && (
+        <div className="mx-auto mt-2 flex w-full max-w-lg flex-col gap-4 border-t border-border/35 pt-6">
+          <SectionLabel>Messaging</SectionLabel>
+          <button
+            type="button"
+            onClick={onSelectTelegram}
+            className={cn(
+              "group relative flex w-full min-w-0 cursor-pointer items-center gap-4 overflow-hidden rounded-2xl border p-4 text-left",
+              "border-sky-400/55 bg-gradient-to-br from-sky-500/[0.14] via-background to-background",
+              "shadow-md shadow-sky-500/20 ring-1 ring-sky-400/25",
+              "transition-all duration-200 ease-out",
+              "hover:scale-[1.01] hover:border-sky-400/80 hover:shadow-lg hover:shadow-sky-500/25",
+              "active:scale-[0.995]"
+            )}
+          >
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-500/20 text-sky-600 shadow-md shadow-sky-500/20 ring-1 ring-sky-400/35 dark:bg-sky-950/60 dark:text-sky-300">
+              <Send className="h-5 w-5 shrink-0" aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-lg font-semibold tracking-tight">Telegram</span>
+              <span className="text-muted-foreground mt-1 block text-sm leading-relaxed">
+                Deliver leads to your Telegram bot or group
+              </span>
+            </span>
+            <ConnectCta variant="sky" />
+          </button>
+          <ComingSoonCard
+            icon={<MessageSquare />}
+            title="Discord"
+            description="Send leads to a Discord channel"
+          />
+          <ComingSoonCard
+            icon={<Phone />}
+            title="WhatsApp"
+            description="Business messaging integration"
+          />
+        </div>
+      )}
+
+      {tab === "data" && (
+        <div className="mx-auto mt-2 flex w-full max-w-lg flex-col gap-4 border-t border-border/35 pt-6">
+          <SectionLabel>Data &amp; spreadsheets</SectionLabel>
+          <div
+            role="note"
+            aria-label="Google Sheets — coming soon"
+            className={cn(
+              "flex w-full min-w-0 cursor-not-allowed select-none items-start gap-4 rounded-2xl border border-dashed border-muted/50 bg-muted/15 p-4 text-left backdrop-blur-[1px]",
+              "opacity-55 saturate-[0.6] transition-opacity duration-200"
+            )}
+          >
+            <span className={cn(CARD_ICON_WRAP, "opacity-75")}>
+              <Table2 className="shrink-0" aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="text-base font-semibold tracking-tight text-foreground/75">Google Sheets</span>
+                <ComingSoonBadge />
+              </span>
+              <span className="text-muted-foreground mt-1 block text-sm leading-relaxed">
+                Connect Google account first. Routing will be available soon.
+              </span>
+            </span>
+          </div>
+          <ComingSoonCard
+            icon={<LayoutGrid />}
+            title="Airtable"
+            description="Sync rows to an Airtable base"
+          />
+          <ComingSoonCard
+            icon={<FileText />}
+            title="Notion"
+            description="Create pages or database entries from leads"
+          />
+        </div>
+      )}
+
+      {tab === "webhooks" && (
+        <div className="mx-auto mt-2 flex w-full max-w-lg flex-col gap-4 border-t border-border/35 pt-6">
+          <SectionLabel>Webhooks</SectionLabel>
+          <button
+            type="button"
+            onClick={onSelectCustom}
+            className={cn(
+              "group relative flex w-full min-w-0 cursor-pointer items-center gap-4 overflow-hidden rounded-2xl border p-4 text-left",
+              "border-primary/45 bg-gradient-to-br from-primary/[0.11] via-background to-background",
+              "shadow-md shadow-primary/8 ring-1 ring-primary/18",
+              "transition-all duration-200 ease-out",
+              "hover:scale-[1.01] hover:border-primary/60 hover:shadow-lg hover:shadow-primary/12",
+              "active:scale-[0.995]"
+            )}
+          >
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/12 text-primary ring-1 ring-primary/25">
+              <Webhook className="h-5 w-5 shrink-0" aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-lg font-semibold tracking-tight">Custom HTTP endpoint</span>
+              <span className="text-muted-foreground mt-1 block text-sm leading-relaxed">
+                POST or GET to any URL with JSON, form, or multipart body
+              </span>
+            </span>
+            <ConnectCta variant="primary" />
+          </button>
+          <div
+            className={cn(
+              "flex gap-3 rounded-2xl border border-amber-300/70 bg-amber-50/90 p-4 transition-shadow duration-200 dark:border-amber-800/50 dark:bg-amber-950/40"
+            )}
+          >
+            <span className="shrink-0 text-base leading-none opacity-90" aria-hidden>
+              ⚠️
+            </span>
+            <p className="text-amber-950/95 dark:text-amber-100/90 text-sm leading-relaxed">
+              Custom integration requires technical knowledge. You&apos;ll need the API endpoint, method, and body
+              fields of your target system.
             </p>
+          </div>
+        </div>
+      )}
+
+      {tab === "affiliate" && (
+        <div className="mx-auto mt-2 w-full max-w-lg border-t border-border/35 pt-6">
+          <SectionLabel>Affiliate templates</SectionLabel>
+          {affiliateTemplates.length === 0 ? (
+            <div className="flex min-h-[10rem] flex-col items-center justify-center rounded-2xl border border-dashed border-muted/60 bg-muted/10 px-6 py-10 text-center">
+              <p className="text-muted-foreground max-w-xs text-sm leading-relaxed">
+                No affiliate templates available yet. Try Webhooks or contact your admin.
+              </p>
+            </div>
           ) : (
-            <ul className="space-y-2">
-              {templates.map((tpl) => (
-                <li key={tpl.id}>
+            <ul
+              className={cn(
+                "flex flex-col gap-3.5",
+                affiliateTemplates.length <= 2 && "min-h-[12rem] justify-center py-2"
+              )}
+            >
+              {affiliateTemplates.map((tpl) => (
+                <li key={tpl.id} className="w-full min-w-0">
                   <button
                     type="button"
                     onClick={() => onSelectAffiliate(tpl)}
                     className={cn(
-                      "group flex w-full items-stretch gap-3 rounded-[14px] border border-border bg-background p-3 text-left transition-all duration-200",
-                      "hover:border-primary hover:bg-primary/5",
-                      "active:scale-[0.98]"
+                      "group flex w-full min-w-0 cursor-pointer items-stretch gap-4 rounded-2xl border border-border/80 bg-background p-4 text-left",
+                      "shadow-sm transition-all duration-200 ease-out",
+                      "hover:scale-[1.01] hover:border-primary/35 hover:shadow-md hover:shadow-primary/8",
+                      "active:scale-[0.995]"
                     )}
                   >
                     <span
-                      className="w-1.5 shrink-0 self-stretch rounded-full"
+                      className="w-1.5 shrink-0 self-stretch rounded-full opacity-95"
                       style={{ backgroundColor: tpl.color }}
                       aria-hidden
                     />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-semibold">
-                        {tpl.name}
-                      </span>
+                      <span className="block text-lg font-semibold tracking-tight">{tpl.name}</span>
                       {tpl.description ? (
-                        <span className="text-muted-foreground mt-0.5 line-clamp-2 block text-xs leading-snug">
+                        <span className="text-muted-foreground mt-1 line-clamp-2 block text-sm leading-relaxed">
                           {tpl.description}
                         </span>
                       ) : null}
                     </span>
-                    <ChevronRight className="text-muted-foreground group-hover:text-primary mt-0.5 h-4 w-4 shrink-0 transition-colors" />
+                    <ConnectCta variant="primary" />
                   </button>
                 </li>
               ))}
             </ul>
           )}
         </div>
-      ) : tab === "telegram" ? (
-        <div className="space-y-3">
-          <p className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
-            Telegram Bot destination
-          </p>
-          <button
-            type="button"
-            onClick={onSelectTelegram}
-            className={cn(
-              "group flex w-full items-center gap-3 rounded-[14px] border border-dashed border-sky-300 bg-background p-3 text-left transition-all duration-200",
-              "hover:border-sky-400 hover:bg-sky-500/5",
-              "active:scale-[0.98]"
-            )}
-          >
-            <span
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-950/50"
-              aria-hidden
-            >
-              <Send className="h-5 w-5" />
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold">Telegram Bot</span>
-              <span className="text-muted-foreground mt-0.5 block text-xs leading-snug">
-                O&apos;z Telegram botingizga leadlarni yuboring
-              </span>
-            </span>
-            <ChevronRight className="text-muted-foreground group-hover:text-sky-500 h-4 w-4 shrink-0 transition-colors" />
-          </button>
-          <div className="flex gap-2.5 rounded-[14px] border border-sky-200/80 bg-sky-50 p-3 dark:border-sky-800/60 dark:bg-sky-950/20">
-            <span className="shrink-0 text-base" aria-hidden>💡</span>
-            <p className="text-sky-900 dark:text-sky-100/90 text-xs leading-relaxed">
-              Telegram botingiz token va chat ID kerak bo&apos;ladi. Bot @BotFather orqali yaratiladi.
-            </p>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <p className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
-            Custom integration
-          </p>
-          <button
-            type="button"
-            onClick={onSelectCustom}
-            className={cn(
-              "group flex w-full items-center gap-3 rounded-[14px] border border-dashed border-border bg-background p-3 text-left transition-all duration-200",
-              "hover:border-primary hover:bg-primary/5",
-              "active:scale-[0.98]"
-            )}
-          >
-            <span
-              className="bg-muted text-muted-foreground flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-lg"
-              aria-hidden
-            >
-              ⚙️
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold">Custom</span>
-              <span className="text-muted-foreground mt-0.5 block text-xs leading-snug">
-                Istalgan sayt uchun universal POST API builder
-              </span>
-            </span>
-            <ChevronRight className="text-muted-foreground group-hover:text-primary h-4 w-4 shrink-0 transition-colors" />
-          </button>
+      )}
 
-          <div
-            className={cn(
-              "flex gap-2.5 rounded-[14px] border border-amber-300/80 bg-amber-50 p-3 dark:border-amber-700/60 dark:bg-amber-950/35"
-            )}
-          >
-            <span className="shrink-0 text-base" aria-hidden>
-              ⚠️
-            </span>
-            <p className="text-amber-950 dark:text-amber-100/90 text-xs leading-relaxed">
-              Custom integration requires technical knowledge. You&apos;ll need
-              to know the API endpoint, method, and body fields of your target
-              website.
-            </p>
-          </div>
+      {tab === "crm" && (
+        <div className="mx-auto mt-2 flex w-full max-w-lg flex-col gap-4 border-t border-border/35 pt-6">
+          <SectionLabel>CRM</SectionLabel>
+          <ComingSoonCard
+            icon={<Briefcase />}
+            title="Bitrix24"
+            description="Create leads and deals in Bitrix24"
+          />
+          <ComingSoonCard
+            icon={<Building2 />}
+            title="AmoCRM"
+            description="Pipeline and contact sync"
+          />
+          <ComingSoonCard
+            icon={<Puzzle />}
+            title="HubSpot"
+            description="Contacts and marketing handoff"
+          />
         </div>
       )}
     </div>
