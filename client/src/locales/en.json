@@ -69,9 +69,9 @@
     "webhookEvents": "Webhook Events",
     "webhookEventsDesc": "Total received",
     "leadsWithDeliveryToday": "Leads with a delivery today",
-    "leadsWithDeliveryTodayDesc": "Unique leads with \u22651 integration send today",
+    "leadsWithDeliveryTodayDesc": "Unique leads with ≥1 integration send today",
     "leadsWithFailedToday": "Leads with a failed delivery today",
-    "leadsWithFailedTodayDesc": "Unique leads with \u22651 failed integration attempt today",
+    "leadsWithFailedTodayDesc": "Unique leads with ≥1 failed integration attempt today",
     "totalLeads": "Total Leads",
     "totalLeadsDesc": "All time",
     "delivered": "Delivered",
@@ -123,7 +123,7 @@
     "pleaseSelectPage": "Please select a Page",
     "pleaseSelectForm": "Please select a Form",
     "hoursBackPositive": "Hours back must be greater than 0",
-    "pagePagination": "{{current}} / {{total}} \u00b7 {{count}} leads",
+    "pagePagination": "{{current}} / {{total}} · {{count}} leads",
     "filters": {
       "searchPlaceholder": "Search name, phone...",
       "all": "All",
@@ -337,7 +337,10 @@
       "fillAllFields": "Please fill in all fields",
       "passwordsNoMatch": "Passwords do not match",
       "invalidResetLink": "Invalid reset link"
-    }
+    },
+    "continueWithGoogle": "Continue with Google",
+    "loggedInGoogle": "Signed in with Google",
+    "googleLoginCancelled": "Google login was cancelled."
   },
   "settings": {
     "title": "Settings",

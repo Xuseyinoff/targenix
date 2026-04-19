@@ -69,9 +69,9 @@
     "webhookEvents": "Webhook hodisalar",
     "webhookEventsDesc": "Jami qabul qilingan",
     "leadsWithDeliveryToday": "Bugun yetkazilgan lidlar",
-    "leadsWithDeliveryTodayDesc": "Bugun \u22651 integratsiya yuborilgan noyob lidlar",
+    "leadsWithDeliveryTodayDesc": "Bugun ≥1 integratsiya yuborilgan noyob lidlar",
     "leadsWithFailedToday": "Bugun xato bo'lgan lidlar",
-    "leadsWithFailedTodayDesc": "Bugun \u22651 muvaffaqiyatsiz urinish bo'lgan noyob lidlar",
+    "leadsWithFailedTodayDesc": "Bugun ≥1 muvaffaqiyatsiz urinish bo'lgan noyob lidlar",
     "totalLeads": "Jami lidlar",
     "totalLeadsDesc": "Barcha vaqt",
     "delivered": "Yetkazildi",
@@ -123,7 +123,7 @@
     "pleaseSelectPage": "Sahifani tanlang",
     "pleaseSelectForm": "Formani tanlang",
     "hoursBackPositive": "Soat 0 dan katta bo'lishi kerak",
-    "pagePagination": "{{current}} / {{total}} \u00b7 {{count}} ta lid",
+    "pagePagination": "{{current}} / {{total}} · {{count}} ta lid",
     "filters": {
       "searchPlaceholder": "Ism, telefon bo‘yicha qidirish...",
       "all": "Barchasi",
@@ -337,7 +337,10 @@
       "fillAllFields": "Barcha maydonlarni to‘ldiring",
       "passwordsNoMatch": "Parollar mos kelmaydi",
       "invalidResetLink": "Tiklash havolasi noto‘g‘ri"
-    }
+    },
+    "continueWithGoogle": "Google orqali kirish",
+    "loggedInGoogle": "Google orqali kirildi",
+    "googleLoginCancelled": "Google orqali kirish bekor qilindi."
   },
   "settings": {
     "title": "Sozlamalar",

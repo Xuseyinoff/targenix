@@ -18,12 +18,18 @@ const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 
-/** All scopes requested from Google. */
+/** Full scopes for account connection (Sheets, Drive). */
 export const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/drive.file",
+];
+
+/** Minimal scopes for login / register (email + profile only). */
+export const GOOGLE_LOGIN_SCOPES = [
+  "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/userinfo.profile",
 ];
 
 // ─── Config helpers ───────────────────────────────────────────────────────────
@@ -76,19 +82,19 @@ export interface GoogleRefreshResponse {
 
 /**
  * Build the Google OAuth 2.0 consent-screen URL.
- * `state` is the CSRF token stored in DB.
+ * @param state  CSRF token stored in DB
+ * @param scopes Override scopes (defaults to full GOOGLE_SCOPES)
  */
-export function buildGoogleAuthUrl(state: string): string {
+export function buildGoogleAuthUrl(state: string, scopes?: string[]): string {
   const url = new URL(GOOGLE_AUTH_URL);
   url.searchParams.set("client_id", getGoogleClientId());
   url.searchParams.set("redirect_uri", getGoogleCallbackUrl());
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", GOOGLE_SCOPES.join(" "));
+  url.searchParams.set("scope", (scopes ?? GOOGLE_SCOPES).join(" "));
   url.searchParams.set("state", state);
   // access_type=offline ensures a refresh_token is returned on first consent
   url.searchParams.set("access_type", "offline");
   // prompt=consent forces Google to return a new refresh_token every time
-  // (otherwise it is only issued on first connection)
   url.searchParams.set("prompt", "consent");
   return url.toString();
 }

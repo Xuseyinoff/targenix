@@ -69,9 +69,9 @@
     "webhookEvents": "Webhook-события",
     "webhookEventsDesc": "Получено всего",
     "leadsWithDeliveryToday": "Лиды с доставкой сегодня",
-    "leadsWithDeliveryTodayDesc": "Уникальные лиды с \u22651 отправкой в интеграцию сегодня",
+    "leadsWithDeliveryTodayDesc": "Уникальные лиды с ≥1 отправкой в интеграцию сегодня",
     "leadsWithFailedToday": "Лиды с ошибкой доставки сегодня",
-    "leadsWithFailedTodayDesc": "Уникальные лиды с \u22651 неудачной попыткой сегодня",
+    "leadsWithFailedTodayDesc": "Уникальные лиды с ≥1 неудачной попыткой сегодня",
     "totalLeads": "Всего лидов",
     "totalLeadsDesc": "За всё время",
     "delivered": "Доставлено",
@@ -123,7 +123,7 @@
     "pleaseSelectPage": "Выберите страницу",
     "pleaseSelectForm": "Выберите форму",
     "hoursBackPositive": "Часов должно быть больше 0",
-    "pagePagination": "{{current}} / {{total}} \u00b7 {{count}} лидов",
+    "pagePagination": "{{current}} / {{total}} · {{count}} лидов",
     "filters": {
       "searchPlaceholder": "Поиск по имени, телефону...",
       "all": "Все",
@@ -337,7 +337,10 @@
       "fillAllFields": "Заполните все поля",
       "passwordsNoMatch": "Пароли не совпадают",
       "invalidResetLink": "Недействительная ссылка"
-    }
+    },
+    "continueWithGoogle": "Войти через Google",
+    "loggedInGoogle": "Вход через Google выполнен",
+    "googleLoginCancelled": "Вход через Google был отменён."
   },
   "settings": {
     "title": "Настройки",
