@@ -136,25 +136,20 @@ describe("retryAllFailedLeads", () => {
       { id: 2, leadgenId: "lg2", pageId: "p2", formId: "f2", userId: 1, dataStatus: "ERROR", deliveryStatus: "PENDING" },
     ];
 
-    const updateChain = {
-      update: vi.fn(),
-      set: vi.fn(),
+    const updateBuilder = {
+      set: vi.fn().mockReturnThis(),
       where: vi.fn().mockResolvedValue(undefined),
     };
-    updateChain.update.mockReturnValue(updateChain);
-    updateChain.set.mockReturnValue(updateChain);
 
-    const selectChain = {
-      select: vi.fn(),
-      from: vi.fn(),
-      where: vi.fn().mockResolvedValue(failedLeads), // terminal — resolves to leads array
+    const selectBuilder = {
+      from: vi.fn().mockReturnThis(),
+      // 1st: graph ERROR leads; 2nd: stuck PENDING query (empty)
+      where: vi.fn().mockResolvedValueOnce(failedLeads).mockResolvedValueOnce([]),
     };
-    selectChain.select.mockReturnValue(selectChain);
-    selectChain.from.mockReturnValue(selectChain);
 
     const fakeDb = {
-      ...selectChain,
-      ...updateChain,
+      select: vi.fn(() => selectBuilder),
+      update: vi.fn(() => updateBuilder),
     };
 
     const dispatchMock = vi.fn().mockResolvedValue(undefined);

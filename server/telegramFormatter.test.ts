@@ -64,15 +64,19 @@ describe("parseApiResponse", () => {
   });
 
   it("caps fields at 5 extras", () => {
-    const r = parseApiResponse("API", {
-      status: "ok",
-      message: "done",
-      order_id: "1",
-      payout: "100",
-      status_text: "accepted",
-      comment: "fast",
-      response_code: "200",
-    }, true);
+    const r = parseApiResponse(
+      "API",
+      {
+        status: "ok",
+        message: "done",
+        order_id: "1",
+        payout: "100",
+        status_text: "accepted",
+        comment: "fast",
+        response_code: "200",
+      },
+      true
+    );
     expect(r.fields.length).toBeLessThanOrEqual(6);
   });
 
@@ -82,7 +86,7 @@ describe("parseApiResponse", () => {
   });
 });
 
-// ─── formatLeadMessage ────────────────────────────────────────────────────────
+// ─── formatLeadMessage (minimal delivery template) ───────────────────────────
 
 describe("formatLeadMessage", () => {
   const baseOpts = {
@@ -101,9 +105,11 @@ describe("formatLeadMessage", () => {
     },
   };
 
-  it("contains the TARGENIX header", () => {
+  it("shows minimal NEW LEAD header", () => {
     const html = formatLeadMessage(baseOpts);
-    expect(html).toContain("TARGENIX • NEW LEAD");
+    expect(html).toContain("🚀");
+    expect(html).toContain("<b>NEW LEAD</b>");
+    expect(html).not.toContain("TARGENIX");
   });
 
   it("shows lead name and phone", () => {
@@ -112,46 +118,48 @@ describe("formatLeadMessage", () => {
     expect(html).toContain("+998901234567");
   });
 
-  it("shows SOURCE block with account, page, form", () => {
+  it("shows compact source lines (Account, Sahifa, Forma)", () => {
     const html = formatLeadMessage(baseOpts);
-    expect(html).toContain("SOURCE");
+    expect(html).toContain("📌 Account:");
     expect(html).toContain("Xusenova Sitoramo");
+    expect(html).toContain("📍 Sahifa:");
     expect(html).toContain("Go'zallik Mo'jizasi");
+    expect(html).toContain("📝 Forma:");
     expect(html).toContain("Tibbiyot Form - 7");
+    expect(html).not.toContain("SOURCE");
   });
 
-  it("shows ROUTING block with integration name", () => {
+  it("shows routing line to destination", () => {
     const html = formatLeadMessage(baseOpts);
-    expect(html).toContain("ROUTING");
+    expect(html).toContain("🔀 Yo'naltirildi");
     expect(html).toContain("Sotuvchi.com");
+    expect(html).not.toContain("ROUTING");
   });
 
-  it("shows YUBORILDI for success", () => {
+  it("shows Yuborildi for success with duration", () => {
     const html = formatLeadMessage(baseOpts);
-    expect(html).toContain("YUBORILDI");
-    expect(html).not.toContain("YUBORILMADI");
+    expect(html).toContain("✅ Yuborildi");
+    expect(html).toContain("0.32s");
+    expect(html).not.toContain("Yuborilmadi");
   });
 
-  it("shows YUBORILMADI for failure", () => {
+  it("shows Yuborilmadi for failure", () => {
     const html = formatLeadMessage({
       ...baseOpts,
       routing: { ...baseOpts.routing, success: false, error: "Timeout" },
     });
-    expect(html).toContain("YUBORILMADI");
-    expect(html).not.toContain("YUBORILDI");
+    expect(html).toContain("❌ Yuborilmadi");
+    expect(html).not.toContain("✅ Yuborildi");
   });
 
-  it("shows response time in seconds", () => {
-    const html = formatLeadMessage(baseOpts);
-    expect(html).toContain("0.32s");
-  });
-
-  it("omits time line when durationMs is undefined", () => {
+  it("omits duration suffix when durationMs is undefined", () => {
     const html = formatLeadMessage({
       ...baseOpts,
       routing: { ...baseOpts.routing, durationMs: undefined },
     });
-    expect(html).not.toContain("Time:");
+    expect(html).toContain("✅ Yuborildi");
+    expect(html).not.toContain("0.32s");
+    expect(html).not.toMatch(/Yuborildi • \d/);
   });
 
   it("wraps response in blockquote", () => {
@@ -160,38 +168,43 @@ describe("formatLeadMessage", () => {
     expect(html).toContain("</blockquote>");
   });
 
-  it("shows integration name in response block", () => {
+  it("shows SUCCESS and order id inside response block", () => {
     const html = formatLeadMessage(baseOpts);
-    // Header is now outside blockquote: "<name> → RESPONSE"
-    // When no targetWebsiteName, falls back to integrationName
-    expect(html).toContain("Sotuvchi.com → RESPONSE");
+    expect(html).toContain("SUCCESS");
+    expect(html).toContain("ID:");
+    expect(html).toContain("ORD-999");
+    expect(html).not.toContain("→ RESPONSE");
   });
 
-  it("shows targetWebsiteName in response header when provided", () => {
+  it("prefers targetWebsiteName in routing line when provided", () => {
     const html = formatLeadMessage({
       ...baseOpts,
-      routing: { ...baseOpts.routing, targetWebsiteName: "Sotuvchi.com" },
+      routing: { ...baseOpts.routing, targetWebsiteName: "My Dest" },
     });
-    expect(html).toContain("Sotuvchi.com → RESPONSE");
+    expect(html).toContain("🔀 Yo'naltirildi → My Dest");
   });
 
   it("shows [TEST] badge in header when isTest=true", () => {
     const html = formatLeadMessage({ ...baseOpts, isTest: true });
     expect(html).toContain("[TEST]");
-    expect(html).toContain("TARGENIX • NEW LEAD");
+    expect(html).toContain("NEW LEAD");
   });
 
-  it("shows [RETRY] badge and attempt line when isAutoRetry with deliveryAttempt", () => {
+  it("shows [ADMIN] badge when isAdmin=true", () => {
+    const html = formatLeadMessage({ ...baseOpts, isAdmin: true });
+    expect(html).toContain("[ADMIN]");
+  });
+
+  it("shows [RETRY] badge and Urinish line when isAutoRetry with deliveryAttempt", () => {
     const html = formatLeadMessage({
       ...baseOpts,
       isAutoRetry: true,
       deliveryAttempt: { current: 2, max: 3 },
     });
     expect(html).toContain("[RETRY]");
-    expect(html).toContain("TARGENIX • NEW LEAD");
-    expect(html).toContain("Urinish:");
-    expect(html).toContain("2/3");
-    expect(html).toContain("avtomatik qayta yuborish");
+    expect(html).toContain("NEW LEAD");
+    expect(html).toContain("🔁 Urinish: 2/3");
+    expect(html).not.toContain("avtomatik qayta yuborish");
   });
 
   it("shows [TEST] and [RETRY] together when both flags set", () => {
@@ -232,15 +245,16 @@ describe("formatLeadMessage", () => {
     expect(html).toContain("👤 —");
   });
 
-  it("omits SOURCE block when no context provided", () => {
+  it("omits source lines when no account/page/form", () => {
     const html = formatLeadMessage({
       lead: { fullName: "Test", phone: "123" },
       routing: { integrationName: "API", success: true },
     });
-    expect(html).not.toContain("SOURCE");
+    expect(html).not.toContain("📌 Account:");
+    expect(html).not.toContain("📍 Sahifa:");
   });
 
-  it("produces valid HTML (no unclosed tags in blockquote)", () => {
+  it("produces valid HTML (balanced blockquotes)", () => {
     const html = formatLeadMessage(baseOpts);
     const opens = (html.match(/<blockquote>/g) || []).length;
     const closes = (html.match(/<\/blockquote>/g) || []).length;
@@ -253,5 +267,10 @@ describe("formatLeadMessage", () => {
       routing: { ...baseOpts.routing, responseData: null },
     });
     expect(html).toContain("Unknown response format");
+  });
+
+  it("does not include footer clock line", () => {
+    const html = formatLeadMessage(baseOpts);
+    expect(html).not.toContain("🕒");
   });
 });

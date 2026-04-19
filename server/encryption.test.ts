@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeAll } from "vitest";
 import { encrypt, decrypt } from "./encryption";
+
+beforeAll(() => {
+  if (!process.env.ENCRYPTION_KEY) {
+    process.env.ENCRYPTION_KEY = "vitest-test-encryption-key-min-32-chars!";
+  }
+});
 
 describe("encryption helpers", () => {
   it("encrypts and decrypts a string correctly", () => {

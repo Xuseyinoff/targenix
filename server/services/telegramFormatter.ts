@@ -27,7 +27,7 @@ export interface LeadContext {
 export interface RoutingContext {
   /** Human-readable integration / routing rule name */
   integrationName: string;
-  /** Target website / platform name (e.g. "Sotuvchi.com") — shown in ROUTING line */
+  /** Target website / platform name (e.g. "Sotuvchi.com") — shown after Yo'naltirildi */
   targetWebsiteName?: string | null;
   /** Whether the delivery to the target API succeeded */
   success: boolean;
@@ -247,7 +247,7 @@ function truncate(text: string, max: number): string {
 // ─── Main formatter ───────────────────────────────────────────────────────────
 
 /**
- * Build a complete, SaaS-level Telegram HTML message for a lead notification.
+ * Build a compact Telegram HTML message for delivery-chat lead notifications.
  *
  * @example
  * const html = formatLeadMessage({
@@ -266,11 +266,6 @@ export function formatLeadMessage(opts: FormatLeadMessageOptions): string {
   const formName = lead.formName ? esc(lead.formName.trim()) : null;
   const integrationName = esc(routing.integrationName.trim());
 
-  // Delivery status
-  const deliveryStatus = routing.success
-    ? `🟢 <b>YUBORILDI</b>`
-    : `🔴 <b>YUBORILMADI</b>`;
-
   // Response time
   const responseTime =
     routing.durationMs !== undefined
@@ -285,37 +280,34 @@ export function formatLeadMessage(opts: FormatLeadMessageOptions): string {
     routing.error
   );
 
-  // ── 1. HEADER ─────────────────────────────────────────────────────────────
+  // ── 1. HEADER (minimal delivery template) ─────────────────────────────────
   const parts: string[] = [];
   const headerBadges: string[] = [];
-  if (isTest) headerBadges.push(`<code>[TEST]</code>`);
-  if (isAdmin) headerBadges.push(`<code>[ADMIN]</code>`);
-  if (isAutoRetry) headerBadges.push(`<code>[RETRY]</code>`);
+  if (isTest) headerBadges.push(`[TEST]`);
+  if (isAdmin) headerBadges.push(`[ADMIN]`);
+  if (isAutoRetry) headerBadges.push(`[RETRY]`);
   const headerSuffix = headerBadges.length ? ` ${headerBadges.join(" ")}` : "";
-  parts.push(`🚀 <b>TARGENIX • NEW LEAD</b>${headerSuffix}`);
+  parts.push(`🚀 <b>NEW LEAD</b>${headerSuffix}`);
 
   // ── 2. CLIENT BLOCK (blockquote #1) ───────────────────────────────────────
-  // For null name: show plain dash (not bold) to match test expectation
   const nameDisplay = lead.fullName?.trim() ? `<b>${name}</b>` : name;
   parts.push(`<blockquote>👤 ${nameDisplay}\n📞 <code>${phone}</code></blockquote>`);
 
-  // ── 3. SOURCE ─────────────────────────────────────────────────────────────
-  const sourceLines: string[] = [`📌 <i>SOURCE</i>`];
-  if (accountName) sourceLines.push(`<b>Account:</b> ${accountName}`);
-  if (pageName) sourceLines.push(`<b>Page:</b> ${pageName}`);
-  if (formName) sourceLines.push(`<b>Form:</b> ${formName}`);
-  if (sourceLines.length > 1) parts.push(sourceLines.join("\n"));
+  // ── 3. SOURCE (compact, no "SOURCE" heading) ─────────────────────────────
+  const sourceLines: string[] = [];
+  if (accountName) sourceLines.push(`📌 Account: ${accountName}`);
+  if (pageName) sourceLines.push(`📍 Sahifa: ${pageName}`);
+  if (formName) sourceLines.push(`📝 Forma: ${formName}`);
+  if (sourceLines.length) parts.push(sourceLines.join("\n"));
 
-  // ── 4. ROUTING ────────────────────────────────────────────────────────────
-  // Show: pageName → targetWebsiteName (or integrationName as fallback)
-  const targetName = routing.targetWebsiteName ? esc(routing.targetWebsiteName.trim()) : integrationName;
-  const routingLine = pageName
-    ? `→ ${pageName} → <u>${targetName}</u>`
-    : `→ <u>${targetName}</u>`;
-  parts.push(`🔗 <i>ROUTING</i>\n${routingLine}`);
+  // ── 4. ROUTING (single line — destination only, no duplicate page) ─────────
+  const targetName = routing.targetWebsiteName
+    ? esc(routing.targetWebsiteName.trim())
+    : integrationName;
+  parts.push(`🔀 Yo'naltirildi → ${targetName}`);
 
-  // ── 5. STATUS ─────────────────────────────────────────────────────────────
-  const statusLines: string[] = [];
+  // ── 5. RETRY + DELIVERY LINE ───────────────────────────────────────────────
+  const midLines: string[] = [];
   if (
     isAutoRetry &&
     deliveryAttempt &&
@@ -324,52 +316,40 @@ export function formatLeadMessage(opts: FormatLeadMessageOptions): string {
   ) {
     const cur = Math.min(deliveryAttempt.current, deliveryAttempt.max);
     const max = deliveryAttempt.max;
-    statusLines.push(`🔁 <b>Urinish:</b> ${cur}/${max} <i>(avtomatik qayta yuborish)</i>`);
+    midLines.push(`🔁 Urinish: ${cur}/${max}`);
   }
-  statusLines.push(
-    `📡 <b>Integration:</b> Active`,
-    `📤 <b>Delivery:</b> ${deliveryStatus}`,
-  );
-  if (routing.durationMs !== undefined) {
-    statusLines.push(`⚡ <b>Time:</b> ${responseTime}`);
-  }
-  parts.push(statusLines.join("\n"));
+  const deliveryLine =
+    routing.success
+      ? routing.durationMs !== undefined
+        ? `✅ Yuborildi • ${responseTime}`
+        : `✅ Yuborildi`
+      : routing.durationMs !== undefined
+        ? `❌ Yuborilmadi • ${responseTime}`
+        : `❌ Yuborilmadi`;
+  midLines.push(deliveryLine);
+  parts.push(midLines.join("\n"));
 
-  // ── 6. RESPONSE BLOCK ────────────────────────────────────────────────────
-  // Header line is OUTSIDE blockquote; status + fields are INSIDE blockquote
-  const rawStatusLabel = parsed.statusLabel === "Success" ? "SUCCESS" : parsed.statusLabel === "Error" ? "FAILED" : parsed.statusLabel;
+  // ── 6. RESPONSE (single blockquote; no outer "→ RESPONSE" header) ───────────
+  const rawStatusLabel =
+    parsed.statusLabel === "Success"
+      ? "SUCCESS"
+      : parsed.statusLabel === "Error"
+        ? "FAILED"
+        : parsed.statusLabel;
   const statusBold = `<b>${parsed.statusEmoji} ${esc(rawStatusLabel)}</b>`;
 
-  // Use targetWebsiteName for header if available, otherwise fall back to integrationName
-  const responseHeaderName = routing.targetWebsiteName ? esc(routing.targetWebsiteName.trim()) : integrationName;
-  parts.push(`📡 <b>${responseHeaderName} → RESPONSE</b>`);
-
-  // Find ID and message fields for structured display
   const idField = parsed.fields.find((f) => f.label === "ID");
   const msgField = parsed.fields.find((f) => f.label === "Message");
   const extraFields = parsed.fields.filter((f) => f.label !== "ID" && f.label !== "Message");
 
   const responseBodyLines: string[] = [statusBold];
-  if (idField) responseBodyLines.push(`• ID: <code>${esc(idField.value)}</code>`);
-  if (msgField) responseBodyLines.push(`• Message: ${esc(msgField.value)}`);
+  if (idField) responseBodyLines.push(`ID: <code>${esc(idField.value)}</code>`);
+  if (msgField) responseBodyLines.push(`Xabar: ${esc(msgField.value)}`);
   for (const f of extraFields) {
-    responseBodyLines.push(`• <b>${esc(f.label)}:</b> ${esc(f.value)}`);
+    responseBodyLines.push(`${esc(f.label)}: ${esc(f.value)}`);
   }
 
   parts.push(`<blockquote>${responseBodyLines.join("\n")}</blockquote>`);
-
-  // ── 7. FINAL TIME (outside) ───────────────────────────────────────────────
-  const now = new Date();
-  const formattedTime = now.toLocaleString("uz-UZ", {
-    timeZone: "Asia/Tashkent",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  parts.push(`🕒 ${formattedTime}`);
 
   return parts.join("\n\n");
 }
