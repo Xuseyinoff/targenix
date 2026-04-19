@@ -281,6 +281,13 @@
       "when": 1776240000000,
       "tag": "0039_telegram_destination",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "5",
+      "when": 1776250000000,
+      "tag": "0040_google_oauth",
+      "breakpoints": true
     }
   ]
 }
