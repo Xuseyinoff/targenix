@@ -191,13 +191,23 @@ export const googleAccounts = mysqlTable("google_accounts", {
   refreshToken: text("refreshToken"),
   /** Absolute timestamp when the access token expires */
   expiryDate: timestamp("expiryDate"),
+  /**
+   * "login"       — created during Google Login / Register (openid, email, profile scopes only).
+   *                 NEVER used for API access (Sheets, Drive, etc.).
+   * "integration" — created when user connects Google for API access (full scopes).
+   *                 Used exclusively for Sheets/Drive/etc. calls.
+   */
+  type: mysqlEnum("type", ["login", "integration"]).default("login").notNull(),
+  /** Space-separated list of OAuth scopes that were granted for this token. */
+  scopes: text("scopes"),
   connectedAt: timestamp("connectedAt").defaultNow().notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
-  // One Google account (by email) per platform user
-  uqUserEmail: uniqueIndex("uq_google_accounts_user_email").on(t.userId, t.email),
+  // One row per (user, email, type) — same Google email can appear as both login + integration
+  uqUserEmailType: uniqueIndex("uq_google_accounts_user_email_type").on(t.userId, t.email, t.type),
   idxUserId: index("idx_google_accounts_user_id").on(t.userId),
+  idxType: index("idx_google_accounts_type").on(t.userId, t.type),
 }));
 
 export type GoogleAccount = typeof googleAccounts.$inferSelect;
@@ -210,8 +220,13 @@ export const googleOauthStates = mysqlTable("google_oauth_states", {
   id: int("id").autoincrement().primaryKey(),
   /** Cryptographically random 64-hex-char state token */
   state: varchar("state", { length: 128 }).notNull(),
-  /** Platform user who initiated the flow */
+  /** Platform user who initiated the flow. 0 = login flow (user not yet authenticated). */
   userId: int("userId").notNull(),
+  /**
+   * "login"       — flow started from Login / Register page (no session required).
+   * "integration" — flow started from Connections page (session required, userId > 0).
+   */
+  type: mysqlEnum("type", ["login", "integration"]).default("login").notNull(),
   /** 10-minute TTL */
   expiresAt: timestamp("expiresAt").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

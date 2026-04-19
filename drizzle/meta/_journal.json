@@ -288,6 +288,13 @@
       "when": 1776250000000,
       "tag": "0040_google_oauth",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "5",
+      "when": 1776260000000,
+      "tag": "0041_google_accounts_type",
+      "breakpoints": true
     }
   ]
 }

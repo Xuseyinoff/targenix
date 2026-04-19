@@ -40,7 +40,7 @@ export const googleAccountsRouter = router({
         connectedAt: googleAccounts.connectedAt,
       })
       .from(googleAccounts)
-      .where(eq(googleAccounts.userId, userId))
+      .where(and(eq(googleAccounts.userId, userId), eq(googleAccounts.type, "integration")))
       .orderBy(desc(googleAccounts.connectedAt));
   }),
 
@@ -61,7 +61,7 @@ export const googleAccountsRouter = router({
           refreshToken: googleAccounts.refreshToken,
         })
         .from(googleAccounts)
-        .where(and(eq(googleAccounts.id, input.id), eq(googleAccounts.userId, userId)))
+        .where(and(eq(googleAccounts.id, input.id), eq(googleAccounts.userId, userId), eq(googleAccounts.type, "integration")))
         .limit(1);
 
       if (!account) {
@@ -93,7 +93,7 @@ export const googleAccountsRouter = router({
       const [account] = await db
         .select()
         .from(googleAccounts)
-        .where(and(eq(googleAccounts.id, input.id), eq(googleAccounts.userId, userId)))
+        .where(and(eq(googleAccounts.id, input.id), eq(googleAccounts.userId, userId), eq(googleAccounts.type, "integration")))
         .limit(1);
 
       if (!account) {
@@ -141,7 +141,7 @@ export const googleAccountsRouter = router({
       const [account] = await db
         .select({ id: googleAccounts.id, accessToken: googleAccounts.accessToken, email: googleAccounts.email })
         .from(googleAccounts)
-        .where(and(eq(googleAccounts.id, input.id), eq(googleAccounts.userId, userId)))
+        .where(and(eq(googleAccounts.id, input.id), eq(googleAccounts.userId, userId), eq(googleAccounts.type, "integration")))
         .limit(1);
 
       if (!account) {

@@ -1,36 +1,53 @@
 /**
  * Google OAuth 2.0 helpers.
  *
- * Handles:
- *  - Building the authorization URL
- *  - Exchanging an authorization code for tokens
- *  - Fetching the authenticated user's profile
- *  - Refreshing an expired access token
- *  - Checking whether a stored token is expired
+ * SCOPE POLICY
+ * ────────────
+ * GOOGLE_LOGIN_SCOPES      — Login / Register only. Never used for API calls.
+ * GOOGLE_INTEGRATION_SCOPES — Google Sheets / Drive. Used only for integration accounts.
+ *
+ * The two flows MUST never share tokens.
  */
 
 import axios from "axios";
 import { log } from "./appLogger";
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// ─── Google endpoints ─────────────────────────────────────────────────────────
 
-const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+const GOOGLE_TOKEN_URL   = "https://oauth2.googleapis.com/token";
+const GOOGLE_REVOKE_URL  = "https://oauth2.googleapis.com/revoke";
 const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
-const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_AUTH_URL    = "https://accounts.google.com/o/oauth2/v2/auth";
 
-/** Full scopes for account connection (Sheets, Drive). */
-export const GOOGLE_SCOPES = [
+// ─── Scope sets ───────────────────────────────────────────────────────────────
+
+/**
+ * Scopes for Google Login / Register.
+ * Identity only — no API access granted.
+ */
+export const GOOGLE_LOGIN_SCOPES = [
+  "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/userinfo.profile",
+];
+
+/**
+ * Scopes for Google Sheets / Drive integration.
+ * Includes login scopes (Google requires them) plus API access scopes.
+ */
+export const GOOGLE_INTEGRATION_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/drive.file",
 ];
 
-/** Minimal scopes for login / register (email + profile only). */
-export const GOOGLE_LOGIN_SCOPES = [
-  "https://www.googleapis.com/auth/userinfo.email",
-  "https://www.googleapis.com/auth/userinfo.profile",
-];
+/** Human-readable scope label — used for display in the UI. */
+export const SCOPE_LABELS: Record<string, string> = {
+  "https://www.googleapis.com/auth/userinfo.email":   "Read email address",
+  "https://www.googleapis.com/auth/userinfo.profile": "Read profile info",
+  "https://www.googleapis.com/auth/spreadsheets":     "Read and write Google Sheets",
+  "https://www.googleapis.com/auth/drive.file":       "Access files created by this app",
+};
 
 // ─── Config helpers ───────────────────────────────────────────────────────────
 
@@ -40,17 +57,9 @@ function requireEnv(key: string): string {
   return value;
 }
 
-export function getGoogleClientId(): string {
-  return requireEnv("GOOGLE_CLIENT_ID");
-}
-
-export function getGoogleClientSecret(): string {
-  return requireEnv("GOOGLE_CLIENT_SECRET");
-}
-
-export function getGoogleCallbackUrl(): string {
-  return requireEnv("GOOGLE_CALLBACK_URL");
-}
+export function getGoogleClientId(): string     { return requireEnv("GOOGLE_CLIENT_ID"); }
+export function getGoogleClientSecret(): string { return requireEnv("GOOGLE_CLIENT_SECRET"); }
+export function getGoogleCallbackUrl(): string  { return requireEnv("GOOGLE_CALLBACK_URL"); }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -81,41 +90,43 @@ export interface GoogleRefreshResponse {
 // ─── Authorization URL ────────────────────────────────────────────────────────
 
 /**
- * Build the Google OAuth 2.0 consent-screen URL.
+ * Build the Google OAuth consent-screen URL.
+ *
  * @param state  CSRF token stored in DB
- * @param scopes Override scopes (defaults to full GOOGLE_SCOPES)
+ * @param type   "login" = identity only | "integration" = full API access
  */
-export function buildGoogleAuthUrl(state: string, scopes?: string[]): string {
+export function buildGoogleAuthUrl(state: string, type: "login" | "integration"): string {
+  const scopes = type === "integration" ? GOOGLE_INTEGRATION_SCOPES : GOOGLE_LOGIN_SCOPES;
+
   const url = new URL(GOOGLE_AUTH_URL);
-  url.searchParams.set("client_id", getGoogleClientId());
-  url.searchParams.set("redirect_uri", getGoogleCallbackUrl());
+  url.searchParams.set("client_id",     getGoogleClientId());
+  url.searchParams.set("redirect_uri",  getGoogleCallbackUrl());
   url.searchParams.set("response_type", "code");
-  url.searchParams.set("scope", (scopes ?? GOOGLE_SCOPES).join(" "));
-  url.searchParams.set("state", state);
-  // access_type=offline ensures a refresh_token is returned on first consent
-  url.searchParams.set("access_type", "offline");
-  // prompt=consent forces Google to return a new refresh_token every time
-  url.searchParams.set("prompt", "consent");
+  url.searchParams.set("scope",         scopes.join(" "));
+  url.searchParams.set("state",         state);
+  // access_type=offline → refresh_token returned on first consent
+  url.searchParams.set("access_type",   "offline");
+  // prompt=consent → always ask, ensuring refresh_token is issued each time
+  url.searchParams.set("prompt",        "consent");
   return url.toString();
 }
 
 // ─── Token Exchange ───────────────────────────────────────────────────────────
 
 /**
- * Exchange an authorization code (from callback ?code=...) for tokens.
- * Returns access_token, refresh_token, expires_in.
+ * Exchange an authorization code (from callback ?code=...) for access + refresh tokens.
  */
 export async function exchangeCodeForGoogleTokens(code: string): Promise<GoogleTokenResponse> {
-  await log.info("GOOGLE", "→ exchangeCodeForGoogleTokens");
+  await log.info("GOOGLE", "→ exchangeCodeForTokens");
 
   const response = await axios.post<GoogleTokenResponse>(
     GOOGLE_TOKEN_URL,
     new URLSearchParams({
       code,
-      client_id: getGoogleClientId(),
+      client_id:     getGoogleClientId(),
       client_secret: getGoogleClientSecret(),
-      redirect_uri: getGoogleCallbackUrl(),
-      grant_type: "authorization_code",
+      redirect_uri:  getGoogleCallbackUrl(),
+      grant_type:    "authorization_code",
     }).toString(),
     { headers: { "Content-Type": "application/x-www-form-urlencoded" }, timeout: 10_000 }
   );
@@ -143,7 +154,6 @@ export async function getGoogleUserProfile(accessToken: string): Promise<GoogleU
 
 /**
  * Use a stored refresh_token to obtain a new access_token.
- * Throws if the refresh token has been revoked or is invalid.
  */
 export async function refreshGoogleToken(refreshToken: string): Promise<GoogleRefreshResponse> {
   await log.info("GOOGLE", "→ refreshGoogleToken");
@@ -151,10 +161,10 @@ export async function refreshGoogleToken(refreshToken: string): Promise<GoogleRe
   const response = await axios.post<GoogleRefreshResponse>(
     GOOGLE_TOKEN_URL,
     new URLSearchParams({
-      client_id: getGoogleClientId(),
+      client_id:     getGoogleClientId(),
       client_secret: getGoogleClientSecret(),
       refresh_token: refreshToken,
-      grant_type: "refresh_token",
+      grant_type:    "refresh_token",
     }).toString(),
     { headers: { "Content-Type": "application/x-www-form-urlencoded" }, timeout: 10_000 }
   );
@@ -162,20 +172,37 @@ export async function refreshGoogleToken(refreshToken: string): Promise<GoogleRe
   return response.data;
 }
 
+// ─── Token revocation ─────────────────────────────────────────────────────────
+
+/**
+ * Revoke a token at Google's servers (best-effort, never throws).
+ */
+export async function revokeGoogleToken(token: string): Promise<void> {
+  try {
+    await axios.post(
+      GOOGLE_REVOKE_URL,
+      new URLSearchParams({ token }).toString(),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" }, timeout: 5_000 }
+    );
+  } catch {
+    // Revocation is best-effort — token may already be expired or revoked
+  }
+}
+
 // ─── Expiry helpers ───────────────────────────────────────────────────────────
 
 /**
- * Calculate the absolute expiry Date from an expires_in (seconds) value.
- * Subtracts a 60-second safety buffer to refresh slightly before actual expiry.
+ * Compute absolute expiry Date from expires_in (seconds).
+ * Subtracts a 60-second safety buffer.
  */
 export function computeExpiryDate(expiresIn: number): Date {
   return new Date(Date.now() + (expiresIn - 60) * 1000);
 }
 
 /**
- * Returns true if the token has expired or expires within the next 60 seconds.
+ * Returns true if the token has expired or will expire within 60 seconds.
  */
 export function isTokenExpired(expiryDate: Date | null | undefined): boolean {
-  if (!expiryDate) return false; // no expiry info — assume valid
+  if (!expiryDate) return false;
   return expiryDate.getTime() <= Date.now() + 60_000;
 }
