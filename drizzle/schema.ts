@@ -240,12 +240,11 @@ export type InsertTargetWebsite = typeof targetWebsites.$inferInsert;
 
 // ─── Integrations ─────────────────────────────────────────────────────────────
 // LEAD_ROUTING: full pipeline — FB account → page → form → field map → target website
-// TELEGRAM: notify a Telegram chat on each new lead
 // AFFILIATE: POST lead to an external HTTP endpoint
 export const integrations = mysqlTable("integrations", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
-  type: mysqlEnum("type", ["TELEGRAM", "AFFILIATE", "LEAD_ROUTING"]).notNull(),
+  type: mysqlEnum("type", ["AFFILIATE", "LEAD_ROUTING"]).notNull(),
   /**
    * JSON config shape by type:
    *   LEAD_ROUTING: {
@@ -257,7 +256,6 @@ export const integrations = mysqlTable("integrations", {
    *     flow: string,
    *     offerId: string,
    *   }
-   *   TELEGRAM: { token: string, chatId: string }
    *   AFFILIATE: { url: string, headers: Record<string,string> }
    */
   config: json("config").notNull(),

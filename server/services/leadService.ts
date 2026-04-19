@@ -3,7 +3,6 @@ import { facebookConnections, facebookAccounts, facebookForms, leads, orders, in
 import { getDb } from "../db";
 import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
-import { sendTelegramNotification, type TelegramConfig } from "./telegramService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 import { sendAffiliateOrder, sendAffiliateOrderByTemplate, type AffiliateConfig, type TemplateType, type TemplateConfig } from "./affiliateService";
 import { formatLeadMessage } from "./telegramFormatter";
@@ -528,28 +527,7 @@ async function runOrderIntegrationSend(params: {
   const deliverySource = params.deliverySource ?? "initial";
   let result: IntegrationDeliveryResult;
 
-  if (integration.type === "TELEGRAM") {
-    const config = integration.config as TelegramConfig;
-    result = await sendTelegramNotification(
-      config,
-      {
-        ...leadPayload,
-        formId: lead.formId ?? "",
-        createdAt: lead.createdAt ?? new Date(),
-      },
-      { isAutoRetry: deliverySource === "auto_retry" },
-    );
-    await log[result.success ? "info" : "warn"](
-      "TELEGRAM",
-      result.success ? `Telegram notification sent for leadId=${lead.id}` : `Telegram notification failed for leadId=${lead.id}`,
-      { integrationId: integration.id, error: result.error },
-      lead.id,
-      leadPayload.pageId,
-      userId,
-      "sent_to_telegram",
-      "facebook",
-    );
-  } else if (integration.type === "AFFILIATE") {
+  if (integration.type === "AFFILIATE") {
     const config = integration.config as AffiliateConfig;
     const _t0Affiliate = Date.now();
     result = await sendAffiliateOrder(config, leadPayload);
@@ -870,7 +848,7 @@ export async function processLead(params: {
       if (intPageId !== params.pageId || intFormId !== params.formId) continue;
     }
 
-    if (integration.type !== "TELEGRAM" && integration.type !== "AFFILIATE" && integration.type !== "LEAD_ROUTING") {
+    if (integration.type !== "AFFILIATE" && integration.type !== "LEAD_ROUTING") {
       continue;
     }
 
@@ -1005,7 +983,7 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
     if (intPageId !== lead.pageId || intFormId !== lead.formId) return { outcome: "skipped" };
   }
 
-  if (integration.type !== "TELEGRAM" && integration.type !== "AFFILIATE" && integration.type !== "LEAD_ROUTING") {
+  if (integration.type !== "AFFILIATE" && integration.type !== "LEAD_ROUTING") {
     return { outcome: "skipped" };
   }
 

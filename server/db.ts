@@ -375,7 +375,7 @@ export async function getIntegrations(userId: number): Promise<Integration[]> {
 
 export async function createIntegration(data: {
   userId: number;
-  type: "TELEGRAM" | "AFFILIATE" | "LEAD_ROUTING";
+  type: "AFFILIATE" | "LEAD_ROUTING";
   name: string;
   config: unknown;
   telegramChatId?: string | null;

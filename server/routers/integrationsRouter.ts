@@ -36,8 +36,8 @@ export const integrationsRouter = router({
   }),
 
   /**
-   * Lead Routing wizard only. Standalone Telegram / Affiliate integrations were removed from the product UI;
-   * delivery code still supports legacy TELEGRAM/AFFILIATE rows in the database.
+   * Lead Routing wizard only. Standalone Affiliate integrations were removed from the product UI;
+   * delivery code still supports legacy AFFILIATE rows in the database.
    */
   create: protectedProcedure
     .input(
