@@ -53,6 +53,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Send,
   Tag,
   Trash2,
   User,
@@ -659,6 +660,8 @@ export default function LeadRoutingWizard({
     }
     if (step === 5) {
       if (!state.targetWebsiteId) return false;
+      // Telegram destinations need no variable fields
+      if (state.targetTemplateType === "telegram") return true;
       if (state.targetTemplateType === "custom") {
         // For custom templates, all auto-detected variables must be filled
         return customVarNames.every(k => !!state.variableFields[k]?.trim());
@@ -1460,7 +1463,9 @@ export default function LeadRoutingWizard({
                               ? "sotuvchi.com"
                               : site.templateType === "100k"
                                 ? "100k.uz"
-                                : "Custom";
+                                : site.templateType === "telegram"
+                                  ? "Telegram Bot"
+                                  : "Custom";
                           return (
                             <button
                               key={site.id}
@@ -1491,7 +1496,9 @@ export default function LeadRoutingWizard({
                                 className="w-8 h-8 rounded-md flex items-center justify-center shrink-0"
                                 style={{ backgroundColor: site.color }}
                               >
-                                <Globe className="w-4 h-4 text-white" />
+                                {site.templateType === "telegram"
+                                  ? <Send className="w-4 h-4 text-white" />
+                                  : <Globe className="w-4 h-4 text-white" />}
                               </div>
                               <div className="flex-1 min-w-0">
                                 <p className="font-medium text-sm">
@@ -1522,6 +1529,18 @@ export default function LeadRoutingWizard({
                     {/* Variable fields for selected template */}
                     {state.targetWebsiteId &&
                       (() => {
+                        // Telegram: no variable fields, show info instead
+                        if (state.targetTemplateType === "telegram") {
+                          return (
+                            <div className="flex gap-2.5 rounded-lg border border-sky-200/80 bg-sky-50 p-3 dark:border-sky-800/60 dark:bg-sky-950/20">
+                              <Send className="h-4 w-4 shrink-0 mt-0.5 text-sky-600 dark:text-sky-400" />
+                              <p className="text-xs text-sky-900 dark:text-sky-200">
+                                Leadlar avtomatik Telegram ga yuboriladi. Qo&apos;shimcha sozlash shart emas.
+                              </p>
+                            </div>
+                          );
+                        }
+
                         const selectedSite = targetWebsites?.find(s => s.id === state.targetWebsiteId);
                         const dynTemplateId = (selectedSite as { templateId?: number | null } | undefined)?.templateId;
 

@@ -157,7 +157,7 @@ export const integrationsRouter = router({
               tw.templateConfig as TemplateConfig,
               testLead,
               variableFields,
-              tw.url
+              tw.url ?? ""
             );
           }
           success = result.success;

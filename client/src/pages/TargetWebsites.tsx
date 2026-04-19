@@ -63,10 +63,11 @@ import {
   Braces,
   Sparkles,
   Layers,
+  Send,
 } from "lucide-react";
 
 // ─── Template definitions (client-side display only) ─────────────────────────
-type TemplateType = "sotuvchi" | "100k" | "custom";
+type TemplateType = "sotuvchi" | "100k" | "custom" | "telegram";
 type ContentType = "json" | "form-urlencoded" | "multipart";
 
 interface TemplateInfo {
@@ -128,6 +129,16 @@ const TEMPLATES: TemplateInfo[] = [
     variableFields: [],
     autoMapped: {},
   },
+  {
+    id: "telegram",
+    label: "Telegram Bot",
+    description: "O'z Telegram botingizga leadlarni yuboring",
+    color: "bg-sky-500",
+    infoText: "Leads will be sent as formatted messages via your Telegram bot",
+    savedFields: [],
+    variableFields: [],
+    autoMapped: { full_name: "Full Name", phone_number: "Phone", email: "Email" },
+  },
 ];
 
 // ─── Built-in variables reference ────────────────────────────────────────────
@@ -139,6 +150,8 @@ const BUILTIN_VARS = [
   { key: "{{page_id}}", desc: "Facebook page ID" },
   { key: "{{form_id}}", desc: "Facebook form ID" },
 ];
+
+const DEFAULT_TELEGRAM_TEMPLATE = `📋 Yangi lead\n\n👤 Ism: {{full_name}}\n📞 Telefon: {{phone_number}}\n📧 Email: {{email}}\n📄 Sahifa: {{pageName}}\n📝 Form: {{formName}}`;
 
 const DEFAULT_JSON_TEMPLATE = `{
   "name": "{{name}}",
@@ -187,6 +200,10 @@ interface FormState {
   jsonValue: string;
   /** User-defined variable names that will be prompted in Step 5 (custom template only) */
   customVariableFields: string[];
+  // Telegram only
+  botToken: string;
+  chatId: string;
+  messageTemplate: string;
 }
 
 const defaultForm = (): FormState => ({
@@ -207,6 +224,9 @@ const defaultForm = (): FormState => ({
   jsonField: "status",
   jsonValue: "ok",
   customVariableFields: [],
+  botToken: "",
+  chatId: "",
+  messageTemplate: DEFAULT_TELEGRAM_TEMPLATE,
 });
 
 // ─── Badge helpers ────────────────────────────────────────────────────────────
@@ -217,7 +237,7 @@ function templateBadgeVariant(type: string | null): "default" | "secondary" | "o
 }
 
 function templateLabel(type: string | null): string {
-  return TEMPLATES.find((t) => t.id === type)?.label ?? "Custom";
+  return TEMPLATES.find((t) => t.id === type)?.label ?? (type === "telegram" ? "Telegram Bot" : "Custom");
 }
 
 // ─── Test Result Panel ────────────────────────────────────────────────────────
@@ -462,8 +482,9 @@ export default function TargetWebsites() {
     onError: (e) => toast.error(e.message),
   });
 
-  const selectedTemplate = TEMPLATES.find((t) => t.id === form.templateType)!;
+  const selectedTemplate = TEMPLATES.find((t) => t.id === form.templateType) ?? TEMPLATES[2];
   const isCustom = form.templateType === "custom";
+  const isTelegram = form.templateType === "telegram";
 
   const filteredSites = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -546,6 +567,22 @@ export default function TargetWebsites() {
       return;
     }
 
+    // Telegram destination → dedicated form
+    if (site.templateType === "telegram") {
+      const config = (site.templateConfig ?? {}) as Record<string, unknown>;
+      setForm({
+        ...defaultForm(),
+        name: site.name,
+        templateType: "telegram",
+        chatId: (config.chatId as string) ?? "",
+        botToken: "",
+        messageTemplate: (config.messageTemplate as string) ?? DEFAULT_TELEGRAM_TEMPLATE,
+      });
+      setMode("configure");
+      setOpen(true);
+      return;
+    }
+
     // Legacy template (sotuvchi / 100k / custom) → full form
     const tpl = TEMPLATES.find((t) => t.id === site.templateType) ?? TEMPLATES[2];
     const config = (site.templateConfig ?? {}) as Record<string, unknown>;
@@ -597,12 +634,38 @@ export default function TargetWebsites() {
   }
 
   function handleTemplateSelect(id: TemplateType) {
-    setForm((f) => ({ ...f, templateType: id, fields: {}, showSecret: {} }));
+    setForm((f) => ({
+      ...f,
+      templateType: id,
+      fields: {},
+      showSecret: {},
+      ...(id === "telegram" ? { botToken: "", chatId: "", messageTemplate: DEFAULT_TELEGRAM_TEMPLATE } : {}),
+    }));
     setMode("configure");
   }
 
   function handleSubmit() {
     if (!form.name.trim()) { toast.error(t("destinations.validation.nameRequired")); return; }
+
+    // Telegram destination
+    if (isTelegram) {
+      if (!form.chatId.trim()) { toast.error(t("destinations.validation.fieldRequired", { field: "Chat ID" })); return; }
+      if (!form.botToken.trim() && !editId) { toast.error(t("destinations.validation.fieldRequired", { field: "Bot Token" })); return; }
+      const telegramPayload = {
+        name: form.name,
+        templateType: "telegram" as const,
+        chatId: form.chatId.trim(),
+        botToken: form.botToken.trim() || undefined,
+        messageTemplate: form.messageTemplate || DEFAULT_TELEGRAM_TEMPLATE,
+      };
+      if (editId) {
+        updateMutation.mutate({ id: editId, ...telegramPayload });
+      } else {
+        createMutation.mutate(telegramPayload);
+      }
+      return;
+    }
+
     if (isCustom && !form.url.trim()) { toast.error(t("destinations.validation.endpointRequired")); return; }
 
     // Validate apiKey for non-custom templates (required on create, optional on edit)
@@ -783,7 +846,9 @@ export default function TargetWebsites() {
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground truncate">
-                        {site.url || (config.url as string) || tpl?.endpoint || "—"}
+                        {site.templateType === "telegram"
+                          ? `Chat: ${(config.chatId as string) || "—"}`
+                          : site.url || (config.url as string) || tpl?.endpoint || "—"}
                       </p>
                       {Boolean(config.apiKeyMasked) && (
                         <p className="text-xs text-muted-foreground mt-0.5">{t("destinations.labels.apiKeyConfigured")}</p>
@@ -919,6 +984,7 @@ export default function TargetWebsites() {
             templates={dynTemplates}
             onSelectAffiliate={selectDynTemplate}
             onSelectCustom={() => handleTemplateSelect("custom")}
+            onSelectTelegram={() => handleTemplateSelect("telegram")}
           />
         )}
 
@@ -1073,7 +1139,19 @@ export default function TargetWebsites() {
                 </Button>
               )}
 
-              {isCustom ? (
+              {isTelegram ? (
+                <div className="flex gap-3 rounded-2xl border border-sky-200/70 bg-gradient-to-br from-sky-500/[0.07] via-background to-background p-3.5 shadow-sm dark:border-sky-900/50 dark:from-sky-950/40 dark:to-background">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-500 text-white shadow-md shadow-sky-500/20">
+                    <Send className="h-5 w-5" aria-hidden />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold tracking-tight text-foreground">Telegram Bot</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                      O&apos;z botingizdan leadlarni chat yoki kanalga yuboring
+                    </p>
+                  </div>
+                </div>
+              ) : isCustom ? (
                 <div className="flex gap-3 rounded-2xl border border-violet-200/70 bg-gradient-to-br from-violet-500/[0.07] via-background to-fuchsia-500/[0.05] p-3.5 shadow-sm dark:border-violet-900/50 dark:from-violet-950/40 dark:to-background">
                   <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-600 text-white shadow-md shadow-violet-500/20">
                     <Braces className="h-5 w-5" aria-hidden />
@@ -1113,8 +1191,8 @@ export default function TargetWebsites() {
                 />
               </div>
 
-              {/* Non-custom: saved fields (apiKey) */}
-              {!isCustom && selectedTemplate.savedFields.map((sf) => (
+              {/* Non-custom, non-telegram: saved fields (apiKey) */}
+              {!isCustom && !isTelegram && selectedTemplate.savedFields.map((sf) => (
                 <div key={sf.key} className="space-y-1.5">
                   <Label>
                     {sf.label}
@@ -1148,7 +1226,7 @@ export default function TargetWebsites() {
               ))}
 
               {/* Non-custom: auto-mapped info */}
-              {!isCustom && Object.keys(selectedTemplate.autoMapped).length > 0 && (
+              {!isCustom && !isTelegram && Object.keys(selectedTemplate.autoMapped).length > 0 && (
                 <div className="rounded-lg bg-muted/40 border p-3 space-y-1">
                   <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
                     <Info className="w-3 h-3" /> {t("destinations.legacy.autoMappedFields")}
@@ -1158,6 +1236,93 @@ export default function TargetWebsites() {
                       <code className="bg-background px-1 rounded">{k}</code> ← {v}
                     </p>
                   ))}
+                </div>
+              )}
+
+              {/* Telegram specific fields */}
+              {isTelegram && (
+                <div className="space-y-5 rounded-2xl border border-sky-200/60 bg-card/40 p-4 shadow-sm dark:border-sky-900/40 dark:bg-card/20">
+                  {/* Bot Token */}
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">
+                      Bot Token{" "}
+                      {!editId ? (
+                        <span className="text-destructive">*</span>
+                      ) : (
+                        <span className="text-muted-foreground text-xs ml-1">{t("destinations.dynamic.leaveBlankKeep")}</span>
+                      )}
+                    </Label>
+                    <div className="relative">
+                      <Input
+                        className="h-10 rounded-lg pr-10 font-mono text-sm shadow-xs"
+                        placeholder={editId ? t("destinations.dynamic.unchangedPlaceholder") : "123456789:AAF..."}
+                        value={form.botToken}
+                        onChange={(e) => setForm((f) => ({ ...f, botToken: e.target.value }))}
+                        type={form.showSecret["botToken"] ? "text" : "password"}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => toggleShowSecret("botToken")}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {form.showSecret["botToken"] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">@BotFather dan oling</p>
+                  </div>
+
+                  {/* Chat ID */}
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">
+                      Chat ID <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      className="h-10 rounded-lg font-mono text-sm shadow-xs"
+                      placeholder="-100123456789"
+                      value={form.chatId}
+                      onChange={(e) => setForm((f) => ({ ...f, chatId: e.target.value }))}
+                    />
+                    <p className="text-xs text-muted-foreground">Guruh yoki kanal chat ID. Guruhlar uchun - bilan boshlanadi.</p>
+                  </div>
+
+                  {/* Message Template */}
+                  <div className="space-y-1.5">
+                    <Label className="text-sm font-medium">Xabar shabloni</Label>
+                    <Textarea
+                      className="min-h-[140px] resize-y rounded-lg border-border/80 font-mono text-xs leading-relaxed shadow-xs"
+                      value={form.messageTemplate}
+                      onChange={(e) => setForm((f) => ({ ...f, messageTemplate: e.target.value }))}
+                      placeholder={DEFAULT_TELEGRAM_TEMPLATE}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      O&apos;zgaruvchilar:{" "}
+                      {["{{full_name}}", "{{phone_number}}", "{{email}}", "{{pageName}}", "{{formName}}", "{{campaignName}}"].map((v) => (
+                        <code key={v} className="mx-0.5 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">{v}</code>
+                      ))}
+                    </p>
+                  </div>
+
+                  {/* Test button */}
+                  <div className="space-y-2 border-t border-border/50 pt-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        type="button"
+                        onClick={handleTest}
+                        disabled={isTesting || !editId}
+                        className="h-9 gap-2"
+                        title={!editId ? t("destinations.form.testSaveFirstTitle") : undefined}
+                      >
+                        {isTesting ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />}
+                        {isTesting ? t("destinations.form.testing") : t("destinations.form.testIntegration")}
+                      </Button>
+                      <p className="text-xs text-muted-foreground sm:pl-1">
+                        {editId ? t("destinations.form.testDescReady") : t("destinations.form.testDescLocked")}
+                      </p>
+                    </div>
+                    {testResult && editId ? <TestResultPanel result={testResult} onClose={() => setTestResult(null)} /> : null}
+                  </div>
                 </div>
               )}
 

@@ -4,7 +4,8 @@ import { getDb } from "../db";
 import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
-import { sendAffiliateOrder, sendAffiliateOrderByTemplate, type AffiliateConfig, type TemplateType, type TemplateConfig } from "./affiliateService";
+import { sendAffiliateOrder, sendAffiliateOrderByTemplate, injectVariables, type AffiliateConfig, type TemplateType, type TemplateConfig } from "./affiliateService";
+import { sendTelegramRawMessage } from "./telegramService";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
 import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
@@ -592,6 +593,25 @@ async function runOrderIntegrationSend(params: {
             targetUrlUsed = undefined;
             result = { success: false, error: `Template ${tw.templateId} not found` };
           }
+        } else if (tw && tw.templateType === "telegram") {
+          const cfg = (tw.templateConfig ?? {}) as { botTokenEncrypted?: string; chatId?: string; messageTemplate?: string };
+          if (!cfg.botTokenEncrypted || !cfg.chatId) {
+            result = { success: false, error: "Telegram destination missing botToken or chatId" };
+          } else {
+            const token = decrypt(cfg.botTokenEncrypted);
+            const ctx: Record<string, string> = {};
+            if (leadPayload.fullName) ctx.full_name = leadPayload.fullName;
+            if (leadPayload.phone) ctx.phone_number = leadPayload.phone;
+            if (leadPayload.email) ctx.email = leadPayload.email;
+            if (lead.pageName) ctx.pageName = lead.pageName;
+            if (lead.formName) ctx.formName = lead.formName;
+            if (lead.campaignName) ctx.campaignName = lead.campaignName;
+            if (lead.createdAt) ctx.createdAt = new Date(lead.createdAt).toLocaleString("uz-UZ");
+            Object.assign(ctx, leadPayload.extraFields ?? {});
+            const messageTemplate = cfg.messageTemplate || "📋 Yangi lead\n\n👤 Ism: {{full_name}}\n📞 Telefon: {{phone_number}}\n📧 Email: {{email}}";
+            const message = injectVariables(messageTemplate, ctx);
+            result = await sendTelegramRawMessage(token, cfg.chatId, message);
+          }
         } else if (tw && tw.templateType) {
           targetUrlUsed = (tw.url as string | null) ?? undefined;
           result = await sendAffiliateOrderByTemplate(
@@ -599,7 +619,7 @@ async function runOrderIntegrationSend(params: {
             tw.templateConfig as TemplateConfig,
             leadPayload,
             variableFields,
-            tw.url,
+            tw.url ?? "",
           );
         } else {
           targetUrlUsed = (config.targetUrl as string | undefined) ?? undefined;

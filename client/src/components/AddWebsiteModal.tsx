@@ -12,7 +12,7 @@ import {
   useDialogComposition,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { ChevronRight, X } from "lucide-react";
+import { ChevronRight, Send, X } from "lucide-react";
 
 export type AddWebsiteFormMode =
   | "select-template"
@@ -161,13 +161,14 @@ export function WebsiteFlowDialog({
   );
 }
 
-type AddSiteTab = "affiliate" | "custom";
+type AddSiteTab = "affiliate" | "custom" | "telegram";
 
 interface AddWebsiteSelectStepProps<T extends DynTemplateListItem> {
   open: boolean;
   templates: T[];
   onSelectAffiliate: (tpl: T) => void;
   onSelectCustom: () => void;
+  onSelectTelegram: () => void;
 }
 
 export function AddWebsiteSelectStep<T extends DynTemplateListItem>({
@@ -175,6 +176,7 @@ export function AddWebsiteSelectStep<T extends DynTemplateListItem>({
   templates,
   onSelectAffiliate,
   onSelectCustom,
+  onSelectTelegram,
 }: AddWebsiteSelectStepProps<T>) {
   const [tab, setTab] = React.useState<AddSiteTab>("affiliate");
 
@@ -184,27 +186,27 @@ export function AddWebsiteSelectStep<T extends DynTemplateListItem>({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         <button
           type="button"
           onClick={() => setTab("affiliate")}
           className={cn(
-            "flex min-h-[4.5rem] w-full items-start gap-2.5 rounded-[14px] border p-3 text-left transition-all duration-200",
+            "flex min-h-[4.5rem] w-full items-start gap-2 rounded-[14px] border p-2.5 text-left transition-all duration-200",
             tab === "affiliate"
               ? "border-primary bg-primary/10"
               : "border-border bg-background hover:border-muted-foreground/30"
           )}
         >
           <span
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-orange-100 text-base dark:bg-orange-950/50"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-orange-100 text-sm dark:bg-orange-950/50"
             aria-hidden
           >
             ⚡
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">Affiliate</span>
-            <span className="text-muted-foreground mt-0.5 block text-xs leading-snug">
-              Ready-made integrations
+            <span className="block text-xs font-semibold">Affiliate</span>
+            <span className="text-muted-foreground mt-0.5 block text-[11px] leading-snug">
+              Ready-made
             </span>
           </span>
         </button>
@@ -212,22 +214,45 @@ export function AddWebsiteSelectStep<T extends DynTemplateListItem>({
           type="button"
           onClick={() => setTab("custom")}
           className={cn(
-            "flex min-h-[4.5rem] w-full items-start gap-2.5 rounded-[14px] border p-3 text-left transition-all duration-200",
+            "flex min-h-[4.5rem] w-full items-start gap-2 rounded-[14px] border p-2.5 text-left transition-all duration-200",
             tab === "custom"
               ? "border-primary bg-primary/10"
               : "border-border bg-background hover:border-muted-foreground/30"
           )}
         >
           <span
-            className="bg-muted text-muted-foreground flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-base"
+            className="bg-muted text-muted-foreground flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-sm"
             aria-hidden
           >
             ⚙️
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block text-sm font-semibold">Custom</span>
-            <span className="text-muted-foreground mt-0.5 block text-xs leading-snug">
-              Build your own API
+            <span className="block text-xs font-semibold">Custom</span>
+            <span className="text-muted-foreground mt-0.5 block text-[11px] leading-snug">
+              Your own API
+            </span>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("telegram")}
+          className={cn(
+            "flex min-h-[4.5rem] w-full items-start gap-2 rounded-[14px] border p-2.5 text-left transition-all duration-200",
+            tab === "telegram"
+              ? "border-sky-400 bg-sky-500/10"
+              : "border-border bg-background hover:border-muted-foreground/30"
+          )}
+        >
+          <span
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-950/50"
+            aria-hidden
+          >
+            <Send className="h-4 w-4" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-xs font-semibold">Telegram</span>
+            <span className="text-muted-foreground mt-0.5 block text-[11px] leading-snug">
+              Bot delivery
             </span>
           </span>
         </button>
@@ -277,6 +302,41 @@ export function AddWebsiteSelectStep<T extends DynTemplateListItem>({
               ))}
             </ul>
           )}
+        </div>
+      ) : tab === "telegram" ? (
+        <div className="space-y-3">
+          <p className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">
+            Telegram Bot destination
+          </p>
+          <button
+            type="button"
+            onClick={onSelectTelegram}
+            className={cn(
+              "group flex w-full items-center gap-3 rounded-[14px] border border-dashed border-sky-300 bg-background p-3 text-left transition-all duration-200",
+              "hover:border-sky-400 hover:bg-sky-500/5",
+              "active:scale-[0.98]"
+            )}
+          >
+            <span
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-sky-100 text-sky-600 dark:bg-sky-950/50"
+              aria-hidden
+            >
+              <Send className="h-5 w-5" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-semibold">Telegram Bot</span>
+              <span className="text-muted-foreground mt-0.5 block text-xs leading-snug">
+                O&apos;z Telegram botingizga leadlarni yuboring
+              </span>
+            </span>
+            <ChevronRight className="text-muted-foreground group-hover:text-sky-500 h-4 w-4 shrink-0 transition-colors" />
+          </button>
+          <div className="flex gap-2.5 rounded-[14px] border border-sky-200/80 bg-sky-50 p-3 dark:border-sky-800/60 dark:bg-sky-950/20">
+            <span className="shrink-0 text-base" aria-hidden>💡</span>
+            <p className="text-sky-900 dark:text-sky-100/90 text-xs leading-relaxed">
+              Telegram botingiz token va chat ID kerak bo&apos;ladi. Bot @BotFather orqali yaratiladi.
+            </p>
+          </div>
         </div>
       ) : (
         <div className="space-y-3">

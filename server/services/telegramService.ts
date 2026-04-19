@@ -74,6 +74,25 @@ export async function sendTelegramNotification(
 }
 
 /**
+ * Send a raw text message via a user-owned bot token.
+ * Used by telegram destination delivery and testIntegration.
+ */
+export async function sendTelegramRawMessage(
+  token: string,
+  chatId: string,
+  text: string,
+): Promise<{ success: boolean; error?: string }> {
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+  try {
+    await axios.post(url, { chat_id: chatId, text }, { timeout: 10000 });
+    return { success: true };
+  } catch (err: any) {
+    const error = err?.response?.data?.description || err.message;
+    return { success: false, error };
+  }
+}
+
+/**
  * Validate a Telegram bot token by calling getMe.
  */
 export async function validateTelegramToken(token: string): Promise<boolean> {

@@ -208,17 +208,18 @@ export type InsertDestinationTemplate = typeof destinationTemplates.$inferInsert
 // ─── Target Websites ──────────────────────────────────────────────────────────
 // A list of affiliate/CRM websites that leads are routed to.
 //
-// templateType: 'sotuvchi' | '100k' | 'albato' | 'custom' (legacy hardcoded)
+// templateType: 'sotuvchi' | '100k' | 'albato' | 'custom' | 'telegram' (legacy hardcoded)
 // templateId:   FK to destinationTemplates (dynamic admin-managed templates)
 // templateConfig: template-specific config JSON, e.g.:
 //   legacy:  { apiKeyEncrypted, ... }
 //   dynamic: { secrets: { api_key: "encrypted:..." }, variables: {} }
+//   telegram: { botTokenEncrypted, chatId, messageTemplate }
 export const targetWebsites = mysqlTable("target_websites", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
   name: varchar("name", { length: 255 }).notNull(),
-  /** Base URL of the target website's lead submission endpoint */
-  url: text("url").notNull(),
+  /** Base URL of the target website's lead submission endpoint. NULL for telegram destinations. */
+  url: text("url"),
   /** Optional static headers as JSON object */
   headers: json("headers"),
   /** Template type: sotuvchi | 100k | albato | custom (legacy; null when using templateId) */

@@ -35,6 +35,7 @@ import {
 
 import { assertSafeOutboundUrl } from "../lib/urlSafety";
 import { checkUserRateLimit } from "../lib/userRateLimit";
+import { sendTelegramRawMessage } from "../services/telegramService";
 
 async function validateTargetUrl(url: string): Promise<void> {
   await assertSafeOutboundUrl(url);
@@ -62,6 +63,11 @@ function maskConfig(config: unknown): unknown {
   if (c.apiKeyEncrypted) {
     delete c.apiKeyEncrypted;
     c.apiKeyMasked = "••••••••";
+  }
+  // Telegram: botTokenEncrypted
+  if (c.botTokenEncrypted) {
+    delete c.botTokenEncrypted;
+    c.botTokenMasked = "••••••••";
   }
   // Dynamic template: secrets map — mask all values
   if (c.secrets && typeof c.secrets === "object") {
@@ -159,12 +165,12 @@ export const targetWebsitesRouter = router({
     }));
   }),
 
-  /** Create a new target website. apiKey is encrypted before saving. */
+  /** Create a new target website. apiKey / botToken is encrypted before saving. */
   create: protectedProcedure
     .input(
       z.object({
         name: z.string().min(1),
-        templateType: z.enum(["sotuvchi", "100k", "custom"]),
+        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram"]),
         /** Plain-text apiKey — only for sotuvchi / 100k */
         apiKey: z.string().optional(),
         /** For custom template */
@@ -179,6 +185,10 @@ export const targetWebsitesRouter = router({
         jsonField: z.string().optional(),
         jsonValue: z.string().optional(),
         variableFields: z.array(z.string()).optional(),
+        /** Telegram destination fields */
+        botToken: z.string().optional(),
+        chatId: z.string().optional(),
+        messageTemplate: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -195,6 +205,27 @@ export const targetWebsitesRouter = router({
         .limit(1);
       const autoChatId =
         me?.mode === "ALL" && me.defaultChatId ? String(me.defaultChatId) : null;
+
+      // Telegram destination — no URL needed
+      if (input.templateType === "telegram") {
+        if (!input.botToken?.trim()) throw new Error("Bot Token is required");
+        if (!input.chatId?.trim()) throw new Error("Chat ID is required");
+        const config: Record<string, unknown> = {
+          botTokenEncrypted: encrypt(input.botToken),
+          chatId: input.chatId.trim(),
+          messageTemplate: input.messageTemplate?.trim() || "📋 Yangi lead\n\n👤 Ism: {{full_name}}\n📞 Telefon: {{phone_number}}\n📧 Email: {{email}}",
+        };
+        await db.insert(targetWebsites).values({
+          userId: ctx.user.id,
+          name: input.name,
+          url: null,
+          templateType: "telegram",
+          templateConfig: config,
+          color: "#0088cc",
+          isActive: true,
+        });
+        return { success: true };
+      }
 
       // Build URL (pre-filled for known templates)
       let url = "";
@@ -243,7 +274,7 @@ export const targetWebsitesRouter = router({
       z.object({
         id: z.number(),
         name: z.string().min(1).optional(),
-        templateType: z.enum(["sotuvchi", "100k", "custom"]).optional(),
+        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram"]).optional(),
         apiKey: z.string().optional(),
         url: z.string().optional(),
         method: z.enum(["POST", "GET"]).optional(),
@@ -257,6 +288,10 @@ export const targetWebsitesRouter = router({
         jsonValue: z.string().optional(),
         variableFields: z.array(z.string()).optional(),
         isActive: z.boolean().optional(),
+        /** Telegram destination fields */
+        botToken: z.string().optional(),
+        chatId: z.string().optional(),
+        messageTemplate: z.string().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -280,35 +315,43 @@ export const targetWebsitesRouter = router({
         input.fieldMap !== undefined || input.successCondition !== undefined ||
         input.contentType !== undefined || input.variableFields !== undefined ||
         input.bodyTemplate !== undefined || input.bodyFields !== undefined ||
-        input.jsonField !== undefined || input.jsonValue !== undefined;
+        input.jsonField !== undefined || input.jsonValue !== undefined ||
+        input.botToken !== undefined || input.chatId !== undefined || input.messageTemplate !== undefined;
 
       if (hasConfigChange) {
         const existingConfig = (site.templateConfig as Record<string, unknown>) ?? {};
         const newConfig = { ...existingConfig };
 
-        if (input.apiKey) {
-          newConfig.apiKeyEncrypted = encrypt(input.apiKey);
-        }
         const templateType = input.templateType ?? site.templateType;
-        if (templateType === "custom") {
-          if (input.method !== undefined) newConfig.method = input.method;
-          if (input.headers !== undefined) newConfig.headers = input.headers;
-          if (input.fieldMap !== undefined) newConfig.fieldMap = input.fieldMap;
-          if (input.successCondition !== undefined) newConfig.successCondition = input.successCondition;
-          if (input.contentType !== undefined) newConfig.contentType = input.contentType;
-          if (input.bodyTemplate !== undefined) newConfig.bodyTemplate = input.bodyTemplate;
-          if (input.bodyFields !== undefined) newConfig.bodyFields = input.bodyFields;
-          if (input.jsonField !== undefined) newConfig.jsonField = input.jsonField;
-          if (input.jsonValue !== undefined) newConfig.jsonValue = input.jsonValue;
-          if (input.variableFields !== undefined) newConfig.variableFields = input.variableFields;
+
+        if (templateType === "telegram") {
+          if (input.botToken?.trim()) newConfig.botTokenEncrypted = encrypt(input.botToken);
+          if (input.chatId !== undefined) newConfig.chatId = input.chatId.trim();
+          if (input.messageTemplate !== undefined) newConfig.messageTemplate = input.messageTemplate;
+        } else {
+          if (input.apiKey) {
+            newConfig.apiKeyEncrypted = encrypt(input.apiKey);
+          }
+          if (templateType === "custom") {
+            if (input.method !== undefined) newConfig.method = input.method;
+            if (input.headers !== undefined) newConfig.headers = input.headers;
+            if (input.fieldMap !== undefined) newConfig.fieldMap = input.fieldMap;
+            if (input.successCondition !== undefined) newConfig.successCondition = input.successCondition;
+            if (input.contentType !== undefined) newConfig.contentType = input.contentType;
+            if (input.bodyTemplate !== undefined) newConfig.bodyTemplate = input.bodyTemplate;
+            if (input.bodyFields !== undefined) newConfig.bodyFields = input.bodyFields;
+            if (input.jsonField !== undefined) newConfig.jsonField = input.jsonField;
+            if (input.jsonValue !== undefined) newConfig.jsonValue = input.jsonValue;
+            if (input.variableFields !== undefined) newConfig.variableFields = input.variableFields;
+          }
         }
         updates.templateConfig = newConfig;
 
         if (input.templateType) {
           updates.templateType = input.templateType;
-          // Update URL for known templates
           if (input.templateType === "sotuvchi") updates.url = "https://sotuvchi.com/api/v2/order";
           else if (input.templateType === "100k") updates.url = "https://api.100k.uz/api/shop/v1/orders/target";
+          else if (input.templateType === "telegram") { /* no url needed */ }
           else if (input.url) {
             await validateTargetUrl(input.url);
             updates.url = input.url;
@@ -626,13 +669,25 @@ export const targetWebsitesRouter = router({
         };
       }
 
+      // ── Telegram destination test ─────────────────────────────────────────────
+      if (site.templateType === "telegram") {
+        const cfg = (site.templateConfig ?? {}) as { botTokenEncrypted?: string; chatId?: string; messageTemplate?: string };
+        if (!cfg.botTokenEncrypted || !cfg.chatId) {
+          return { success: false, responseData: null, error: "Telegram config incomplete (missing botToken or chatId)", durationMs: Date.now() - t0, requestPreview: null };
+        }
+        const token = decrypt(cfg.botTokenEncrypted);
+        const testText = `[TEST] Yangi lead\n\nIsm: Test User\nTelefon: +998901234567\nEmail: test@example.com`;
+        const result = await sendTelegramRawMessage(token, cfg.chatId, testText);
+        return { success: result.success, responseData: null, error: result.error, durationMs: Date.now() - t0, requestPreview: null };
+      }
+
       // ── Legacy custom template ─────────────────────────────────────────────────
       const result = await sendAffiliateOrderByTemplate(
         site.templateType as TemplateType,
         site.templateConfig as TemplateConfig,
         sampleLead,
         varOverrides,
-        site.url
+        site.url ?? ""
       );
       const durationMs = Date.now() - t0;
 
