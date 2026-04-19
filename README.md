@@ -1,552 +1,599 @@
-# Targenix.uz — Facebook Lead Ads Integration Platform
+# Targenix
 
-A production-ready full-stack platform that captures Facebook Lead Ads in real time via webhook, enriches them through the Facebook Graph API, and forwards them to Telegram channels and affiliate endpoints. Built with React 19, Express 4, tRPC 11, Drizzle ORM, and MySQL.
+> **Facebook Lead Ads automation platform** — receive, enrich, route, and monitor leads in real time.
 
-**Live demo:** [leadadsweb-8bpfwfmt.manus.space](https://leadadsweb-8bpfwfmt.manus.space)
-
----
-
-## Table of Contents
-
-- [Architecture Overview](#architecture-overview)
-- [Features](#features)
-- [Tech Stack](#tech-stack)
-- [Environment Variables](#environment-variables)
-- [Local Development](#local-development)
-- [Database Setup](#database-setup)
-- [Deployment Guide](#deployment-guide)
-  - [Railway](#deploy-to-railway)
-  - [Render](#deploy-to-render)
-  - [VPS (Ubuntu)](#deploy-to-vps-ubuntu)
-- [Facebook Webhook Configuration](#facebook-webhook-configuration)
-- [API Endpoints](#api-endpoints)
-- [Project Structure](#project-structure)
-- [Running Tests](#running-tests)
+[![Node.js](https://img.shields.io/badge/Node.js-22%2B-green)](https://nodejs.org) [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)](https://www.typescriptlang.org) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](./LICENSE)
 
 ---
 
-## Architecture Overview
+## 🚀 Overview
+
+**Targenix** is a multi-tenant SaaS automation platform purpose-built for **Facebook and Instagram Lead Ads**. It sits between Meta's webhook infrastructure and your downstream destinations (Telegram channels, HTTP endpoints, CRMs) — handling ingestion, enrichment, routing, retry logic, and observability in one hosted product.
+
+**Who it is for:**
+- Performance marketers and agencies running Lead Ad campaigns at scale
+- SMBs that want instant lead notifications in Telegram without writing code
+- Technical teams that need a reliable, auditable pipeline from Meta to internal systems
+
+**Core value proposition:** Connect a Facebook Page in the dashboard, define a routing rule (page + form → destination), and every new lead flows to your destination within seconds — with automatic retries, structured logs, and a delivery status you can track.
+
+---
+
+## ⚙️ How It Works
 
 ```
-Facebook Lead Ads
-       │
-       │  POST /api/webhooks/facebook
-       ▼
-┌─────────────────────────────────────┐
-│  Express Server (Node.js 22)        │
-│  1. Verify X-Hub-Signature-256      │
-│  2. Return 200 OK immediately       │
-│  3. setImmediate → process lead     │
-└──────────────┬──────────────────────┘
-               │
-       ┌───────▼────────┐
-       │  MySQL Database │  ← Drizzle ORM
-       │  - leads        │
-       │  - webhook_events│
-       │  - integrations │
-       │  - fb_connections│
-       └───────┬─────────┘
-               │
-    ┌──────────▼──────────┐
-    │  Facebook Graph API  │  GET /v19.0/{leadgen_id}
-    │  (fetch full data)   │  → fullName, phone, email
-    └──────────┬───────────┘
-               │
-    ┌──────────▼──────────┐
-    │  Integrations        │
-    │  - Telegram Bot      │  → formatted lead message
-    │  - Affiliate API     │  → order payload + retry
-    └─────────────────────┘
+Facebook / Instagram Lead Ad (user submits form)
+        │
+        ▼
+POST /api/webhooks/facebook
+  ├─ Verify X-Hub-Signature-256 (HMAC-SHA256)
+  ├─ Return 200 OK immediately (Meta requirement)
+  ├─ Fan-out: resolve all Targenix users connected to that page_id
+  └─ For each user → saveIncomingLead (leads table, status: PENDING)
+        │
+        ▼
+dispatchLeadProcessing
+  ├─ Redis available → push BullMQ job (lead-processing queue)
+  └─ No Redis → setImmediate in-process (dev / degraded mode)
+        │
+        ▼
+processLead (worker process OR in-process)
+  ├─ Resolve encrypted Facebook access token
+  ├─ Fetch full field_data from Graph API
+  ├─ Denormalize: fullName, phone, email, extraFields, ad attribution
+  ├─ Update lead: dataStatus = ENRICHED (or ERROR)
+  ├─ Create one Order per active LEAD_ROUTING integration
+  ├─ Send to destinations:
+  │   ├─ Telegram: HTML-formatted message → telegramChatId
+  │   └─ HTTP endpoint: POST/GET with variable injection + retry policy
+  └─ Aggregate order statuses → update lead.deliveryStatus
+        │
+        ▼
+Worker schedulers (hourly)
+  ├─ Retry Graph errors (re-dispatch leads with dataStatus=ERROR)
+  ├─ Retry stuck PENDING leads (>10 min threshold)
+  ├─ Retry failed Orders (max 3 attempts, 1h spacing)
+  ├─ Log retention (purge old app_logs per policy)
+  ├─ Facebook forms cache refresh
+  └─ Ad accounts / campaigns / insights sync
 ```
 
-**Key design decision:** The server responds `200 OK` to Facebook within ~350ms, then processes the lead asynchronously via `setImmediate`. This prevents Facebook from retrying due to slow responses. Redis/BullMQ is intentionally not used — synchronous in-process handling is sufficient and removes the Redis infrastructure dependency.
+---
+
+## 🧩 Features
+
+All features listed below are **verified from the codebase**.
+
+### Lead Ingestion
+- **Facebook & Instagram Lead Ads webhook** — real-time `POST /api/webhooks/facebook` with HMAC-SHA256 signature verification
+- **Meta hub challenge verification** — `GET /api/webhooks/facebook` for initial Meta subscription setup
+- **Multi-tenant fan-out** — a single Facebook Page can be connected to multiple Targenix accounts; all receive the lead independently
+- **Webhook event log** — every raw payload stored in `webhook_events` for audit and replay
+
+### Lead Processing
+- **Graph API enrichment** — full `field_data` array fetched per lead; phone, name, email, and extra fields extracted
+- **Ad attribution** — `campaignId`, `adsetId`, `adId` denormalized from Graph payload
+- **`dataStatus` / `deliveryStatus` pipeline** — PENDING → ENRICHED / ERROR; PENDING → PROCESSING → SUCCESS / FAILED / PARTIAL
+- **Manual poll from form** — `leads.pollFacebookForm` tRPC procedure lets users import past leads from a connected form
+- **Lead resync** — re-fetch Graph data for existing leads via `leads.resync`
+
+### Destinations
+- **Telegram delivery** — HTML-formatted lead summaries sent to linked bot chats (DELIVERY type); SYSTEM chat reserved for alerts
+- **HTTP destinations (Target Websites)** — flexible POST / GET with JSON, `application/x-www-form-urlencoded`, or `multipart/form-data`; variable injection (`{{name}}`, `{{phone}}`, `{{email}}`, `{{lead_id}}`, custom fields); configurable success rules (`http_2xx`, `json_field`, `ok_true`)
+- **Admin-managed destination templates** — reusable endpoint definitions (URL, method, content type, body fields) so users configure only their secrets and offer IDs
+- **Test lead delivery** — `targetWebsites.testDelivery` sends a synthetic lead to verify a destination before going live
+
+### Retry & Reliability
+- **BullMQ queue** — durable async processing when `REDIS_URL` is configured; 3 auto-retry attempts with exponential backoff
+- **Order retry scheduler** — hourly, max 3 attempts with 1-hour spacing between attempts; independent of BullMQ
+- **Graph error retry** — hourly re-dispatch for leads that failed enrichment (up to 500 at a time)
+- **Stuck lead detection** — leads stuck in PENDING >10 minutes are automatically re-dispatched
+
+### Authentication
+- **Email / password** — register, login, logout with `bcryptjs` (12 rounds) + `jose` JWT session cookie (30-day TTL, HTTP-only, Secure)
+- **Facebook Login** — OAuth authorization code flow as an alternative sign-in path
+- **Password reset** — SMTP email with time-limited token
+- **Role system** — `user` and `admin` roles; admin-gated pages and tRPC procedures
+
+### Facebook Account Management
+- **User-level Facebook accounts** — encrypted long-lived access tokens stored per account
+- **Page-level connections** — subscribe the Meta app to a page to receive its leads
+- **Forms cache** — hourly refresh of form metadata per connected page
+- **Facebook OAuth flows** — account connect and page connect via server-side `/api/auth/facebook/...` routes
+
+### Analytics & Observability
+- **Ad account drill-down** — Facebook ad accounts, campaigns, ad sets, and performance insights synced hourly
+- **Campaign insights** — spend, impressions, clicks, leads count, CTR, CPL, conversion rate
+- **Per-destination analytics** — delivery success rates by destination
+- **Structured logs** — `app_logs` table with level (INFO/WARN/ERROR/DEBUG), category, eventType, duration, meta JSON; retention policy (48h USER logs, 30d SYSTEM logs)
+- **Health endpoint** — `GET /api/health` returns DB status, last webhook timestamp, dispatch mode, uptime
+- **SSE admin stream** — real-time webhook event feed at `GET /api/webhooks/events/stream` (admin only)
+
+### Dashboard & UI
+- **Leads list** — paginated, searchable, filterable by status / page / form / platform (fb | ig)
+- **Lead detail** — full payload, orders list, delivery status breakdown
+- **Integrations wizard** — step-by-step `LEAD_ROUTING` creation (page + form → destination)
+- **Connections manager** — add / remove Facebook pages, sync forms
+- **Telegram settings** — link chats, set delivery mode, set default delivery chat
+- **Admin tools** — global leads browser, backfill operations, destination template management, structured logs viewer
+- **Internationalisation** — `en`, `ru`, `uz` locale files
+
+### Not Implemented
+- **Google Sheets** — No Sheets API integration exists in this repository
+- **Zapier / Make-style visual workflow builder** — routing is data-driven (page + form → destination), not a multi-step canvas
+- **In-app AI chat** — LLM dependencies exist (`@ai-sdk/openai`, `ai`) but chat routes are not registered in the production server entry
 
 ---
 
-## Features
+## 🏗️ Architecture
 
-- **Real-time webhook** — receives Facebook `leadgen` events with HMAC-SHA256 signature verification
-- **Graph API enrichment** — fetches full lead data (name, phone, email) using stored Page Access Tokens
-- **Admin dashboard** — React SPA with leads table, webhook health monitor, integrations manager, and FB connections
-- **Live event stream** — Server-Sent Events (SSE) on the Webhook Health page; new events appear without page refresh
-- **Facebook polling** — manual "Sync from Facebook" to pull leads directly from a Form ID via Graph API
-- **Telegram integration** — sends formatted lead notifications to any bot/channel
-- **Affiliate integration** — posts lead data to configurable endpoints with exponential-backoff retry (up to 3 attempts)
-- **AES-256-CBC encryption** — all stored Page Access Tokens are encrypted at rest
-- **No Redis required** — runs on any Node.js host without additional infrastructure
+### Repository Layout
 
----
-
-## Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Frontend | React 19, Tailwind CSS 4, shadcn/ui, tRPC client |
-| Backend | Node.js 22, Express 4, tRPC 11 |
-| Database | MySQL / TiDB (via Drizzle ORM) |
-| Auth | Manus OAuth (JWT session cookies) |
-| Build | Vite 7 (frontend), esbuild (server bundle) |
-| Testing | Vitest |
-
----
-
-## Environment Variables
-
-Create a `.env` file at the project root (never commit this file). Copy `.env.example` as a starting point.
-
-```env
-# ── Database ──────────────────────────────────────────────────────────────────
-# MySQL connection string. Supports TiDB, PlanetScale, Railway MySQL, etc.
-DATABASE_URL=mysql://user:password@host:3306/dbname
-
-# ── Application ───────────────────────────────────────────────────────────────
-# Full public URL of your deployed app (no trailing slash).
-# Used to build the webhook callback URL shown in the dashboard.
-APP_URL=https://your-app.railway.app
-
-# ── Facebook ──────────────────────────────────────────────────────────────────
-# Your Facebook App's App Secret (App Dashboard → Settings → Basic).
-# Used to verify X-Hub-Signature-256 on incoming webhook requests.
-# If left empty, signature verification is skipped (development only).
-FACEBOOK_APP_SECRET=your_app_secret_here
-
-# A secret string you choose freely. Must exactly match what you enter in the
-# Facebook Developer Console when configuring the webhook callback URL.
-FACEBOOK_VERIFY_TOKEN=your_chosen_verify_token
-
-# ── Encryption ────────────────────────────────────────────────────────────────
-# 32-character (256-bit) random string for AES-256-CBC encryption of
-# Facebook Page Access Tokens stored in the database.
-# Generate with: openssl rand -hex 16
-ENCRYPTION_KEY=your_32_char_random_string_here
-
-# ── Auth (Manus OAuth) ────────────────────────────────────────────────────────
-# Required for the login/logout flow in the admin dashboard.
-JWT_SECRET=your_jwt_secret_here
-VITE_APP_ID=your_manus_app_id
-OAUTH_SERVER_URL=https://api.manus.im
-VITE_OAUTH_PORTAL_URL=https://manus.im
-
-# ── Owner info ────────────────────────────────────────────────────────────────
-# The first user with this openId is automatically promoted to admin.
-OWNER_OPEN_ID=your_manus_open_id
-OWNER_NAME=Your Name
-
-# ── Manus built-in APIs (optional) ───────────────────────────────────────────
-BUILT_IN_FORGE_API_URL=
-BUILT_IN_FORGE_API_KEY=
-VITE_FRONTEND_FORGE_API_KEY=
-VITE_FRONTEND_FORGE_API_URL=
+```
+targenix.uz/
+├── server/                   # Node.js backend
+│   ├── _core/                # Express app bootstrap, middleware, context helpers
+│   ├── routers/              # tRPC routers (auth, leads, integrations, etc.)
+│   ├── services/             # Business logic (lead pipeline, Facebook, Telegram, email)
+│   ├── webhooks/             # Facebook & Telegram webhook handlers + SSE
+│   ├── queues/               # BullMQ queue definition + Redis connection
+│   ├── workers/              # Worker entry + background schedulers
+│   ├── routes/               # Express REST routes (OAuth flows)
+│   ├── lib/                  # Shared utilities (URL safety, retry policies)
+│   ├── db.ts                 # Drizzle + mysql2 connection
+│   ├── index.ts              # Web server entry point
+│   └── worker.ts             # Worker process entry point
+├── client/                   # React 19 SPA
+│   └── src/
+│       ├── pages/            # 31 pages (dashboard, auth, settings, admin)
+│       ├── components/       # Shared UI components (Radix-based)
+│       ├── contexts/         # Theme + locale providers
+│       ├── hooks/            # Custom React hooks
+│       └── locales/          # i18n JSON (en, ru, uz)
+├── drizzle/
+│   ├── schema.ts             # 23-table MySQL schema
+│   └── migrations/           # Drizzle Kit migration files
+├── shared/                   # Code shared between server and client
+│   ├── types.ts              # Re-exported schema types
+│   └── const.ts              # Session cookie names, shared constants
+├── scripts/                  # One-off migration and backfill scripts
+├── tooling/                  # DB inspection and maintenance utilities
+├── package.json              # pnpm workspace root
+├── drizzle.config.ts         # Drizzle Kit config (MySQL dialect)
+├── vite.config.ts            # Vite config (frontend build + dev proxy)
+├── vitest.config.ts          # Vitest test runner config
+└── railway.toml              # Railway deployment config (web + worker services)
 ```
 
-**Variable reference:**
+### Backend
 
-| Variable | Required | Notes |
-|---|---|---|
-| `DATABASE_URL` | Yes | MySQL/TiDB connection string |
-| `APP_URL` | Yes | Public HTTPS URL, no trailing slash |
-| `FACEBOOK_APP_SECRET` | Recommended | Skip = no signature verification |
-| `FACEBOOK_VERIFY_TOKEN` | Yes | Must match Facebook Console entry |
-| `ENCRYPTION_KEY` | Yes | Exactly 32 characters |
-| `JWT_SECRET` | Yes | Any long random string |
-| `VITE_APP_ID` | Yes | Manus OAuth App ID |
-| `OAUTH_SERVER_URL` | Yes | `https://api.manus.im` |
-| `VITE_OAUTH_PORTAL_URL` | Yes | `https://manus.im` |
-| `OWNER_OPEN_ID` | Yes | Your Manus user openId |
+The backend is a single **Express** application with **tRPC** for typed API procedures and plain REST routes for webhooks and OAuth callbacks.
 
-> **Important:** `ENCRYPTION_KEY` must be exactly 32 characters. Changing it after tokens are stored will break decryption of all saved Page Access Tokens. Rotate carefully.
+- **`server/_core/index.ts`** — bootstraps Express: Helmet + CSP, rate limiters, raw body capture (required for HMAC verification), JSON parser, static file serving, tRPC adapter, webhook mounts
+- **`server/routers.ts`** — root tRPC router merging all domain routers
+- **`server/services/`** — lead pipeline (`leadService`, `leadDispatch`), Graph API client, Telegram send/format, affiliate HTTP delivery, schedulers, email sender
+- **`server/workers/`** — BullMQ job consumer (concurrency 5) + five hourly schedulers; runs as a **separate process** (`dist/worker.js`) to prevent duplicate cron execution when the web tier scales horizontally
+
+### Frontend
+
+A **React 19** SPA bundled by **Vite 7**, served as static files from `dist/public/` in production.
+
+- **Wouter** — lightweight client-side router
+- **tRPC React Query** — typed server state management; auto-generated types from server routers
+- **Radix UI primitives** — accessible headless components (24+ primitives)
+- **Tailwind CSS 4** — utility-first styling
+
+### Database
+
+**MySQL** accessed via **Drizzle ORM**. 23 tables across logical domains:
+
+| Domain | Tables |
+|--------|--------|
+| Users & Auth | `users`, `password_reset_tokens`, `facebook_oauth_states` |
+| Facebook | `facebook_accounts`, `facebook_connections`, `facebook_forms` |
+| Lead Pipeline | `leads`, `orders`, `integrations` |
+| Destinations | `target_websites`, `destination_templates` |
+| Telegram | `telegram_chats`, `telegram_pending_chats` |
+| Observability | `webhook_events`, `app_logs` |
+| Ad Data Cache | `ad_accounts_cache`, `campaigns_cache`, `ad_sets_cache`, `campaign_insights_cache` |
+
+### Async Processing
+
+```
+Web process (dist/index.js)
+  └─ Receives webhook
+  └─ Saves lead row
+  └─ IF REDIS_URL → push BullMQ job
+     ELSE → setImmediate in-process (not durable)
+
+Worker process (dist/worker.js)
+  └─ BullMQ consumer: processLead (concurrency 5, 3 auto-retries)
+  └─ Hourly scheduler: retryGraphErrors
+  └─ Hourly scheduler: retryStuckPending
+  └─ Hourly scheduler: retryFailedOrders
+  └─ Hourly scheduler: logRetention
+  └─ Hourly scheduler: refreshFacebookForms
+  └─ Hourly scheduler: syncAdAccounts
+```
 
 ---
 
-## Local Development
+## 🔌 Integrations
+
+### Facebook Lead Ads
+
+**How it connects:**
+1. User authenticates with Facebook in the dashboard (OAuth → long-lived token stored AES-256-CBC encrypted)
+2. User selects a Page to connect; server calls Graph API to subscribe the Meta app to the page's `leadgen` topic
+3. Meta sends `leadgen` webhook events to `POST /api/webhooks/facebook`
+
+**Webhook security:**
+- `GET` verification: returns `hub.challenge` when `hub.verify_token` matches `FACEBOOK_VERIFY_TOKEN`
+- `POST` verification: HMAC-SHA256 of raw body against `FACEBOOK_APP_SECRET`; requests without a valid signature are rejected (when `FACEBOOK_APP_SECRET` is configured)
+
+**Graph API usage:**
+- `/{leadgen_id}?fields=field_data,...` — fetch full lead payload
+- `/{page_id}/leadgen_forms` — list forms per page (hourly cache refresh)
+- `/{page_id}/subscribed_apps` — subscribe/unsubscribe app
+- Marketing API: ad accounts, campaigns, ad sets, insights (hourly sync)
+
+**Token management:**
+- All Facebook access tokens are AES-256-CBC encrypted before storage using `ENCRYPTION_KEY`
+- Token resolution priority: LEAD_ROUTING integration config → `facebook_accounts` → `facebook_connections`
+
+---
+
+### Telegram
+
+**How it connects:**
+1. User opens the Telegram settings page in the dashboard
+2. Server generates a one-time `/start <token>` link
+3. User clicks the link and starts the bot; bot receives `/start <token>`, links the chat to the user's account
+4. Chat is saved as type `SYSTEM` (1:1 with bot) or `DELIVERY` (group/channel)
+5. User assigns a delivery chat to a LEAD_ROUTING integration
+
+**Lead notifications:**
+- HTML-formatted messages built in `telegramFormatter.ts`
+- Includes: lead fields (name, phone, email, extras), source (page, form, platform), ad attribution, delivery attempt info
+- Sent only to `DELIVERY`-type chats, never to `SYSTEM` chat
+
+**Bot registration:**
+- On server start, `registerTelegramWebhook(APP_URL)` sets the bot's webhook URL at the Telegram API to `{APP_URL}/api/telegram/webhook`
+- Optional `TELEGRAM_WEBHOOK_SECRET` for request validation
+
+---
+
+### HTTP Destinations (Affiliate / Custom / Templates)
+
+**How it works:**
+1. User creates a Target Website with a URL, HTTP method, content type, and field mapping
+2. Optionally based on an admin-managed destination template (reusable endpoint definition)
+3. When a lead matches a LEAD_ROUTING integration, an `orders` row is created and the HTTP call is dispatched
+
+**Variable injection in URL, headers, and body:**
+- `{{name}}`, `{{phone}}`, `{{email}}`, `{{lead_id}}`, `{{page_id}}`, `{{form_id}}`
+- Any extra field from the lead's `extraFields` JSON
+
+**Success rules:**
+- `http_2xx` — HTTP status 200–299 (default)
+- `json_field` — check a specific field in the JSON response equals an expected value
+- `ok_true` — legacy: `response.ok === true`
+
+**Retry policy:**
+- Max 3 attempts per order
+- 1-hour gap between retries (scheduled by worker)
+- Final failure after 3 attempts → order status `FAILED`, lead `deliveryStatus` updated
+
+---
+
+### Google Sheets
+
+**Not implemented.** No Google Sheets API integration, OAuth, or sync logic exists in this codebase.
+
+---
+
+## 🛠️ Tech Stack
+
+### Backend
+
+| Category | Technology |
+|----------|------------|
+| Runtime | Node.js ≥ 22 |
+| Framework | Express 4.21 |
+| API layer | tRPC 11.6 |
+| Validation | Zod 4.1 |
+| ORM | Drizzle ORM 0.44 |
+| Database | MySQL (mysql2 3.15) |
+| Job queue | BullMQ 5.70 + ioredis 5.10 |
+| Auth | jose 6.1 (JWT), bcryptjs 3.0 |
+| HTTP client | axios 1.13 |
+| Email | nodemailer 8.0 |
+| Telegram | node-telegram-bot-api 0.67 |
+| Security | Helmet 8.1, express-rate-limit 8.3 |
+| Utilities | nanoid 5.1, date-fns 4.1 |
+
+### Frontend
+
+| Category | Technology |
+|----------|------------|
+| Framework | React 19.2 |
+| Build tool | Vite 7.1 |
+| Router | Wouter 3.7 |
+| Server state | TanStack Query 5.90 + tRPC React Query |
+| Forms | react-hook-form 7.64 + @hookform/resolvers |
+| UI primitives | Radix UI (24+ primitives) |
+| Styling | Tailwind CSS 4.1, class-variance-authority |
+| Charts | Recharts 2.15 |
+| Animations | Framer Motion 12.23 |
+| Notifications | Sonner 2.0 |
+| Icons | Lucide React 0.453 |
+
+### Tooling
+
+| Category | Technology |
+|----------|------------|
+| Language | TypeScript 5.9 |
+| Server bundler | esbuild 0.25 |
+| Dev server | tsx 4.19 (ts-node alternative) |
+| Test runner | Vitest |
+| Package manager | pnpm |
+| DB migrations | Drizzle Kit |
+| Deployment | Railway (railway.toml) |
+
+---
+
+## 📦 Installation
+
+### Prerequisites
+
+- Node.js 22+
+- pnpm (`npm install -g pnpm`)
+- MySQL database (local or hosted)
+- Redis (optional — required for durable production queue)
+
+### Steps
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/namas2003/Leadflow.git
-cd Leadflow
+git clone <repository-url>
+cd targenix.uz
 
-# 2. Install dependencies (requires pnpm ≥ 10)
+# 2. Install dependencies
 pnpm install
 
-# 3. Copy and fill in environment variables
-cp .env.example .env
-# Edit .env with your values
+# 3. Create environment file
+cp .env.example .env   # if .env.example exists; otherwise create .env manually
+# Edit .env with your values (see Environment Variables section)
 
-# 4. Push database schema (creates all tables)
+# 4. Run database migrations
 pnpm db:push
 
-# 5. Start the development server (hot-reload on both frontend and backend)
+# 5. Development mode (web server + Vite HMR on a single port)
 pnpm dev
 ```
 
-The app runs at `http://localhost:3000`. Vite proxies frontend requests to the Express backend — both are served from the same port.
-
-To test the webhook locally, use a tunnel tool such as [ngrok](https://ngrok.com):
+### Production
 
 ```bash
-ngrok http 3000
-# Use the https://xxxx.ngrok.io URL as your Facebook callback URL
-```
-
----
-
-## Database Setup
-
-This project uses **Drizzle ORM** with a **MySQL** (or TiDB-compatible) database. No manual SQL is required.
-
-### Tables
-
-| Table | Purpose |
-|---|---|
-| `users` | Manus OAuth user accounts |
-| `leads` | Captured Facebook leads (status: PENDING → RECEIVED / FAILED) |
-| `webhook_events` | Log of all incoming webhook POST requests with signature status |
-| `integrations` | Telegram and Affiliate integration configurations |
-| `facebook_connections` | Facebook Page ID + AES-256-encrypted Access Token pairs |
-| `orders` | Delivery attempt records per integration (PENDING → SENT / FAILED) |
-
-### Applying migrations
-
-```bash
-pnpm db:push
-```
-
-This runs `drizzle-kit generate && drizzle-kit migrate`. It is idempotent — safe to run on every deploy. Drizzle tracks which migrations have been applied.
-
----
-
-## Deployment Guide
-
-### Deploy to Railway
-
-Railway is the closest match to the Manus.space environment (Node.js + MySQL on the same platform).
-
-**Step 1 — Create a new project**
-
-1. Go to [railway.app](https://railway.app) → **New Project**.
-2. Click **"Add Service" → "GitHub Repo"** and select this repository.
-3. Click **"Add Service" → "Database" → "MySQL"** to provision a MySQL instance.
-
-**Step 2 — Set environment variables**
-
-In the Railway service → **Variables**, add all variables from the table above. For `DATABASE_URL`, copy the connection string from your MySQL service's **Connect** tab (use the internal URL for services in the same project).
-
-**Step 3 — Configure build and start commands**
-
-In the service settings, set:
-
-| Setting | Value |
-|---|---|
-| Build Command | `pnpm install && pnpm build` |
-| Start Command | `pnpm db:push && pnpm start` |
-
-The `pnpm db:push` in the start command ensures migrations run automatically on every deploy before the server starts.
-
-**Step 4 — Set `APP_URL`**
-
-After the first deploy, Railway assigns a public URL (e.g., `https://leadflow-production.up.railway.app`). Add this as `APP_URL` and trigger a redeploy.
-
-**Step 5 — Configure Facebook webhook**
-
-Use the URL shown in the **Webhook Health** page of your dashboard as the Facebook callback URL.
-
----
-
-### Deploy to Render
-
-**Step 1 — Create a Web Service**
-
-1. Go to [render.com](https://render.com) → **New → Web Service**.
-2. Connect your GitHub repository.
-3. Configure:
-
-| Setting | Value |
-|---|---|
-| Environment | Node |
-| Build Command | `pnpm install && pnpm build` |
-| Start Command | `pnpm db:push && pnpm start` |
-
-**Step 2 — Add a MySQL database**
-
-Render does not offer MySQL natively. Use one of:
-- [PlanetScale](https://planetscale.com) — free tier, MySQL-compatible, serverless
-- [TiDB Cloud](https://tidbcloud.com) — free tier, fully MySQL-compatible
-- [Railway MySQL](https://railway.app) — provision separately, use the external connection string
-
-Set `DATABASE_URL` from your chosen provider.
-
-**Step 3 — Environment variables**
-
-In Render service settings → **Environment**, add all required variables.
-
-**Step 4 — Set `APP_URL`**
-
-Render assigns a URL like `https://leadflow.onrender.com`. Set this as `APP_URL`.
-
-> **Note on SSE:** Render's free tier may buffer Server-Sent Events. If the live stream on the Webhook Health page does not work, upgrade to a paid plan or use Railway instead.
-
----
-
-### Deploy to VPS (Ubuntu)
-
-This guide assumes Ubuntu 22.04 with a domain name pointed at your server's IP.
-
-**Step 1 — Install system dependencies**
-
-```bash
-# Node.js 22
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# pnpm
-npm install -g pnpm
-
-# PM2 (process manager — keeps the app running after logout/reboot)
-npm install -g pm2
-
-# Nginx (reverse proxy)
-sudo apt-get install -y nginx
-
-# MySQL
-sudo apt-get install -y mysql-server
-sudo mysql_secure_installation
-```
-
-**Step 2 — Create the database**
-
-```bash
-sudo mysql
-```
-
-```sql
-CREATE DATABASE leadflow CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'leadflow'@'localhost' IDENTIFIED BY 'your_strong_password';
-GRANT ALL PRIVILEGES ON leadflow.* TO 'leadflow'@'localhost';
-FLUSH PRIVILEGES;
-EXIT;
-```
-
-**Step 3 — Clone and configure**
-
-```bash
-git clone https://github.com/namas2003/Leadflow.git /var/www/leadflow
-cd /var/www/leadflow
-
-pnpm install
-
-cp .env.example .env
-nano .env
-# Fill in all required variables. Example DATABASE_URL:
-# DATABASE_URL=mysql://leadflow:your_strong_password@localhost:3306/leadflow
-# APP_URL=https://your-domain.com
-```
-
-**Step 4 — Build and migrate**
-
-```bash
+# Build frontend SPA + server bundle + worker bundle
 pnpm build
-pnpm db:push
+
+# Start web server (serves API + static frontend)
+pnpm start
+
+# Start worker process (required for durable queue + background schedulers)
+pnpm start:worker
 ```
 
-**Step 5 — Start with PM2**
+Run both `pnpm start` and `pnpm start:worker` as separate processes in production. Use **PM2**, **systemd**, or Railway's multi-service config (`railway.toml` already defines both).
 
-```bash
-pm2 start "pnpm start" --name leadflow
-pm2 save
-pm2 startup
-# Copy and run the command that pm2 prints — this enables auto-start on reboot
-```
+### Railway Deployment
 
-**Step 6 — Configure Nginx**
+The repository includes `railway.toml` with two services pre-configured:
 
-```bash
-sudo nano /etc/nginx/sites-available/leadflow
-```
+| Service | Command |
+|---------|---------|
+| Web | `NODE_ENV=production node dist/index.js` |
+| Worker | `NODE_ENV=production node dist/worker.js` |
 
-```nginx
-server {
-    listen 80;
-    server_name your-domain.com;
-
-    location / {
-        proxy_pass http://localhost:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-
-        # Required for SSE (Server-Sent Events live stream)
-        proxy_buffering off;
-        proxy_read_timeout 86400s;
-    }
-}
-```
-
-```bash
-sudo ln -s /etc/nginx/sites-available/leadflow /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-
-# SSL with Let's Encrypt (free)
-sudo apt-get install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d your-domain.com
-```
-
-**Step 7 — Update `APP_URL` and restart**
-
-```bash
-# Edit .env and set APP_URL=https://your-domain.com
-nano .env
-pm2 restart leadflow
-```
+Set all required environment variables in Railway's Variables panel and deploy.
 
 ---
 
-## Facebook Webhook Configuration
+## 🔐 Environment Variables
 
-Once deployed, configure the webhook in the Facebook Developer Console:
+### Required (server startup will fail without these)
 
-1. Go to [developers.facebook.com](https://developers.facebook.com) → your App → **Webhooks**.
-2. Select product: **Page**.
-3. Click **"Add Callback URL"** and enter:
-   - **Callback URL:** `https://your-domain.com/api/webhooks/facebook`
-   - **Verify Token:** the value you set as `FACEBOOK_VERIFY_TOKEN`
-4. Click **"Verify and Save"** — the server responds to the GET verification request automatically.
-5. Subscribe to the **`leadgen`** field.
-6. Go to **FB Connections** in the dashboard and add your Page ID and Long-Lived Page Access Token.
+| Variable | Description |
+|----------|-------------|
+| `APP_URL` | Full public URL, e.g. `https://app.targenix.uz`. Must use `https://` in production. Used for OAuth redirects, Telegram webhook registration, and email links. |
+| `DATABASE_URL` | MySQL connection string. Also accepts `MYSQL_URL` or `MYSQL_PUBLIC_URL` (Railway naming). At least one must be set. |
+| `FACEBOOK_APP_SECRET` | Meta app secret. Enables HMAC-SHA256 verification on incoming webhooks. |
+| `FACEBOOK_VERIFY_TOKEN` | Arbitrary token configured in Meta's Webhooks UI to verify hub challenge requests. |
+| `ENCRYPTION_KEY` | Exactly **32 characters**. AES-256-CBC key for encrypting stored Facebook tokens. Changing this invalidates all existing encrypted tokens. |
+| `JWT_SECRET` | At least **32 characters**. Signs session JWT cookies. |
 
-> **Development vs Live mode:** Facebook only delivers real lead webhooks to apps in **Live mode**. In Development mode, use the "Send to My Server" test button in the Webhooks dashboard (under the `leadgen` field), or use the [Lead Ads Testing Tool](https://developers.facebook.com/tools/lead-ads-testing) to generate real lead IDs that the Graph API can resolve.
+### Required for Production Reliability
 
-### Obtaining a Long-Lived Page Access Token
+| Variable | Description |
+|----------|-------------|
+| `REDIS_URL` | Redis connection string. Enables BullMQ durable queue. Without this, leads are processed in-process only (not durable across restarts). The worker process exits if this is not set. |
 
-```bash
-# 1. Get a short-lived token from Graph API Explorer:
-#    https://developers.facebook.com/tools/explorer/
-#    Permissions needed: pages_read_engagement, leads_retrieval, pages_manage_metadata
+### Facebook
 
-# 2. Exchange for a long-lived token (~60 days):
-curl "https://graph.facebook.com/oauth/access_token\
-?grant_type=fb_exchange_token\
-&client_id=YOUR_APP_ID\
-&client_secret=YOUR_APP_SECRET\
-&fb_exchange_token=SHORT_LIVED_TOKEN"
-```
+| Variable | Description |
+|----------|-------------|
+| `FACEBOOK_APP_ID` | Meta App ID, used server-side for OAuth token exchange. |
+| `VITE_FACEBOOK_APP_ID` | Same value, injected into the client build for the Facebook JS SDK (`FB.init`). Must be set at build time. |
 
-Enter the resulting token in the **FB Connections** page of the dashboard. It is encrypted with AES-256-CBC before being stored in the database.
+### Telegram
 
----
+| Variable | Description |
+|----------|-------------|
+| `TELEGRAM_BOT_TOKEN` | Telegram Bot API token. Required for Telegram delivery destination. |
+| `TELEGRAM_BOT_USERNAME` | Bot username (without `@`). Optional; defaults to `Targenixbot`. |
+| `TELEGRAM_WEBHOOK_SECRET` | Optional secret token for validating incoming Telegram webhook requests. |
 
-## API Endpoints
+### Email (Password Reset)
 
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/api/webhooks/facebook` | Facebook hub.challenge verification |
-| `POST` | `/api/webhooks/facebook` | Receive lead events from Facebook |
-| `GET` | `/api/webhooks/events/stream` | SSE stream for real-time event monitoring |
-| `POST` | `/api/trpc/leads.list` | Paginated lead list with search and status filter |
-| `POST` | `/api/trpc/leads.getById` | Single lead with order history |
-| `POST` | `/api/trpc/leads.stats` | Lead counts by status |
-| `POST` | `/api/trpc/leads.pollFromForm` | Sync leads from a Facebook Form ID |
-| `POST` | `/api/trpc/integrations.list` | List all integrations |
-| `POST` | `/api/trpc/integrations.create` | Add Telegram or Affiliate integration |
-| `POST` | `/api/trpc/integrations.toggle` | Enable/disable an integration |
-| `POST` | `/api/trpc/integrations.delete` | Remove an integration |
-| `POST` | `/api/trpc/facebook.listConnections` | List Facebook Page connections |
-| `POST` | `/api/trpc/facebook.createConnection` | Add a Page connection |
-| `POST` | `/api/trpc/facebook.deleteConnection` | Remove a Page connection |
-| `POST` | `/api/trpc/facebook.webhookUrl` | Get the configured webhook callback URL |
-| `POST` | `/api/trpc/webhook.recentEvents` | Last 30 webhook events from DB |
-| `POST` | `/api/trpc/webhook.stats` | Webhook event counts |
+| Variable | Description |
+|----------|-------------|
+| `SMTP_HOST` | SMTP server hostname. |
+| `SMTP_PORT` | SMTP port (e.g. `587` for STARTTLS, `465` for SSL). |
+| `SMTP_USER` | SMTP username / email address. |
+| `SMTP_PASS` | SMTP password. |
+| `SMTP_FROM` | From address for outbound emails. Falls back to `SMTP_USER` if not set. |
 
----
+### Optional / Ancillary
 
-## Project Structure
+| Variable | Description |
+|----------|-------------|
+| `PORT` | HTTP listen port. Defaults to `3000`. |
+| `NODE_ENV` | `development` or `production`. Affects Vite mode, CSP assumptions, cookie security flags. |
+| `OWNER_OPEN_ID` | OpenID of the initial admin user. Used by env helpers for owner-scoped behavior. |
+| `VITE_ANALYTICS_ENDPOINT` | Umami analytics script endpoint. Injected into `client/index.html` at build time. |
+| `VITE_ANALYTICS_WEBSITE_ID` | Umami website ID. |
+| `BUILT_IN_FORGE_API_URL` | Optional internal API URL for the built-in forge/map integration. |
+| `BUILT_IN_FORGE_API_KEY` | API key for the forge integration. |
+| `VITE_FRONTEND_FORGE_API_URL` | Client-side forge API URL (injected at Vite build time). |
+| `VITE_FRONTEND_FORGE_API_KEY` | Client-side forge API key. |
 
-```
-├── client/                       # React 19 frontend (Vite)
-│   └── src/
-│       ├── pages/
-│       │   ├── Home.tsx              # Overview dashboard with stats
-│       │   ├── Leads.tsx             # Lead list + Sync from Facebook dialog
-│       │   ├── WebhookHealth.tsx     # Real-time SSE event monitor + DB log
-│       │   ├── Integrations.tsx      # Telegram + Affiliate config
-│       │   └── FacebookConnections.tsx
-│       └── components/
-│           └── DashboardLayout.tsx   # Sidebar navigation shell
-│
-├── server/                       # Express + tRPC backend
-│   ├── _core/                    # Framework plumbing (OAuth, tRPC context, env)
-│   ├── routers/
-│   │   ├── leadsRouter.ts            # Lead CRUD + polling mutation
-│   │   ├── integrationsRouter.ts     # Integration CRUD
-│   │   ├── facebookRouter.ts         # FB connections + webhookUrl query
-│   │   └── webhookRouter.ts          # Webhook stats + recent events
-│   ├── services/
-│   │   ├── facebookService.ts        # Graph API client + signature verification
-│   │   ├── leadService.ts            # Lead save + enrichment orchestration
-│   │   ├── telegramService.ts        # Telegram Bot API
-│   │   └── affiliateService.ts       # Affiliate POST + exponential-backoff retry
-│   ├── webhooks/
-│   │   ├── facebookWebhook.ts        # GET verify + POST handler + SSE endpoint
-│   │   └── sseEmitter.ts             # Server-Sent Events broadcaster (in-memory)
-│   ├── encryption.ts                 # AES-256-CBC encrypt/decrypt helpers
-│   ├── db.ts                         # Drizzle query helpers
-│   └── routers.ts                    # Root tRPC router
-│
-├── drizzle/
-│   ├── schema.ts                     # All table definitions (source of truth)
-│   └── *.sql                         # Auto-generated migration files
-│
-├── shared/
-│   └── const.ts                      # Shared constants (cookie name, etc.)
-│
-├── .gitignore
-├── .env.example                      # Template for environment variables
-├── drizzle.config.ts
-├── package.json
-├── tsconfig.json
-└── vite.config.ts
-```
+> **Note:** All `VITE_*` variables must be present **at build time** (`pnpm build`). They are statically embedded in the frontend bundle by Vite and cannot be changed at runtime.
 
 ---
 
-## Running Tests
+## 📡 API Endpoints
+
+### REST (Express)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/health` | None | System health: DB status, last webhook time, dispatch mode, uptime |
+| `GET` | `/api/webhooks/facebook` | None | Meta hub challenge verification |
+| `POST` | `/api/webhooks/facebook` | HMAC | Facebook leadgen webhook ingestion (rate limit: 300 req/min) |
+| `GET` | `/api/webhooks/events/stream` | Admin | SSE stream of real-time webhook events |
+| `POST` | `/api/telegram/webhook` | Secret | Telegram bot update handler (rate limit: 300 req/min) |
+| `GET` | `/api/auth/facebook/start` | Session | Redirect to Facebook login OAuth |
+| `GET` | `/api/auth/facebook/callback` | None | Facebook login OAuth callback |
+| `GET` | `/api/auth/facebook/connect-start` | Session | Start Facebook page connection OAuth |
+| `GET` | `/api/auth/facebook/connect-callback` | None | Page connection OAuth callback |
+
+### tRPC (`/api/trpc/*`)
+
+All procedures use tRPC's batched HTTP transport. Types are inferred from router definitions.
+
+| Namespace | Key Procedures |
+|-----------|----------------|
+| `auth` | `register`, `login`, `logout`, `me`, `forgotPassword`, `resetPassword`, `facebookLogin`, `deleteAccount` |
+| `leads` | `list` (paginated + filtered), `getById`, `getStats`, `getCount`, `resync`, `pollFacebookForm`, `retryLead`, `retryAllFailed` |
+| `integrations` | `list`, `create` (LEAD_ROUTING), `update`, `delete`, `testLead` |
+| `facebookAccounts` | `list`, `connect`, `disconnect`, `getPages` |
+| `targetWebsites` | `list`, `create`, `update`, `delete`, `testDelivery` |
+| `telegram` | `connectSystemChat`, `listChats`, `disconnectChat`, `updateDeliveryMode`, `setDefaultDeliveryChat` |
+| `webhook` | Admin stats, recent events |
+| `logs` | Paginated structured log query (admin) |
+| `adminLeads` | Global leads browser (admin) |
+| `adminBackfill` | Bulk resync operations (admin) |
+| `adminTemplates` | Destination template CRUD (admin) |
+| `adAnalytics` | Ad accounts, campaigns, ad sets, campaign insights |
+| `system` | System-level configuration queries |
+
+---
+
+## 🧪 Testing
+
+### Run Unit Tests
 
 ```bash
 pnpm test
+# or equivalently
+pnpm exec vitest run
 ```
 
-The test suite covers:
-- Webhook HMAC-SHA256 signature verification (valid and invalid signatures)
-- Lead tRPC router procedures (list, stats)
-- AES-256-CBC encryption and decryption round-trip
-- Auth logout cookie clearing
+### Test Files
 
-All 9 tests pass with no external dependencies (no database or network required).
+| File | What it covers |
+|------|----------------|
+| `server/affiliateService.test.ts` | Variable injection, success rule evaluation, HTTP delivery |
+| `server/auth.logout.test.ts` | Session cookie clearing on logout |
+| `server/encryption.test.ts` | AES-256-CBC token encrypt / decrypt round-trip |
+| `server/httpLogging.test.ts` | HTTP request / response structured logging |
+| `server/logRetentionScheduler.test.ts` | Log cleanup policy (USER 48h, SYSTEM 30d) |
+| `server/multiTenantIsolation.test.ts` | userId-scoped query isolation |
+| `server/publicUser.test.ts` | Unauthenticated request context handling |
+| `server/retryScheduler.test.ts` | Order retry logic, stuck lead detection, Graph error retry |
+| `server/telegramFormatter.test.ts` | HTML message formatting for lead notifications |
+| `server/webhook.signature.test.ts` | HMAC-SHA256 webhook signature verification |
+
+> There are no E2E or browser tests in this repository.
+
+### Manual Integration Testing
+
+1. Set `FACEBOOK_APP_SECRET` and `FACEBOOK_VERIFY_TOKEN` in `.env`
+2. Configure Meta's webhook to `https://<your-host>/api/webhooks/facebook`
+3. Connect a Facebook Page in the dashboard (`/connections`)
+4. Create a LEAD_ROUTING integration (`/integrations/new-routing`) pointing to a Telegram chat or HTTP destination
+5. Use Meta's **"Send Test Lead"** button in the Lead Ads form setup, or run `integrations.testLead` from the Integrations UI
+6. Verify rows appear in `leads` and `orders` tables and the destination receives the payload
 
 ---
 
-## Processing Flow (Step by Step)
+## 📊 Current Status
 
-1. Facebook POSTs `{ "object": "page", "entry": [{ "changes": [{ "field": "leadgen", "value": { "leadgen_id": "...", "page_id": "..." } }] }] }` to `/api/webhooks/facebook`.
-2. Server verifies `X-Hub-Signature-256` header using `FACEBOOK_APP_SECRET`.
-3. Webhook event is logged to `webhook_events` table.
-4. Server returns `200 OK` immediately (Facebook requires a response within 5 seconds).
-5. `setImmediate()` schedules asynchronous lead processing.
-6. Lead record is inserted into `leads` table with status `PENDING`.
-7. Server looks up the matching `facebook_connections` record by `page_id`.
-8. Page Access Token is decrypted from AES-256-CBC storage.
-9. `GET https://graph.facebook.com/v19.0/{leadgen_id}?access_token=...` fetches full lead data.
-10. Lead record is updated with `fullName`, `phone`, `email` and status `RECEIVED`.
-11. For each active integration: Telegram message is sent, or Affiliate endpoint is POSTed.
-12. Failed deliveries are retried up to 3 times with exponential backoff (1s, 2s, 4s).
-13. SSE stream broadcasts the event to any connected Webhook Health dashboard clients.
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Facebook webhook ingestion | Working | HMAC verification, multi-tenant fan-out, event logging |
+| Graph API enrichment | Working | Full field_data, ad attribution, platform detection |
+| Lead pipeline (dataStatus / deliveryStatus) | Working | PENDING → ENRICHED / ERROR; order-level tracking |
+| Telegram delivery | Working | Requires `TELEGRAM_BOT_TOKEN`; HTML-formatted messages |
+| HTTP destinations (affiliate / custom) | Working | Variable injection, retry policy, success rules |
+| Admin destination templates | Working | Admin creates; users select and configure |
+| Facebook account & page OAuth | Working | Long-lived encrypted tokens; page subscription |
+| Email authentication | Working | bcrypt + JWT session cookies |
+| Facebook Login | Working | OAuth code flow; upserts user via `facebook:{id}` openId |
+| Password reset via email | Working | Requires SMTP environment variables |
+| BullMQ durable queue | Working (optional) | Requires `REDIS_URL`; degrades gracefully without it |
+| Worker background schedulers | Working | Requires separate `pnpm start:worker` process |
+| Ad account / campaign sync | Working | Hourly sync from Facebook Marketing API |
+| Dashboard analytics | Working | Lead counts, delivery rates, ad performance |
+| i18n (en / ru / uz) | Working | Locale JSON files; React context provider |
+| Admin tools (logs, backfill, templates) | Working | Role-gated to `admin` users |
+| Google Sheets integration | **Not implemented** | No Sheets API code exists |
+| In-app AI chat | **Not exposed** | Dependencies present; routes not registered |
+| E2E / browser test suite | **Not implemented** | Unit tests only |
 
 ---
 
-## License
+## 🚧 Roadmap
 
-MIT
+The following are potential next steps — not committed deliverables:
+
+- **Google Sheets destination** — export leads to a Sheets spreadsheet via OAuth-authenticated Google Sheets API with batching support
+- **Additional destination types** — Slack, email, Airtable, custom webhooks with richer mapping UI
+- **Multi-step workflow automation** — visual canvas for chaining actions beyond a single page→form→destination rule
+- **Webhook replay / dead-letter UI** — operator UI to inspect, replay, or discard failed webhook events from `webhook_events` table
+- **E2E test suite** — Playwright tests against a staging Meta test app and a seeded database
+- **OpenTelemetry** — standardised traces and metrics across web and worker processes (currently: health endpoint + structured logs + SSE)
+- **Billing / subscription management** — per-user plan limits on leads per month, integrations, and destinations
+- **Lead deduplication** — configurable rules to suppress duplicate leads within a time window
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository and create a feature branch from `main`
+2. Follow the existing TypeScript and tRPC patterns; all new API procedures should go through the router hierarchy in `server/routers/`
+3. Maintain **multi-tenant isolation** — every query must filter by `userId`; no cross-tenant data leaks
+4. Do not bypass webhook signature verification in new code paths
+5. Run checks before opening a PR:
+   ```bash
+   pnpm check   # TypeScript type-check
+   pnpm test    # Vitest unit tests
+   ```
+6. Keep PRs focused; separate refactors from feature additions
+
+---
+
+## 📄 License
+
+**MIT** — see `"license": "MIT"` in `package.json`.

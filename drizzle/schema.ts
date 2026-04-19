@@ -173,6 +173,56 @@ export const facebookForms = mysqlTable("facebook_forms", {
 export type FacebookForm = typeof facebookForms.$inferSelect;
 export type InsertFacebookForm = typeof facebookForms.$inferInsert;
 
+// ─── Google Accounts ──────────────────────────────────────────────────────────
+// One row per connected Google account per platform user.
+// One user can connect multiple Google accounts (multiple Google emails).
+export const googleAccounts = mysqlTable("google_accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  /** Google account email address */
+  email: varchar("email", { length: 320 }).notNull(),
+  /** Display name from Google profile */
+  name: varchar("name", { length: 255 }),
+  /** Google profile picture URL */
+  picture: varchar("picture", { length: 512 }),
+  /** OAuth access token — stored AES-256-CBC encrypted */
+  accessToken: text("accessToken").notNull(),
+  /** OAuth refresh token — stored AES-256-CBC encrypted. Null if not returned (already connected). */
+  refreshToken: text("refreshToken"),
+  /** Absolute timestamp when the access token expires */
+  expiryDate: timestamp("expiryDate"),
+  connectedAt: timestamp("connectedAt").defaultNow().notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  // One Google account (by email) per platform user
+  uqUserEmail: uniqueIndex("uq_google_accounts_user_email").on(t.userId, t.email),
+  idxUserId: index("idx_google_accounts_user_id").on(t.userId),
+}));
+
+export type GoogleAccount = typeof googleAccounts.$inferSelect;
+export type InsertGoogleAccount = typeof googleAccounts.$inferInsert;
+
+// ─── Google OAuth States (CSRF protection) ────────────────────────────────────
+// Short-lived tokens stored during the OAuth authorization_code flow.
+// Verified on callback to prevent CSRF attacks; deleted immediately after use.
+export const googleOauthStates = mysqlTable("google_oauth_states", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Cryptographically random 64-hex-char state token */
+  state: varchar("state", { length: 128 }).notNull(),
+  /** Platform user who initiated the flow */
+  userId: int("userId").notNull(),
+  /** 10-minute TTL */
+  expiresAt: timestamp("expiresAt").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  uqState: uniqueIndex("uq_google_oauth_states_state").on(t.state),
+  idxUserId: index("idx_google_oauth_states_user_id").on(t.userId),
+}));
+
+export type GoogleOauthState = typeof googleOauthStates.$inferSelect;
+export type InsertGoogleOauthState = typeof googleOauthStates.$inferInsert;
+
 // ─── Destination Templates (Admin-managed) ─────────────────────────────────────
 // Admin-defined affiliate endpoint templates.
 // Users pick a template when creating a destination — no code changes needed for new affiliates.

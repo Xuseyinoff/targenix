@@ -14,6 +14,7 @@ import { serveStatic, setupVite } from "./vite";
 import facebookWebhookRouter from "../webhooks/facebookWebhook";
 import { registerFacebookOAuthRoutes } from "../routes/facebookOAuthCallback";
 import { registerFacebookLoginRoutes } from "../routes/facebookLoginOAuth";
+import { registerGoogleOAuthRoutes } from "../routes/googleOAuth";
 import { handleTelegramWebhook, registerTelegramWebhook } from "../webhooks/telegramWebhook";
 import { log } from "../services/appLogger";
 import { getLeadDispatchMode } from "../services/leadDispatch";
@@ -256,6 +257,8 @@ async function startServer() {
   registerFacebookOAuthRoutes(app);
   // Facebook Login/Register OAuth (separate from connection flow)
   registerFacebookLoginRoutes(app);
+  // Google OAuth 2.0 (account connection — Sheets, Drive, etc.)
+  registerGoogleOAuthRoutes(app);
   // Chat API disabled — no auth guard; re-enable with session check when needed
   // registerChatRoutes(app);
   // tRPC API

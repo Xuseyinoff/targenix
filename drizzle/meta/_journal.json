@@ -267,6 +267,20 @@
       "when": 1776225000000,
       "tag": "0037_telegram_destination_delivery_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "5",
+      "when": 1776230000000,
+      "tag": "0038_remove_telegram_integration_type",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "5",
+      "when": 1776240000000,
+      "tag": "0039_telegram_destination",
+      "breakpoints": true
     }
   ]
 }

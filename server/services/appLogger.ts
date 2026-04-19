@@ -23,7 +23,8 @@ export type LogCategory =
   | "HTTP"
   | "FACEBOOK"
   | "TELEGRAM"
-  | "AFFILIATE";
+  | "AFFILIATE"
+  | "GOOGLE";
 
 export type LogType = "USER" | "SYSTEM";
 

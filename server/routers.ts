@@ -12,6 +12,7 @@ import { adminTemplatesRouter } from "./routers/adminTemplatesRouter";
 import { adminLeadsRouter } from "./routers/adminLeadsRouter";
 import { adAnalyticsRouter } from "./routers/adAnalyticsRouter";
 import { systemRouter } from "./_core/systemRouter";
+import { googleAccountsRouter } from "./routers/googleAccountsRouter";
 
 export const appRouter = router({
   system: systemRouter,
@@ -19,6 +20,7 @@ export const appRouter = router({
   leads: leadsRouter,
   integrations: integrationsRouter,
   facebookAccounts: facebookAccountsRouter,
+  googleAccounts: googleAccountsRouter,
   targetWebsites: targetWebsitesRouter,
   webhook: webhookRouter,
   logs: logsRouter,
