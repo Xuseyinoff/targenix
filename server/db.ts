@@ -75,6 +75,8 @@ export async function getDb() {
   return _db;
 }
 
+export type DbClient = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+
 // ─── Users ────────────────────────────────────────────────────────────────────
 export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) throw new Error("User openId is required for upsert");

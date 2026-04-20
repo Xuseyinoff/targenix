@@ -8,6 +8,7 @@ import { injectVariables } from "./affiliateService";
 import { affiliateAdapter } from "../integrations/adapters/affiliateAdapter";
 import { plainUrlAdapter } from "../integrations/adapters/plainUrlAdapter";
 import { legacyTemplateAdapter } from "../integrations/adapters/legacyTemplateAdapter";
+import { dynamicTemplateAdapter } from "../integrations/adapters/dynamicTemplateAdapter";
 import { sendTelegramRawMessage } from "./telegramService";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
@@ -610,7 +611,6 @@ async function runOrderIntegrationSend(params: {
     let destinationTelegramChatId: string | null = null;
     const twId = integration.targetWebsiteId ?? (config.targetWebsiteId ? Number(config.targetWebsiteId) : null);
     if (twId) {
-      const { targetWebsites, destinationTemplates } = await import("../../drizzle/schema");
       const [tw] = await db.select().from(targetWebsites).where(eq(targetWebsites.id, twId)).limit(1);
       if (tw && tw.userId !== userId) {
         result = { success: false, error: "Target website owner mismatch", errorType: "validation" };
@@ -618,19 +618,10 @@ async function runOrderIntegrationSend(params: {
         destinationTelegramChatId = (tw as { telegramChatId?: string | null } | undefined)?.telegramChatId?.trim?.() ?? null;
         const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
         if (tw && tw.templateId) {
-          const { sendLeadViaTemplate } = await import("./affiliateService");
-          const [dynTpl] = await db
-            .select()
-            .from(destinationTemplates)
-            .where(eq(destinationTemplates.id, tw.templateId))
-            .limit(1);
-          if (dynTpl) {
-            targetUrlUsed = dynTpl.endpointUrl ?? undefined;
-            result = await sendLeadViaTemplate(dynTpl, tw.templateConfig, leadPayload, variableFields);
-          } else {
-            targetUrlUsed = undefined;
-            result = { success: false, error: `Template ${tw.templateId} not found`, errorType: "validation" };
-          }
+          result = await dynamicTemplateAdapter.send(
+            { db, targetWebsite: tw, variableFields },
+            leadPayload,
+          );
         } else if (tw && tw.templateType === "telegram") {
           const cfg = (tw.templateConfig ?? {}) as { botTokenEncrypted?: string; chatId?: string; messageTemplate?: string };
           if (!cfg.botTokenEncrypted || !cfg.chatId) {
