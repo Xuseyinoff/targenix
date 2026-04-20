@@ -274,6 +274,44 @@ export const destinationTemplates = mysqlTable("destination_templates", {
 export type DestinationTemplate = typeof destinationTemplates.$inferSelect;
 export type InsertDestinationTemplate = typeof destinationTemplates.$inferInsert;
 
+// ─── Connections (unified credential store) ──────────────────────────────────
+// A per-user library of reusable connections (Google Sheets accounts, Telegram
+// bots, future API keys). Replaces scattered credential storage inside
+// target_websites.templateConfig. Step 1 scaffold — additive only; delivery
+// code still reads from templateConfig until adapters migrate to connectionId.
+//
+// Credentials storage by type:
+//   google_sheets → googleAccountId references googleAccounts.id
+//   telegram_bot  → credentialsJson = { botTokenEncrypted, chatId }
+//   api_key       → credentialsJson = { apiKeyEncrypted, ... }
+//
+// FK enforcement (googleAccountId → google_accounts.id ON DELETE SET NULL)
+// is declared in migration 0043_connections.sql, not here. This matches the
+// convention used by other tables in this file.
+export const connections = mysqlTable("connections", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: int("userId").notNull(),
+  type: mysqlEnum("type", ["google_sheets", "telegram_bot", "api_key"]).notNull(),
+  /** Human-readable label shown in the UI, e.g. "Google Sheets (user@gmail.com)" */
+  displayName: varchar("displayName", { length: 255 }).notNull(),
+  /** Lifecycle status; adapters treat non-'active' as "fall back to templateConfig". */
+  status: mysqlEnum("status", ["active", "expired", "revoked", "error"]).default("active").notNull(),
+  /** FK → google_accounts.id (ON DELETE SET NULL at DB level). Populated only when type = 'google_sheets'. */
+  googleAccountId: int("googleAccountId"),
+  /** Encrypted credentials for telegram_bot / api_key types. NULL for google_sheets. */
+  credentialsJson: json("credentialsJson"),
+  /** Last successful verification timestamp; used by health checks. */
+  lastVerifiedAt: timestamp("lastVerifiedAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  idxUserId: index("idx_connections_user_id").on(t.userId),
+  idxUserType: index("idx_connections_user_type").on(t.userId, t.type),
+}));
+
+export type Connection = typeof connections.$inferSelect;
+export type InsertConnection = typeof connections.$inferInsert;
+
 // ─── Target Websites ──────────────────────────────────────────────────────────
 // A list of affiliate/CRM websites that leads are routed to.
 //
@@ -302,6 +340,13 @@ export const targetWebsites = mysqlTable("target_websites", {
   isActive: boolean("isActive").default(true).notNull(),
   /** Hex color for visual distinction in UI (e.g., #3b82f6) */
   color: varchar("color", { length: 7 }).default("#6366f1").notNull(),
+  /**
+   * FK → connections.id (ON DELETE SET NULL at DB level, see migration 0043).
+   * Nullable — adapters prefer the linked connection when set, otherwise fall
+   * back to credentials embedded in templateConfig. This keeps legacy rows and
+   * tests working without any data migration.
+   */
+  connectionId: int("connectionId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 

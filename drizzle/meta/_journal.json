@@ -302,6 +302,13 @@
       "when": 1776270000000,
       "tag": "0042_destination_templates_category",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "5",
+      "when": 1776870000000,
+      "tag": "0043_connections",
+      "breakpoints": true
     }
   ]
 }
