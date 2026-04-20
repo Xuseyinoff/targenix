@@ -6,6 +6,7 @@ import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 import { sendAffiliateOrderByTemplate, injectVariables, type TemplateType, type TemplateConfig } from "./affiliateService";
 import { affiliateAdapter } from "../integrations/adapters/affiliateAdapter";
+import { plainUrlAdapter } from "../integrations/adapters/plainUrlAdapter";
 import { sendTelegramRawMessage } from "./telegramService";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
@@ -707,12 +708,12 @@ async function runOrderIntegrationSend(params: {
           );
         } else {
           targetUrlUsed = (config.targetUrl as string | undefined) ?? undefined;
-          result = await sendLeadToTargetWebsite(config, leadPayload);
+          result = await plainUrlAdapter.send(config, leadPayload);
         }
       }
     } else {
       targetUrlUsed = (config.targetUrl as string | undefined) ?? undefined;
-      result = await sendLeadToTargetWebsite(config, leadPayload);
+      result = await plainUrlAdapter.send(config, leadPayload);
     }
     result.durationMs = Date.now() - _t0Routing;
     await log[result.success ? "info" : "warn"](
