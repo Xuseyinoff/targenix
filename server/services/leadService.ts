@@ -4,9 +4,10 @@ import { getDb } from "../db";
 import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
-import { sendAffiliateOrderByTemplate, injectVariables, type TemplateType, type TemplateConfig } from "./affiliateService";
+import { injectVariables } from "./affiliateService";
 import { affiliateAdapter } from "../integrations/adapters/affiliateAdapter";
 import { plainUrlAdapter } from "../integrations/adapters/plainUrlAdapter";
+import { legacyTemplateAdapter } from "../integrations/adapters/legacyTemplateAdapter";
 import { sendTelegramRawMessage } from "./telegramService";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
@@ -699,13 +700,12 @@ async function runOrderIntegrationSend(params: {
           }
         } else if (tw && tw.templateType) {
           targetUrlUsed = (tw.url as string | null) ?? undefined;
-          result = await sendAffiliateOrderByTemplate(
-            tw.templateType as TemplateType,
-            tw.templateConfig as TemplateConfig,
-            leadPayload,
+          result = await legacyTemplateAdapter.send({
+            templateType: tw.templateType,
+            templateConfig: tw.templateConfig,
             variableFields,
-            tw.url ?? "",
-          );
+            url: tw.url,
+          }, leadPayload);
         } else {
           targetUrlUsed = (config.targetUrl as string | undefined) ?? undefined;
           result = await plainUrlAdapter.send(config, leadPayload);
