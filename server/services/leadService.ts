@@ -4,7 +4,8 @@ import { getDb } from "../db";
 import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
-import { sendAffiliateOrder, sendAffiliateOrderByTemplate, injectVariables, type AffiliateConfig, type TemplateType, type TemplateConfig } from "./affiliateService";
+import { sendAffiliateOrderByTemplate, injectVariables, type TemplateType, type TemplateConfig } from "./affiliateService";
+import { affiliateAdapter } from "../integrations/adapters/affiliateAdapter";
 import { sendTelegramRawMessage } from "./telegramService";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
@@ -565,9 +566,8 @@ async function runOrderIntegrationSend(params: {
   let result: IntegrationDeliveryResult;
 
   if (integration.type === "AFFILIATE") {
-    const config = integration.config as AffiliateConfig;
     const _t0Affiliate = Date.now();
-    result = await sendAffiliateOrder(config, leadPayload);
+    result = await affiliateAdapter.send(integration.config, leadPayload);
     result.durationMs = Date.now() - _t0Affiliate;
     await log[result.success ? "info" : "warn"](
       "AFFILIATE",
