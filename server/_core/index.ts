@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "../integrations";
 import { validateEnv } from "./validateEnv";
 validateEnv();
 import express from "express";
