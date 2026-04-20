@@ -624,12 +624,24 @@ async function runOrderIntegrationSend(params: {
           );
         } else if (tw && tw.templateType === "telegram") {
           result = await telegramAdapter.send(
-            { templateConfig: tw.templateConfig, leadRow: lead },
+            {
+              templateConfig: tw.templateConfig,
+              leadRow: lead,
+              db,
+              userId,
+              connectionId: tw.connectionId ?? null,
+            },
             leadPayload,
           );
         } else if (tw && tw.templateType === "google-sheets") {
           result = await googleSheetsAdapter.send(
-            { templateConfig: tw.templateConfig, userId, leadRow: lead },
+            {
+              templateConfig: tw.templateConfig,
+              userId,
+              leadRow: lead,
+              db,
+              connectionId: tw.connectionId ?? null,
+            },
             leadPayload,
           );
         } else if (tw && tw.templateType) {

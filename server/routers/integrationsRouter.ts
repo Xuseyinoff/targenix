@@ -185,6 +185,8 @@ export const integrationsRouter = router({
                 templateConfig: tw.templateConfig,
                 userId: ctx.user.id,
                 leadRow: { createdAt: testLeadTimestamp },
+                db,
+                connectionId: tw.connectionId ?? null,
               },
               { ...testLead, extraFields: {} },
             );
