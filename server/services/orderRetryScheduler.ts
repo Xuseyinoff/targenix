@@ -1,6 +1,7 @@
 /**
- * Order-level auto-retry: re-sends FAILED integrations on a fixed interval
- * without re-running Facebook Graph enrichment (see retryFailedOrderDelivery).
+ * Order-level auto-retry: picks FAILED orders whose `nextRetryAt` is due and
+ * re-sends without re-running Facebook Graph enrichment (see retryFailedOrderDelivery).
+ * Retry spacing is set on each failed attempt in `persistOrderDeliveryAttemptResult`.
  */
 
 import { and, eq, isNotNull, lt, lte } from "drizzle-orm";

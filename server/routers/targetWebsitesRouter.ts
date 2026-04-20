@@ -36,6 +36,11 @@ import {
 import { assertSafeOutboundUrl } from "../lib/urlSafety";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { sendTelegramRawMessage } from "../services/telegramService";
+import {
+  appendLeadToGoogleSheet,
+  buildGoogleSheetsAppendRow,
+  getGoogleSheetHeaders,
+} from "../services/googleSheetsService";
 
 async function validateTargetUrl(url: string): Promise<void> {
   await assertSafeOutboundUrl(url);
@@ -140,6 +145,8 @@ function categoryFromTemplateType(templateType: string): DestinationListCategory
     case "sotuvchi":
     case "100k":
       return "affiliate";
+    case "google-sheets":
+      return "data";
     default:
       return "affiliate";
   }
@@ -223,9 +230,16 @@ export const targetWebsitesRouter = router({
     .input(
       z.object({
         name: z.string().min(1),
-        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram"]),
+        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram", "google-sheets"]),
         /** Plain-text apiKey — only for sotuvchi / 100k */
         apiKey: z.string().optional(),
+        /** Google Sheets destination */
+        googleAccountId: z.number().int().positive().optional(),
+        spreadsheetId: z.string().optional(),
+        sheetName: z.string().optional(),
+        /** Google Sheets row 1 labels + column → lead field */
+        sheetHeaders: z.array(z.string()).optional(),
+        mapping: z.record(z.string(), z.string()).optional(),
         /** For custom template */
         url: z.string().optional(),
         method: z.enum(["POST", "GET"]).optional(),
@@ -280,6 +294,31 @@ export const targetWebsitesRouter = router({
         return { success: true };
       }
 
+      // Google Sheets — append row per lead (no HTTP affiliate URL)
+      if (input.templateType === "google-sheets") {
+        if (!input.googleAccountId) throw new Error("Google account is required");
+        if (!input.spreadsheetId?.trim()) throw new Error("Spreadsheet ID is required");
+        if (!input.sheetName?.trim()) throw new Error("Sheet name is required");
+        const config: Record<string, unknown> = {
+          googleAccountId: input.googleAccountId,
+          spreadsheetId: input.spreadsheetId.trim(),
+          sheetName: input.sheetName.trim(),
+        };
+        config.sheetHeaders = input.sheetHeaders ?? [];
+        config.mapping = input.mapping ?? {};
+        await db.insert(targetWebsites).values({
+          userId: ctx.user.id,
+          name: input.name,
+          url: null,
+          templateType: "google-sheets",
+          templateConfig: config,
+          color: "#0F9D58",
+          isActive: true,
+          ...(autoChatId ? { telegramChatId: autoChatId } : {}),
+        });
+        return { success: true };
+      }
+
       // Build URL (pre-filled for known templates)
       let url = "";
       if (input.templateType === "sotuvchi") url = "https://sotuvchi.com/api/v2/order";
@@ -327,8 +366,13 @@ export const targetWebsitesRouter = router({
       z.object({
         id: z.number(),
         name: z.string().min(1).optional(),
-        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram"]).optional(),
+        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram", "google-sheets"]).optional(),
         apiKey: z.string().optional(),
+        googleAccountId: z.number().int().positive().optional(),
+        spreadsheetId: z.string().optional(),
+        sheetName: z.string().optional(),
+        sheetHeaders: z.array(z.string()).optional(),
+        mapping: z.record(z.string(), z.string()).optional(),
         url: z.string().optional(),
         method: z.enum(["POST", "GET"]).optional(),
         headers: z.record(z.string(), z.string()).optional(),
@@ -369,7 +413,9 @@ export const targetWebsitesRouter = router({
         input.contentType !== undefined || input.variableFields !== undefined ||
         input.bodyTemplate !== undefined || input.bodyFields !== undefined ||
         input.jsonField !== undefined || input.jsonValue !== undefined ||
-        input.botToken !== undefined || input.chatId !== undefined || input.messageTemplate !== undefined;
+        input.botToken !== undefined || input.chatId !== undefined || input.messageTemplate !== undefined ||
+        input.googleAccountId !== undefined || input.spreadsheetId !== undefined || input.sheetName !== undefined ||
+        input.sheetHeaders !== undefined || input.mapping !== undefined;
 
       if (hasConfigChange) {
         const existingConfig = (site.templateConfig as Record<string, unknown>) ?? {};
@@ -381,6 +427,12 @@ export const targetWebsitesRouter = router({
           if (input.botToken?.trim()) newConfig.botTokenEncrypted = encrypt(input.botToken);
           if (input.chatId !== undefined) newConfig.chatId = input.chatId.trim();
           if (input.messageTemplate !== undefined) newConfig.messageTemplate = input.messageTemplate;
+        } else if (templateType === "google-sheets") {
+          if (input.googleAccountId !== undefined) newConfig.googleAccountId = input.googleAccountId;
+          if (input.spreadsheetId !== undefined) newConfig.spreadsheetId = input.spreadsheetId.trim();
+          if (input.sheetName !== undefined) newConfig.sheetName = input.sheetName.trim();
+          if (input.sheetHeaders !== undefined) newConfig.sheetHeaders = input.sheetHeaders;
+          if (input.mapping !== undefined) newConfig.mapping = input.mapping;
         } else {
           if (input.apiKey) {
             newConfig.apiKeyEncrypted = encrypt(input.apiKey);
@@ -405,6 +457,9 @@ export const targetWebsitesRouter = router({
           if (input.templateType === "sotuvchi") updates.url = "https://sotuvchi.com/api/v2/order";
           else if (input.templateType === "100k") updates.url = "https://api.100k.uz/api/shop/v1/orders/target";
           else if (input.templateType === "telegram") { /* no url needed */ }
+          else if (input.templateType === "google-sheets") {
+            updates.url = null;
+          }
           else if (input.url) {
             await validateTargetUrl(input.url);
             updates.url = input.url;
@@ -626,6 +681,31 @@ export const targetWebsitesRouter = router({
     }),
 
   /**
+   * Load row 1 of a Google Sheet tab as header labels (for column mapping UI).
+   */
+  getSheetHeaders: protectedProcedure
+    .input(
+      z.object({
+        googleAccountId: z.number().int().positive(),
+        spreadsheetId: z.string().min(1),
+        sheetName: z.string().min(1),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      checkUserRateLimit(ctx.user.id, "getSheetHeaders", {
+        max: 20,
+        windowMs: 60_000,
+        message: "Too many sheet header requests. Max 20 per minute.",
+      });
+      return getGoogleSheetHeaders({
+        userId: ctx.user.id,
+        googleAccountId: input.googleAccountId,
+        spreadsheetId: input.spreadsheetId,
+        sheetName: input.sheetName,
+      });
+    }),
+
+  /**
    * Test an integration by sending a sample lead and returning the full request/response.
    *
    * For dynamic (admin-managed) templates:
@@ -732,6 +812,66 @@ export const targetWebsitesRouter = router({
         const testText = `[TEST] Yangi lead\n\nIsm: Test User\nTelefon: +998901234567\nEmail: test@example.com`;
         const result = await sendTelegramRawMessage(token, cfg.chatId, testText);
         return { success: result.success, responseData: null, error: result.error, durationMs: Date.now() - t0, requestPreview: null };
+      }
+
+      // ── Google Sheets ──────────────────────────────────────────────────────────
+      if (site.templateType === "google-sheets") {
+        const cfg = (site.templateConfig ?? {}) as Record<string, unknown>;
+        const gidRaw = cfg.googleAccountId;
+        const googleAccountId =
+          typeof gidRaw === "number" && Number.isFinite(gidRaw)
+            ? gidRaw
+            : typeof gidRaw === "string"
+              ? parseInt(String(gidRaw).trim(), 10)
+              : NaN;
+        const spreadsheetId = typeof cfg.spreadsheetId === "string" ? cfg.spreadsheetId.trim() : "";
+        const sheetName = typeof cfg.sheetName === "string" ? cfg.sheetName.trim() : "";
+        if (!Number.isFinite(googleAccountId) || googleAccountId < 1 || !spreadsheetId || !sheetName) {
+          return {
+            success: false,
+            responseData: null,
+            error: "Google Sheets config incomplete (googleAccountId, spreadsheetId, or sheetName)",
+            durationMs: Date.now() - t0,
+            requestPreview: {
+              url: `POST spreadsheets/${spreadsheetId || "?"}/values/...:append`,
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: { values: [["Test User", "+998901234567", "test@example.com", new Date().toISOString()]] },
+            },
+          };
+        }
+        const ts = new Date().toISOString();
+        const sheetHeaders = Array.isArray(cfg.sheetHeaders) ? (cfg.sheetHeaders as string[]) : null;
+        const mapping =
+          cfg.mapping && typeof cfg.mapping === "object" && !Array.isArray(cfg.mapping)
+            ? (cfg.mapping as Record<string, string>)
+            : null;
+        const rowValues = buildGoogleSheetsAppendRow({
+          sheetHeaders,
+          mapping,
+          leadPayload: { ...sampleLead, extraFields: {} },
+          createdAtIso: ts,
+        });
+        const result = await appendLeadToGoogleSheet({
+          userId: ctx.user.id,
+          googleAccountId,
+          spreadsheetId,
+          sheetName,
+          values: rowValues,
+        });
+        const durationMs = Date.now() - t0;
+        return {
+          success: result.success,
+          responseData: result.responseData,
+          error: result.error,
+          durationMs,
+          requestPreview: {
+            url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/...:append`,
+            method: "POST",
+            headers: { Authorization: "Bearer ••••", "Content-Type": "application/json" },
+            body: { values: [rowValues] },
+          },
+        };
       }
 
       // ── Legacy custom template ─────────────────────────────────────────────────

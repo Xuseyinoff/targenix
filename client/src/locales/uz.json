@@ -193,11 +193,47 @@
       "targetWebsiteSaved": "Saqlandi",
       "copied": "Clipboard’ga nusxalandi",
       "copiedKey": "{{key}} nusxalandi",
-      "testFailed": "Test muvaffaqiyatsiz: {{message}}"
+      "testFailed": "Test muvaffaqiyatsiz: {{message}}",
+      "testConnected": "Ulanish muvaffaqiyatli"
     },
     "labels": {
       "apiKeyConfigured": "API Key sozlangan",
       "secretsConfigured": "Secretlar sozlangan"
+    },
+    "sheets": {
+      "title": "Google Sheets",
+      "desc": "Har bir lead jadvalga yangi qator sifatida qo‘shiladi.",
+      "googleAccount": "Google akkaunt",
+      "selectAccount": "Akkauntni tanlang",
+      "spreadsheetId": "Jadval ID",
+      "sheetName": "Varaq nomi",
+      "pasteIdHint": "URL dan ID ni qo‘ying (/d/ va /edit/ orasidagi qism).",
+      "urlExample": "https://docs.google.com/spreadsheets/d/XXXXXXXXXXXXXXXX/edit",
+      "connectGoogle": "Google akkauntni ulash",
+      "connectGoogleHint": "Google Sheets ruxsati bilan integratsiya akkaunti kerak (shu brauzer sessiyasi).",
+      "noAccounts": "Sheets uchun ulangan Google akkaunt yo‘q.",
+      "refreshAccounts": "Ro‘yxatni yangilash",
+      "testConnection": "Ulanishni sinash",
+      "required": "Bu maydon majburiy",
+      "loadColumns": "Ustunlarni yuklash",
+      "loadColumnsHint": "Varaqning 1-qatorini ustun sarlavhalari sifatida o‘qiydi.",
+      "loadColumnsFailed": "Google dan sarlavhalar yuklanmadi.",
+      "emptyHeaderRow": "1-qator bo‘sh — jadvalda sarlavha qo‘shing yoki varaq nomini tekshiring.",
+      "columnMappingTitle": "Ustunlarni lead maydonlariga bog‘lash",
+      "columnLabel": "Ustun",
+      "emptyColumn": "bo‘sh",
+      "mapToField": "Lead maydoni",
+      "mapNone": "— Yo‘q —",
+      "mappingAtLeastOne": "Kamida bitta ustunni lead maydoniga bog‘lang yoki standart 4 ustunli qator uchun ustunlarni tozalang.",
+      "field": {
+        "fullName": "To‘liq ism",
+        "phone": "Telefon",
+        "email": "Email",
+        "createdAt": "Yaratilgan vaqt (ISO)",
+        "leadgenId": "Lead ID (leadgen)",
+        "pageId": "Sahifa ID",
+        "formId": "Forma ID"
+      }
     },
     "validation": {
       "nameRequired": "Nom majburiy",

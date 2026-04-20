@@ -7,8 +7,17 @@ import {
   deleteIntegration,
   getDb,
 } from "../db";
-import { sendAffiliateOrderByTemplate, sendLeadViaTemplate, type TemplateType, type TemplateConfig } from "../services/affiliateService";
+import {
+  sendAffiliateOrderByTemplate,
+  sendLeadViaTemplate,
+  injectVariables,
+  type TemplateType,
+  type TemplateConfig,
+} from "../services/affiliateService";
 import { sendLeadTelegramNotification } from "../services/leadService";
+import { sendTelegramRawMessage } from "../services/telegramService";
+import { appendLeadToGoogleSheet, buildGoogleSheetsAppendRow } from "../services/googleSheetsService";
+import { decrypt } from "../encryption";
 import { targetWebsites, destinationTemplates } from "../../drizzle/schema";
 import { eq, and } from "drizzle-orm";
 import { checkUserRateLimit } from "../lib/userRateLimit";
@@ -119,8 +128,8 @@ export const integrationsRouter = router({
         email: "test@targenix.uz",
         pageId: integration.pageId ?? "test-page",
         formId: integration.formId ?? "test-form",
-        createdAt: new Date(),
       };
+      const testLeadTimestamp = new Date();
 
       let success = false;
       let responseData: unknown = null;
@@ -150,6 +159,68 @@ export const integrationsRouter = router({
               .limit(1);
             if (!dynTpl) throw new Error(`Destination template #${tw.templateId} not found`);
             result = await sendLeadViaTemplate(dynTpl, tw.templateConfig, testLead, variableFields);
+          } else if (tw.templateType === "telegram") {
+            const cfg = (tw.templateConfig ?? {}) as {
+              botTokenEncrypted?: string;
+              chatId?: string;
+              messageTemplate?: string;
+            };
+            if (!cfg.botTokenEncrypted || !cfg.chatId) {
+              result = { success: false, error: "Telegram destination missing botToken or chatId" };
+            } else {
+              const token = decrypt(cfg.botTokenEncrypted);
+              const ctx: Record<string, string> = {
+                full_name: testLead.fullName,
+                phone_number: testLead.phone,
+                email: testLead.email,
+                pageName: "",
+                formName: "",
+                campaignName: "",
+                createdAt: testLeadTimestamp.toLocaleString("uz-UZ"),
+              };
+              const messageTemplate =
+                cfg.messageTemplate ||
+                "📋 Yangi lead\n\n👤 Ism: {{full_name}}\n📞 Telefon: {{phone_number}}\n📧 Email: {{email}}";
+              const message = `[TEST] ${injectVariables(messageTemplate, ctx)}`;
+              result = await sendTelegramRawMessage(token, cfg.chatId, message);
+            }
+          } else if (tw.templateType === "google-sheets") {
+            const cfg = (tw.templateConfig ?? {}) as Record<string, unknown>;
+            const gidRaw = cfg.googleAccountId;
+            const googleAccountId =
+              typeof gidRaw === "number" && Number.isFinite(gidRaw)
+                ? gidRaw
+                : typeof gidRaw === "string"
+                  ? parseInt(String(gidRaw).trim(), 10)
+                  : NaN;
+            const spreadsheetId = typeof cfg.spreadsheetId === "string" ? cfg.spreadsheetId.trim() : "";
+            const sheetName = typeof cfg.sheetName === "string" ? cfg.sheetName.trim() : "";
+            if (!Number.isFinite(googleAccountId) || googleAccountId < 1 || !spreadsheetId || !sheetName) {
+              result = {
+                success: false,
+                error: "Google Sheets destination missing googleAccountId, spreadsheetId, or sheetName",
+              };
+            } else {
+              const ts = testLeadTimestamp.toISOString();
+              const sheetHeaders = Array.isArray(cfg.sheetHeaders) ? (cfg.sheetHeaders as string[]) : null;
+              const mapping =
+                cfg.mapping && typeof cfg.mapping === "object" && !Array.isArray(cfg.mapping)
+                  ? (cfg.mapping as Record<string, string>)
+                  : null;
+              const rowValues = buildGoogleSheetsAppendRow({
+                sheetHeaders,
+                mapping,
+                leadPayload: { ...testLead, extraFields: {} },
+                createdAtIso: ts,
+              });
+              result = await appendLeadToGoogleSheet({
+                userId: ctx.user.id,
+                googleAccountId,
+                spreadsheetId,
+                sheetName,
+                values: rowValues,
+              });
+            }
           } else {
             // Legacy custom/sotuvchi/100k destination
             result = await sendAffiliateOrderByTemplate(

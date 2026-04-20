@@ -193,11 +193,47 @@
       "targetWebsiteSaved": "Target website saved",
       "copied": "Copied to clipboard",
       "copiedKey": "Copied {{key}}",
-      "testFailed": "Test failed: {{message}}"
+      "testFailed": "Test failed: {{message}}",
+      "testConnected": "Connected successfully"
     },
     "labels": {
       "apiKeyConfigured": "API Key configured",
       "secretsConfigured": "Secrets configured"
+    },
+    "sheets": {
+      "title": "Google Sheets",
+      "desc": "Append each lead as a new row in your spreadsheet.",
+      "googleAccount": "Google account",
+      "selectAccount": "Select account",
+      "spreadsheetId": "Spreadsheet ID",
+      "sheetName": "Sheet name",
+      "pasteIdHint": "Paste the ID from your spreadsheet URL (between /d/ and /edit).",
+      "urlExample": "https://docs.google.com/spreadsheets/d/XXXXXXXXXXXXXXXX/edit",
+      "connectGoogle": "Connect Google account",
+      "connectGoogleHint": "Use an integration account with Google Sheets access (same browser session).",
+      "noAccounts": "No Google accounts connected for Sheets yet.",
+      "refreshAccounts": "Refresh list",
+      "testConnection": "Test connection",
+      "required": "This field is required",
+      "loadColumns": "Load columns",
+      "loadColumnsHint": "Reads row 1 of the sheet as column headers.",
+      "loadColumnsFailed": "Could not load headers from Google.",
+      "emptyHeaderRow": "Row 1 is empty — add header labels in the sheet or check the tab name.",
+      "columnMappingTitle": "Map columns to lead fields",
+      "columnLabel": "Column",
+      "emptyColumn": "empty",
+      "mapToField": "Lead field",
+      "mapNone": "— None —",
+      "mappingAtLeastOne": "Map at least one column to a lead field (or clear loaded columns to use the default 4-column row).",
+      "field": {
+        "fullName": "Full name",
+        "phone": "Phone",
+        "email": "Email",
+        "createdAt": "Created at (ISO)",
+        "leadgenId": "Lead ID (leadgen)",
+        "pageId": "Page ID",
+        "formId": "Form ID"
+      }
     },
     "validation": {
       "nameRequired": "Name is required",

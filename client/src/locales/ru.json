@@ -193,11 +193,47 @@
       "targetWebsiteSaved": "Сохранено",
       "copied": "Скопировано в буфер",
       "copiedKey": "Скопировано: {{key}}",
-      "testFailed": "Тест не прошёл: {{message}}"
+      "testFailed": "Тест не прошёл: {{message}}",
+      "testConnected": "Подключение успешно"
     },
     "labels": {
       "apiKeyConfigured": "API ключ настроен",
       "secretsConfigured": "Секреты настроены"
+    },
+    "sheets": {
+      "title": "Google Sheets",
+      "desc": "Каждый лид добавляется новой строкой в таблицу.",
+      "googleAccount": "Аккаунт Google",
+      "selectAccount": "Выберите аккаунт",
+      "spreadsheetId": "ID таблицы",
+      "sheetName": "Имя листа",
+      "pasteIdHint": "Вставьте ID из URL таблицы (между /d/ и /edit).",
+      "urlExample": "https://docs.google.com/spreadsheets/d/XXXXXXXXXXXXXXXX/edit",
+      "connectGoogle": "Подключить Google",
+      "connectGoogleHint": "Нужен аккаунт интеграции с доступом к Google Sheets.",
+      "noAccounts": "Нет подключённых аккаунтов Google для Sheets.",
+      "refreshAccounts": "Обновить список",
+      "testConnection": "Проверить подключение",
+      "required": "Обязательное поле",
+      "loadColumns": "Загрузить столбцы",
+      "loadColumnsHint": "Читает строку 1 листа как заголовки столбцов.",
+      "loadColumnsFailed": "Не удалось загрузить заголовки из Google.",
+      "emptyHeaderRow": "Строка 1 пуста — добавьте заголовки или проверьте имя вкладки.",
+      "columnMappingTitle": "Сопоставление столбцов с полями лида",
+      "columnLabel": "Столбец",
+      "emptyColumn": "пусто",
+      "mapToField": "Поле лида",
+      "mapNone": "— Не выбрано —",
+      "mappingAtLeastOne": "Сопоставьте хотя бы один столбец с полем лида (или сбросьте загрузку столбцов для стандартной строки из 4 полей).",
+      "field": {
+        "fullName": "Полное имя",
+        "phone": "Телефон",
+        "email": "Email",
+        "createdAt": "Создано (ISO)",
+        "leadgenId": "ID лида (leadgen)",
+        "pageId": "ID страницы",
+        "formId": "ID формы"
+      }
     },
     "validation": {
       "nameRequired": "Название обязательно",

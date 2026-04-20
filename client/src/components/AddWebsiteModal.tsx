@@ -214,6 +214,7 @@ interface AddWebsiteSelectStepProps<T extends DynTemplateListItem> {
   onSelectAffiliate: (tpl: T) => void;
   onSelectCustom: () => void;
   onSelectTelegram: () => void;
+  onSelectGoogleSheets: () => void;
 }
 
 /** Shared icon container — fixed size for alignment across cards */
@@ -287,6 +288,7 @@ export function AddWebsiteSelectStep<T extends DynTemplateListItem>({
   onSelectAffiliate,
   onSelectCustom,
   onSelectTelegram,
+  onSelectGoogleSheets,
 }: AddWebsiteSelectStepProps<T>) {
   const [tab, setTab] = React.useState<AddSiteTab>("affiliate");
 
@@ -368,27 +370,29 @@ export function AddWebsiteSelectStep<T extends DynTemplateListItem>({
       {tab === "data" && (
         <div className="mx-auto mt-2 flex w-full max-w-lg flex-col gap-4 border-t border-border/35 pt-6">
           <SectionLabel>Data &amp; spreadsheets</SectionLabel>
-          <div
-            role="note"
-            aria-label="Google Sheets — coming soon"
+          <button
+            type="button"
+            onClick={onSelectGoogleSheets}
             className={cn(
-              "flex w-full min-w-0 cursor-not-allowed select-none items-start gap-4 rounded-2xl border border-dashed border-muted/50 bg-muted/15 p-4 text-left backdrop-blur-[1px]",
-              "opacity-55 saturate-[0.6] transition-opacity duration-200"
+              "group relative flex w-full min-w-0 cursor-pointer items-center gap-4 overflow-hidden rounded-2xl border p-4 text-left",
+              "border-emerald-400/45 bg-gradient-to-br from-emerald-500/[0.12] via-background to-background",
+              "shadow-md shadow-emerald-500/15 ring-1 ring-emerald-400/20",
+              "transition-all duration-200 ease-out",
+              "hover:scale-[1.01] hover:border-emerald-400/70 hover:shadow-lg hover:shadow-emerald-500/20",
+              "active:scale-[0.995]"
             )}
           >
-            <span className={cn(CARD_ICON_WRAP, "opacity-75")}>
+            <span className={cn(CARD_ICON_WRAP, "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400")}>
               <Table2 className="shrink-0" aria-hidden />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="flex flex-wrap items-center gap-2">
-                <span className="text-base font-semibold tracking-tight text-foreground/75">Google Sheets</span>
-                <ComingSoonBadge />
-              </span>
+              <span className="block text-lg font-semibold tracking-tight">Google Sheets</span>
               <span className="text-muted-foreground mt-1 block text-sm leading-relaxed">
-                Connect Google account first. Routing will be available soon.
+                Append each lead as a row — pick a connected Google account, spreadsheet, and sheet tab.
               </span>
             </span>
-          </div>
+            <ConnectCta variant="primary" />
+          </button>
           <ComingSoonCard
             icon={<LayoutGrid />}
             title="Airtable"

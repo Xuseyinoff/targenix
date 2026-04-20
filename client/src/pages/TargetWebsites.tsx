@@ -41,6 +41,10 @@ import {
   WebsiteFlowDialog,
   AddWebsiteSelectStep,
 } from "@/components/AddWebsiteModal";
+import {
+  GoogleSheetsDestinationForm,
+  type GoogleSheetsFieldErrors,
+} from "@/components/GoogleSheetsDestinationForm";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import {
@@ -64,10 +68,11 @@ import {
   Sparkles,
   Layers,
   Send,
+  Table2,
 } from "lucide-react";
 
 // ─── Template definitions (client-side display only) ─────────────────────────
-type TemplateType = "sotuvchi" | "100k" | "custom" | "telegram";
+type TemplateType = "sotuvchi" | "100k" | "custom" | "telegram" | "google-sheets";
 type ContentType = "json" | "form-urlencoded" | "multipart";
 
 interface TemplateInfo {
@@ -141,6 +146,18 @@ const TEMPLATES: TemplateInfo[] = [
   },
 ];
 
+/** Display-only template row for Google Sheets (not in TEMPLATES picker list). */
+const GOOGLE_SHEETS_TEMPLATE_INFO: TemplateInfo = {
+  id: "google-sheets",
+  label: "Google Sheets",
+  description: "",
+  color: "bg-emerald-600",
+  infoText: "",
+  savedFields: [],
+  variableFields: [],
+  autoMapped: {},
+};
+
 // ─── Built-in variables reference ────────────────────────────────────────────
 const BUILTIN_VARS = [
   { key: "{{name}}", desc: "Full name" },
@@ -204,6 +221,14 @@ interface FormState {
   botToken: string;
   chatId: string;
   messageTemplate: string;
+  // Google Sheets
+  googleAccountId: number | null;
+  spreadsheetId: string;
+  sheetName: string;
+  /** Row 1 labels from Google (optional). */
+  sheetHeaders: string[];
+  /** Header label → mappable field key (or __none__). */
+  columnMapping: Record<string, string>;
 }
 
 const defaultForm = (): FormState => ({
@@ -227,16 +252,23 @@ const defaultForm = (): FormState => ({
   botToken: "",
   chatId: "",
   messageTemplate: DEFAULT_TELEGRAM_TEMPLATE,
+  googleAccountId: null,
+  spreadsheetId: "",
+  sheetName: "Sheet1",
+  sheetHeaders: [],
+  columnMapping: {},
 });
 
 // ─── Badge helpers ────────────────────────────────────────────────────────────
 function templateBadgeVariant(type: string | null): "default" | "secondary" | "outline" {
   if (type === "sotuvchi") return "default";
   if (type === "100k") return "secondary";
+  if (type === "google-sheets") return "secondary";
   return "outline";
 }
 
 function templateLabel(type: string | null): string {
+  if (type === "google-sheets") return GOOGLE_SHEETS_TEMPLATE_INFO.label;
   return TEMPLATES.find((t) => t.id === type)?.label ?? (type === "telegram" ? "Telegram Bot" : "Custom");
 }
 
@@ -421,10 +453,15 @@ export default function TargetWebsites() {
   // Edit-dynamic state (edit flow — simplified: name + secrets only)
   const [editDynSecretKeys, setEditDynSecretKeys] = useState<string[]>([]);
   const [editDynUrl, setEditDynUrl] = useState("");
+  const [sheetsFieldErrors, setSheetsFieldErrors] = useState<GoogleSheetsFieldErrors>({});
+  const [sheetsLoadError, setSheetsLoadError] = useState<string | null>(null);
 
   const utils = trpc.useUtils();
+  const getSheetHeadersMutation = trpc.targetWebsites.getSheetHeaders.useMutation();
   const { data: sites = [], isLoading } = trpc.targetWebsites.list.useQuery();
   const { data: dynTemplates = [] } = trpc.targetWebsites.getTemplates.useQuery();
+  const { data: googleIntegrationAccounts = [], isLoading: googleAccountsLoading } =
+    trpc.googleAccounts.list.useQuery();
 
   const createMutation = trpc.targetWebsites.create.useMutation({
     onSuccess: () => {
@@ -460,6 +497,7 @@ export default function TargetWebsites() {
   const testMutation = trpc.targetWebsites.testIntegration.useMutation({
     onSuccess: (data) => {
       setTestResult(data as TestResult);
+      if (data.success) toast.success(t("destinations.toast.testConnected"));
     },
     onError: (e) => toast.error(t("destinations.toast.testFailed", { message: e.message })),
   });
@@ -482,9 +520,29 @@ export default function TargetWebsites() {
     onError: (e) => toast.error(e.message),
   });
 
-  const selectedTemplate = TEMPLATES.find((t) => t.id === form.templateType) ?? TEMPLATES[2];
+  const selectedTemplate =
+    form.templateType === "google-sheets"
+      ? GOOGLE_SHEETS_TEMPLATE_INFO
+      : (TEMPLATES.find((t) => t.id === form.templateType) ?? TEMPLATES[2]);
   const isCustom = form.templateType === "custom";
   const isTelegram = form.templateType === "telegram";
+  const isGoogleSheets = form.templateType === "google-sheets";
+
+  const googleSheetsMappingOk =
+    form.sheetHeaders.length === 0 ||
+    form.sheetHeaders.some((col) => {
+      const v = form.columnMapping[col];
+      return typeof v === "string" && v.length > 0 && v !== "__none__";
+    });
+
+  const googleSheetsFormValid =
+    !isGoogleSheets ||
+    (form.googleAccountId != null &&
+      form.googleAccountId > 0 &&
+      form.spreadsheetId.trim().length > 0 &&
+      form.sheetName.trim().length > 0 &&
+      googleIntegrationAccounts.length > 0 &&
+      googleSheetsMappingOk);
 
   const filteredSites = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -503,10 +561,15 @@ export default function TargetWebsites() {
         const config = (site.templateConfig ?? {}) as Record<string, unknown>;
         const url = String(site.url || (config.url as string) || "");
         const type = String(site.templateType || "");
+        const sheetId =
+          site.templateType === "google-sheets"
+            ? String((config.spreadsheetId as string) || "")
+            : "";
         return (
           site.name.toLowerCase().includes(q) ||
           url.toLowerCase().includes(q) ||
-          type.toLowerCase().includes(q)
+          type.toLowerCase().includes(q) ||
+          sheetId.toLowerCase().includes(q)
         );
       });
   }, [sites, query, filter]);
@@ -516,10 +579,31 @@ export default function TargetWebsites() {
     setForm(defaultForm());
     setMode("select-template");
     setTestResult(null);
+    setSheetsFieldErrors({});
+    setSheetsLoadError(null);
     setSelectedDynTemplate(null);
     setDynName("");
     setDynSecrets({});
     setDynShowSecret({});
+    setOpen(true);
+  }
+
+  function handleGoogleSheetsSelect() {
+    setEditId(null);
+    setForm({
+      ...defaultForm(),
+      templateType: "google-sheets",
+      name: "",
+      googleAccountId: null,
+      spreadsheetId: "",
+      sheetName: "Sheet1",
+      sheetHeaders: [],
+      columnMapping: {},
+    });
+    setSheetsFieldErrors({});
+    setSheetsLoadError(null);
+    setTestResult(null);
+    setMode("configure");
     setOpen(true);
   }
 
@@ -563,6 +647,44 @@ export default function TargetWebsites() {
       setEditDynSecretKeys(secretKeys);
       setEditDynUrl(site.url ?? "");
       setMode("edit-dynamic");
+      setOpen(true);
+      return;
+    }
+
+    // Google Sheets
+    if (site.templateType === "google-sheets") {
+      const cfg = (site.templateConfig ?? {}) as Record<string, unknown>;
+      const gid = cfg.googleAccountId;
+      const parsedId =
+        typeof gid === "number" && Number.isFinite(gid)
+          ? gid
+          : typeof gid === "string"
+            ? parseInt(String(gid).trim(), 10)
+            : null;
+      const rawHeaders = cfg.sheetHeaders;
+      const sheetHeaders = Array.isArray(rawHeaders)
+        ? (rawHeaders as unknown[]).map((h) => String(h ?? ""))
+        : [];
+      const rawMap = cfg.mapping;
+      const columnMapping: Record<string, string> =
+        rawMap && typeof rawMap === "object" && !Array.isArray(rawMap)
+          ? Object.fromEntries(
+              Object.entries(rawMap as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")]),
+            )
+          : {};
+      setForm({
+        ...defaultForm(),
+        name: site.name,
+        templateType: "google-sheets",
+        googleAccountId: Number.isFinite(parsedId as number) && (parsedId as number) > 0 ? (parsedId as number) : null,
+        spreadsheetId: typeof cfg.spreadsheetId === "string" ? cfg.spreadsheetId : "",
+        sheetName: typeof cfg.sheetName === "string" ? cfg.sheetName : "Sheet1",
+        sheetHeaders,
+        columnMapping,
+      });
+      setSheetsFieldErrors({});
+      setSheetsLoadError(null);
+      setMode("configure");
       setOpen(true);
       return;
     }
@@ -646,6 +768,41 @@ export default function TargetWebsites() {
 
   function handleSubmit() {
     if (!form.name.trim()) { toast.error(t("destinations.validation.nameRequired")); return; }
+
+    // Google Sheets
+    if (isGoogleSheets) {
+      const err: GoogleSheetsFieldErrors = {};
+      if (googleIntegrationAccounts.length === 0) {
+        toast.error(t("destinations.sheets.noAccounts"));
+        return;
+      }
+      if (form.googleAccountId == null || form.googleAccountId < 1) {
+        err.googleAccountId = t("destinations.sheets.required");
+      }
+      if (!form.spreadsheetId.trim()) err.spreadsheetId = t("destinations.sheets.required");
+      if (!form.sheetName.trim()) err.sheetName = t("destinations.sheets.required");
+      if (form.sheetHeaders.length > 0 && !googleSheetsMappingOk) {
+        err.mapping = t("destinations.sheets.mappingAtLeastOne");
+      }
+      setSheetsFieldErrors(err);
+      if (Object.keys(err).length > 0) return;
+
+      const payload = {
+        name: form.name.trim(),
+        templateType: "google-sheets" as const,
+        googleAccountId: form.googleAccountId!,
+        spreadsheetId: form.spreadsheetId.trim(),
+        sheetName: form.sheetName.trim(),
+        sheetHeaders: form.sheetHeaders,
+        mapping: form.columnMapping,
+      };
+      if (editId) {
+        updateMutation.mutate({ id: editId, ...payload });
+      } else {
+        createMutation.mutate(payload);
+      }
+      return;
+    }
 
     // Telegram destination
     if (isTelegram) {
@@ -848,7 +1005,9 @@ export default function TargetWebsites() {
                       <p className="text-xs text-muted-foreground truncate">
                         {site.templateType === "telegram"
                           ? `Chat: ${(config.chatId as string) || "—"}`
-                          : site.url || (config.url as string) || tpl?.endpoint || "—"}
+                          : site.templateType === "google-sheets"
+                            ? `Sheet: ${(config.spreadsheetId as string) || "—"} · ${(config.sheetName as string) || "—"}`
+                            : site.url || (config.url as string) || tpl?.endpoint || "—"}
                       </p>
                       {Boolean(config.apiKeyMasked) && (
                         <p className="text-xs text-muted-foreground mt-0.5">{t("destinations.labels.apiKeyConfigured")}</p>
@@ -970,7 +1129,11 @@ export default function TargetWebsites() {
               <Button variant="outline" className="h-10 w-full sm:w-auto" onClick={() => setOpen(false)}>
                 {t("destinations.dialog.cancel")}
               </Button>
-              <Button className="h-10 w-full shadow-sm sm:w-auto sm:min-w-[9rem]" onClick={handleSubmit} disabled={isSaving}>
+              <Button
+                className="h-10 w-full shadow-sm sm:w-auto sm:min-w-[9rem]"
+                onClick={handleSubmit}
+                disabled={isSaving || (isGoogleSheets && !googleSheetsFormValid)}
+              >
                 {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {editId ? t("destinations.dialog.saveChanges") : t("destinations.dialog.saveWebsite")}
               </Button>
@@ -985,6 +1148,7 @@ export default function TargetWebsites() {
             onSelectAffiliate={selectDynTemplate}
             onSelectCustom={() => handleTemplateSelect("custom")}
             onSelectTelegram={() => handleTemplateSelect("telegram")}
+            onSelectGoogleSheets={handleGoogleSheetsSelect}
           />
         )}
 
@@ -1139,7 +1303,17 @@ export default function TargetWebsites() {
                 </Button>
               )}
 
-              {isTelegram ? (
+              {isGoogleSheets ? (
+                <div className="flex gap-3 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-500/[0.08] via-background to-background p-3.5 shadow-sm dark:border-emerald-900/50 dark:from-emerald-950/40 dark:to-background">
+                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-md shadow-emerald-600/20">
+                    <Table2 className="h-5 w-5" aria-hidden />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold tracking-tight text-foreground">{t("destinations.sheets.title")}</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{t("destinations.sheets.desc")}</p>
+                  </div>
+                </div>
+              ) : isTelegram ? (
                 <div className="flex gap-3 rounded-2xl border border-sky-200/70 bg-gradient-to-br from-sky-500/[0.07] via-background to-background p-3.5 shadow-sm dark:border-sky-900/50 dark:from-sky-950/40 dark:to-background">
                   <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-sky-500 text-white shadow-md shadow-sky-500/20">
                     <Send className="h-5 w-5" aria-hidden />
@@ -1191,8 +1365,8 @@ export default function TargetWebsites() {
                 />
               </div>
 
-              {/* Non-custom, non-telegram: saved fields (apiKey) */}
-              {!isCustom && !isTelegram && selectedTemplate.savedFields.map((sf) => (
+              {/* Non-custom, non-telegram, non-sheets: saved fields (apiKey) */}
+              {!isCustom && !isTelegram && !isGoogleSheets && selectedTemplate.savedFields.map((sf) => (
                 <div key={sf.key} className="space-y-1.5">
                   <Label>
                     {sf.label}
@@ -1226,7 +1400,7 @@ export default function TargetWebsites() {
               ))}
 
               {/* Non-custom: auto-mapped info */}
-              {!isCustom && !isTelegram && Object.keys(selectedTemplate.autoMapped).length > 0 && (
+              {!isCustom && !isTelegram && !isGoogleSheets && Object.keys(selectedTemplate.autoMapped).length > 0 && (
                 <div className="rounded-lg bg-muted/40 border p-3 space-y-1">
                   <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
                     <Info className="w-3 h-3" /> {t("destinations.legacy.autoMappedFields")}
@@ -1323,6 +1497,79 @@ export default function TargetWebsites() {
                     </div>
                     {testResult && editId ? <TestResultPanel result={testResult} onClose={() => setTestResult(null)} /> : null}
                   </div>
+                </div>
+              )}
+
+              {isGoogleSheets && (
+                <div className="space-y-3">
+                  <GoogleSheetsDestinationForm
+                    accounts={googleIntegrationAccounts.map((a) => ({ id: a.id, email: a.email }))}
+                    googleAccountId={form.googleAccountId}
+                    spreadsheetId={form.spreadsheetId}
+                    sheetName={form.sheetName}
+                    sheetHeaders={form.sheetHeaders}
+                    columnMapping={form.columnMapping}
+                    fieldErrors={sheetsFieldErrors}
+                    onGoogleAccountIdChange={(id) => {
+                      setSheetsFieldErrors((e) => ({ ...e, googleAccountId: undefined, mapping: undefined }));
+                      setSheetsLoadError(null);
+                      setForm((f) => ({
+                        ...f,
+                        googleAccountId: id,
+                        sheetHeaders: [],
+                        columnMapping: {},
+                      }));
+                    }}
+                    onSpreadsheetIdChange={(v) => {
+                      setSheetsFieldErrors((e) => ({ ...e, spreadsheetId: undefined, mapping: undefined }));
+                      setSheetsLoadError(null);
+                      setForm((f) => ({
+                        ...f,
+                        spreadsheetId: v,
+                        sheetHeaders: [],
+                        columnMapping: {},
+                      }));
+                    }}
+                    onSheetNameChange={(v) => {
+                      setSheetsFieldErrors((e) => ({ ...e, sheetName: undefined, mapping: undefined }));
+                      setSheetsLoadError(null);
+                      setForm((f) => ({
+                        ...f,
+                        sheetName: v,
+                        sheetHeaders: [],
+                        columnMapping: {},
+                      }));
+                    }}
+                    onSheetHeadersLoaded={(headers) => {
+                      setSheetsFieldErrors((e) => ({ ...e, mapping: undefined }));
+                      setForm((f) => ({ ...f, sheetHeaders: headers, columnMapping: {} }));
+                    }}
+                    onColumnMappingChange={(header, fieldKey) => {
+                      setSheetsFieldErrors((e) => ({ ...e, mapping: undefined }));
+                      setForm((f) => ({
+                        ...f,
+                        columnMapping: { ...f.columnMapping, [header]: fieldKey },
+                      }));
+                    }}
+                    onAccountsRefresh={() => void utils.googleAccounts.list.invalidate()}
+                    onLoadColumns={() =>
+                      getSheetHeadersMutation.mutateAsync({
+                        googleAccountId: form.googleAccountId!,
+                        spreadsheetId: form.spreadsheetId.trim(),
+                        sheetName: form.sheetName.trim(),
+                      })
+                    }
+                    loadColumnsPending={getSheetHeadersMutation.isPending}
+                    loadColumnsError={sheetsLoadError}
+                    onLoadColumnsError={setSheetsLoadError}
+                    onTestConnection={handleTest}
+                    isTesting={isTesting}
+                    canTest={!!editId}
+                    accountsLoading={googleAccountsLoading}
+                  />
+                  {testResult && editId ? (
+                    <TestResultPanel result={testResult} onClose={() => setTestResult(null)} />
+                  ) : null}
                 </div>
               )}
 

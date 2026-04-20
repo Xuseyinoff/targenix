@@ -1,4 +1,5 @@
 import axios from "axios";
+import { inferDeliveryErrorType, type DeliveryErrorType } from "../lib/orderRetryPolicy";
 
 export interface TelegramConfig {
   token: string;
@@ -50,7 +51,7 @@ export async function sendTelegramNotification(
   config: TelegramConfig,
   lead: LeadNotificationData,
   options?: SendTelegramNotificationOptions,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; errorType?: DeliveryErrorType }> {
   const text = formatIntegrationTelegramMarkdown(lead, options);
   const url = `https://api.telegram.org/bot${config.token}/sendMessage`;
 
@@ -67,9 +68,14 @@ export async function sendTelegramNotification(
     console.log(`[Telegram] Notification sent to chat ${config.chatId}`);
     return { success: true };
   } catch (err: any) {
+    const status = err?.response?.status as number | undefined;
     const error = err?.response?.data?.description || err.message;
     console.error(`[Telegram] Failed to send notification:`, error);
-    return { success: false, error };
+    return {
+      success: false,
+      error,
+      errorType: inferDeliveryErrorType({ httpStatus: status, message: String(error) }),
+    };
   }
 }
 
@@ -81,14 +87,19 @@ export async function sendTelegramRawMessage(
   token: string,
   chatId: string,
   text: string,
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; errorType?: DeliveryErrorType }> {
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
   try {
     await axios.post(url, { chat_id: chatId, text }, { timeout: 10000 });
     return { success: true };
   } catch (err: any) {
+    const status = err?.response?.status as number | undefined;
     const error = err?.response?.data?.description || err.message;
-    return { success: false, error };
+    return {
+      success: false,
+      error,
+      errorType: inferDeliveryErrorType({ httpStatus: status, message: String(error) }),
+    };
   }
 }
 

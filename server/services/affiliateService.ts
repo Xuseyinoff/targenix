@@ -2,6 +2,7 @@ import axios from "axios";
 import FormData from "form-data";
 import { decrypt } from "../encryption";
 import type { DestinationTemplate } from "../../drizzle/schema";
+import { inferDeliveryErrorType, type DeliveryErrorType } from "../lib/orderRetryPolicy";
 
 // ─── Shared lead payload ────────────────────────────────────────────────────
 export interface LeadPayload {
@@ -18,6 +19,7 @@ export type AffiliateResult = {
   success: boolean;
   responseData?: unknown;
   error?: string;
+  errorType?: DeliveryErrorType;
 };
 
 // ─── Template types ─────────────────────────────────────────────────────────
@@ -392,7 +394,9 @@ export async function sendAffiliateOrderByTemplate(
     // ── custom ────────────────────────────────────────────────────────────────
     // URL priority: cfg.url (legacy) → siteUrl (from target_websites.url column)
     const url = (cfg.url as string) || siteUrl || "";
-    if (!url) return { success: false, error: "No URL configured for custom template" };
+    if (!url) {
+      return { success: false, error: "No URL configured for custom template", errorType: "validation" };
+    }
 
     // SSRF protection: reject localhost, RFC1918, and non-HTTPS URLs before
     // issuing the outbound HTTP request. Without this, a user could point their
@@ -421,12 +425,30 @@ export async function sendAffiliateOrderByTemplate(
     });
 
     const success = evaluateSuccess(cfg, response.status, response.data);
-    return { success, responseData: response.data };
+    if (!success) {
+      const errMsg =
+        typeof response.data === "string" && response.data.trim()
+          ? response.data
+          : `HTTP ${response.status}`;
+      return {
+        success: false,
+        responseData: response.data,
+        error: errMsg,
+        errorType: inferDeliveryErrorType({ httpStatus: response.status, message: errMsg }),
+      };
+    }
+    return { success: true, responseData: response.data };
   } catch (err: unknown) {
-    const e = err as { response?: { data?: unknown }; message?: string };
+    const e = err as { response?: { data?: unknown; status?: number }; message?: string };
     const error = e?.response?.data ?? e?.message ?? "Unknown error";
+    const errStr = JSON.stringify(error);
     console.error(`[Affiliate] Template ${templateType} failed:`, error);
-    return { success: false, error: JSON.stringify(error) };
+    return {
+      success: false,
+      error: errStr,
+      errorType:
+        inferDeliveryErrorType({ httpStatus: e?.response?.status, message: errStr }) ?? "network",
+    };
   }
 }
 
@@ -517,12 +539,27 @@ export async function sendLeadViaTemplate(
     });
 
     const success = response.status >= 200 && response.status < 300;
-    return { success, responseData: response.data };
+    if (!success) {
+      const errMsg = `HTTP ${response.status}`;
+      return {
+        success: false,
+        responseData: response.data,
+        error: errMsg,
+        errorType: inferDeliveryErrorType({ httpStatus: response.status, message: errMsg }),
+      };
+    }
+    return { success: true, responseData: response.data };
   } catch (err: unknown) {
-    const e = err as { response?: { data?: unknown }; message?: string };
+    const e = err as { response?: { data?: unknown; status?: number }; message?: string };
     const error = e?.response?.data ?? e?.message ?? "Unknown error";
+    const errStr = JSON.stringify(error);
     console.error(`[Affiliate] Dynamic template "${template.name}" failed:`, error);
-    return { success: false, error: JSON.stringify(error) };
+    return {
+      success: false,
+      error: errStr,
+      errorType:
+        inferDeliveryErrorType({ httpStatus: e?.response?.status, message: errStr }) ?? "network",
+    };
   }
 }
 

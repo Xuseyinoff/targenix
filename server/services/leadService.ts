@@ -9,7 +9,12 @@ import { sendTelegramRawMessage } from "./telegramService";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
 import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
-import { ORDER_MAX_DELIVERY_ATTEMPTS, ORDER_RETRY_INTERVAL_MS } from "../lib/orderRetryPolicy";
+import {
+  ORDER_MAX_DELIVERY_ATTEMPTS,
+  computeNextRetryAt,
+  inferDeliveryErrorType,
+  type DeliveryErrorType,
+} from "../lib/orderRetryPolicy";
 
 // ─── Field extraction helpers ─────────────────────────────────────────────────
 
@@ -266,7 +271,7 @@ async function sendLeadToTargetWebsite(
     formId: string;
     extraFields?: Record<string, string>;
   }
-): Promise<{ success: boolean; responseData?: unknown; error?: string }> {
+): Promise<{ success: boolean; responseData?: unknown; error?: string; errorType?: DeliveryErrorType }> {
   const { targetUrl, targetHeaders, flow, offerId } = config as {
     targetUrl?: string;
     targetHeaders?: Record<string, string>;
@@ -275,13 +280,17 @@ async function sendLeadToTargetWebsite(
   };
 
   if (!targetUrl) {
-    return { success: false, error: "No targetUrl configured in LEAD_ROUTING integration" };
+    return { success: false, error: "No targetUrl configured in LEAD_ROUTING integration", errorType: "validation" };
   }
 
   try {
     await assertSafeTargetUrl(targetUrl);
   } catch (err) {
-    return { success: false, error: `Invalid targetUrl: ${err instanceof Error ? err.message : String(err)}` };
+    return {
+      success: false,
+      error: `Invalid targetUrl: ${err instanceof Error ? err.message : String(err)}`,
+      errorType: "validation",
+    };
   }
 
   try {
@@ -313,11 +322,18 @@ async function sendLeadToTargetWebsite(
     try { responseData = JSON.parse(text); } catch { responseData = text; }
 
     if (!res.ok) {
-      return { success: false, error: `HTTP ${res.status}`, responseData };
+      const errMsg = `HTTP ${res.status}`;
+      return {
+        success: false,
+        error: errMsg,
+        responseData,
+        errorType: inferDeliveryErrorType({ httpStatus: res.status, message: errMsg }),
+      };
     }
     return { success: true, responseData };
   } catch (err) {
-    return { success: false, error: String(err) };
+    const msg = String(err);
+    return { success: false, error: msg, errorType: inferDeliveryErrorType({ message: msg }) ?? "network" };
   }
 }
 
@@ -461,6 +477,7 @@ type IntegrationDeliveryResult = {
   responseData?: unknown;
   error?: string;
   durationMs?: number;
+  errorType?: DeliveryErrorType;
 };
 
 async function persistOrderDeliveryAttemptResult(
@@ -470,15 +487,34 @@ async function persistOrderDeliveryAttemptResult(
   const { orderId, prevAttempts, result } = params;
   const now = new Date();
   const newAttempts = prevAttempts + 1;
-  const nextRetry =
-    result.success || newAttempts >= ORDER_MAX_DELIVERY_ATTEMPTS
-      ? null
-      : new Date(now.getTime() + ORDER_RETRY_INTERVAL_MS);
+  const nextRetry = computeNextRetryAt({
+    now,
+    newAttempts,
+    maxAttempts: ORDER_MAX_DELIVERY_ATTEMPTS,
+    success: result.success,
+    errorType: result.errorType,
+  });
+
+  let merged: Record<string, unknown>;
+  if (
+    result.responseData != null &&
+    typeof result.responseData === "object" &&
+    !Array.isArray(result.responseData)
+  ) {
+    merged = { ...(result.responseData as Record<string, unknown>) };
+  } else if (result.responseData === undefined) {
+    merged = result.error !== undefined ? { error: result.error } : {};
+  } else {
+    merged = { body: result.responseData };
+  }
+  if (result.error !== undefined) merged.error = result.error;
+  if (result.errorType !== undefined) merged.errorType = result.errorType;
+  merged.attempts = newAttempts;
 
   const common = {
     attempts: newAttempts,
     lastAttemptAt: now,
-    responseData: (result.responseData ?? { error: result.error }) as Record<string, unknown>,
+    responseData: merged,
   };
 
   const setPayload = result.success
@@ -575,7 +611,7 @@ async function runOrderIntegrationSend(params: {
       const { targetWebsites, destinationTemplates } = await import("../../drizzle/schema");
       const [tw] = await db.select().from(targetWebsites).where(eq(targetWebsites.id, twId)).limit(1);
       if (tw && tw.userId !== userId) {
-        result = { success: false, error: "Target website owner mismatch" };
+        result = { success: false, error: "Target website owner mismatch", errorType: "validation" };
       } else {
         destinationTelegramChatId = (tw as { telegramChatId?: string | null } | undefined)?.telegramChatId?.trim?.() ?? null;
         const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
@@ -591,12 +627,16 @@ async function runOrderIntegrationSend(params: {
             result = await sendLeadViaTemplate(dynTpl, tw.templateConfig, leadPayload, variableFields);
           } else {
             targetUrlUsed = undefined;
-            result = { success: false, error: `Template ${tw.templateId} not found` };
+            result = { success: false, error: `Template ${tw.templateId} not found`, errorType: "validation" };
           }
         } else if (tw && tw.templateType === "telegram") {
           const cfg = (tw.templateConfig ?? {}) as { botTokenEncrypted?: string; chatId?: string; messageTemplate?: string };
           if (!cfg.botTokenEncrypted || !cfg.chatId) {
-            result = { success: false, error: "Telegram destination missing botToken or chatId" };
+            result = {
+              success: false,
+              error: "Telegram destination missing botToken or chatId",
+              errorType: "validation",
+            };
           } else {
             const token = decrypt(cfg.botTokenEncrypted);
             const ctx: Record<string, string> = {};
@@ -611,6 +651,50 @@ async function runOrderIntegrationSend(params: {
             const messageTemplate = cfg.messageTemplate || "📋 Yangi lead\n\n👤 Ism: {{full_name}}\n📞 Telefon: {{phone_number}}\n📧 Email: {{email}}";
             const message = injectVariables(messageTemplate, ctx);
             result = await sendTelegramRawMessage(token, cfg.chatId, message);
+          }
+        } else if (tw && tw.templateType === "google-sheets") {
+          const cfg = (tw.templateConfig ?? {}) as Record<string, unknown>;
+          const gidRaw = cfg.googleAccountId;
+          const googleAccountId =
+            typeof gidRaw === "number" && Number.isFinite(gidRaw)
+              ? gidRaw
+              : typeof gidRaw === "string"
+                ? parseInt(String(gidRaw).trim(), 10)
+                : NaN;
+          const spreadsheetId = typeof cfg.spreadsheetId === "string" ? cfg.spreadsheetId.trim() : "";
+          const sheetName = typeof cfg.sheetName === "string" ? cfg.sheetName.trim() : "";
+          if (!Number.isFinite(googleAccountId) || googleAccountId < 1 || !spreadsheetId || !sheetName) {
+            result = {
+              success: false,
+              error: "Google Sheets destination missing googleAccountId, spreadsheetId, or sheetName",
+              errorType: "validation",
+            };
+          } else {
+            const ts = lead.createdAt ? new Date(lead.createdAt).toISOString() : new Date().toISOString();
+            const sheetHeaders = Array.isArray(cfg.sheetHeaders)
+              ? (cfg.sheetHeaders as string[])
+              : null;
+            const mapping =
+              cfg.mapping && typeof cfg.mapping === "object" && !Array.isArray(cfg.mapping)
+                ? (cfg.mapping as Record<string, string>)
+                : null;
+            const { appendLeadToGoogleSheet, buildGoogleSheetsAppendRow } = await import("./googleSheetsService");
+            const rowValues = buildGoogleSheetsAppendRow({
+              sheetHeaders,
+              mapping,
+              leadPayload: {
+                ...leadPayload,
+                extraFields: leadPayload.extraFields ?? {},
+              },
+              createdAtIso: ts,
+            });
+            result = await appendLeadToGoogleSheet({
+              userId,
+              googleAccountId,
+              spreadsheetId,
+              sheetName,
+              values: rowValues,
+            });
           }
         } else if (tw && tw.templateType) {
           targetUrlUsed = (tw.url as string | null) ?? undefined;
@@ -670,7 +754,11 @@ async function runOrderIntegrationSend(params: {
       deliveryAttempt: deliverySource === "auto_retry" ? params.deliveryAttempt : undefined,
     });
   } else {
-    result = { success: false, error: `Unsupported integration type: ${integration.type}` };
+    result = {
+      success: false,
+      error: `Unsupported integration type: ${integration.type}`,
+      errorType: "validation",
+    };
   }
 
   return result;
