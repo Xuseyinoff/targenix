@@ -7,20 +7,14 @@ import {
   deleteIntegration,
   getDb,
 } from "../db";
-import {
-  sendAffiliateOrderByTemplate,
-  sendLeadViaTemplate,
-  injectVariables,
-  type TemplateType,
-  type TemplateConfig,
-} from "../services/affiliateService";
+import { injectVariables } from "../services/affiliateService";
 import { sendLeadTelegramNotification } from "../services/leadService";
 import { sendTelegramRawMessage } from "../services/telegramService";
-import { appendLeadToGoogleSheet, buildGoogleSheetsAppendRow } from "../services/googleSheetsService";
 import { decrypt } from "../encryption";
-import { targetWebsites, destinationTemplates } from "../../drizzle/schema";
+import { targetWebsites } from "../../drizzle/schema";
 import { eq, and } from "drizzle-orm";
 import { checkUserRateLimit } from "../lib/userRateLimit";
+import { getAdapter } from "../integrations";
 
 export const integrationsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
@@ -151,14 +145,13 @@ export const integrationsRouter = router({
 
           let result: { success: boolean; responseData?: unknown; error?: string };
           if (tw.templateId) {
-            // Admin template-based destination → use sendLeadViaTemplate
-            const [dynTpl] = await db
-              .select()
-              .from(destinationTemplates)
-              .where(eq(destinationTemplates.id, tw.templateId))
-              .limit(1);
-            if (!dynTpl) throw new Error(`Destination template #${tw.templateId} not found`);
-            result = await sendLeadViaTemplate(dynTpl, tw.templateConfig, testLead, variableFields);
+            // Admin template-based destination → dynamicTemplateAdapter (resolves template from DB).
+            const adapter = getAdapter("dynamic-template");
+            if (!adapter) throw new Error("Adapter not found: dynamic-template");
+            result = await adapter.send(
+              { db, targetWebsite: tw, variableFields },
+              testLead,
+            );
           } else if (tw.templateType === "telegram") {
             const cfg = (tw.templateConfig ?? {}) as {
               botTokenEncrypted?: string;
@@ -185,50 +178,28 @@ export const integrationsRouter = router({
               result = await sendTelegramRawMessage(token, cfg.chatId, message);
             }
           } else if (tw.templateType === "google-sheets") {
-            const cfg = (tw.templateConfig ?? {}) as Record<string, unknown>;
-            const gidRaw = cfg.googleAccountId;
-            const googleAccountId =
-              typeof gidRaw === "number" && Number.isFinite(gidRaw)
-                ? gidRaw
-                : typeof gidRaw === "string"
-                  ? parseInt(String(gidRaw).trim(), 10)
-                  : NaN;
-            const spreadsheetId = typeof cfg.spreadsheetId === "string" ? cfg.spreadsheetId.trim() : "";
-            const sheetName = typeof cfg.sheetName === "string" ? cfg.sheetName.trim() : "";
-            if (!Number.isFinite(googleAccountId) || googleAccountId < 1 || !spreadsheetId || !sheetName) {
-              result = {
-                success: false,
-                error: "Google Sheets destination missing googleAccountId, spreadsheetId, or sheetName",
-              };
-            } else {
-              const ts = testLeadTimestamp.toISOString();
-              const sheetHeaders = Array.isArray(cfg.sheetHeaders) ? (cfg.sheetHeaders as string[]) : null;
-              const mapping =
-                cfg.mapping && typeof cfg.mapping === "object" && !Array.isArray(cfg.mapping)
-                  ? (cfg.mapping as Record<string, string>)
-                  : null;
-              const rowValues = buildGoogleSheetsAppendRow({
-                sheetHeaders,
-                mapping,
-                leadPayload: { ...testLead, extraFields: {} },
-                createdAtIso: ts,
-              });
-              result = await appendLeadToGoogleSheet({
+            const adapter = getAdapter("google-sheets");
+            if (!adapter) throw new Error("Adapter not found: google-sheets");
+            result = await adapter.send(
+              {
+                templateConfig: tw.templateConfig,
                 userId: ctx.user.id,
-                googleAccountId,
-                spreadsheetId,
-                sheetName,
-                values: rowValues,
-              });
-            }
+                leadRow: { createdAt: testLeadTimestamp },
+              },
+              { ...testLead, extraFields: {} },
+            );
           } else {
-            // Legacy custom/sotuvchi/100k destination
-            result = await sendAffiliateOrderByTemplate(
-              tw.templateType as TemplateType,
-              tw.templateConfig as TemplateConfig,
+            // Legacy custom/sotuvchi/100k destination → legacyTemplateAdapter
+            const adapter = getAdapter("legacy-template");
+            if (!adapter) throw new Error("Adapter not found: legacy-template");
+            result = await adapter.send(
+              {
+                templateType: tw.templateType,
+                templateConfig: tw.templateConfig,
+                variableFields,
+                url: tw.url,
+              },
               testLead,
-              variableFields,
-              tw.url ?? ""
             );
           }
           success = result.success;

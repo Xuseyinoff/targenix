@@ -14,3 +14,4 @@ registerAdapter("telegram", telegramAdapter);
 registerAdapter("google-sheets", googleSheetsAdapter);
 
 export { getAdapter, listAdapters } from "./registry";
+export { resolveAdapterKey } from "./resolveAdapterKey";
