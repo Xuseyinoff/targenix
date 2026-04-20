@@ -39,6 +39,8 @@ export const GOOGLE_INTEGRATION_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.profile",
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/drive.file",
+  /** List spreadsheet files in Drive (picker UX); metadata only, not file content. */
+  "https://www.googleapis.com/auth/drive.metadata.readonly",
 ];
 
 /** Human-readable scope label — used for display in the UI. */
@@ -47,6 +49,8 @@ export const SCOPE_LABELS: Record<string, string> = {
   "https://www.googleapis.com/auth/userinfo.profile": "Read profile info",
   "https://www.googleapis.com/auth/spreadsheets":     "Read and write Google Sheets",
   "https://www.googleapis.com/auth/drive.file":       "Access files created by this app",
+  "https://www.googleapis.com/auth/drive.metadata.readonly":
+    "See names of your Google Sheets in Drive (for picker)",
 };
 
 // ─── Config helpers ───────────────────────────────────────────────────────────

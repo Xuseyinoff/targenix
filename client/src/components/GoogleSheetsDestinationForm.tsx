@@ -1,5 +1,6 @@
 /**
  * Google Sheets destination fields — used inside Destinations modal (configure step).
+ * Spreadsheet: pick from Drive, search, or manual ID (legacy). Tabs load from Sheets API.
  */
 
 import * as React from "react";
@@ -13,16 +14,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, FlaskConical, Table2 } from "lucide-react";
+import { Loader2, FlaskConical, Table2, RefreshCw } from "lucide-react";
 import { useT } from "@/hooks/useT";
 import { cn } from "@/lib/utils";
 import { GOOGLE_SHEETS_MAPPABLE_FIELDS } from "@shared/googleSheets";
+import { trpc } from "@/lib/trpc";
 
 const NONE_VALUE = "__none__";
+const SHEET_MANUAL_VALUE = "__manual_sheet__";
+/** Placeholder row when multiple tabs exist but none chosen yet. */
+const SHEET_TAB_PICK_VALUE = "__pick_sheet_tab__";
 
 export type GoogleSheetsFieldErrors = Partial<
   Record<"googleAccountId" | "spreadsheetId" | "sheetName" | "mapping", string>
 >;
+
+export type SpreadsheetPickerMode = "select" | "search" | "manual";
 
 export interface GoogleIntegrationAccount {
   id: number;
@@ -82,6 +89,151 @@ export function GoogleSheetsDestinationForm({
 }: GoogleSheetsDestinationFormProps) {
   const t = useT();
   const [connectBusy, setConnectBusy] = React.useState(false);
+  const [pickerMode, setPickerMode] = React.useState<SpreadsheetPickerMode>("select");
+  const [searchDraft, setSearchDraft] = React.useState("");
+  const [spreadsheetList, setSpreadsheetList] = React.useState<{ id: string; name: string }[]>([]);
+  const [spreadsheetsListError, setSpreadsheetsListError] = React.useState<string | null>(null);
+  const [sheetTitles, setSheetTitles] = React.useState<string[]>([]);
+  const [sheetTabsError, setSheetTabsError] = React.useState<string | null>(null);
+  const [sheetTabsLoading, setSheetTabsLoading] = React.useState(false);
+  const [useManualSheetName, setUseManualSheetName] = React.useState(false);
+
+  const listSpreadsheetsMutation = trpc.google.listSpreadsheets.useMutation();
+  const listSheetsMutation = trpc.google.listSheets.useMutation();
+
+  const hasAccounts = accounts.length > 0;
+  const idLooksValid = spreadsheetId.trim().length >= 10;
+
+  React.useEffect(() => {
+    setSpreadsheetList([]);
+    setSpreadsheetsListError(null);
+    setSheetTitles([]);
+    setSheetTabsError(null);
+    setUseManualSheetName(false);
+    setSearchDraft("");
+  }, [googleAccountId]);
+
+  /** Select from list: load when account or select mode is active. */
+  React.useEffect(() => {
+    if (pickerMode !== "select" || googleAccountId == null || !hasAccounts) return;
+    let cancelled = false;
+    setSpreadsheetsListError(null);
+    void listSpreadsheetsMutation
+      .mutateAsync({ googleAccountId })
+      .then((r) => {
+        if (cancelled) return;
+        if (r.success && r.data) setSpreadsheetList(r.data);
+        else {
+          setSpreadsheetList([]);
+          setSpreadsheetsListError(r.error ?? t("destinations.sheets.listSpreadsheetsFailed"));
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setSpreadsheetList([]);
+          setSpreadsheetsListError(e instanceof Error ? e.message : String(e));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+    // listSpreadsheetsMutation / t intentionally omitted — stable enough; avoids refetch loops.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickerMode, googleAccountId, hasAccounts]);
+
+  /** Search: debounced Drive query. */
+  React.useEffect(() => {
+    if (pickerMode !== "search" || googleAccountId == null || !hasAccounts) return;
+    let cancelled = false;
+    const h = window.setTimeout(() => {
+      setSpreadsheetsListError(null);
+      void listSpreadsheetsMutation
+        .mutateAsync({
+          googleAccountId,
+          nameContains: searchDraft.trim() || undefined,
+        })
+        .then((r) => {
+          if (cancelled) return;
+          if (r.success && r.data) setSpreadsheetList(r.data);
+          else {
+            setSpreadsheetList([]);
+            setSpreadsheetsListError(r.error ?? t("destinations.sheets.listSpreadsheetsFailed"));
+          }
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            setSpreadsheetList([]);
+            setSpreadsheetsListError(e instanceof Error ? e.message : String(e));
+          }
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(h);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickerMode, googleAccountId, hasAccounts, searchDraft]);
+
+  /** Sheet tabs when spreadsheet id + account ready. */
+  React.useEffect(() => {
+    if (googleAccountId == null || !idLooksValid) {
+      setSheetTitles([]);
+      setSheetTabsLoading(false);
+      setSheetTabsError(null);
+      return;
+    }
+    let cancelled = false;
+    setSheetTabsLoading(true);
+    setSheetTabsError(null);
+    const tid = window.setTimeout(() => {
+      void listSheetsMutation
+        .mutateAsync({
+          googleAccountId,
+          spreadsheetId: spreadsheetId.trim(),
+        })
+        .then((r) => {
+          if (cancelled) return;
+          if (r.success && r.data) {
+            setSheetTitles(r.data);
+            setSheetTabsError(null);
+          } else {
+            setSheetTitles([]);
+            setSheetTabsError(r.error ?? null);
+          }
+        })
+        .catch((e) => {
+          if (!cancelled) {
+            setSheetTitles([]);
+            setSheetTabsError(e instanceof Error ? e.message : String(e));
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setSheetTabsLoading(false);
+        });
+    }, 450);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(tid);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleAccountId, spreadsheetId, idLooksValid]);
+
+  /** Single tab: default sheet name. */
+  React.useEffect(() => {
+    if (sheetTitles.length !== 1 || sheetName.trim()) return;
+    onSheetNameChange(sheetTitles[0]!);
+  }, [sheetTitles, sheetName, onSheetNameChange]);
+
+  /** If API returns tabs, decide whether the current name is a preset tab or custom. */
+  React.useEffect(() => {
+    if (sheetTitles.length === 0) return;
+    const sn = sheetName.trim();
+    if (!sn) {
+      setUseManualSheetName(false);
+      return;
+    }
+    setUseManualSheetName(!sheetTitles.includes(sn));
+  }, [sheetTitles, sheetName]);
 
   async function handleConnectGoogle() {
     setConnectBusy(true);
@@ -116,7 +268,17 @@ export function GoogleSheetsDestinationForm({
     }
   }
 
-  const hasAccounts = accounts.length > 0;
+  const spreadsheetsLoading = listSpreadsheetsMutation.isPending;
+
+  const sheetTabSelectValue = useManualSheetName
+    ? SHEET_MANUAL_VALUE
+    : sheetName.trim() && sheetTitles.includes(sheetName.trim())
+      ? sheetName.trim()
+      : sheetTitles.length > 1
+        ? SHEET_TAB_PICK_VALUE
+        : sheetTitles.length === 1
+          ? sheetTitles[0]!
+          : SHEET_TAB_PICK_VALUE;
 
   return (
     <div className="space-y-5 rounded-2xl border border-emerald-200/60 bg-card/40 p-4 shadow-sm dark:border-emerald-900/40 dark:bg-card/20">
@@ -178,33 +340,208 @@ export function GoogleSheetsDestinationForm({
         </div>
       ) : null}
 
-      <div className="space-y-1.5">
-        <Label className="text-sm font-medium">
-          {t("destinations.sheets.spreadsheetId")} <span className="text-destructive">*</span>
-        </Label>
-        <Input
-          className={cn("h-10 font-mono text-sm", fieldErrors.spreadsheetId && "border-destructive")}
-          placeholder="1AbcXYZ..."
-          value={spreadsheetId}
-          onChange={(e) => onSpreadsheetIdChange(e.target.value)}
+      <div className="space-y-2 rounded-lg border border-border/60 bg-muted/5 p-3">
+        <Label className="text-sm font-medium">{t("destinations.sheets.pickerModeLabel")}</Label>
+        <Select
+          value={pickerMode}
+          onValueChange={(v) => {
+            const m = v as SpreadsheetPickerMode;
+            setPickerMode(m);
+            setSpreadsheetsListError(null);
+            if (m === "manual") {
+              setSpreadsheetList([]);
+            }
+          }}
           disabled={!hasAccounts && !accountsLoading}
-        />
-        <p className="text-xs text-muted-foreground">{t("destinations.sheets.pasteIdHint")}</p>
-        <p className="text-[11px] text-muted-foreground font-mono break-all">{t("destinations.sheets.urlExample")}</p>
-        {fieldErrors.spreadsheetId ? <p className="text-xs text-destructive">{fieldErrors.spreadsheetId}</p> : null}
+        >
+          <SelectTrigger className="h-10">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="select">{t("destinations.sheets.pickerModeSelect")}</SelectItem>
+            <SelectItem value="search">{t("destinations.sheets.pickerModeSearch")}</SelectItem>
+            <SelectItem value="manual">{t("destinations.sheets.pickerModeManual")}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
+
+      {pickerMode === "manual" ? (
+        <div className="space-y-1.5">
+          <Label className="text-sm font-medium">
+            {t("destinations.sheets.spreadsheetId")} <span className="text-destructive">*</span>
+          </Label>
+          <Input
+            className={cn("h-10 font-mono text-sm", fieldErrors.spreadsheetId && "border-destructive")}
+            placeholder="1AbcXYZ..."
+            value={spreadsheetId}
+            onChange={(e) => onSpreadsheetIdChange(e.target.value)}
+            disabled={!hasAccounts && !accountsLoading}
+          />
+          <p className="text-xs text-muted-foreground">{t("destinations.sheets.pasteIdHint")}</p>
+          <p className="text-[11px] text-muted-foreground font-mono break-all">{t("destinations.sheets.urlExample")}</p>
+          {fieldErrors.spreadsheetId ? <p className="text-xs text-destructive">{fieldErrors.spreadsheetId}</p> : null}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {pickerMode === "search" ? (
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">{t("destinations.sheets.spreadsheetSearchLabel")}</Label>
+              <Input
+                className="h-10"
+                placeholder={t("destinations.sheets.spreadsheetSearchPlaceholder")}
+                value={searchDraft}
+                onChange={(e) => setSearchDraft(e.target.value)}
+                disabled={!hasAccounts || googleAccountId == null}
+              />
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Label className="text-sm font-medium shrink-0">
+              {t("destinations.sheets.pickSpreadsheet")} <span className="text-destructive">*</span>
+            </Label>
+            {pickerMode === "select" ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1"
+                disabled={!hasAccounts || googleAccountId == null || spreadsheetsLoading}
+                onClick={() => {
+                  if (googleAccountId == null) return;
+                  setSpreadsheetsListError(null);
+                  void listSpreadsheetsMutation
+                    .mutateAsync({ googleAccountId })
+                    .then((r) => {
+                      if (r.success && r.data) setSpreadsheetList(r.data);
+                      else {
+                        setSpreadsheetList([]);
+                        setSpreadsheetsListError(r.error ?? t("destinations.sheets.listSpreadsheetsFailed"));
+                      }
+                    })
+                    .catch((e) => {
+                      setSpreadsheetList([]);
+                      setSpreadsheetsListError(e instanceof Error ? e.message : String(e));
+                    });
+                }}
+              >
+                {spreadsheetsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                {t("destinations.sheets.reloadSpreadsheets")}
+              </Button>
+            ) : null}
+          </div>
+
+          {spreadsheetsLoading ? (
+            <div className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/30 bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+              {t("destinations.sheets.loadingSpreadsheets")}
+            </div>
+          ) : null}
+
+          {spreadsheetsListError ? (
+            <p className="text-xs text-destructive rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5">
+              {spreadsheetsListError}
+            </p>
+          ) : null}
+
+          {!spreadsheetsLoading && !spreadsheetsListError && spreadsheetList.length === 0 && hasAccounts && googleAccountId != null ? (
+            <p className="text-xs text-muted-foreground rounded-md border border-dashed border-muted-foreground/30 bg-muted/10 px-3 py-2">
+              {t("destinations.sheets.noSpreadsheets")}
+            </p>
+          ) : null}
+
+          {!spreadsheetsLoading && spreadsheetList.length > 0 ? (
+            <Select
+              value={spreadsheetId.trim() && spreadsheetList.some((s) => s.id === spreadsheetId.trim()) ? spreadsheetId.trim() : undefined}
+              onValueChange={(id) => {
+                onSpreadsheetIdChange(id);
+                onSheetHeadersLoaded([]);
+                setUseManualSheetName(false);
+              }}
+              disabled={!hasAccounts || googleAccountId == null}
+            >
+              <SelectTrigger className={cn("h-10", fieldErrors.spreadsheetId && "border-destructive")}>
+                <SelectValue placeholder={t("destinations.sheets.pickSpreadsheetPlaceholder")} />
+              </SelectTrigger>
+              <SelectContent className="max-h-64">
+                {spreadsheetList.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    <span className="truncate">{s.name}</span>
+                    <span className="ml-2 font-mono text-[10px] text-muted-foreground">{s.id.slice(0, 8)}…</span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+
+          {fieldErrors.spreadsheetId ? <p className="text-xs text-destructive">{fieldErrors.spreadsheetId}</p> : null}
+        </div>
+      )}
 
       <div className="space-y-1.5">
         <Label className="text-sm font-medium">
           {t("destinations.sheets.sheetName")} <span className="text-destructive">*</span>
         </Label>
-        <Input
-          className={cn("h-10", fieldErrors.sheetName && "border-destructive")}
-          placeholder="Sheet1"
-          value={sheetName}
-          onChange={(e) => onSheetNameChange(e.target.value)}
-          disabled={!hasAccounts && !accountsLoading}
-        />
+        {sheetTabsLoading ? (
+          <div className="flex items-center gap-2 rounded-md border border-dashed border-muted-foreground/30 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+            {t("destinations.sheets.loadingSheetTabs")}
+          </div>
+        ) : null}
+        {sheetTabsError ? <p className="text-xs text-destructive">{sheetTabsError}</p> : null}
+
+        {!sheetTabsLoading && sheetTitles.length > 0 ? (
+          <div className="space-y-2">
+            <Select
+              value={sheetTabSelectValue}
+              onValueChange={(v) => {
+                if (v === SHEET_TAB_PICK_VALUE) return;
+                if (v === SHEET_MANUAL_VALUE) {
+                  setUseManualSheetName(true);
+                  return;
+                }
+                setUseManualSheetName(false);
+                onSheetNameChange(v);
+                onSheetHeadersLoaded([]);
+              }}
+              disabled={!hasAccounts && !accountsLoading}
+            >
+              <SelectTrigger className={cn("h-10", fieldErrors.sheetName && "border-destructive")}>
+                <SelectValue placeholder={t("destinations.sheets.sheetTabPlaceholder")} />
+              </SelectTrigger>
+              <SelectContent>
+                {sheetTitles.length > 1 ? (
+                  <SelectItem value={SHEET_TAB_PICK_VALUE} disabled>
+                    {t("destinations.sheets.sheetTabPlaceholder")}
+                  </SelectItem>
+                ) : null}
+                {sheetTitles.map((tab) => (
+                  <SelectItem key={tab} value={tab}>
+                    {tab}
+                  </SelectItem>
+                ))}
+                <SelectItem value={SHEET_MANUAL_VALUE}>{t("destinations.sheets.sheetTabManual")}</SelectItem>
+              </SelectContent>
+            </Select>
+            {useManualSheetName ? (
+              <Input
+                className="h-10"
+                placeholder={t("destinations.sheets.sheetCustomPlaceholder")}
+                value={sheetName}
+                onChange={(e) => onSheetNameChange(e.target.value)}
+                disabled={!hasAccounts && !accountsLoading}
+              />
+            ) : null}
+          </div>
+        ) : (
+          <Input
+            className={cn("h-10", fieldErrors.sheetName && "border-destructive")}
+            placeholder="Sheet1"
+            value={sheetName}
+            onChange={(e) => onSheetNameChange(e.target.value)}
+            disabled={!hasAccounts && !accountsLoading}
+          />
+        )}
         {fieldErrors.sheetName ? <p className="text-xs text-destructive">{fieldErrors.sheetName}</p> : null}
       </div>
 
@@ -243,10 +580,7 @@ export function GoogleSheetsDestinationForm({
                   <span className="text-xs font-medium text-foreground sm:w-[40%] sm:min-w-0 sm:truncate" title={col}>
                     {t("destinations.sheets.columnLabel")}: {col || `(${t("destinations.sheets.emptyColumn")})`}
                   </span>
-                  <Select
-                    value={value}
-                    onValueChange={(v) => onColumnMappingChange(col, v)}
-                  >
+                  <Select value={value} onValueChange={(v) => onColumnMappingChange(col, v)}>
                     <SelectTrigger className="h-9 sm:max-w-xs">
                       <SelectValue placeholder={t("destinations.sheets.mapToField")} />
                     </SelectTrigger>

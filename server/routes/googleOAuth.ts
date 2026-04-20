@@ -17,7 +17,7 @@
  * │  FLOW 2: GOOGLE INTEGRATION  (type = "integration")                     │
  * │                                                                         │
  * │  Route:   GET /api/auth/google/initiate                                 │
- * │  Scopes:  email + profile + spreadsheets + drive.file                   │
+ * │  Scopes:  email + profile + spreadsheets + drive.file + drive.metadata… │
  * │  Auth:    REQUIRED — user must have an active session                   │
  * │  Result:  Stores token in google_accounts with type="integration"       │
  * │           Does NOT create a session or alter the current session        │

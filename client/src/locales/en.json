@@ -233,7 +233,23 @@
         "leadgenId": "Lead ID (leadgen)",
         "pageId": "Page ID",
         "formId": "Form ID"
-      }
+      },
+      "pickerModeLabel": "Spreadsheet",
+      "pickerModeSelect": "Pick from my Drive",
+      "pickerModeSearch": "Search by name",
+      "pickerModeManual": "Enter spreadsheet ID (manual)",
+      "loadingSpreadsheets": "Loading spreadsheets…",
+      "noSpreadsheets": "No spreadsheets found. Create one in Google Drive or try another account.",
+      "listSpreadsheetsFailed": "Could not load spreadsheets from Google.",
+      "pickSpreadsheet": "Spreadsheet",
+      "pickSpreadsheetPlaceholder": "Choose a spreadsheet…",
+      "spreadsheetSearchLabel": "Search",
+      "spreadsheetSearchPlaceholder": "Type part of the file name…",
+      "reloadSpreadsheets": "Refresh list",
+      "loadingSheetTabs": "Loading sheet tabs…",
+      "sheetTabPlaceholder": "Choose a tab…",
+      "sheetTabManual": "Other tab (type name)",
+      "sheetCustomPlaceholder": "Exact tab name, e.g. Sheet2"
     },
     "validation": {
       "nameRequired": "Name is required",

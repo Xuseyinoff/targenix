@@ -233,7 +233,23 @@
         "leadgenId": "ID лида (leadgen)",
         "pageId": "ID страницы",
         "formId": "ID формы"
-      }
+      },
+      "pickerModeLabel": "Таблица (spreadsheet)",
+      "pickerModeSelect": "Выбрать из моего Drive",
+      "pickerModeSearch": "Поиск по имени",
+      "pickerModeManual": "Ввести ID таблицы (вручную)",
+      "loadingSpreadsheets": "Загрузка таблиц…",
+      "noSpreadsheets": "Таблицы не найдены. Создайте в Google Drive или выберите другой аккаунт.",
+      "listSpreadsheetsFailed": "Не удалось загрузить список таблиц из Google.",
+      "pickSpreadsheet": "Таблица",
+      "pickSpreadsheetPlaceholder": "Выберите таблицу…",
+      "spreadsheetSearchLabel": "Поиск",
+      "spreadsheetSearchPlaceholder": "Введите часть имени файла…",
+      "reloadSpreadsheets": "Обновить список",
+      "loadingSheetTabs": "Загрузка вкладок…",
+      "sheetTabPlaceholder": "Выберите вкладку…",
+      "sheetTabManual": "Другая вкладка (ввести имя)",
+      "sheetCustomPlaceholder": "Точное имя вкладки, напр. Sheet2"
     },
     "validation": {
       "nameRequired": "Название обязательно",

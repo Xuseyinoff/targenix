@@ -233,7 +233,23 @@
         "leadgenId": "Lead ID (leadgen)",
         "pageId": "Sahifa ID",
         "formId": "Forma ID"
-      }
+      },
+      "pickerModeLabel": "Jadval (spreadsheet)",
+      "pickerModeSelect": "Drive dan tanlash",
+      "pickerModeSearch": "Nom bo‘yicha qidirish",
+      "pickerModeManual": "Spreadsheet ID (qo‘lda)",
+      "loadingSpreadsheets": "Jadvallar yuklanmoqda…",
+      "noSpreadsheets": "Hech qanday jadval topilmadi. Google Drive da yarating yoki boshqa hisobni tanlang.",
+      "listSpreadsheetsFailed": "Google dan jadvallar ro‘yxati olinmadi.",
+      "pickSpreadsheet": "Jadval",
+      "pickSpreadsheetPlaceholder": "Jadvalni tanlang…",
+      "spreadsheetSearchLabel": "Qidiruv",
+      "spreadsheetSearchPlaceholder": "Fayl nomining bir qismini yozing…",
+      "reloadSpreadsheets": "Ro‘yxatni yangilash",
+      "loadingSheetTabs": "Varaqlar yuklanmoqda…",
+      "sheetTabPlaceholder": "Varaqni tanlang…",
+      "sheetTabManual": "Boshqa varaq (nomni yozing)",
+      "sheetCustomPlaceholder": "Aniq varaq nomi, masalan Sheet2"
     },
     "validation": {
       "nameRequired": "Nom majburiy",

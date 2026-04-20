@@ -50,6 +50,182 @@ function parseSheetsApiError(data: unknown, text: string, status: number): strin
   return msg;
 }
 
+/** In-memory cache for Drive/Sheets browse helpers (per-user, short TTL). */
+const BROWSE_CACHE_MS = 5 * 60 * 1000;
+const spreadsheetsListCache = new Map<string, { at: number; data: { id: string; name: string }[] }>();
+const spreadsheetTabsCache = new Map<string, { at: number; data: string[] }>();
+
+function browseCacheGet<T>(m: Map<string, { at: number; data: T }>, key: string): T | undefined {
+  const row = m.get(key);
+  if (!row || Date.now() - row.at > BROWSE_CACHE_MS) return undefined;
+  return row.data;
+}
+
+function browseCacheSet<T>(m: Map<string, { at: number; data: T }>, key: string, data: T) {
+  m.set(key, { at: Date.now(), data });
+}
+
+async function resolveIntegrationGoogleAccessToken(
+  userId: number,
+  googleAccountId: number,
+): Promise<{ ok: true; accessToken: string } | { ok: false; error: string }> {
+  if (!Number.isFinite(googleAccountId) || googleAccountId < 1) {
+    return { ok: false, error: "Missing or invalid googleAccountId" };
+  }
+
+  const db = await getDb();
+  if (!db) return { ok: false, error: "Database not available" };
+
+  const [row] = await db
+    .select({ id: googleAccounts.id })
+    .from(googleAccounts)
+    .where(
+      and(
+        eq(googleAccounts.id, googleAccountId),
+        eq(googleAccounts.userId, userId),
+        eq(googleAccounts.type, "integration"),
+      ),
+    )
+    .limit(1);
+
+  if (!row) {
+    return { ok: false, error: "Google integration account not found" };
+  }
+
+  try {
+    const accessToken = await getValidGoogleAccessToken(googleAccountId);
+    return { ok: true, accessToken };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+function escapeDriveQueryLiteral(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+/**
+ * List spreadsheets visible to the integration account (Drive API).
+ * Requires `drive.metadata.readonly` on the OAuth token (reconnect if 403).
+ */
+export async function listUserSpreadsheets(params: {
+  userId: number;
+  googleAccountId: number;
+  /** Optional filter: `name contains` (case-insensitive per Drive behavior). */
+  nameContains?: string;
+}): Promise<{ success: boolean; data?: { id: string; name: string }[]; error?: string }> {
+  const { userId, googleAccountId } = params;
+  const rawQ = (params.nameContains ?? "").trim().slice(0, 120);
+  const cacheKey = `${userId}:${googleAccountId}:${rawQ || "__all__"}`;
+  const hit = browseCacheGet(spreadsheetsListCache, cacheKey);
+  if (hit) return { success: true, data: hit };
+
+  const resolved = await resolveIntegrationGoogleAccessToken(userId, googleAccountId);
+  if (!resolved.ok) return { success: false, error: resolved.error };
+
+  let q = "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false";
+  if (rawQ.length > 0) {
+    q += ` and name contains '${escapeDriveQueryLiteral(rawQ)}'`;
+  }
+
+  const url = new URL("https://www.googleapis.com/drive/v3/files");
+  url.searchParams.set("q", q);
+  url.searchParams.set("fields", "files(id,name),nextPageToken");
+  url.searchParams.set("pageSize", "50");
+  url.searchParams.set("supportsAllDrives", "true");
+  url.searchParams.set("includeItemsFromAllDrives", "true");
+
+  try {
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${resolved.accessToken}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = await res.text();
+    let data: unknown = text;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!res.ok) {
+      const errMsg = parseSheetsApiError(data, text, res.status);
+      const hint =
+        res.status === 403
+          ? `${errMsg} If you connected Google before this update, disconnect and reconnect to grant Drive list access.`
+          : errMsg;
+      return { success: false, error: hint };
+    }
+
+    const files = (data as { files?: Array<{ id?: string; name?: string }> }).files ?? [];
+    const list = files
+      .filter((f) => typeof f.id === "string" && f.id.length > 0)
+      .map((f) => ({ id: f.id as string, name: typeof f.name === "string" ? f.name : "(untitled)" }));
+
+    browseCacheSet(spreadsheetsListCache, cacheKey, list);
+    return { success: true, data: list };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * Tab titles for a spreadsheet (Sheets API spreadsheets.get).
+ */
+export async function getSpreadsheetSheetTitles(params: {
+  userId: number;
+  googleAccountId: number;
+  spreadsheetId: string;
+}): Promise<{ success: boolean; data?: string[]; error?: string }> {
+  const { userId, googleAccountId, spreadsheetId } = params;
+  if (typeof spreadsheetId !== "string" || !spreadsheetId.trim()) {
+    return { success: false, error: "Missing spreadsheetId" };
+  }
+
+  const sid = spreadsheetId.trim();
+  const cacheKey = `${userId}:${googleAccountId}:${sid}`;
+  const hit = browseCacheGet(spreadsheetTabsCache, cacheKey);
+  if (hit) return { success: true, data: hit };
+
+  const resolved = await resolveIntegrationGoogleAccessToken(userId, googleAccountId);
+  if (!resolved.ok) return { success: false, error: resolved.error };
+
+  const url = new URL(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sid)}`,
+  );
+  url.searchParams.set("fields", "sheets.properties.title");
+
+  try {
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${resolved.accessToken}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = await res.text();
+    let data: unknown = text;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+
+    if (!res.ok) {
+      return { success: false, error: parseSheetsApiError(data, text, res.status) };
+    }
+
+    const sheets = (data as { sheets?: Array<{ properties?: { title?: string } }> }).sheets ?? [];
+    const titles = sheets
+      .map((s) => (typeof s.properties?.title === "string" ? s.properties.title : ""))
+      .filter((t) => t.length > 0);
+
+    browseCacheSet(spreadsheetTabsCache, cacheKey, titles);
+    return { success: true, data: titles };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /**
  * Read row 1 of a tab as header labels (GET .../values/{sheet}!1:1).
  */
@@ -71,31 +247,9 @@ export async function getGoogleSheetHeaders(params: {
     return { success: false, error: "Missing sheetName" };
   }
 
-  const db = await getDb();
-  if (!db) return { success: false, error: "Database not available" };
-
-  const [row] = await db
-    .select({ id: googleAccounts.id })
-    .from(googleAccounts)
-    .where(
-      and(
-        eq(googleAccounts.id, googleAccountId),
-        eq(googleAccounts.userId, userId),
-        eq(googleAccounts.type, "integration"),
-      ),
-    )
-    .limit(1);
-
-  if (!row) {
-    return { success: false, error: "Google integration account not found" };
-  }
-
-  let accessToken: string;
-  try {
-    accessToken = await getValidGoogleAccessToken(googleAccountId);
-  } catch (e) {
-    return { success: false, error: e instanceof Error ? e.message : String(e) };
-  }
+  const resolved = await resolveIntegrationGoogleAccessToken(userId, googleAccountId);
+  if (!resolved.ok) return { success: false, error: resolved.error };
+  const accessToken = resolved.accessToken;
 
   const range = sheetHeaderRowRange(sheetName.trim());
   const encodedRange = encodeURIComponent(range);
