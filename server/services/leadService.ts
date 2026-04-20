@@ -4,12 +4,11 @@ import { getDb } from "../db";
 import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
-import { injectVariables } from "./affiliateService";
 import { affiliateAdapter } from "../integrations/adapters/affiliateAdapter";
 import { plainUrlAdapter } from "../integrations/adapters/plainUrlAdapter";
 import { legacyTemplateAdapter } from "../integrations/adapters/legacyTemplateAdapter";
 import { dynamicTemplateAdapter } from "../integrations/adapters/dynamicTemplateAdapter";
-import { sendTelegramRawMessage } from "./telegramService";
+import { telegramAdapter } from "../integrations/adapters/telegramAdapter";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
 import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
@@ -623,28 +622,10 @@ async function runOrderIntegrationSend(params: {
             leadPayload,
           );
         } else if (tw && tw.templateType === "telegram") {
-          const cfg = (tw.templateConfig ?? {}) as { botTokenEncrypted?: string; chatId?: string; messageTemplate?: string };
-          if (!cfg.botTokenEncrypted || !cfg.chatId) {
-            result = {
-              success: false,
-              error: "Telegram destination missing botToken or chatId",
-              errorType: "validation",
-            };
-          } else {
-            const token = decrypt(cfg.botTokenEncrypted);
-            const ctx: Record<string, string> = {};
-            if (leadPayload.fullName) ctx.full_name = leadPayload.fullName;
-            if (leadPayload.phone) ctx.phone_number = leadPayload.phone;
-            if (leadPayload.email) ctx.email = leadPayload.email;
-            if (lead.pageName) ctx.pageName = lead.pageName;
-            if (lead.formName) ctx.formName = lead.formName;
-            if (lead.campaignName) ctx.campaignName = lead.campaignName;
-            if (lead.createdAt) ctx.createdAt = new Date(lead.createdAt).toLocaleString("uz-UZ");
-            Object.assign(ctx, leadPayload.extraFields ?? {});
-            const messageTemplate = cfg.messageTemplate || "📋 Yangi lead\n\n👤 Ism: {{full_name}}\n📞 Telefon: {{phone_number}}\n📧 Email: {{email}}";
-            const message = injectVariables(messageTemplate, ctx);
-            result = await sendTelegramRawMessage(token, cfg.chatId, message);
-          }
+          result = await telegramAdapter.send(
+            { templateConfig: tw.templateConfig, leadRow: lead },
+            leadPayload,
+          );
         } else if (tw && tw.templateType === "google-sheets") {
           const cfg = (tw.templateConfig ?? {}) as Record<string, unknown>;
           const gidRaw = cfg.googleAccountId;
