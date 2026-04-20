@@ -9,6 +9,7 @@ import { plainUrlAdapter } from "../integrations/adapters/plainUrlAdapter";
 import { legacyTemplateAdapter } from "../integrations/adapters/legacyTemplateAdapter";
 import { dynamicTemplateAdapter } from "../integrations/adapters/dynamicTemplateAdapter";
 import { telegramAdapter } from "../integrations/adapters/telegramAdapter";
+import { googleSheetsAdapter } from "../integrations/adapters/googleSheetsAdapter";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
 import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
@@ -627,49 +628,10 @@ async function runOrderIntegrationSend(params: {
             leadPayload,
           );
         } else if (tw && tw.templateType === "google-sheets") {
-          const cfg = (tw.templateConfig ?? {}) as Record<string, unknown>;
-          const gidRaw = cfg.googleAccountId;
-          const googleAccountId =
-            typeof gidRaw === "number" && Number.isFinite(gidRaw)
-              ? gidRaw
-              : typeof gidRaw === "string"
-                ? parseInt(String(gidRaw).trim(), 10)
-                : NaN;
-          const spreadsheetId = typeof cfg.spreadsheetId === "string" ? cfg.spreadsheetId.trim() : "";
-          const sheetName = typeof cfg.sheetName === "string" ? cfg.sheetName.trim() : "";
-          if (!Number.isFinite(googleAccountId) || googleAccountId < 1 || !spreadsheetId || !sheetName) {
-            result = {
-              success: false,
-              error: "Google Sheets destination missing googleAccountId, spreadsheetId, or sheetName",
-              errorType: "validation",
-            };
-          } else {
-            const ts = lead.createdAt ? new Date(lead.createdAt).toISOString() : new Date().toISOString();
-            const sheetHeaders = Array.isArray(cfg.sheetHeaders)
-              ? (cfg.sheetHeaders as string[])
-              : null;
-            const mapping =
-              cfg.mapping && typeof cfg.mapping === "object" && !Array.isArray(cfg.mapping)
-                ? (cfg.mapping as Record<string, string>)
-                : null;
-            const { appendLeadToGoogleSheet, buildGoogleSheetsAppendRow } = await import("./googleSheetsService");
-            const rowValues = buildGoogleSheetsAppendRow({
-              sheetHeaders,
-              mapping,
-              leadPayload: {
-                ...leadPayload,
-                extraFields: leadPayload.extraFields ?? {},
-              },
-              createdAtIso: ts,
-            });
-            result = await appendLeadToGoogleSheet({
-              userId,
-              googleAccountId,
-              spreadsheetId,
-              sheetName,
-              values: rowValues,
-            });
-          }
+          result = await googleSheetsAdapter.send(
+            { templateConfig: tw.templateConfig, userId, leadRow: lead },
+            leadPayload,
+          );
         } else if (tw && tw.templateType) {
           targetUrlUsed = (tw.url as string | null) ?? undefined;
           result = await legacyTemplateAdapter.send({
