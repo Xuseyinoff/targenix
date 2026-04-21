@@ -415,6 +415,58 @@ export const integrations = mysqlTable("integrations", {
 export type Integration = typeof integrations.$inferSelect;
 export type InsertIntegration = typeof integrations.$inferInsert;
 
+// ─── Integration Destinations ─────────────────────────────────────────────────
+// Fan-out join between ONE integration and N target_websites (migration 0044).
+//
+// This is the Make.com-style multi-destination scaffold. Until Commit 5 wires
+// the feature-flagged dual-read, the legacy `integrations.targetWebsiteId`
+// column remains the dispatch source of truth. This table is kept in sync by
+// dual-write in server/db.ts so both shapes stay correct during the rollout.
+//
+// Invariants:
+//   - (integrationId, targetWebsiteId) is UNIQUE.
+//   - Both FKs CASCADE: deleting an integration or a target website removes
+//     the mapping automatically — no orphans, no dangling dispatch attempts.
+//   - `position` drives fan-out order (all zero today; reorderable later).
+//   - `enabled` lets a user pause ONE destination without deleting the row.
+//   - `filterJson` is reserved for per-destination Make.com-style filters
+//     (Phase 5+). NULL and unread at this commit.
+export const integrationDestinations = mysqlTable(
+  "integration_destinations",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    integrationId: int("integrationId").notNull(),
+    targetWebsiteId: int("targetWebsiteId").notNull(),
+    position: int("position").default(0).notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    filterJson: json("filterJson"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().notNull().onUpdateNow(),
+  },
+  (t) => ({
+    // Dispatch hot-path: resolve all enabled destinations for one integration,
+    // ordered. Index covers the full WHERE + ORDER BY clause.
+    idxIntegration: index("idx_integration_destinations_integration").on(
+      t.integrationId,
+      t.enabled,
+      t.position,
+    ),
+    // Reverse lookup — "what integrations deliver to this destination?" —
+    // used when cleaning up on target_website delete.
+    idxTargetWebsite: index("idx_integration_destinations_target_website").on(
+      t.targetWebsiteId,
+    ),
+    // Hard guarantee against duplicate mappings in the UI or via a race.
+    uniqIntegrationDestination: uniqueIndex("uniq_integration_destination").on(
+      t.integrationId,
+      t.targetWebsiteId,
+    ),
+  }),
+);
+
+export type IntegrationDestination = typeof integrationDestinations.$inferSelect;
+export type InsertIntegrationDestination = typeof integrationDestinations.$inferInsert;
+
 // ─── Leads ────────────────────────────────────────────────────────────────────
 export const leads = mysqlTable("leads", {
   id: int("id").autoincrement().primaryKey(),

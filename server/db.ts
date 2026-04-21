@@ -375,6 +375,41 @@ export async function getIntegrations(userId: number): Promise<Integration[]> {
   return db.select().from(integrations).where(eq(integrations.userId, userId)).orderBy(desc(integrations.createdAt));
 }
 
+/**
+ * Extract a numeric targetWebsiteId from an integration config JSON.
+ * Accepts both number and numeric-string forms (historical inconsistency).
+ */
+function extractTargetWebsiteId(cfg: Record<string, unknown> | null | undefined): number | null {
+  const raw = cfg?.targetWebsiteId;
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
+  if (typeof raw === "string" && /^\d+$/.test(raw) && Number(raw) > 0) return Number(raw);
+  return null;
+}
+
+/**
+ * Best-effort dual-write into integration_destinations. Part of Commit 4 of
+ * Phase 4. Failures are swallowed with a warn-log so a transient glitch on
+ * the new table cannot break integration CRUD — dispatch still consumes
+ * the legacy `integrations.targetWebsiteId` column until Commit 5 flips the
+ * feature flag. Drift (if any) is repaired by the idempotent backfill
+ * script at tooling/mysql/backfill-integration-destinations.mjs.
+ */
+async function safeSyncLegacyDestination(
+  db: DbClient,
+  integrationId: number,
+  targetWebsiteId: number | null,
+): Promise<void> {
+  try {
+    const { syncLegacyDestination } = await import("./services/integrationDestinations");
+    await syncLegacyDestination(db, integrationId, targetWebsiteId);
+  } catch (err) {
+    console.warn(
+      `[dual-write] integration_destinations sync failed for integrationId=${integrationId}:`,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
 export async function createIntegration(data: {
   userId: number;
   type: "AFFILIATE" | "LEAD_ROUTING";
@@ -393,7 +428,12 @@ export async function createIntegration(data: {
   const formName = isLR ? (String(cfg?.formName ?? "") || null) : null;
   const rawFbId = isLR ? (cfg?.facebookAccountId ?? cfg?.accountId) : undefined;
   const facebookAccountId = typeof rawFbId === "number" && rawFbId > 0 ? rawFbId : null;
-  await db.insert(integrations).values({
+  // Commit 4: previously this column was populated only by a later backfill.
+  // We now set it at creation time so the legacy dispatch path sees the id
+  // immediately and the dual-write mirror below has a canonical source.
+  const targetWebsiteId = isLR ? extractTargetWebsiteId(cfg) : null;
+
+  const [result] = await db.insert(integrations).values({
     userId: data.userId,
     type: data.type,
     name: data.name,
@@ -405,7 +445,15 @@ export async function createIntegration(data: {
     pageName,
     formName,
     facebookAccountId,
+    targetWebsiteId,
   });
+
+  // Dual-write into the new join table so Commit 5's dispatch fan-out
+  // sees the same destination set the legacy column already advertises.
+  const insertedId = (result as { insertId?: number })?.insertId;
+  if (isLR && typeof insertedId === "number" && insertedId > 0) {
+    await safeSyncLegacyDestination(db, insertedId, targetWebsiteId);
+  }
 }
 
 export async function updateIntegration(id: number, data: Partial<{ name: string; config: unknown; isActive: boolean; telegramChatId: string | null }>): Promise<void> {
@@ -413,6 +461,7 @@ export async function updateIntegration(id: number, data: Partial<{ name: string
   if (!db) throw new Error("DB not available");
   // Keep dedicated columns in sync when config is updated
   const updateData: Record<string, unknown> = { ...data };
+  let twIdForSync: number | null | undefined;
   if (data.config !== undefined) {
     const cfg = data.config as Record<string, unknown> | null;
     updateData.pageId = String(cfg?.pageId ?? "") || null;
@@ -421,13 +470,25 @@ export async function updateIntegration(id: number, data: Partial<{ name: string
     updateData.formName = String(cfg?.formName ?? "") || null;
     const rawFbId = cfg?.facebookAccountId ?? cfg?.accountId;
     updateData.facebookAccountId = typeof rawFbId === "number" && rawFbId > 0 ? rawFbId : null;
+    // Keep the dedicated column and the destination table in sync together.
+    twIdForSync = extractTargetWebsiteId(cfg);
+    updateData.targetWebsiteId = twIdForSync;
   }
   await db.update(integrations).set(updateData).where(eq(integrations.id, id));
+  // Dual-write: mirror the new targetWebsiteId into integration_destinations.
+  // Undefined means "config was not part of this update" → leave the mapping
+  // alone. A config update with no targetWebsiteId clears the mapping.
+  if (twIdForSync !== undefined) {
+    await safeSyncLegacyDestination(db, id, twIdForSync);
+  }
 }
 
 export async function deleteIntegration(id: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
+  // The FK on integration_destinations.integrationId CASCADEs, so the
+  // delete below implicitly wipes the mapping rows. Explicit safeSync with
+  // an empty list would only duplicate that work — we let the DB handle it.
   await db.delete(integrations).where(eq(integrations.id, id));
 }
 
