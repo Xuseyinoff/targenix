@@ -14,12 +14,14 @@ import { adAnalyticsRouter } from "./routers/adAnalyticsRouter";
 import { systemRouter } from "./_core/systemRouter";
 import { googleAccountsRouter } from "./routers/googleAccountsRouter";
 import { googleRouter } from "./routers/googleRouter";
+import { appsRouter } from "./routers/appsRouter";
 
 export const appRouter = router({
   system: systemRouter,
   auth: authRouter,
   leads: leadsRouter,
   integrations: integrationsRouter,
+  apps: appsRouter,
   facebookAccounts: facebookAccountsRouter,
   googleAccounts: googleAccountsRouter,
   google: googleRouter,
