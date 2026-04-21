@@ -4,6 +4,7 @@
  */
 
 import * as React from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +20,22 @@ import { useT } from "@/hooks/useT";
 import { cn } from "@/lib/utils";
 import { GOOGLE_SHEETS_MAPPABLE_FIELDS } from "@shared/googleSheets";
 import { trpc } from "@/lib/trpc";
+
+/**
+ * Channel + message types sent by GET /api/auth/google/callback (integration flow).
+ * See server/routes/googleOAuth.ts → popupHtml().
+ */
+const GOOGLE_OAUTH_CHANNEL = "targenix_google_oauth";
+type GoogleOAuthMessage =
+  | {
+      type: "google_oauth_success";
+      accountId: number;
+      email?: string;
+      name?: string;
+      picture?: string;
+      scopes?: string;
+    }
+  | { type: "google_oauth_error"; error?: string };
 
 const NONE_VALUE = "__none__";
 const SHEET_MANUAL_VALUE = "__manual_sheet__";
@@ -235,21 +252,113 @@ export function GoogleSheetsDestinationForm({
     setUseManualSheetName(!sheetTitles.includes(sn));
   }, [sheetTitles, sheetName]);
 
+  /**
+   * Tracks the popup window + its close-polling timer so the success/error
+   * listener can stop polling as soon as the callback posts a message.
+   */
+  const popupRef = React.useRef<Window | null>(null);
+  const popupPollRef = React.useRef<number | null>(null);
+
+  const clearPopupWatch = React.useCallback(() => {
+    if (popupPollRef.current != null) {
+      window.clearInterval(popupPollRef.current);
+      popupPollRef.current = null;
+    }
+    popupRef.current = null;
+  }, []);
+
+  /**
+   * Listen for the integration OAuth callback message.
+   * Server broadcasts on BroadcastChannel("targenix_google_oauth") AND
+   * posts via window.opener.postMessage (same-origin). We handle both so
+   * we stay robust across browsers that restrict either transport.
+   */
+  React.useEffect(() => {
+    const handleSuccess = (msg: GoogleOAuthMessage) => {
+      clearPopupWatch();
+      setConnectBusy(false);
+      if (msg.type === "google_oauth_success") {
+        toast.success(
+          msg.email
+            ? t("destinations.sheets.connectedWithEmail", { email: msg.email })
+            : t("destinations.sheets.connected"),
+        );
+        onAccountsRefresh();
+        onGoogleAccountIdChange(msg.accountId);
+      } else if (msg.type === "google_oauth_error") {
+        toast.error(msg.error || t("destinations.sheets.connectFailed"));
+      }
+    };
+
+    const bc = new BroadcastChannel(GOOGLE_OAUTH_CHANNEL);
+    const bcHandler = (e: MessageEvent) => {
+      const data = e.data as GoogleOAuthMessage | undefined;
+      if (!data || typeof data !== "object") return;
+      if (data.type === "google_oauth_success" || data.type === "google_oauth_error") {
+        handleSuccess(data);
+      }
+    };
+    bc.addEventListener("message", bcHandler);
+
+    const winHandler = (e: MessageEvent) => {
+      if (e.origin !== window.location.origin) return;
+      const data = e.data as GoogleOAuthMessage | undefined;
+      if (!data || typeof data !== "object") return;
+      if (data.type === "google_oauth_success" || data.type === "google_oauth_error") {
+        handleSuccess(data);
+      }
+    };
+    window.addEventListener("message", winHandler);
+
+    return () => {
+      bc.removeEventListener("message", bcHandler);
+      bc.close();
+      window.removeEventListener("message", winHandler);
+      clearPopupWatch();
+    };
+  }, [clearPopupWatch, onAccountsRefresh, onGoogleAccountIdChange, t]);
+
   async function handleConnectGoogle() {
+    // Prevent double-opening while a popup is already in flight.
+    if (connectBusy) return;
     setConnectBusy(true);
     try {
       const res = await fetch("/api/auth/google/initiate", { credentials: "include" });
       const data = (await res.json()) as { oauthUrl?: string; error?: string };
-      if (!res.ok) {
-        throw new Error(data.error || "Could not start Google connection");
+      if (!res.ok || !data.oauthUrl) {
+        throw new Error(data.error || t("destinations.sheets.connectFailed"));
       }
-      if (data.oauthUrl) {
-        window.open(data.oauthUrl, "_blank", "noopener,noreferrer");
+
+      // Sized popup (not _blank) — mirrors the Login/Facebook flow.
+      const width = 520;
+      const height = 640;
+      const left = Math.max(0, Math.floor(window.screenX + (window.outerWidth - width) / 2));
+      const top = Math.max(0, Math.floor(window.screenY + (window.outerHeight - height) / 2));
+      const popup = window.open(
+        data.oauthUrl,
+        "targenix_google_oauth_popup",
+        `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`,
+      );
+      if (!popup) {
+        setConnectBusy(false);
+        toast.error(t("destinations.sheets.popupBlocked"));
+        return;
       }
-    } catch {
-      /* non-fatal */
-    } finally {
+      popupRef.current = popup;
+
+      // Poll for manual close — if the user dismisses the popup without
+      // finishing auth, stop the spinner. The message listener cancels this
+      // interval first on success.
+      popupPollRef.current = window.setInterval(() => {
+        if (popupRef.current?.closed) {
+          clearPopupWatch();
+          // Use functional setter so this doesn't race with success handler.
+          setConnectBusy((prev) => (prev ? false : prev));
+        }
+      }, 600);
+    } catch (err) {
       setConnectBusy(false);
+      toast.error(err instanceof Error ? err.message : t("destinations.sheets.connectFailed"));
     }
   }
 

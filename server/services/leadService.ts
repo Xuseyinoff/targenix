@@ -5,11 +5,7 @@ import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 import { affiliateAdapter } from "../integrations/adapters/affiliateAdapter";
-import { plainUrlAdapter } from "../integrations/adapters/plainUrlAdapter";
-import { legacyTemplateAdapter } from "../integrations/adapters/legacyTemplateAdapter";
-import { dynamicTemplateAdapter } from "../integrations/adapters/dynamicTemplateAdapter";
-import { telegramAdapter } from "../integrations/adapters/telegramAdapter";
-import { googleSheetsAdapter } from "../integrations/adapters/googleSheetsAdapter";
+import { dispatchDelivery } from "../integrations/dispatch";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
 import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
@@ -609,57 +605,48 @@ async function runOrderIntegrationSend(params: {
     const _t0Routing = Date.now();
     let targetUrlUsed: string | undefined;
     let destinationTelegramChatId: string | null = null;
+
+    // Resolve destination (targetWebsite) once — the unified dispatcher handles
+    // every branch (dynamic-template / telegram / google-sheets / legacy /
+    // plain-url) based on what this row looks like.
     const twId = integration.targetWebsiteId ?? (config.targetWebsiteId ? Number(config.targetWebsiteId) : null);
+    let tw: typeof targetWebsites.$inferSelect | null = null;
+    let ownerMismatch = false;
     if (twId) {
-      const [tw] = await db.select().from(targetWebsites).where(eq(targetWebsites.id, twId)).limit(1);
-      if (tw && tw.userId !== userId) {
-        result = { success: false, error: "Target website owner mismatch", errorType: "validation" };
-      } else {
-        destinationTelegramChatId = (tw as { telegramChatId?: string | null } | undefined)?.telegramChatId?.trim?.() ?? null;
-        const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
-        if (tw && tw.templateId) {
-          result = await dynamicTemplateAdapter.send(
-            { db, targetWebsite: tw, variableFields },
-            leadPayload,
-          );
-        } else if (tw && tw.templateType === "telegram") {
-          result = await telegramAdapter.send(
-            {
-              templateConfig: tw.templateConfig,
-              leadRow: lead,
-              db,
-              userId,
-              connectionId: tw.connectionId ?? null,
-            },
-            leadPayload,
-          );
-        } else if (tw && tw.templateType === "google-sheets") {
-          result = await googleSheetsAdapter.send(
-            {
-              templateConfig: tw.templateConfig,
-              userId,
-              leadRow: lead,
-              db,
-              connectionId: tw.connectionId ?? null,
-            },
-            leadPayload,
-          );
-        } else if (tw && tw.templateType) {
-          targetUrlUsed = (tw.url as string | null) ?? undefined;
-          result = await legacyTemplateAdapter.send({
-            templateType: tw.templateType,
-            templateConfig: tw.templateConfig,
-            variableFields,
-            url: tw.url,
-          }, leadPayload);
+      const [row] = await db.select().from(targetWebsites).where(eq(targetWebsites.id, twId)).limit(1);
+      if (row) {
+        if (row.userId !== userId) {
+          ownerMismatch = true;
         } else {
-          targetUrlUsed = (config.targetUrl as string | undefined) ?? undefined;
-          result = await plainUrlAdapter.send(config, leadPayload);
+          tw = row;
+          destinationTelegramChatId = (row as { telegramChatId?: string | null }).telegramChatId?.trim?.() ?? null;
         }
       }
+    }
+
+    if (ownerMismatch) {
+      result = { success: false, error: "Target website owner mismatch", errorType: "validation" };
     } else {
-      targetUrlUsed = (config.targetUrl as string | undefined) ?? undefined;
-      result = await plainUrlAdapter.send(config, leadPayload);
+      const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
+      const dispatched = await dispatchDelivery(
+        {
+          db,
+          userId,
+          integrationType: "LEAD_ROUTING",
+          integrationConfig: config,
+          targetWebsite: tw,
+          leadRow: lead,
+          variableFields,
+        },
+        leadPayload,
+      );
+      targetUrlUsed = dispatched.targetUrlUsed;
+      result = {
+        success: dispatched.success,
+        responseData: dispatched.responseData,
+        error: dispatched.error,
+        errorType: dispatched.errorType,
+      };
     }
     result.durationMs = Date.now() - _t0Routing;
     await log[result.success ? "info" : "warn"](
