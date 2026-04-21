@@ -50,6 +50,11 @@ import {
 } from "@/components/dynamic-form";
 import type { ConfigField } from "@/components/dynamic-form";
 import { AppIcon, appIconBgClass } from "./appIcons";
+import {
+  APP_KEY_TO_TEMPLATE_TYPE,
+  buildCreatePayload,
+  isSupportedAppKey,
+} from "./createPayload";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -90,19 +95,6 @@ interface AppListItem {
   availability: "stable" | "beta" | "deprecated";
 }
 
-/**
- * Mapping from manifest `app.key` → the templateType expected by
- * targetWebsites.create. Apps not listed here are hidden from the picker.
- */
-const APP_KEY_TO_TEMPLATE_TYPE: Record<
-  string,
-  "telegram" | "google-sheets" | "custom"
-> = {
-  telegram: "telegram",
-  "google-sheets": "google-sheets",
-  "plain-url": "custom",
-};
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function DestinationCreatorDrawer({
@@ -142,7 +134,7 @@ export function DestinationCreatorDrawer({
     () =>
       apps.filter((a) => {
         if (a.availability === "deprecated") return false;
-        if (!APP_KEY_TO_TEMPLATE_TYPE[a.key]) return false;
+        if (!isSupportedAppKey(a.key)) return false;
         const fields = a.modules[0]?.fields;
         return Array.isArray(fields) && fields.length > 0;
       }),
@@ -225,10 +217,13 @@ export function DestinationCreatorDrawer({
       // and the new row is present before onCreated auto-selects it.
       await utils.targetWebsites.list.invalidate();
       toast.success(`Created destination "${result.name ?? destName.trim()}"`);
+      const fallbackTemplateType = isSupportedAppKey(selectedApp.key)
+        ? APP_KEY_TO_TEMPLATE_TYPE[selectedApp.key]
+        : "custom";
       onCreated({
         id: result.id,
         name: result.name ?? destName.trim(),
-        templateType: result.templateType ?? APP_KEY_TO_TEMPLATE_TYPE[selectedApp.key] ?? "custom",
+        templateType: result.templateType ?? fallbackTemplateType,
         category: selectedApp.category,
       });
       onOpenChange(false);
@@ -499,143 +494,7 @@ function ConfigureStep({
   );
 }
 
-// ─── Payload builder ─────────────────────────────────────────────────────────
-
-type CreatePayload =
-  | {
-      name: string;
-      templateType: "telegram";
-      connectionId?: number;
-      chatId?: string;
-      messageTemplate?: string;
-    }
-  | {
-      name: string;
-      templateType: "google-sheets";
-      connectionId?: number;
-      googleAccountId?: number;
-      spreadsheetId: string;
-      sheetName: string;
-      sheetHeaders?: string[];
-      mapping?: Record<string, string>;
-    }
-  | {
-      name: string;
-      templateType: "custom";
-      url: string;
-      method?: "POST" | "GET";
-      contentType?: "json" | "form" | "form-urlencoded" | "multipart";
-      bodyTemplate?: string;
-      headers?: Record<string, string>;
-    };
-
-function buildCreatePayload(
-  appKey: string,
-  name: string,
-  v: FieldValues,
-): CreatePayload {
-  if (appKey === "telegram") {
-    const connectionId = asNumber(v.connectionId);
-    if (!connectionId) {
-      throw new Error("Select a Telegram connection first.");
-    }
-    const chatId = asString(v.chatId).trim();
-    const messageTemplate = asString(v.messageTemplate);
-    return {
-      name,
-      templateType: "telegram",
-      connectionId,
-      ...(chatId ? { chatId } : {}),
-      ...(messageTemplate ? { messageTemplate } : {}),
-    };
-  }
-
-  if (appKey === "google-sheets") {
-    const connectionId = asNumber(v.connectionId);
-    if (!connectionId) {
-      throw new Error("Select a Google account first.");
-    }
-    const spreadsheetId = asString(v.spreadsheetId).trim();
-    const sheetName = asString(v.sheetName).trim();
-    if (!spreadsheetId) throw new Error("Spreadsheet is required.");
-    if (!sheetName) throw new Error("Sheet tab is required.");
-    const mapping =
-      v.mapping && typeof v.mapping === "object"
-        ? (v.mapping as Record<string, string>)
-        : {};
-    return {
-      name,
-      templateType: "google-sheets",
-      connectionId,
-      spreadsheetId,
-      sheetName,
-      mapping,
-      sheetHeaders: Object.keys(mapping),
-    };
-  }
-
-  if (appKey === "plain-url") {
-    const url = asString(v.url).trim();
-    if (!url) throw new Error("URL is required.");
-    const method = asString(v.method) === "GET" ? "GET" : "POST";
-    const contentTypeRaw = asString(v.contentType);
-    const contentType: "json" | "form-urlencoded" | "multipart" =
-      contentTypeRaw === "form-urlencoded" || contentTypeRaw === "multipart"
-        ? (contentTypeRaw as "form-urlencoded" | "multipart")
-        : "json";
-    const bodyTemplate = asString(v.bodyTemplate);
-    const headers = parseHeadersJson(asString(v.headers));
-    return {
-      name,
-      templateType: "custom",
-      url,
-      method,
-      contentType,
-      ...(bodyTemplate ? { bodyTemplate } : {}),
-      ...(headers ? { headers } : {}),
-    };
-  }
-
-  throw new Error(`Unsupported app: ${appKey}`);
-}
-
-function asNumber(v: unknown): number | undefined {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string" && v.trim()) {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : undefined;
-  }
-  return undefined;
-}
-
-function asString(v: unknown): string {
-  if (typeof v === "string") return v;
-  if (typeof v === "number") return String(v);
-  return "";
-}
-
-function parseHeadersJson(raw: string): Record<string, string> | undefined {
-  const trimmed = raw.trim();
-  if (!trimmed) return undefined;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      throw new Error("Headers must be a JSON object.");
-    }
-    const out: Record<string, string> = {};
-    for (const [k, val] of Object.entries(parsed)) {
-      if (typeof val !== "string") {
-        throw new Error(`Header "${k}" must be a string.`);
-      }
-      out[k] = val;
-    }
-    return out;
-  } catch (err) {
-    throw new Error(
-      err instanceof Error ? `Invalid headers JSON: ${err.message}` : "Invalid headers JSON.",
-    );
-  }
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function prettyCategory(cat: string): string {
   switch (cat) {

@@ -98,6 +98,12 @@ interface WizardState {
   variableFields: Record<string, string>;
   // Meta
   integrationName: string;
+  /**
+   * True once the user has manually edited the integration name. Until then
+   * the auto-fill effect keeps it in sync with "page → destination" so that
+   * swapping destinations updates the suggested name automatically.
+   */
+  integrationNameTouched: boolean;
 }
 
 const INITIAL_STATE: WizardState = {
@@ -115,6 +121,7 @@ const INITIAL_STATE: WizardState = {
   extraFields: [],
   variableFields: {},
   integrationName: "",
+  integrationNameTouched: false,
 };
 
 // ─── Destination category metadata ────────────────────────────────────────────
@@ -346,15 +353,24 @@ export default function IntegrationWizardV2() {
   }, [formFields]);
 
   // ─── Auto-fill: integration name once page + destination are chosen ─────────
+  // Tracks the "auto" vs "user-edited" state via `integrationNameTouched`. As
+  // long as the user hasn't typed into the name field, we keep the suggestion
+  // in sync with the currently-picked page and destination — swapping the
+  // destination should update the preview instead of leaving a stale name.
   useEffect(() => {
-    if (state.integrationName.trim()) return; // user has typed something
+    if (state.integrationNameTouched) return;
     if (state.pageName && state.targetWebsiteName) {
-      setState((s) => ({
-        ...s,
-        integrationName: `${state.pageName} → ${state.targetWebsiteName}`,
-      }));
+      const suggested = `${state.pageName} → ${state.targetWebsiteName}`;
+      if (state.integrationName !== suggested) {
+        setState((s) => ({ ...s, integrationName: suggested }));
+      }
     }
-  }, [state.pageName, state.targetWebsiteName, state.integrationName]);
+  }, [
+    state.pageName,
+    state.targetWebsiteName,
+    state.integrationName,
+    state.integrationNameTouched,
+  ]);
 
   // ─── Auto-fill: seed variableFields with empty placeholders for custom ────
   // templates so the mapping card has something to render. Existing values
@@ -712,13 +728,32 @@ export default function IntegrationWizardV2() {
             <Input
               id="integration-name"
               value={state.integrationName}
-              onChange={(e) => patch({ integrationName: e.target.value })}
+              onChange={(e) =>
+                patch({
+                  integrationName: e.target.value,
+                  integrationNameTouched: true,
+                })
+              }
               placeholder={
                 state.pageName && state.targetWebsiteName
                   ? `${state.pageName} → ${state.targetWebsiteName}`
                   : "My integration"
               }
             />
+            {state.integrationNameTouched && (
+              <button
+                type="button"
+                onClick={() =>
+                  patch({
+                    integrationName: "",
+                    integrationNameTouched: false,
+                  })
+                }
+                className="text-[11px] text-muted-foreground hover:text-primary"
+              >
+                Reset to auto-generated name
+              </button>
+            )}
           </div>
         </WizardCard>
 

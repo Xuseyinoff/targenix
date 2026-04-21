@@ -23,8 +23,24 @@
 
 /**
  * Routes integration dispatch through the new `integration_destinations`
- * table instead of the legacy `integrations.targetWebsiteId` column.
- * OFF by default until Commit 5c lands per-destination tracking.
+ * table instead of the legacy `integrations.targetWebsiteId` column. Also
+ * gates the new Make.com-style `/integrations/new-v2` wizard on the client.
+ *
+ * Rollout checklist (do these before setting MULTI_DEST_ALL=true):
+ *   - [5a] dual-read resolver lands in leadService.ts             — done
+ *   - [5b] v2 wizard routes available                             — done
+ *   - [5c.1] targetWebsites.create returns {id, name, templateType} — done
+ *   - [5c.2] DestinationCreatorDrawer renders manifest-driven forms — done
+ *   - [5c.3] Google OAuth popup auto-selects the new connection    — done
+ *   - [5d]   Telegram inline add-bot dialog auto-selects           — done
+ *   - [6]    Multi-destination fan-out in leadService (out of scope here)
+ *
+ * Until [6] ships the resolver returns at most one destination even under
+ * the new code path, so enabling this flag is safe in production — it just
+ * surfaces the new UI. Enable in three steps:
+ *   1. MULTI_DEST_USER_IDS=1          → founders / owners only.
+ *   2. MULTI_DEST_USER_IDS=1,42,…     → internal beta cohort.
+ *   3. MULTI_DEST_ALL=true            → global; revisit only after [6].
  */
 export const FLAG_MULTI_DESTINATIONS = "multi_destinations" as const;
 

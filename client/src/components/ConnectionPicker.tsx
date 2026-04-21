@@ -3,9 +3,11 @@
  *
  * Used by destination forms (Google Sheets, Telegram) to let the user pick
  * one of their existing connections instead of re-pasting credentials every
- * time. When the list is empty the picker surfaces a "Connect new" link that
- * opens /connections in a new tab — the destination form keeps the user's
- * in-progress state, they come back and refresh.
+ * time. Each supported connection type has an inline "Connect new" flow:
+ *   - google_sheets  → OAuth popup via `useGoogleOAuthPopup`
+ *   - telegram_bot   → bot-token + chat-id dialog (`TelegramConnectDialog`)
+ * In both cases, the newly created connection is auto-selected once the
+ * flow succeeds so the user never has to leave the current form.
  *
  * Props intentionally small so the component is trivially embeddable:
  *   type            — which connections are eligible (google_sheets | telegram_bot)
@@ -32,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { useT } from "@/hooks/useT";
 import { trpc } from "@/lib/trpc";
 import { useGoogleOAuthPopup } from "@/hooks/useGoogleOAuthPopup";
+import { TelegramConnectDialog } from "@/components/connections/TelegramConnectDialog";
 
 export type ConnectionPickerType = "google_sheets" | "telegram_bot";
 
@@ -111,7 +114,15 @@ export function ConnectionPicker({
     },
   });
 
+  // Telegram bot connections are created via a reusable dialog that uses the
+  // `connections.createTelegramBot` mutation (bot-token + chat-id, probed on
+  // the server before storage). After creation we refetch the list so the
+  // dropdown picks up the new entry and auto-select it.
+  const [telegramDialogOpen, setTelegramDialogOpen] = React.useState(false);
+
   const supportsInlineOAuth = type === "google_sheets";
+  const supportsInlineTelegram = type === "telegram_bot";
+  const supportsInlineCreate = supportsInlineOAuth || supportsInlineTelegram;
 
   const handleOpenConnectionsPage = () => {
     if (onAfterConnect) onAfterConnect();
@@ -123,11 +134,25 @@ export function ConnectionPicker({
       void startGoogleOAuth();
       return;
     }
-    // Telegram bot connections require a manual bot token + chat id dialog
-    // — that flow lives on /connections for now. Opening the tab so the
-    // user can finish there, then refetch on focus-return.
+    if (supportsInlineTelegram) {
+      setTelegramDialogOpen(true);
+      return;
+    }
+    // Fallback for any future connection type without an inline creator —
+    // open /connections and refetch on return.
     window.open("/connections", "_blank", "noreferrer");
     handleOpenConnectionsPage();
+  };
+
+  const handleTelegramCreated = async (connectionId: number) => {
+    // TelegramConnectDialog already invalidates connections.list, but we want
+    // the *current* picker query to resolve before auto-selecting so the
+    // consumer's form shows the new entry.
+    const res = await refetch();
+    const list = res.data ?? [];
+    const fresh = list.find((c) => c.id === connectionId);
+    onChange(fresh ? fresh.id : connectionId);
+    if (onAfterConnect) onAfterConnect();
   };
 
   return (
@@ -185,7 +210,7 @@ export function ConnectionPicker({
           </SelectContent>
         </Select>
 
-        {supportsInlineOAuth ? (
+        {supportsInlineCreate ? (
           <Button
             type="button"
             variant="outline"
@@ -196,7 +221,9 @@ export function ConnectionPicker({
             title={
               hasAny
                 ? t("connections.picker.manage")
-                : t("connections.google.connect")
+                : supportsInlineOAuth
+                  ? t("connections.google.connect")
+                  : t("connections.telegram.connect")
             }
           >
             {isConnecting ? (
@@ -228,7 +255,7 @@ export function ConnectionPicker({
 
       {!isLoading && !hasAny && (
         <p className="text-xs text-muted-foreground">
-          {supportsInlineOAuth ? (
+          {supportsInlineCreate ? (
             <>
               {t("connections.picker.emptyHint")}{" "}
               <button
@@ -237,9 +264,11 @@ export function ConnectionPicker({
                 disabled={disabled || isConnecting}
                 className="font-medium text-primary hover:underline disabled:opacity-60"
               >
-                {isConnecting
-                  ? t("connections.google.connecting")
-                  : t("connections.google.connect")}
+                {supportsInlineOAuth
+                  ? isConnecting
+                    ? t("connections.google.connecting")
+                    : t("connections.google.connect")
+                  : t("connections.telegram.connect")}
               </button>
             </>
           ) : (
@@ -256,6 +285,14 @@ export function ConnectionPicker({
             </>
           )}
         </p>
+      )}
+
+      {supportsInlineTelegram && (
+        <TelegramConnectDialog
+          open={telegramDialogOpen}
+          onOpenChange={setTelegramDialogOpen}
+          onCreated={(id) => void handleTelegramCreated(id)}
+        />
       )}
     </div>
   );

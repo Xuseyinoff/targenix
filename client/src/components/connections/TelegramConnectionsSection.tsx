@@ -51,6 +51,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useT } from "@/hooks/useT";
 import { trpc } from "@/lib/trpc";
+import { TelegramConnectDialog } from "./TelegramConnectDialog";
 
 export function TelegramConnectionsSection() {
   const t = useT();
@@ -61,7 +62,6 @@ export function TelegramConnectionsSection() {
   });
 
   const [connectOpen, setConnectOpen] = React.useState(false);
-  const [form, setForm] = React.useState({ displayName: "", botToken: "", chatId: "" });
 
   const [renameTarget, setRenameTarget] = React.useState<
     { id: number; currentName: string } | null
@@ -70,16 +70,6 @@ export function TelegramConnectionsSection() {
   const [disconnectTarget, setDisconnectTarget] = React.useState<
     { id: number; name: string; usageCount: number } | null
   >(null);
-
-  const createMutation = trpc.connections.createTelegramBot.useMutation({
-    onSuccess: () => {
-      toast.success(t("connections.telegram.connectSuccess"));
-      utils.connections.list.invalidate();
-      setConnectOpen(false);
-      setForm({ displayName: "", botToken: "", chatId: "" });
-    },
-    onError: (err) => toast.error(err.message),
-  });
 
   const renameMutation = trpc.connections.rename.useMutation({
     onSuccess: () => {
@@ -240,89 +230,7 @@ export function TelegramConnectionsSection() {
         </ul>
       )}
 
-      <Dialog open={connectOpen} onOpenChange={setConnectOpen}>
-        <DialogContent className="rounded-2xl sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{t("connections.telegram.dialogTitle")}</DialogTitle>
-            <DialogDescription>
-              {t("connections.telegram.dialogBody")}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="tg-name">{t("connections.telegram.nameLabel")}</Label>
-              <Input
-                id="tg-name"
-                placeholder={t("connections.telegram.namePlaceholder")}
-                value={form.displayName}
-                maxLength={255}
-                onChange={(e) => setForm({ ...form, displayName: e.target.value })}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="tg-token">{t("connections.telegram.tokenLabel")}</Label>
-              <Input
-                id="tg-token"
-                placeholder="123456:AAH..."
-                value={form.botToken}
-                maxLength={255}
-                onChange={(e) => setForm({ ...form, botToken: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t("connections.telegram.tokenHelp")}
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="tg-chat">{t("connections.telegram.chatLabel")}</Label>
-              <Input
-                id="tg-chat"
-                placeholder="-100..."
-                value={form.chatId}
-                maxLength={255}
-                onChange={(e) => setForm({ ...form, chatId: e.target.value })}
-              />
-              <p className="text-xs text-muted-foreground">
-                {t("connections.telegram.chatHelp")}
-              </p>
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              type="button"
-              variant="outline"
-              className="rounded-xl"
-              onClick={() => setConnectOpen(false)}
-              disabled={createMutation.isPending}
-            >
-              {t("connections.telegram.cancel")}
-            </Button>
-            <Button
-              type="button"
-              className="rounded-xl bg-[#0088cc] text-white hover:bg-[#0077b3]"
-              disabled={
-                createMutation.isPending ||
-                !form.displayName.trim() ||
-                !form.botToken.trim() ||
-                !form.chatId.trim()
-              }
-              onClick={() =>
-                createMutation.mutate({
-                  displayName: form.displayName.trim(),
-                  botToken: form.botToken.trim(),
-                  chatId: form.chatId.trim(),
-                })
-              }
-            >
-              {createMutation.isPending && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              {t("connections.telegram.save")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <TelegramConnectDialog open={connectOpen} onOpenChange={setConnectOpen} />
 
       <Dialog
         open={!!renameTarget}
