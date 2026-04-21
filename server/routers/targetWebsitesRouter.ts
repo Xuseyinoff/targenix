@@ -17,7 +17,7 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { targetWebsites, destinationTemplates, users, integrations, orders } from "../../drizzle/schema";
+import { targetWebsites, destinationTemplates, users, integrations, orders, connections } from "../../drizzle/schema";
 import { eq, desc, and, sql, gte, lt, inArray } from "drizzle-orm";
 import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
 import { encrypt, decrypt } from "../encryption";
@@ -256,6 +256,8 @@ export const targetWebsitesRouter = router({
         botToken: z.string().optional(),
         chatId: z.string().optional(),
         messageTemplate: z.string().optional(),
+        /** Phase 3 — link to unified connections table (optional, additive). */
+        connectionId: z.number().int().positive().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -272,6 +274,46 @@ export const targetWebsitesRouter = router({
         .limit(1);
       const autoChatId =
         me?.mode === "ALL" && me.defaultChatId ? String(me.defaultChatId) : null;
+
+      // Phase 3 — validate ownership of a passed-in connectionId. We do it
+      // once, up-front, so downstream branches can safely forward the id.
+      // If the connection belongs to another user or is of the wrong type
+      // we reject the whole create call rather than silently dropping the
+      // reference (would produce a destination without working credentials).
+      let validatedConnectionId: number | null = null;
+      if (input.connectionId) {
+        const [cx] = await db
+          .select({
+            id: connections.id,
+            userId: connections.userId,
+            type: connections.type,
+            googleAccountId: connections.googleAccountId,
+          })
+          .from(connections)
+          .where(eq(connections.id, input.connectionId))
+          .limit(1);
+        if (!cx || cx.userId !== ctx.user.id) {
+          throw new Error("Connection not found");
+        }
+        if (input.templateType === "google-sheets" && cx.type !== "google_sheets") {
+          throw new Error("Selected connection is not a Google Sheets connection");
+        }
+        if (input.templateType === "telegram" && cx.type !== "telegram_bot") {
+          throw new Error("Selected connection is not a Telegram bot connection");
+        }
+        validatedConnectionId = cx.id;
+
+        // For google-sheets, derive googleAccountId from the connection when
+        // the form did not send it explicitly — keeps templateConfig coherent
+        // as a fallback for the hybrid adapter resolution.
+        if (
+          input.templateType === "google-sheets" &&
+          !input.googleAccountId &&
+          cx.googleAccountId
+        ) {
+          input = { ...input, googleAccountId: cx.googleAccountId };
+        }
+      }
 
       // Telegram destination — no URL needed
       if (input.templateType === "telegram") {
@@ -290,6 +332,7 @@ export const targetWebsitesRouter = router({
           templateConfig: config,
           color: "#0088cc",
           isActive: true,
+          ...(validatedConnectionId ? { connectionId: validatedConnectionId } : {}),
         });
         return { success: true };
       }
@@ -315,6 +358,7 @@ export const targetWebsitesRouter = router({
           color: "#0F9D58",
           isActive: true,
           ...(autoChatId ? { telegramChatId: autoChatId } : {}),
+          ...(validatedConnectionId ? { connectionId: validatedConnectionId } : {}),
         });
         return { success: true };
       }
@@ -389,6 +433,8 @@ export const targetWebsitesRouter = router({
         botToken: z.string().optional(),
         chatId: z.string().optional(),
         messageTemplate: z.string().optional(),
+        /** Phase 3 — link/unlink unified connections row. `null` clears. */
+        connectionId: z.number().int().positive().nullable().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -405,6 +451,43 @@ export const targetWebsitesRouter = router({
       const updates: Record<string, unknown> = {};
       if (input.name !== undefined) updates.name = input.name;
       if (input.isActive !== undefined) updates.isActive = input.isActive;
+
+      // Phase 3 — validate and apply connectionId swaps.
+      // `null` explicitly clears the link. Any other value must resolve to
+      // a connection owned by this user and compatible with the template.
+      if (input.connectionId === null) {
+        updates.connectionId = null;
+      } else if (input.connectionId !== undefined) {
+        const [cx] = await db
+          .select({
+            id: connections.id,
+            userId: connections.userId,
+            type: connections.type,
+            googleAccountId: connections.googleAccountId,
+          })
+          .from(connections)
+          .where(eq(connections.id, input.connectionId))
+          .limit(1);
+        if (!cx || cx.userId !== ctx.user.id) {
+          throw new Error("Connection not found");
+        }
+        const effectiveType = input.templateType ?? site.templateType;
+        if (effectiveType === "google-sheets" && cx.type !== "google_sheets") {
+          throw new Error("Selected connection is not a Google Sheets connection");
+        }
+        if (effectiveType === "telegram" && cx.type !== "telegram_bot") {
+          throw new Error("Selected connection is not a Telegram bot connection");
+        }
+        updates.connectionId = cx.id;
+
+        if (
+          effectiveType === "google-sheets" &&
+          input.googleAccountId === undefined &&
+          cx.googleAccountId
+        ) {
+          input = { ...input, googleAccountId: cx.googleAccountId };
+        }
+      }
 
       // Rebuild config if any config fields changed
       const hasConfigChange = input.apiKey !== undefined || input.templateType !== undefined ||

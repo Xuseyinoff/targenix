@@ -45,6 +45,7 @@ import {
   GoogleSheetsDestinationForm,
   type GoogleSheetsFieldErrors,
 } from "@/components/GoogleSheetsDestinationForm";
+import { ConnectionPicker } from "@/components/ConnectionPicker";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import {
@@ -229,6 +230,8 @@ interface FormState {
   sheetHeaders: string[];
   /** Header label → mappable field key (or __none__). */
   columnMapping: Record<string, string>;
+  /** Phase 3 — unified connections row. Optional, derived from picker. */
+  connectionId: number | null;
 }
 
 const defaultForm = (): FormState => ({
@@ -257,6 +260,7 @@ const defaultForm = (): FormState => ({
   sheetName: "Sheet1",
   sheetHeaders: [],
   columnMapping: {},
+  connectionId: null,
 });
 
 // ─── Badge helpers ────────────────────────────────────────────────────────────
@@ -462,6 +466,13 @@ export default function TargetWebsites() {
   const { data: dynTemplates = [] } = trpc.targetWebsites.getTemplates.useQuery();
   const { data: googleIntegrationAccounts = [], isLoading: googleAccountsLoading } =
     trpc.googleAccounts.list.useQuery();
+
+  // Phase 3 — unified connections (Google variant) for auto-deriving the
+  // google_accounts.id behind a picked connection. The picker itself queries
+  // the same list; we reuse it here to avoid a second round-trip.
+  const { data: googleConnections = [] } = trpc.connections.list.useQuery({
+    type: "google_sheets",
+  });
 
   const createMutation = trpc.targetWebsites.create.useMutation({
     onSuccess: () => {
@@ -681,6 +692,7 @@ export default function TargetWebsites() {
         sheetName: typeof cfg.sheetName === "string" ? cfg.sheetName : "Sheet1",
         sheetHeaders,
         columnMapping,
+        connectionId: (site as { connectionId?: number | null }).connectionId ?? null,
       });
       setSheetsFieldErrors({});
       setSheetsLoadError(null);
@@ -699,6 +711,7 @@ export default function TargetWebsites() {
         chatId: (config.chatId as string) ?? "",
         botToken: "",
         messageTemplate: (config.messageTemplate as string) ?? DEFAULT_TELEGRAM_TEMPLATE,
+        connectionId: (site as { connectionId?: number | null }).connectionId ?? null,
       });
       setMode("configure");
       setOpen(true);
@@ -795,9 +808,10 @@ export default function TargetWebsites() {
         sheetName: form.sheetName.trim(),
         sheetHeaders: form.sheetHeaders,
         mapping: form.columnMapping,
+        ...(form.connectionId ? { connectionId: form.connectionId } : {}),
       };
       if (editId) {
-        updateMutation.mutate({ id: editId, ...payload });
+        updateMutation.mutate({ id: editId, ...payload, connectionId: form.connectionId ?? null });
       } else {
         createMutation.mutate(payload);
       }
@@ -807,16 +821,20 @@ export default function TargetWebsites() {
     // Telegram destination
     if (isTelegram) {
       if (!form.chatId.trim()) { toast.error(t("destinations.validation.fieldRequired", { field: "Chat ID" })); return; }
-      if (!form.botToken.trim() && !editId) { toast.error(t("destinations.validation.fieldRequired", { field: "Bot Token" })); return; }
+      if (!form.botToken.trim() && !editId && !form.connectionId) {
+        toast.error(t("destinations.validation.fieldRequired", { field: "Bot Token" }));
+        return;
+      }
       const telegramPayload = {
         name: form.name,
         templateType: "telegram" as const,
         chatId: form.chatId.trim(),
         botToken: form.botToken.trim() || undefined,
         messageTemplate: form.messageTemplate || DEFAULT_TELEGRAM_TEMPLATE,
+        ...(form.connectionId ? { connectionId: form.connectionId } : {}),
       };
       if (editId) {
-        updateMutation.mutate({ id: editId, ...telegramPayload });
+        updateMutation.mutate({ id: editId, ...telegramPayload, connectionId: form.connectionId ?? null });
       } else {
         createMutation.mutate(telegramPayload);
       }
@@ -1502,6 +1520,26 @@ export default function TargetWebsites() {
 
               {isGoogleSheets && (
                 <div className="space-y-3">
+                  <ConnectionPicker
+                    type="google_sheets"
+                    value={form.connectionId}
+                    label={t("destinations.sheets.connectionLabel")}
+                    helpText={t("destinations.sheets.connectionHelp")}
+                    onChange={(id) => {
+                      const picked = id != null
+                        ? googleConnections.find((c) => c.id === id)
+                        : null;
+                      // Auto-populate the inner googleAccountId so the rest of
+                      // the existing Sheets form (spreadsheet list, tab picker,
+                      // headers fetch) keeps working unchanged.
+                      setForm((f) => ({
+                        ...f,
+                        connectionId: id,
+                        googleAccountId: picked?.google?.accountId ?? f.googleAccountId,
+                      }));
+                      setSheetsFieldErrors((e) => ({ ...e, googleAccountId: undefined }));
+                    }}
+                  />
                   <GoogleSheetsDestinationForm
                     accounts={googleIntegrationAccounts.map((a) => ({ id: a.id, email: a.email }))}
                     googleAccountId={form.googleAccountId}

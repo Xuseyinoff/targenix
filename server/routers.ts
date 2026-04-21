@@ -15,6 +15,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { googleAccountsRouter } from "./routers/googleAccountsRouter";
 import { googleRouter } from "./routers/googleRouter";
 import { appsRouter } from "./routers/appsRouter";
+import { connectionsRouter } from "./routers/connectionsRouter";
 
 export const appRouter = router({
   system: systemRouter,
@@ -22,6 +23,7 @@ export const appRouter = router({
   leads: leadsRouter,
   integrations: integrationsRouter,
   apps: appsRouter,
+  connections: connectionsRouter,
   facebookAccounts: facebookAccountsRouter,
   googleAccounts: googleAccountsRouter,
   google: googleRouter,

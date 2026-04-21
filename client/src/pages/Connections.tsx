@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Link } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import { DisconnectFacebookAccountDialog } from "@/components/DisconnectFacebookAccountDialog";
+import { GoogleConnectionsSection } from "@/components/connections/GoogleConnectionsSection";
+import { TelegramConnectionsSection } from "@/components/connections/TelegramConnectionsSection";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -725,6 +727,21 @@ export default function Connections() {
             })}
           </div>
         )}
+
+        {/* Phase 3 — delivery-side connections (Google, Telegram).
+            Each section is self-contained: queries the connections router,
+            renders its own connect flow, and exposes rename / disconnect. */}
+        <div className="space-y-6 pt-2">
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-border/60" />
+            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              {t("connections.deliverySectionLabel")}
+            </span>
+            <div className="h-px flex-1 bg-border/60" />
+          </div>
+          <GoogleConnectionsSection />
+          <TelegramConnectionsSection />
+        </div>
 
         {/* Sticky primary CTA — mobile (hidden when empty to avoid duplicate with empty state) */}
         {!isLoading && accountsWithPages.length > 0 && (

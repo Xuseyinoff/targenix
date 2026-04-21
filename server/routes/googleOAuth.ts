@@ -42,6 +42,7 @@ import { eq, and, lt } from "drizzle-orm";
 import { getDb } from "../db";
 import { googleAccounts, googleOauthStates, users } from "../../drizzle/schema";
 import { encrypt, decrypt } from "../encryption";
+import { upsertGoogleConnection } from "../services/connectionService";
 import { sdk } from "../_core/sdk";
 import { getSessionCookieOptions } from "../_core/cookies";
 import { COOKIE_NAME, SESSION_EXPIRATION_MS } from "@shared/const";
@@ -336,10 +337,33 @@ export function registerGoogleOAuthRoutes(app: Express): void {
           scopes:       scope,
         });
 
+        // Phase 3 — mirror this account into the unified connections table so
+        // it shows up on /connections and is pickable from destination forms.
+        // Failure here must never break OAuth — the legacy google_accounts row
+        // is already persisted and adapters fall back to it via templateConfig.
+        let connectionId: number | null = null;
+        try {
+          connectionId = await upsertGoogleConnection(db, {
+            userId:          stateUserId,
+            googleAccountId: accountId,
+            email:           profile.email,
+            displayName:     profile.name?.trim()
+              ? `${profile.name} (${profile.email})`
+              : profile.email,
+          });
+        } catch (err) {
+          await log.warn("GOOGLE", "connections row upsert failed (non-fatal)", {
+            userId: stateUserId,
+            accountId,
+            error:  String(err),
+          });
+        }
+
         await log.info("GOOGLE", "integration account connected", {
           userId: stateUserId,
           email:  profile.email,
           accountId,
+          connectionId,
         });
 
         res.send(popupHtml(channel, {
