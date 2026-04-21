@@ -1,12 +1,13 @@
 import { and, desc, eq, isNotNull, lt, lte } from "drizzle-orm";
-import { facebookConnections, facebookAccounts, facebookForms, leads, orders, integrations, users, targetWebsites } from "../../drizzle/schema";
+import { facebookConnections, facebookAccounts, facebookForms, integrationDestinations, leads, orders, integrations, users, targetWebsites } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 import { affiliateAdapter } from "../integrations/adapters/affiliateAdapter";
 import { dispatchDelivery } from "../integrations/dispatch";
-import { resolveIntegrationDestinations } from "./integrationDestinations";
+import { resolveIntegrationDestinations, type ResolvedDestination } from "./integrationDestinations";
+import { isMultiDestinationsEnabled } from "./featureFlags";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
 import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
@@ -540,6 +541,12 @@ async function persistOrderDeliveryAttemptResult(
 /**
  * Send one order to its integration (Graph already done — routing only).
  * Shared by processLead and the hourly order retry job.
+ *
+ * `preResolvedDestination` — when provided (including null), the LEAD_ROUTING
+ * branch uses it directly and skips the `resolveIntegrationDestinations` call.
+ * Pass `undefined` (or omit) to fall back to the legacy inline resolution.
+ * This avoids a double-query when the caller (fan-out loop) already resolved
+ * the destination list.
  */
 async function runOrderIntegrationSend(params: {
   db: DbClient;
@@ -560,6 +567,15 @@ async function runOrderIntegrationSend(params: {
   deliverySource?: "initial" | "auto_retry";
   /** Set for auto_retry: this delivery is attempt `current` of `max` */
   deliveryAttempt?: { current: number; max: number };
+  /**
+   * Pre-resolved destination to dispatch to.
+   * - `undefined` (default): let the LEAD_ROUTING branch call the resolver
+   *   internally (legacy single-destination path).
+   * - `ResolvedDestination`: use this destination, skip the resolver call.
+   * - `null`: explicitly "no destination configured" — dispatch with tw=null
+   *   (triggers plain-url fallback or validation error).
+   */
+  preResolvedDestination?: ResolvedDestination | null;
 }): Promise<IntegrationDeliveryResult> {
   const { db, integration, lead, leadPayload, userId, isAdmin } = params;
   const deliverySource = params.deliverySource ?? "initial";
@@ -607,28 +623,28 @@ async function runOrderIntegrationSend(params: {
     let targetUrlUsed: string | undefined;
     let destinationTelegramChatId: string | null = null;
 
-    // Resolve destinations via the Commit 5a helper. Under the hood this
-    // reads from `integration_destinations` for users on the feature-flag
-    // allowlist and from the legacy `integrations.targetWebsiteId` column
-    // for everyone else — returning 0 or 1 entries either way until
-    // Commit 5c introduces per-destination retry tracking required for
-    // safe N > 1 fan-out.
-    const destinations = await resolveIntegrationDestinations(db, {
-      id: integration.id,
-      userId: integration.userId,
-      targetWebsiteId: integration.targetWebsiteId ?? null,
-      config: integration.config,
-    });
-    // Guardrail: until Commit 5c lands per-destination tracking, we refuse
-    // to fan out to >1 destinations to avoid double-delivery on retry.
-    // In practice no row reaches this branch because the Commit 4 backfill
-    // produced exactly one row per integration; this is belt-and-braces.
-    if (destinations.length > 1) {
-      console.warn(
-        `[leadService] integration ${integration.id} has ${destinations.length} destinations but per-destination tracking is not yet in place; using the first one only. (Multi-destination fan-out arrives in Commit 5c.)`,
-      );
+    // Resolve the destination to dispatch to.
+    //
+    // Fast path: the caller (fan-out loop in processLead, or the retry path
+    // in retryFailedOrderDelivery) already fetched the destination and passes
+    // it in as `preResolvedDestination`. We use it directly — avoids a
+    // redundant DB round-trip.
+    //
+    // Legacy path: `preResolvedDestination` is `undefined` — we call the
+    // resolver here so existing callers that don't pass it keep working.
+    let primary: ResolvedDestination | null;
+    if (params.preResolvedDestination !== undefined) {
+      primary = params.preResolvedDestination;
+    } else {
+      const resolved = await resolveIntegrationDestinations(db, {
+        id: integration.id,
+        userId: integration.userId,
+        targetWebsiteId: integration.targetWebsiteId ?? null,
+        config: integration.config,
+      });
+      primary = resolved[0] ?? null;
     }
-    const primary = destinations[0] ?? null;
+
     const tw = primary?.targetWebsite ?? null;
     // Preserve the legacy semantics exactly: whitespace-only trims to null,
     // missing mapping is null — both branches fall through to the user's
@@ -715,6 +731,124 @@ async function runOrderIntegrationSend(params: {
   }
 
   return result;
+}
+
+/**
+ * Handle the full lifecycle for a single (integration, destination) pair:
+ *   1. Look up the existing order by `(leadId, integrationId, destinationId)`.
+ *   2. Skip if already SENT, exhausted, or not yet due for retry.
+ *   3. Create the order row if it doesn't exist (with destinationId so the
+ *      unique key `uq_orders_lead_int_dest` scopes it correctly).
+ *   4. Dispatch via `runOrderIntegrationSend`.
+ *   5. Persist the attempt result.
+ *
+ * `destinationId` is 0 for AFFILIATE integrations and for the legacy
+ * single-destination LEAD_ROUTING path (flag off). It equals the
+ * `integration_destinations.id` for the fan-out path (flag on, N > 1).
+ *
+ * `preResolvedDestination` is forwarded to `runOrderIntegrationSend` so the
+ * dispatcher doesn't re-query the destination. Pass `undefined` for the
+ * legacy path (resolver runs inside `runOrderIntegrationSend`).
+ */
+async function deliverOneDestination(params: {
+  db: DbClient;
+  integration: typeof integrations.$inferSelect;
+  destinationId: number;
+  preResolvedDestination?: ResolvedDestination | null;
+  leadId: number;
+  leadRow: typeof leads.$inferSelect;
+  leadPayload: {
+    leadgenId: string;
+    fullName: string | null;
+    phone: string | null;
+    email: string | null;
+    pageId: string;
+    formId: string;
+    extraFields: Record<string, string>;
+  };
+  userId: number;
+  pageId: string;
+  isAdmin?: boolean;
+}): Promise<void> {
+  const { db, integration, destinationId, leadId, leadRow, leadPayload, userId, pageId } = params;
+
+  const [existingOrder] = await db
+    .select({
+      id: orders.id,
+      status: orders.status,
+      attempts: orders.attempts,
+      nextRetryAt: orders.nextRetryAt,
+    })
+    .from(orders)
+    .where(
+      and(
+        eq(orders.leadId, leadId),
+        eq(orders.integrationId, integration.id),
+        eq(orders.destinationId, destinationId),
+      ),
+    )
+    .limit(1);
+
+  if (existingOrder?.status === "SENT") return;
+  if (existingOrder?.status === "FAILED") {
+    if (existingOrder.attempts >= ORDER_MAX_DELIVERY_ATTEMPTS) return;
+    if (existingOrder.nextRetryAt && existingOrder.nextRetryAt > new Date()) return;
+  }
+
+  let orderId: number;
+  let prevAttempts: number;
+
+  if (!existingOrder) {
+    await db.insert(orders).values({
+      leadId,
+      userId,
+      integrationId: integration.id,
+      destinationId,
+      status: "PENDING",
+      attempts: 0,
+    });
+    const [row] = await db
+      .select({ id: orders.id, attempts: orders.attempts })
+      .from(orders)
+      .where(
+        and(
+          eq(orders.leadId, leadId),
+          eq(orders.integrationId, integration.id),
+          eq(orders.destinationId, destinationId),
+        ),
+      )
+      .limit(1);
+    if (!row) return;
+    orderId = row.id;
+    prevAttempts = row.attempts;
+  } else {
+    orderId = existingOrder.id;
+    prevAttempts = existingOrder.attempts;
+  }
+
+  const result = await runOrderIntegrationSend({
+    db,
+    integration,
+    lead: leadRow,
+    leadPayload,
+    userId,
+    isAdmin: params.isAdmin,
+    preResolvedDestination: params.preResolvedDestination,
+  });
+
+  const persisted = await persistOrderDeliveryAttemptResult(db, { orderId, prevAttempts, result });
+  if (!persisted) {
+    await log.warn(
+      "ORDER",
+      `Order ${orderId} delivery result not persisted (concurrent update)`,
+      { orderId, prevAttempts, destinationId },
+      leadId,
+      pageId,
+      userId,
+      "order_delivery_race",
+      "facebook",
+    );
+  }
 }
 
 export async function recalculateLeadDeliveryStatus(leadId: number, userId?: number): Promise<void> {
@@ -913,70 +1047,67 @@ export async function processLead(params: {
       continue;
     }
 
-    const [existingOrder] = await db
-      .select({
-        id: orders.id,
-        status: orders.status,
-        attempts: orders.attempts,
-        nextRetryAt: orders.nextRetryAt,
-      })
-      .from(orders)
-      .where(and(eq(orders.leadId, params.leadId), eq(orders.integrationId, integration.id)))
-      .limit(1);
-
-    if (existingOrder?.status === "SENT") continue;
-
-    if (existingOrder?.status === "FAILED") {
-      if (existingOrder.attempts >= ORDER_MAX_DELIVERY_ATTEMPTS) continue;
-      if (existingOrder.nextRetryAt && existingOrder.nextRetryAt > new Date()) continue;
-    }
-
-    let orderId: number;
-    let prevAttempts: number;
-
-    if (!existingOrder) {
-      await db.insert(orders).values({
-        leadId: params.leadId,
-        userId: params.userId,
-        integrationId: integration.id,
-        status: "PENDING",
-        attempts: 0,
+    // ── Multi-destination fan-out (LEAD_ROUTING + feature flag ON) ──────────
+    // When the flag is on, resolve the full destination list and dispatch to
+    // each one independently. Each destination gets its own `orders` row
+    // keyed by `(leadId, integrationId, destinationId)`, so per-destination
+    // retry state is tracked separately.
+    //
+    // If the resolver returns 0 rows (e.g. table not yet backfilled), we fall
+    // through to the legacy single-destination path below — no regression.
+    if (
+      integration.type === "LEAD_ROUTING" &&
+      isMultiDestinationsEnabled(integration.userId)
+    ) {
+      const destinations = await resolveIntegrationDestinations(db, {
+        id: integration.id,
+        userId: integration.userId,
+        targetWebsiteId: integration.targetWebsiteId ?? null,
+        config: integration.config,
       });
-      const [row] = await db
-        .select({ id: orders.id, attempts: orders.attempts })
-        .from(orders)
-        .where(and(eq(orders.leadId, params.leadId), eq(orders.integrationId, integration.id)))
-        .limit(1);
-      if (!row) continue;
-      orderId = row.id;
-      prevAttempts = row.attempts;
-    } else {
-      orderId = existingOrder.id;
-      prevAttempts = existingOrder.attempts;
+
+      if (destinations.length > 0) {
+        for (const dest of destinations) {
+          await deliverOneDestination({
+            db,
+            integration,
+            // `mappingId` is the integration_destinations.id — used as
+            // destinationId so each destination has its own order row.
+            destinationId: dest.mappingId ?? 0,
+            preResolvedDestination: dest,
+            leadId: params.leadId,
+            leadRow,
+            leadPayload,
+            userId: params.userId,
+            pageId: params.pageId,
+            isAdmin: params.isAdmin,
+          });
+        }
+        // All destinations dispatched; skip the single-destination path.
+        continue;
+      }
+      // If destinations is empty (no rows in integration_destinations yet),
+      // fall through to the legacy single-dest path — `runOrderIntegrationSend`
+      // will call the resolver again internally and handle the "no target" case.
     }
 
-    const result = await runOrderIntegrationSend({
+    // ── Legacy / AFFILIATE single-destination path ──────────────────────────
+    // destinationId = 0 (the schema default). Preserves exact existing
+    // behaviour for all non-flagged users and AFFILIATE integrations.
+    await deliverOneDestination({
       db,
       integration,
-      lead: leadRow,
+      destinationId: 0,
+      // Leave preResolvedDestination undefined so runOrderIntegrationSend
+      // calls the resolver internally — identical to the pre-6b code path.
+      preResolvedDestination: undefined,
+      leadId: params.leadId,
+      leadRow,
       leadPayload,
       userId: params.userId,
+      pageId: params.pageId,
       isAdmin: params.isAdmin,
     });
-
-    const persisted = await persistOrderDeliveryAttemptResult(db, { orderId, prevAttempts, result });
-    if (!persisted) {
-      await log.warn(
-        "ORDER",
-        `Order ${orderId} delivery result not persisted (concurrent update)`,
-        { orderId, prevAttempts },
-        params.leadId,
-        params.pageId,
-        params.userId,
-        "order_delivery_race",
-        "facebook",
-      );
-    }
   }
 
   await recalculateLeadDeliveryStatus(params.leadId, params.userId);
@@ -1059,6 +1190,78 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
     extraFields: extraFieldsResolved,
   };
 
+  // When the order was created by the multi-destination fan-out path, it
+  // carries `destinationId > 0` pointing to the specific
+  // `integration_destinations` row it was dispatched to. On retry we must
+  // re-dispatch to the SAME destination, not let the resolver pick a
+  // potentially different one.
+  //
+  // If `destinationId === 0` this is a legacy order — let
+  // `runOrderIntegrationSend` resolve the destination internally (existing
+  // behaviour, no change).
+  let preResolvedDestination: ResolvedDestination | undefined;
+  if (order.destinationId > 0) {
+    const [destRow] = await db
+      .select({ mapping: integrationDestinations, tw: targetWebsites })
+      .from(integrationDestinations)
+      .innerJoin(
+        targetWebsites,
+        eq(integrationDestinations.targetWebsiteId, targetWebsites.id),
+      )
+      .where(
+        and(
+          eq(integrationDestinations.id, order.destinationId),
+          eq(integrationDestinations.integrationId, integration.id),
+        ),
+      )
+      .limit(1);
+
+    if (!destRow) {
+      // The destination mapping was deleted after the order was created.
+      // Cancel retries for this order so the scheduler doesn't keep picking it.
+      await db.update(orders).set({ nextRetryAt: null }).where(eq(orders.id, order.id));
+      await log.warn(
+        "ORDER",
+        `Order ${order.id} auto-retry skipped — destination mapping ${order.destinationId} not found`,
+        { integrationId: integration.id, destinationId: order.destinationId },
+        order.leadId,
+        lead.pageId,
+        order.userId,
+        "order_retry_skipped",
+        "system",
+      );
+      return { outcome: "skipped" };
+    }
+
+    if (!destRow.mapping.enabled) {
+      await db.update(orders).set({ nextRetryAt: null }).where(eq(orders.id, order.id));
+      await log.warn(
+        "ORDER",
+        `Order ${order.id} auto-retry paused — destination mapping ${order.destinationId} disabled`,
+        { integrationId: integration.id, destinationId: order.destinationId },
+        order.leadId,
+        lead.pageId,
+        order.userId,
+        "order_retry_skipped",
+        "system",
+      );
+      return { outcome: "skipped" };
+    }
+
+    // Ownership guard — must match integration owner to avoid cross-tenant dispatch.
+    if (destRow.tw.userId !== order.userId) {
+      await db.update(orders).set({ nextRetryAt: null }).where(eq(orders.id, order.id));
+      return { outcome: "skipped" };
+    }
+
+    preResolvedDestination = {
+      mappingId: destRow.mapping.id,
+      position: destRow.mapping.position,
+      enabled: destRow.mapping.enabled,
+      targetWebsite: destRow.tw,
+    };
+  }
+
   const prevAttempts = order.attempts;
   const result = await runOrderIntegrationSend({
     db,
@@ -1069,6 +1272,9 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
     isAdmin: false,
     deliverySource: "auto_retry",
     deliveryAttempt: { current: prevAttempts + 1, max: ORDER_MAX_DELIVERY_ATTEMPTS },
+    // Pass the pre-resolved destination for fan-out orders; undefined for legacy
+    // orders so the internal resolver runs as before.
+    preResolvedDestination,
   });
 
   const persisted = await persistOrderDeliveryAttemptResult(db, { orderId: order.id, prevAttempts, result });
