@@ -75,6 +75,7 @@ import {
   serializeExtraFields,
   type ExtraFieldDraft,
 } from "./lead-routing/shared";
+import { DestinationCreatorDrawer } from "@/components/destinations/DestinationCreatorDrawer";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -270,6 +271,11 @@ export default function IntegrationWizardV2() {
   const [openCard, setOpenCard] = useState<
     "trigger" | "destination" | "mapping" | "name" | null
   >("trigger");
+
+  // Inline destination-creator drawer. Opened from the Destination card's
+  // "Create new" button — lets the user build a Telegram / Google Sheets /
+  // webhook destination without leaving the wizard.
+  const [creatorOpen, setCreatorOpen] = useState(false);
 
   // ─── Flag gate ─────────────────────────────────────────────────────────────
   const { data: flags, isLoading: flagsLoading } =
@@ -648,6 +654,7 @@ export default function IntegrationWizardV2() {
             loading={loadingTargets}
             selectedId={state.targetWebsiteId}
             onPick={setDestination}
+            onOpenCreator={() => setCreatorOpen(true)}
           />
         </WizardCard>
 
@@ -714,6 +721,15 @@ export default function IntegrationWizardV2() {
             />
           </div>
         </WizardCard>
+
+        {/* Inline destination creator */}
+        <DestinationCreatorDrawer
+          open={creatorOpen}
+          onOpenChange={setCreatorOpen}
+          onCreated={({ id, name, templateType }) => {
+            setDestination(id, name, templateType);
+          }}
+        />
 
         {/* Footer — sticky save bar */}
         <div className="fixed bottom-0 inset-x-0 bg-background/95 backdrop-blur border-t z-10">
@@ -916,6 +932,7 @@ interface DestinationEditorProps {
   loading: boolean;
   selectedId: number | null;
   onPick: (id: number, name: string, templateType: string) => void;
+  onOpenCreator: () => void;
 }
 
 function DestinationEditor({
@@ -923,6 +940,7 @@ function DestinationEditor({
   loading,
   selectedId,
   onPick,
+  onOpenCreator,
 }: DestinationEditorProps) {
   const grouped = useMemo(() => {
     const map = new Map<string, DestinationListItem[]>();
@@ -937,11 +955,18 @@ function DestinationEditor({
   if (loading) return <LoadingBar />;
   if (destinations.length === 0) {
     return (
-      <EmptyHint
-        message="You haven't created any destinations yet."
-        ctaLabel="Create destination"
-        href="/target-websites"
-      />
+      <div className="space-y-3">
+        <div className="flex items-center gap-3 rounded-md border border-dashed bg-muted/10 p-4">
+          <div className="flex-1 text-xs text-muted-foreground">
+            You haven&apos;t created any destinations yet. Set one up right here
+            — no need to leave the wizard.
+          </div>
+          <Button size="sm" onClick={onOpenCreator} className="shrink-0">
+            <Plus className="h-3.5 w-3.5 mr-1.5" />
+            New destination
+          </Button>
+        </div>
+      </div>
     );
   }
 
@@ -996,20 +1021,20 @@ function DestinationEditor({
         );
       })}
 
-      <div className="pt-1">
+      <div className="pt-1 flex items-center justify-between gap-2 border-t pt-3">
+        <p className="text-[11px] text-muted-foreground">
+          Need a different destination? Create one inline without leaving the
+          wizard.
+        </p>
         <Button
-          variant="ghost"
+          variant="outline"
           size="sm"
-          className="h-8 text-xs"
-          onClick={() => window.open("/target-websites", "_blank")}
+          className="h-8 text-xs shrink-0"
+          onClick={onOpenCreator}
         >
           <Plus className="h-3.5 w-3.5 mr-1.5" />
-          Create new destination
-          <ArrowRight className="h-3 w-3 ml-1.5 opacity-60" />
+          New destination
         </Button>
-        <p className="text-[11px] text-muted-foreground mt-1">
-          Opens destinations in a new tab — return here when done to pick it.
-        </p>
       </div>
     </div>
   );
