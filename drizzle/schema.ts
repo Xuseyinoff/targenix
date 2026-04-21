@@ -538,6 +538,25 @@ export const orders = mysqlTable("orders", {
   leadId: int("leadId").notNull(),
   userId: int("userId").notNull(),
   integrationId: int("integrationId").notNull(),
+  /**
+   * Which `integration_destinations` row this order is delivering to.
+   *
+   * - `0` = legacy single-destination path: an order aggregates delivery
+   *   for the whole integration (there is only one destination so there's
+   *   nothing to disambiguate). All rows created before migration 0045
+   *   take this value.
+   * - `> 0` = per-destination fan-out path (Commit 6b onward, behind the
+   *   `multi_destinations` feature flag). Each destination mapping gets
+   *   its own order row so attempts / nextRetryAt / status are tracked
+   *   independently — preventing double-delivery when one destination
+   *   succeeds and another fails.
+   *
+   * Stored as a non-null INT with DEFAULT 0 so existing code paths that
+   * omit the column on insert keep working without changes, and so the
+   * composite unique key below has strict semantics (unlike NULL, which
+   * MySQL treats as always-unique).
+   */
+  destinationId: int("destinationId").default(0).notNull(),
   status: mysqlEnum("status", ["PENDING", "SENT", "FAILED"]).default("PENDING").notNull(),
   /** Completed delivery attempts (each HTTP/send to integration). Max 3 then auto-retry stops. */
   attempts: int("attempts").default(0).notNull(),
@@ -548,8 +567,15 @@ export const orders = mysqlTable("orders", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
-  // One order row per lead per integration — idempotent retries without duplicate rows
-  uqLeadIntegration: uniqueIndex("uq_orders_lead_integration").on(t.leadId, t.integrationId),
+  // One order row per (lead, integration, destination). Legacy rows pin
+  // destinationId=0 so the constraint still guarantees idempotency on the
+  // single-destination path while leaving room for per-destination rows
+  // when multi-destinations fan-out is enabled.
+  uqLeadIntDest: uniqueIndex("uq_orders_lead_int_dest").on(
+    t.leadId,
+    t.integrationId,
+    t.destinationId,
+  ),
   // Speeds up: getOrdersByLead (WHERE leadId = ?) and processLead order lookup (WHERE leadId = ? AND integrationId = ?)
   idxLeadId: index("idx_orders_lead_id").on(t.leadId),
   // Speeds up: getOrderStats (WHERE userId = ?) and any filter by userId + status
@@ -561,6 +587,10 @@ export const orders = mysqlTable("orders", {
   idxCreatedAt: index("idx_orders_created_at").on(t.createdAt),
   // Hourly job: FAILED + due nextRetryAt
   idxRetryDue: index("idx_orders_retry_due").on(t.status, t.nextRetryAt),
+  // Reverse lookup: "which orders belong to this destination mapping?"
+  // Used by per-destination retry scheduling (Commit 6b) and destination
+  // deletion clean-up.
+  idxDestination: index("idx_orders_destination").on(t.destinationId),
 }));
 
 export type Order = typeof orders.$inferSelect;
