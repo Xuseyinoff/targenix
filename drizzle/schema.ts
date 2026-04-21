@@ -140,8 +140,15 @@ export const facebookConnections = mysqlTable("facebook_connections", {
   subscriptionError: text("subscriptionError"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (t) => ({
-  // One page connection per platform user (same FB page can be connected by different users)
-  userPageUnique: uniqueIndex("uq_facebook_connections_user_page").on(t.userId, t.pageId),
+  // One page connection per (user, FB account, page) — a single Targenix user can
+  // connect the same page via two different FB accounts (business manager + personal).
+  // Same FB page can also still be connected by different Targenix users independently.
+  // Matches prod migration 0035_fb_multi_account_per_page.sql.
+  userAccountPageUnique: uniqueIndex("uq_fb_conn_user_account_page").on(
+    t.userId,
+    t.facebookAccountId,
+    t.pageId,
+  ),
   // Non-unique index on pageId — speeds up webhook fan-out query: WHERE pageId = ?
   idxPageId: index("idx_facebook_connections_page_id").on(t.pageId),
 }));

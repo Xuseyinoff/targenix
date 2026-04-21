@@ -28,7 +28,7 @@ import {
   campaignInsightsCache,
 } from "../../drizzle/schema";
 import { eq, desc, and, inArray, count } from "drizzle-orm";
-import { logEvent } from "../services/appLogger";
+import { logEvent, log } from "../services/appLogger";
 import { encrypt, decrypt } from "../encryption";
 import {
   exchangeForLongLivedToken,
@@ -42,6 +42,7 @@ import {
   unsubscribePageFromApp,
 } from "../services/facebookGraphService";
 import { upsertFormsForPage } from "../services/facebookFormsService";
+import { countOtherActiveTenantsOnPage } from "../services/facebookPageGuard";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 
 function getAppCredentials() {
@@ -714,24 +715,66 @@ export const facebookAccountsRouter = router({
     }),
 
   // ── Unsubscribe page from app ─────────────────────────────────────────────
+  // SHARED-PAGE GUARD: `DELETE /{page-id}/subscribed_apps` kills the webhook
+  // for EVERY Targenix tenant that also relies on this page (see
+  // facebookPageGuard.ts for background). When other tenants are still active
+  // we skip the destructive FB call and only deactivate this user's row.
   unsubscribePage: protectedProcedure
     .input(z.object({ accountId: z.number(), pageId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user.id;
       const db = await getDb();
       if (!db) throw new Error("DB not available");
+
       const [acct] = await db
         .select()
         .from(facebookAccounts)
         .where(eq(facebookAccounts.id, input.accountId))
         .limit(1);
       if (!acct || acct.userId !== userId) throw new Error("Account not found");
+
+      const otherTenants = await countOtherActiveTenantsOnPage(db, input.pageId, userId);
+
+      if (otherTenants > 0) {
+        await db
+          .update(facebookConnections)
+          .set({ isActive: false, subscriptionStatus: "inactive" })
+          .where(
+            and(
+              eq(facebookConnections.userId, userId),
+              eq(facebookConnections.pageId, input.pageId),
+            ),
+          );
+        await log.warn(
+          "FACEBOOK",
+          `Skipped FB unsubscribe for pageId=${input.pageId} — still used by ${otherTenants} other tenant(s)`,
+          { pageId: input.pageId, userId, otherTenants, accountId: input.accountId },
+          null,
+          input.pageId,
+          userId,
+          "webhook_dispatched",
+          "facebook",
+        );
+        return { success: true, sharedWithOthers: true, otherTenants };
+      }
+
       const userToken = decrypt(acct.accessToken);
       const pages = await listUserPages(userToken);
       const page = pages.find((p) => p.id === input.pageId);
       if (!page) throw new Error("Page not found in this account");
       await unsubscribePageFromApp(input.pageId, page.access_token);
-      return { success: true };
+
+      await db
+        .update(facebookConnections)
+        .set({ isActive: false, subscriptionStatus: "inactive" })
+        .where(
+          and(
+            eq(facebookConnections.userId, userId),
+            eq(facebookConnections.pageId, input.pageId),
+          ),
+        );
+
+      return { success: true, sharedWithOthers: false, otherTenants: 0 };
     }),
 
   // ── Webhook URL ───────────────────────────────────────────────────────────
