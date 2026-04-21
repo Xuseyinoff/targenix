@@ -17,12 +17,25 @@ export { resolveAdapterKey } from "./resolveAdapterKey";
 export { dispatchDelivery } from "./dispatch";
 export type { DispatchContext, DispatchOutcome } from "./dispatch";
 
-export { getApp, listApps, validateAppRegistry } from "./appRegistry";
+export {
+  getApp,
+  listApps,
+  validateAppRegistry,
+  validateAllAppFieldSchemas,
+} from "./appRegistry";
 export type { ListAppsOptions } from "./appRegistry";
+export { validateManifestFields } from "./manifestValidation";
+export type { ManifestProblem } from "./manifestValidation";
 export type {
   AppManifest,
   AppModule,
   AppCategory,
   AppAvailability,
   ConnectionType,
+  ConfigField,
+  ConfigFieldOption,
+  ConfigFieldShowWhen,
+  ConfigFieldType,
+  ConfigFieldValidation,
+  ConnectionPickerType,
 } from "./manifest";

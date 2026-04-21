@@ -11,6 +11,7 @@
 
 import type { AppManifest, AppCategory } from "./manifest";
 import { getAdapter } from "./registry";
+import { validateManifestFields, type ManifestProblem } from "./manifestValidation";
 
 const apps = new Map<string, AppManifest>();
 
@@ -26,6 +27,19 @@ export function registerApp(manifest: AppManifest): void {
         `Ensure ./register runs before apps register.`,
     );
   }
+
+  // Commit 1 of Phase 4: warn on malformed field schema but never throw — the
+  // delivery path does not consume fields[] yet, so a bad schema must not
+  // bring the process down.
+  const fieldProblems = validateManifestFields(manifest);
+  if (fieldProblems.length > 0) {
+    for (const p of fieldProblems) {
+      console.warn(
+        `[appRegistry] app '${p.appKey}'${p.moduleKey ? ` module '${p.moduleKey}'` : ""}${p.fieldKey ? ` field '${p.fieldKey}'` : ""}: ${p.problem}`,
+      );
+    }
+  }
+
   apps.set(manifest.key, manifest);
 }
 
@@ -62,4 +76,18 @@ export function validateAppRegistry(): Array<{ appKey: string; adapterKey: strin
     }
   });
   return problems;
+}
+
+/**
+ * Aggregated field-schema validation across every registered app. Used by the
+ * Phase 4 unit tests to assert that every built-in manifest has a well-formed
+ * fields[] declaration. Does NOT include adapter mismatches — call
+ * validateAppRegistry() for those.
+ */
+export function validateAllAppFieldSchemas(): ManifestProblem[] {
+  const all: ManifestProblem[] = [];
+  Array.from(apps.values()).forEach((m) => {
+    all.push(...validateManifestFields(m));
+  });
+  return all;
 }

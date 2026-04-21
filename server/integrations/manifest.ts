@@ -45,6 +45,107 @@ export type ConnectionType =
   | "telegram_bot"
   | "custom_http";
 
+// ─── ConfigField schema (Commit 1 of Phase 4) ──────────────────────────────────
+// Declarative JSON-ish schema describing ONE input rendered by the dynamic form.
+// These are plain data structures — no functions, no closures — so they can be
+// serialised to the client, persisted, versioned, and round-tripped through any
+// storage layer without evaluation concerns.
+//
+// At this commit these types are OPTIONAL metadata on each AppModule. Nothing
+// at runtime consumes them yet (the dynamic form engine arrives in Commit 3).
+// The only active code path is the registry validation pass, which warns about
+// malformed schemas at boot but never throws — existing deliveries are
+// unaffected.
+
+export type ConfigFieldType =
+  | "text"              // single-line string input
+  | "password"          // single-line masked input (UI only — not encryption)
+  | "textarea"          // multi-line string input
+  | "number"            // numeric input
+  | "boolean"           // toggle / checkbox
+  | "select"            // dropdown with static options[]
+  | "async-select"      // dropdown whose options come from optionsSource
+  | "multi-select"      // multi-value dropdown with static options[]
+  | "connection-picker" // picks a row from the connections table by type
+  | "field-mapping"     // destination-field → lead-variable map
+  | "code"              // JSON/raw editor (monospace)
+  | "hidden";           // present in config but not rendered (defaults / legacy)
+
+export interface ConfigFieldOption {
+  value: string;
+  label: string;
+}
+
+export interface ConfigFieldValidation {
+  minLength?: number;
+  maxLength?: number;
+  /** JS regex source, NOT including delimiters. Applied via new RegExp(pattern). */
+  pattern?: string;
+  min?: number;
+  max?: number;
+}
+
+/**
+ * Conditional visibility rule. Field is shown only when the referenced field's
+ * current value matches. Exactly one of equals / notEquals / in must be set.
+ */
+export interface ConfigFieldShowWhen {
+  /** Key of another field in the same module. */
+  field: string;
+  equals?: unknown;
+  notEquals?: unknown;
+  in?: unknown[];
+}
+
+/**
+ * Which Connections row type this picker filters on. Mirrors the
+ * connections.type enum declared in drizzle/schema.ts.
+ */
+export type ConnectionPickerType = "google_sheets" | "telegram_bot" | "api_key";
+
+export interface ConfigField {
+  /** Stable key — persisted to integration config JSON. */
+  key: string;
+  type: ConfigFieldType;
+  label: string;
+  description?: string;
+  placeholder?: string;
+  required?: boolean;
+  /** Initial value when the form is first opened. */
+  defaultValue?: unknown;
+  /** Static options for 'select' / 'multi-select'. */
+  options?: ConfigFieldOption[];
+  /**
+   * For 'async-select' / 'field-mapping' — name of a loader declared in
+   * AppManifest.dynamicOptionsLoaders. Validated at registry boot.
+   */
+  optionsSource?: string;
+  /**
+   * For 'field-mapping' — loader whose output lists the destination column
+   * headers (e.g. Google Sheet column names).
+   */
+  headersSource?: string;
+  /**
+   * Keys of other fields in the same module that this field depends on.
+   * The dynamic form re-runs the async loader whenever a dependency changes.
+   */
+  dependsOn?: string[];
+  /** Conditional visibility — hide when the rule is not satisfied. */
+  showWhen?: ConfigFieldShowWhen;
+  /** Validation applied on the client and re-checked on the server. */
+  validation?: ConfigFieldValidation;
+  /**
+   * For 'connection-picker' — which connection type to filter. Required when
+   * type === 'connection-picker'.
+   */
+  connectionType?: ConnectionPickerType;
+  /**
+   * When true the UI should mask the value (password-style) and logs must
+   * never print it. Useful for api keys inside 'text' fields.
+   */
+  sensitive?: boolean;
+}
+
 export interface AppModule {
   /** Stable identifier referenced by scenarios/tRPC (e.g. "send_message"). */
   key: string;
@@ -54,6 +155,12 @@ export interface AppModule {
   kind: "action";
   /** Optional description shown in docs / tooltips. */
   description?: string;
+  /**
+   * Declarative list of inputs rendered by the dynamic form (Commit 3).
+   * Optional for backwards-compat: modules without fields still work, they
+   * simply cannot be rendered by the new form engine yet.
+   */
+  fields?: ConfigField[];
 }
 
 export interface AppManifest {
@@ -90,9 +197,26 @@ export interface AppManifest {
 
   /**
    * JSON schema describing destination config (spreadsheetId, chatId, …).
-   * Placeholder in Phase 2 — wired into a <SchemaForm> runtime in Phase 4.
+   * Placeholder in Phase 2 — superseded by AppModule.fields[] in Commit 1 of
+   * Phase 4. Kept for backward-compat with any external tooling that might
+   * reference it. New apps should declare fields[] on each module instead.
+   *
+   * @deprecated use AppModule.fields[] — will be removed after all built-in
+   * apps migrate to the new schema.
    */
   configSchema?: unknown;
+  /**
+   * Maps each optionsSource / headersSource key used by this app's fields to
+   * a backend loader identifier (e.g. "appsRouter.googleSheets.listSheetTabs").
+   * Declared here — not on each field — because the same loader is often
+   * reused across several fields, and because Commit 2 will wire a single
+   * tRPC router that reads this map to dispatch loadOptions calls.
+   *
+   * Validated at registry boot: every optionsSource / headersSource referenced
+   * by a field MUST exist as a key here, otherwise validateManifestFields()
+   * reports a problem.
+   */
+  dynamicOptionsLoaders?: Record<string, string>;
 
   /** UI gating. Deprecated apps are still usable but should not be promoted. */
   availability: AppAvailability;
