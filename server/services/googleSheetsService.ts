@@ -50,6 +50,66 @@ function parseSheetsApiError(data: unknown, text: string, status: number): strin
   return msg;
 }
 
+/**
+ * Google returns `Unable to parse range: 'X'!...` when the referenced tab
+ * title doesn't exist. We detect that case so the caller can decorate the
+ * error with the spreadsheet's actual tab titles — a much more useful
+ * diagnostic than the raw API string.
+ */
+function isSheetNotFoundError(msg: string): boolean {
+  return typeof msg === "string" && /unable to parse range/i.test(msg);
+}
+
+/**
+ * Fetches tab titles straight from the Sheets API using a pre-resolved
+ * access token. Used as a post-error diagnostic — never throws; on failure
+ * returns null so the caller can emit the original error unchanged.
+ */
+async function fetchTabTitlesWithToken(
+  accessToken: string,
+  spreadsheetId: string,
+): Promise<string[] | null> {
+  try {
+    const url = new URL(
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}`,
+    );
+    url.searchParams.set("fields", "sheets.properties.title");
+    const res = await fetch(url.toString(), {
+      method: "GET",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      sheets?: Array<{ properties?: { title?: string } }>;
+    };
+    const titles = (data.sheets ?? [])
+      .map((s) => (typeof s.properties?.title === "string" ? s.properties.title : ""))
+      .filter((t) => t.length > 0);
+    return titles;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build a user-friendly "tab not found" message listing the spreadsheet's
+ * actual tab titles. Falls back to the raw API error when the diagnostic
+ * probe itself fails.
+ */
+function formatSheetNotFoundError(
+  attemptedSheetName: string,
+  availableTitles: string[] | null,
+  fallback: string,
+): string {
+  if (!availableTitles || availableTitles.length === 0) {
+    return `Sheet tab "${attemptedSheetName}" not found in this spreadsheet. ${fallback}`;
+  }
+  const preview = availableTitles.slice(0, 10).map((t) => `"${t}"`).join(", ");
+  const suffix = availableTitles.length > 10 ? ` (+${availableTitles.length - 10} more)` : "";
+  return `Sheet tab "${attemptedSheetName}" not found. Available tabs in this spreadsheet: ${preview}${suffix}. Open the destination and pick one of the available tabs, or rename your sheet to match.`;
+}
+
 /** In-memory cache for Drive/Sheets browse helpers (per-user, short TTL). */
 const BROWSE_CACHE_MS = 5 * 60 * 1000;
 const spreadsheetsListCache = new Map<string, { at: number; data: { id: string; name: string }[] }>();
@@ -271,7 +331,12 @@ export async function getGoogleSheetHeaders(params: {
     }
 
     if (!res.ok) {
-      return { success: false, error: parseSheetsApiError(data, text, res.status) };
+      const rawMsg = parseSheetsApiError(data, text, res.status);
+      if (isSheetNotFoundError(rawMsg)) {
+        const titles = await fetchTabTitlesWithToken(accessToken, sid);
+        return { success: false, error: formatSheetNotFoundError(sheetName.trim(), titles, rawMsg) };
+      }
+      return { success: false, error: rawMsg };
     }
 
     const values = (data as { values?: string[][] }).values;
@@ -439,7 +504,15 @@ export async function appendLeadToGoogleSheet(params: {
     }
 
     if (!res.ok) {
-      const errMsg = parseSheetsApiError(data, text, res.status);
+      let errMsg = parseSheetsApiError(data, text, res.status);
+      if (isSheetNotFoundError(errMsg)) {
+        const titles = await fetchTabTitlesWithToken(accessToken, sid);
+        errMsg = formatSheetNotFoundError(sheetName.trim(), titles, errMsg);
+        // Tab-mismatch is a user-config problem, not a transient failure.
+        // Mark it as `validation` so the retry scheduler does NOT keep
+        // hammering the API — the user needs to fix the destination first.
+        return { success: false, error: errMsg, errorType: "validation" };
+      }
       return {
         success: false,
         error: errMsg,

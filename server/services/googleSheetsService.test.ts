@@ -58,6 +58,62 @@ describe("appendLeadToGoogleSheet", () => {
     expect(headers["Content-Type"]).toBe("application/json");
   });
 
+  it("enriches 'Unable to parse range' errors with actual tab titles and marks validation", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    // 1st call: values.append → 400 "Unable to parse range: 'Sheet1'!A:Z"
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ error: { message: "Unable to parse range: 'Sheet1'!A:Z", code: 400 } }),
+        { status: 400 },
+      ),
+    );
+    // 2nd call: diagnostic spreadsheets.get → returns the real tab titles.
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ sheets: [{ properties: { title: "Лист1" } }] }),
+        { status: 200 },
+      ),
+    );
+
+    const out = await appendLeadToGoogleSheet({
+      userId: 1,
+      googleAccountId: 7,
+      spreadsheetId: "abc123",
+      sheetName: "Sheet1",
+      values: ["Ann", "+100", "a@b.co", "2026-01-01T00:00:00.000Z"],
+    });
+
+    expect(out.success).toBe(false);
+    expect(out.errorType).toBe("validation");
+    expect(out.error).toContain('Sheet tab "Sheet1" not found');
+    expect(out.error).toContain('"Лист1"');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(String(fetchSpy.mock.calls[1][0])).toMatch(/fields=sheets\.properties\.title/);
+  });
+
+  it("falls back to the raw error when the tab-titles probe also fails", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ error: { message: "Unable to parse range: 'Sheet1'!A:Z" } }),
+        { status: 400 },
+      ),
+    );
+    fetchSpy.mockResolvedValueOnce(new Response("forbidden", { status: 403 }));
+
+    const out = await appendLeadToGoogleSheet({
+      userId: 1,
+      googleAccountId: 7,
+      spreadsheetId: "abc123",
+      sheetName: "Sheet1",
+      values: ["x"],
+    });
+
+    expect(out.success).toBe(false);
+    expect(out.errorType).toBe("validation");
+    expect(out.error).toContain('"Sheet1" not found');
+  });
+
   it("returns error when spreadsheetId is missing", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const out = await appendLeadToGoogleSheet({
