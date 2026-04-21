@@ -71,6 +71,12 @@ export interface DestinationCreatorDrawerProps {
     templateType: string;
     category: string;
   }) => void;
+  /**
+   * When provided the drawer skips the app-picker step and goes directly to
+   * the configure step for this app key (e.g. "telegram", "google-sheets").
+   * Applied once the app manifest has loaded — safe to set before apps load.
+   */
+  initialAppKey?: string;
 }
 
 /**
@@ -101,6 +107,7 @@ export function DestinationCreatorDrawer({
   open,
   onOpenChange,
   onCreated,
+  initialAppKey,
 }: DestinationCreatorDrawerProps) {
   const [step, setStep] = React.useState<"pick" | "configure">("pick");
   const [selectedApp, setSelectedApp] = React.useState<AppListItem | null>(null);
@@ -109,6 +116,8 @@ export function DestinationCreatorDrawer({
   const [formValues, setFormValues] = React.useState<FieldValues>({});
   const [formErrors, setFormErrors] = React.useState<Record<string, string>>({});
   const [nameError, setNameError] = React.useState<string | null>(null);
+  // Held here until the app manifest loads; cleared once applied.
+  const [pendingAppKey, setPendingAppKey] = React.useState<string | null>(null);
 
   const utils = trpc.useUtils();
   const { data: apps = [], isLoading: loadingApps } =
@@ -116,9 +125,7 @@ export function DestinationCreatorDrawer({
 
   const createMutation = trpc.targetWebsites.create.useMutation();
 
-  // Reset internal state whenever the drawer is closed so re-opening starts
-  // fresh. We deliberately do it on close (not on open) so a failed save
-  // keeps the user's filled-in values while the drawer stays open.
+  // Reset internal state whenever the drawer is closed.
   React.useEffect(() => {
     if (open) return;
     setStep("pick");
@@ -128,7 +135,15 @@ export function DestinationCreatorDrawer({
     setFormValues({});
     setFormErrors({});
     setNameError(null);
+    setPendingAppKey(null);
   }, [open]);
+
+  // When the drawer opens with an initialAppKey, queue it so we can apply it
+  // once supportedApps has loaded (apps load asynchronously after open=true).
+  React.useEffect(() => {
+    if (!open || !initialAppKey) return;
+    setPendingAppKey(initialAppKey);
+  }, [open, initialAppKey]);
 
   const supportedApps = React.useMemo(
     () =>
@@ -140,6 +155,22 @@ export function DestinationCreatorDrawer({
       }),
     [apps],
   );
+
+  // Once supportedApps loads, auto-advance to configure if we have a pending key.
+  React.useEffect(() => {
+    if (!pendingAppKey || loadingApps || supportedApps.length === 0) return;
+    const app = supportedApps.find((a) => a.key === pendingAppKey);
+    if (!app) return;
+    const fields = app.modules[0]?.fields ?? [];
+    setSelectedApp(app);
+    setFormValues(seedInitialValues(fields, undefined));
+    setFormErrors({});
+    setDestName("");
+    setNameError(null);
+    setStep("configure");
+    setPendingAppKey(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAppKey, loadingApps, supportedApps]);
 
   const filteredApps = React.useMemo(() => {
     const q = search.trim().toLowerCase();

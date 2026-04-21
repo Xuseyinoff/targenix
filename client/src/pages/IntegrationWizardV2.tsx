@@ -51,6 +51,7 @@ import {
   MessageSquare,
   Pencil,
   Plus,
+  Search,
   Send,
   Sparkles,
   Tag,
@@ -286,9 +287,17 @@ export default function IntegrationWizardV2() {
   >("trigger");
 
   // Inline destination-creator drawer. Opened from the Destination card's
-  // "Create new" button — lets the user build a Telegram / Google Sheets /
-  // webhook destination without leaving the wizard.
+  // app shortcut cards — opens pre-configured for the chosen app type so the
+  // user skips the app-picker step and goes straight to the form.
   const [creatorOpen, setCreatorOpen] = useState(false);
+  const [creatorInitialApp, setCreatorInitialApp] = useState<string | undefined>(
+    undefined,
+  );
+
+  const handleOpenCreatorForApp = (appKey?: string) => {
+    setCreatorInitialApp(appKey);
+    setCreatorOpen(true);
+  };
 
   // ─── Flag gate ─────────────────────────────────────────────────────────────
   const { data: flags, isLoading: flagsLoading } =
@@ -713,7 +722,7 @@ export default function IntegrationWizardV2() {
                 addDestination(id, name, templateType);
               }
             }}
-            onOpenCreator={() => setCreatorOpen(true)}
+            onOpenCreatorForApp={handleOpenCreatorForApp}
           />
         </WizardCard>
 
@@ -802,13 +811,19 @@ export default function IntegrationWizardV2() {
           </div>
         </WizardCard>
 
-        {/* Inline destination creator — adds to the list, doesn't replace */}
+        {/* Inline destination creator — opens pre-configured for the selected
+            app type so the user skips the app-picker step entirely. */}
         <DestinationCreatorDrawer
           open={creatorOpen}
-          onOpenChange={setCreatorOpen}
+          onOpenChange={(v) => {
+            setCreatorOpen(v);
+            if (!v) setCreatorInitialApp(undefined);
+          }}
+          initialAppKey={creatorInitialApp}
           onCreated={({ id, name, templateType }) => {
             addDestination(id, name, templateType);
             setCreatorOpen(false);
+            setCreatorInitialApp(undefined);
           }}
         />
 
@@ -1015,33 +1030,66 @@ interface DestinationEditorProps {
   selectedIds: number[];
   /** Toggle a destination: add if not selected, remove if selected. */
   onToggle: (id: number, name: string, templateType: string) => void;
-  onOpenCreator: () => void;
+  /**
+   * Open the creator drawer. Pass an appKey to skip the app-picker step and
+   * go directly to the configure form for that app (Variant C).
+   * Omit (or pass undefined) to show the full app picker.
+   */
+  onOpenCreatorForApp: (appKey?: string) => void;
 }
+
+/** Quick-connect cards shown at the top of the destination picker. */
+const DEST_APP_SHORTCUTS = [
+  {
+    key: "telegram",
+    name: "Telegram",
+    desc: "Send as a message",
+    Icon: Send,
+    bg: "bg-sky-100 dark:bg-sky-900/40",
+    text: "text-sky-600 dark:text-sky-400",
+    ring: "hover:border-sky-300 dark:hover:border-sky-600",
+  },
+  {
+    key: "google-sheets",
+    name: "Google Sheets",
+    desc: "Append a row",
+    Icon: FileText,
+    bg: "bg-emerald-100 dark:bg-emerald-900/40",
+    text: "text-emerald-600 dark:text-emerald-400",
+    ring: "hover:border-emerald-300 dark:hover:border-emerald-600",
+  },
+  {
+    key: "plain-url",
+    name: "HTTP Webhook",
+    desc: "POST to any URL",
+    Icon: Globe,
+    bg: "bg-violet-100 dark:bg-violet-900/40",
+    text: "text-violet-600 dark:text-violet-400",
+    ring: "hover:border-violet-300 dark:hover:border-violet-600",
+  },
+] as const;
 
 function DestinationEditor({
   destinations,
   loading,
   selectedIds,
   onToggle,
-  onOpenCreator,
+  onOpenCreatorForApp,
 }: DestinationEditorProps) {
+  const [search, setSearch] = useState("");
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, DestinationListItem[]>();
-    for (const d of destinations) {
-      const arr = map.get(d.category) ?? [];
-      arr.push(d);
-      map.set(d.category, arr);
-    }
-    return Array.from(map.entries());
-  }, [destinations]);
+  const filteredExisting = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return destinations;
+    return destinations.filter((d) => d.name.toLowerCase().includes(q));
+  }, [destinations, search]);
 
   if (loading) return <LoadingBar />;
 
   return (
     <div className="space-y-4">
-      {/* ── Selected destinations chip list ──────────────────────────────── */}
+      {/* ── Selected destinations list ───────────────────────────────────── */}
       {selectedIds.length > 0 && (
         <div className="space-y-1.5">
           <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
@@ -1060,7 +1108,7 @@ function DestinationEditor({
                 >
                   <div
                     className={cn(
-                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold",
+                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-md",
                       color,
                     )}
                   >
@@ -1069,7 +1117,7 @@ function DestinationEditor({
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{d.name}</div>
                     <div className="truncate text-[11px] text-muted-foreground">
-                      {idx === 0 ? "Primary (drives mapping)" : `Destination ${idx + 1}`}
+                      {idx === 0 ? "Primary · drives mapping" : `Destination ${idx + 1}`}
                       {" · "}
                       {d.templateName || d.templateType}
                     </div>
@@ -1089,86 +1137,125 @@ function DestinationEditor({
         </div>
       )}
 
-      {/* ── Picker grid ──────────────────────────────────────────────────── */}
-      {destinations.length === 0 ? (
-        <div className="flex items-center gap-3 rounded-md border border-dashed bg-muted/10 p-4">
-          <div className="flex-1 text-xs text-muted-foreground">
-            You haven&apos;t created any destinations yet. Set one up right here
-            — no need to leave the wizard.
-          </div>
-          <Button size="sm" onClick={onOpenCreator} className="shrink-0">
-            <Plus className="h-3.5 w-3.5 mr-1.5" />
-            New destination
-          </Button>
+      {/* ── App shortcut cards ───────────────────────────────────────────── */}
+      <div>
+        <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-2">
+          Connect a new destination
         </div>
-      ) : (
-        <div className="space-y-3">
-          {grouped.map(([category, items]) => {
-            const Icon = iconForCategory(category);
-            const color = colorForCategory(category);
-            const meta = CATEGORY_META[category as DestinationCategory];
-            return (
-              <div key={category} className="space-y-1.5">
-                <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                  {meta?.label ?? category}
+        <div className="grid grid-cols-3 gap-2">
+          {DEST_APP_SHORTCUTS.map((app) => (
+            <button
+              key={app.key}
+              type="button"
+              onClick={() => onOpenCreatorForApp(app.key)}
+              className={cn(
+                "group flex flex-col items-center gap-2.5 rounded-xl border bg-background p-3.5 text-center transition-all hover:shadow-sm",
+                app.ring,
+              )}
+            >
+              <div
+                className={cn(
+                  "flex h-11 w-11 items-center justify-center rounded-xl transition-transform group-hover:scale-105",
+                  app.bg,
+                )}
+              >
+                <app.Icon className={cn("h-5 w-5", app.text)} />
+              </div>
+              <div>
+                <div className="text-xs font-semibold leading-tight">
+                  {app.name}
                 </div>
-                <div className="grid gap-1.5 sm:grid-cols-2">
-                  {items.map((d) => {
-                    const isSelected = selectedSet.has(d.id);
-                    return (
-                      <button
-                        key={d.id}
-                        type="button"
-                        onClick={() => onToggle(d.id, d.name, d.templateType)}
-                        className={cn(
-                          "flex items-center gap-2.5 rounded-md border bg-background p-2.5 text-left text-sm transition-colors",
-                          isSelected
-                            ? "border-primary ring-1 ring-primary/30 bg-primary/5"
-                            : "hover:border-primary/40 hover:bg-muted/30",
-                        )}
-                      >
-                        <div
-                          className={cn(
-                            "flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
-                            color,
-                          )}
-                        >
-                          <Icon className="h-4 w-4" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium">{d.name}</div>
-                          <div className="truncate text-[11px] text-muted-foreground">
-                            {d.templateName || d.templateType}
-                          </div>
-                        </div>
-                        {isSelected ? (
-                          <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
-                        ) : (
-                          <Plus className="h-4 w-4 text-muted-foreground/40 shrink-0" />
-                        )}
-                      </button>
-                    );
-                  })}
+                <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground">
+                  {app.desc}
                 </div>
               </div>
-            );
-          })}
+            </button>
+          ))}
+        </div>
+      </div>
 
-          <div className="flex items-center justify-between gap-2 border-t pt-3">
-            <p className="text-[11px] text-muted-foreground">
-              Need a different destination? Create one inline without leaving
-              the wizard.
-            </p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 text-xs shrink-0"
-              onClick={onOpenCreator}
-            >
-              <Plus className="h-3.5 w-3.5 mr-1.5" />
-              New destination
-            </Button>
+      {/* ── Pick from existing ───────────────────────────────────────────── */}
+      {destinations.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <div className="h-px flex-1 bg-border" />
+            <span className="text-[11px] text-muted-foreground px-1">
+              or pick from existing
+            </span>
+            <div className="h-px flex-1 bg-border" />
           </div>
+
+          {/* Search */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Filter…"
+              className="flex h-8 w-full rounded-md border border-input bg-transparent px-3 py-1 pl-7 text-xs shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+
+          {/* List */}
+          {filteredExisting.length === 0 ? (
+            <p className="py-3 text-center text-xs text-muted-foreground">
+              No destinations match &ldquo;{search}&rdquo;.
+            </p>
+          ) : (
+            <div className="max-h-52 overflow-y-auto rounded-lg border bg-muted/5 p-1 space-y-0.5">
+              {filteredExisting.map((d) => {
+                const isSelected = selectedSet.has(d.id);
+                const Icon = iconForCategory(d.category);
+                const color = colorForCategory(d.category);
+                return (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => onToggle(d.id, d.name, d.templateType)}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm transition-colors",
+                      isSelected
+                        ? "bg-primary/8 font-medium"
+                        : "hover:bg-muted/60",
+                    )}
+                  >
+                    <div
+                      className={cn(
+                        "flex h-6 w-6 shrink-0 items-center justify-center rounded",
+                        color,
+                      )}
+                    >
+                      <Icon className="h-3 w-3" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="block truncate leading-tight">
+                        {d.name}
+                      </span>
+                      <span className="block truncate text-[10px] text-muted-foreground">
+                        {d.templateName || d.templateType}
+                      </span>
+                    </div>
+                    {isSelected ? (
+                      <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
+                    ) : (
+                      <Plus className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
