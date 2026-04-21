@@ -14,12 +14,14 @@
  * construct.
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import {
   listIntegrationDestinations,
+  resolveIntegrationDestinations,
   setIntegrationDestinations,
   syncLegacyDestination,
 } from "./integrationDestinations";
+import { __resetFeatureFlagsCache } from "./featureFlags";
 import type { DbClient } from "../db";
 
 // ─── test doubles ──────────────────────────────────────────────────────────
@@ -184,5 +186,174 @@ describe("listIntegrationDestinations", () => {
     const db = makeDbWithSelect([]);
     const rows = await listIntegrationDestinations(db, 1, { onlyEnabled: true });
     expect(rows).toEqual([]);
+  });
+});
+
+// ─── resolveIntegrationDestinations ────────────────────────────────────────
+//
+// These tests exercise the dual-read wiring introduced in Commit 5a:
+//   - flag OFF → legacy column path (single SELECT on target_websites)
+//   - flag ON  → new table path (JOIN against integration_destinations)
+// We stub the DB chain loosely; the point is to verify the decision tree
+// and ownership filtering, not drizzle's SQL generation.
+
+interface LegacyDbState {
+  targetWebsiteRow: Record<string, unknown> | null;
+}
+
+interface NewDbState {
+  joinRows: Array<{
+    mapping: { id: number; position: number; enabled: boolean };
+    tw: Record<string, unknown>;
+  }>;
+}
+
+function makeLegacyDb(state: LegacyDbState): DbClient {
+  const chain = {
+    from: vi.fn().mockReturnThis(),
+    where: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockResolvedValue(state.targetWebsiteRow ? [state.targetWebsiteRow] : []),
+  };
+  return { select: vi.fn(() => chain) } as unknown as DbClient;
+}
+
+function makeNewTableDb(state: NewDbState): DbClient {
+  const chain = {
+    from: vi.fn().mockReturnThis(),
+    innerJoin: vi.fn().mockReturnThis(),
+    where: vi.fn().mockResolvedValue(state.joinRows),
+  };
+  return { select: vi.fn(() => chain) } as unknown as DbClient;
+}
+
+describe("resolveIntegrationDestinations — legacy column path", () => {
+  beforeEach(() => {
+    delete process.env.MULTI_DEST_ALL;
+    delete process.env.MULTI_DEST_USER_IDS;
+    __resetFeatureFlagsCache();
+  });
+
+  it("returns the single row for a happy-path integration", async () => {
+    const tw = { id: 200, userId: 1, name: "Sotuvchi" };
+    const db = makeLegacyDb({ targetWebsiteRow: tw });
+    const out = await resolveIntegrationDestinations(db, {
+      id: 1,
+      userId: 1,
+      targetWebsiteId: 200,
+      config: {},
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      mappingId: null,
+      position: 0,
+      enabled: true,
+      targetWebsite: tw,
+    });
+  });
+
+  it("falls back to config.targetWebsiteId when the column is null", async () => {
+    const tw = { id: 99, userId: 7 };
+    const db = makeLegacyDb({ targetWebsiteRow: tw });
+    const out = await resolveIntegrationDestinations(db, {
+      id: 2,
+      userId: 7,
+      targetWebsiteId: null,
+      config: { targetWebsiteId: 99 },
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].targetWebsite).toBe(tw);
+  });
+
+  it("returns an empty list when no target is configured anywhere", async () => {
+    const db = makeLegacyDb({ targetWebsiteRow: null });
+    const out = await resolveIntegrationDestinations(db, {
+      id: 3,
+      userId: 1,
+      targetWebsiteId: null,
+      config: {},
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("filters owner-mismatched target_websites out of the result", async () => {
+    const db = makeLegacyDb({
+      targetWebsiteRow: { id: 10, userId: 99 },
+    });
+    const out = await resolveIntegrationDestinations(db, {
+      id: 4,
+      userId: 1,
+      targetWebsiteId: 10,
+      config: {},
+    });
+    expect(out).toEqual([]);
+  });
+});
+
+describe("resolveIntegrationDestinations — new table path", () => {
+  beforeEach(() => {
+    process.env.MULTI_DEST_USER_IDS = "42";
+    __resetFeatureFlagsCache();
+  });
+
+  afterEach(() => {
+    delete process.env.MULTI_DEST_USER_IDS;
+    __resetFeatureFlagsCache();
+  });
+
+  it("returns rows from integration_destinations when flag is on, ordered by position", async () => {
+    const db = makeNewTableDb({
+      joinRows: [
+        {
+          mapping: { id: 3, position: 1, enabled: true },
+          tw: { id: 302, userId: 42, name: "Sheets" },
+        },
+        {
+          mapping: { id: 7, position: 0, enabled: true },
+          tw: { id: 301, userId: 42, name: "Telegram" },
+        },
+      ],
+    });
+    const out = await resolveIntegrationDestinations(db, {
+      id: 10,
+      userId: 42,
+      targetWebsiteId: null,
+      config: {},
+    });
+    expect(out.map((r) => r.mappingId)).toEqual([7, 3]);
+    expect(out[0].targetWebsite).toMatchObject({ id: 301 });
+  });
+
+  it("drops rows whose target_website owner differs from the integration", async () => {
+    const db = makeNewTableDb({
+      joinRows: [
+        {
+          mapping: { id: 1, position: 0, enabled: true },
+          tw: { id: 999, userId: 5 /* mismatch */ },
+        },
+        {
+          mapping: { id: 2, position: 1, enabled: true },
+          tw: { id: 1000, userId: 42 },
+        },
+      ],
+    });
+    const out = await resolveIntegrationDestinations(db, {
+      id: 10,
+      userId: 42,
+      targetWebsiteId: null,
+      config: {},
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].mappingId).toBe(2);
+  });
+
+  it("returns [] when the integration has no destination rows on the flagged path", async () => {
+    const db = makeNewTableDb({ joinRows: [] });
+    const out = await resolveIntegrationDestinations(db, {
+      id: 10,
+      userId: 42,
+      targetWebsiteId: null,
+      config: {},
+    });
+    expect(out).toEqual([]);
   });
 });

@@ -25,9 +25,33 @@
 
 import { and, eq } from "drizzle-orm";
 import type { DbClient } from "../db";
-import { integrationDestinations } from "../../drizzle/schema";
+import {
+  integrationDestinations,
+  integrations,
+  targetWebsites,
+  type Integration,
+  type TargetWebsite,
+} from "../../drizzle/schema";
+import { isMultiDestinationsEnabled } from "./featureFlags";
 
 export type IntegrationDestinationRow = typeof integrationDestinations.$inferSelect;
+
+/**
+ * Shape returned by resolveIntegrationDestinations() — each element is
+ * one fully-hydrated destination ready for dispatch. We carry the
+ * parent mapping row too so later stages (retry tracking, per-destination
+ * status) can reference it by id.
+ */
+export interface ResolvedDestination {
+  /** Row in integration_destinations when reading from the new path; null on the legacy path. */
+  mappingId: number | null;
+  /** Serial number within the integration (0-based). Today always 0. */
+  position: number;
+  /** Whether this destination is currently enabled (legacy path: always true). */
+  enabled: boolean;
+  /** Full target_websites row — the dispatcher needs the whole thing. */
+  targetWebsite: TargetWebsite;
+}
 
 // ─── public helpers ────────────────────────────────────────────────────────
 
@@ -122,6 +146,124 @@ export async function listIntegrationDestinations(
   // orderBy with and()-wrapped where cleanly across versions, so we sort
   // in memory; the set is tiny (<10 rows per integration in practice).
   return rows.sort((a, b) => a.position - b.position || a.id - b.id);
+}
+
+// ─── read-path resolver (Commit 5a) ────────────────────────────────────────
+
+/**
+ * Resolve the list of destinations to deliver a lead to, given a parent
+ * integration row. The result is a list of 0 or more `ResolvedDestination`
+ * entries, already filtered by enabled flag and ownership, in dispatch
+ * order.
+ *
+ * Two backing paths depending on `isMultiDestinationsEnabled(userId)`:
+ *
+ *   - FLAG OFF (default, today for all users):
+ *       Reads the legacy `integrations.targetWebsiteId` column (or its
+ *       JSON-config fallback). Returns 0 or 1 destinations. Matches the
+ *       exact behaviour of the ad-hoc resolver previously inlined in
+ *       leadService.ts — no user-visible change.
+ *
+ *   - FLAG ON (opt-in users):
+ *       Reads from `integration_destinations` joined against
+ *       `target_websites`. Today the table holds exactly one row per
+ *       integration (after the Commit 4 backfill), so behaviour stays
+ *       identical. Commit 5c will add the per-destination tracking
+ *       required to safely support N > 1 without risking double-delivery
+ *       on retry.
+ *
+ * Ownership is enforced: rows whose `target_websites.userId` doesn't
+ * match the integration's owner are filtered out and logged — these
+ * cannot be delivered to safely and used to raise "owner mismatch" in
+ * the legacy code path.
+ */
+export async function resolveIntegrationDestinations(
+  db: DbClient,
+  integration: Pick<Integration, "id" | "userId" | "targetWebsiteId" | "config">,
+): Promise<ResolvedDestination[]> {
+  if (isMultiDestinationsEnabled(integration.userId)) {
+    return readFromNewTable(db, integration);
+  }
+  return readFromLegacyColumn(db, integration);
+}
+
+async function readFromLegacyColumn(
+  db: DbClient,
+  integration: Pick<Integration, "id" | "userId" | "targetWebsiteId" | "config">,
+): Promise<ResolvedDestination[]> {
+  const cfg = (integration.config ?? null) as Record<string, unknown> | null;
+  const rawId = integration.targetWebsiteId ?? cfg?.targetWebsiteId;
+  const twId =
+    typeof rawId === "number" && Number.isFinite(rawId) && rawId > 0 ? rawId
+    : typeof rawId === "string" && /^\d+$/.test(rawId) && Number(rawId) > 0 ? Number(rawId)
+    : null;
+  if (!twId) return [];
+
+  const [row] = await db
+    .select()
+    .from(targetWebsites)
+    .where(eq(targetWebsites.id, twId))
+    .limit(1);
+  if (!row) return [];
+  if (row.userId !== integration.userId) {
+    console.warn(
+      `[resolveDestinations] owner mismatch on integration=${integration.id} targetWebsite=${row.id}`,
+    );
+    return [];
+  }
+  return [
+    {
+      mappingId: null,
+      position: 0,
+      enabled: true,
+      targetWebsite: row,
+    },
+  ];
+}
+
+async function readFromNewTable(
+  db: DbClient,
+  integration: Pick<Integration, "id" | "userId">,
+): Promise<ResolvedDestination[]> {
+  // Single query with a JOIN so we fetch target_websites in one round-trip.
+  // Sort is done client-side below to keep the SQL dialect-agnostic (the
+  // unit tests stub a minimal chain).
+  const rows = await db
+    .select({
+      mapping: integrationDestinations,
+      tw: targetWebsites,
+    })
+    .from(integrationDestinations)
+    .innerJoin(
+      targetWebsites,
+      eq(integrationDestinations.targetWebsiteId, targetWebsites.id),
+    )
+    .where(
+      and(
+        eq(integrationDestinations.integrationId, integration.id),
+        eq(integrationDestinations.enabled, true),
+      ),
+    );
+
+  const resolved: ResolvedDestination[] = [];
+  for (const r of rows) {
+    if (r.tw.userId !== integration.userId) {
+      // This should be impossible in practice (dual-write enforces same
+      // owner) but a stray row would otherwise leak lead data cross-tenant.
+      console.warn(
+        `[resolveDestinations] owner mismatch on integration=${integration.id} mapping=${r.mapping.id} tw=${r.tw.id}`,
+      );
+      continue;
+    }
+    resolved.push({
+      mappingId: r.mapping.id,
+      position: r.mapping.position,
+      enabled: r.mapping.enabled,
+      targetWebsite: r.tw,
+    });
+  }
+  resolved.sort((a, b) => a.position - b.position || (a.mappingId ?? 0) - (b.mappingId ?? 0));
+  return resolved;
 }
 
 // ─── internals ─────────────────────────────────────────────────────────────

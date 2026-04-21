@@ -6,6 +6,7 @@ import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 import { affiliateAdapter } from "../integrations/adapters/affiliateAdapter";
 import { dispatchDelivery } from "../integrations/dispatch";
+import { resolveIntegrationDestinations } from "./integrationDestinations";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
 import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
@@ -606,25 +607,43 @@ async function runOrderIntegrationSend(params: {
     let targetUrlUsed: string | undefined;
     let destinationTelegramChatId: string | null = null;
 
-    // Resolve destination (targetWebsite) once — the unified dispatcher handles
-    // every branch (dynamic-template / telegram / google-sheets / legacy /
-    // plain-url) based on what this row looks like.
-    const twId = integration.targetWebsiteId ?? (config.targetWebsiteId ? Number(config.targetWebsiteId) : null);
-    let tw: typeof targetWebsites.$inferSelect | null = null;
-    let ownerMismatch = false;
-    if (twId) {
-      const [row] = await db.select().from(targetWebsites).where(eq(targetWebsites.id, twId)).limit(1);
-      if (row) {
-        if (row.userId !== userId) {
-          ownerMismatch = true;
-        } else {
-          tw = row;
-          destinationTelegramChatId = (row as { telegramChatId?: string | null }).telegramChatId?.trim?.() ?? null;
-        }
-      }
+    // Resolve destinations via the Commit 5a helper. Under the hood this
+    // reads from `integration_destinations` for users on the feature-flag
+    // allowlist and from the legacy `integrations.targetWebsiteId` column
+    // for everyone else — returning 0 or 1 entries either way until
+    // Commit 5c introduces per-destination retry tracking required for
+    // safe N > 1 fan-out.
+    const destinations = await resolveIntegrationDestinations(db, {
+      id: integration.id,
+      userId: integration.userId,
+      targetWebsiteId: integration.targetWebsiteId ?? null,
+      config: integration.config,
+    });
+    // Guardrail: until Commit 5c lands per-destination tracking, we refuse
+    // to fan out to >1 destinations to avoid double-delivery on retry.
+    // In practice no row reaches this branch because the Commit 4 backfill
+    // produced exactly one row per integration; this is belt-and-braces.
+    if (destinations.length > 1) {
+      console.warn(
+        `[leadService] integration ${integration.id} has ${destinations.length} destinations but per-destination tracking is not yet in place; using the first one only. (Multi-destination fan-out arrives in Commit 5c.)`,
+      );
     }
+    const primary = destinations[0] ?? null;
+    const tw = primary?.targetWebsite ?? null;
+    // Preserve the legacy semantics exactly: whitespace-only trims to null,
+    // missing mapping is null — both branches fall through to the user's
+    // default Telegram chat in sendLeadTelegramNotification() below.
+    destinationTelegramChatId = tw?.telegramChatId?.trim() || null;
 
-    if (ownerMismatch) {
+    // The legacy path used to flag "Target website owner mismatch" when the
+    // column pointed to a target that belonged to someone else. The new
+    // resolver already filters mismatches out (empty list + console warn),
+    // so here we only need to distinguish "no destination configured"
+    // from "one was configured but had a mismatch".
+    const hadConfiguredTarget =
+      integration.targetWebsiteId != null ||
+      (integration.config as Record<string, unknown> | null)?.targetWebsiteId != null;
+    if (!tw && hadConfiguredTarget) {
       result = { success: false, error: "Target website owner mismatch", errorType: "validation" };
     } else {
       const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
