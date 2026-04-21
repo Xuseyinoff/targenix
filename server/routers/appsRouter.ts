@@ -88,7 +88,10 @@ export const appsRouter = router({
         params: z.record(z.string(), z.unknown()).optional(),
       }),
     )
-    .mutation(async ({ ctx, input }) => {
+    // Exposed as a query: it's idempotent (read-only list / headers) and
+    // pairs with React Query's cache so dependent <AsyncSelect>s don't
+    // re-hit the upstream Google API on every keystroke in the form.
+    .query(async ({ ctx, input }) => {
       checkUserRateLimit(ctx.user.id, "appsLoadOptions", {
         max: 60,
         windowMs: 60_000,

@@ -33,6 +33,7 @@ import Analytics from "./pages/Analytics";
 import DestinationAnalytics from "./pages/DestinationAnalytics";
 import Campaigns from "./pages/Campaigns";
 import AdSets from "./pages/AdSets";
+import DevFormPreview from "./pages/DevFormPreview";
 import { useAuth } from "./_core/hooks/useAuth";
 import { useEffect, type ComponentType, type ReactNode } from "react";
 
@@ -152,6 +153,8 @@ function Router() {
       <Route path="/business/destinations" component={businessToolsPage(DestinationAnalytics)} />
       {/* Legacy /ad-accounts */}
       <Route path="/ad-accounts" component={businessToolsPage(AdAccounts)} />
+      {/* Dev-only preview of the dynamic form field library (admin-gated). */}
+      <Route path="/dev/form-preview" component={DevFormPreview} />
       {/* Auth pages */}
       <Route path="/login" component={Login} />
       <Route path="/register" component={Register} />
