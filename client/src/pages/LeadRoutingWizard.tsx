@@ -160,84 +160,23 @@ function StepSearch({
 }
 
 // ─── Auto-match helpers ───────────────────────────────────────────────────────
+// Constants + pure helpers live in ./lead-routing/shared.ts so the new
+// stacked-card wizard (IntegrationWizardV2) can reuse identical serialisation
+// semantics. Only UI-specific helpers remain in this file.
 
-const NAME_PATTERNS = [
-  "full_name",
-  "fullname",
-  "name",
-  "first_name",
-  "firstname",
-  "имя",
-  "фио",
-  "ismi",
-  "ism",
-  "полное_имя",
-  "полное имя",
-];
-
-const PHONE_PATTERNS = [
-  "phone",
-  "phone_number",
-  "phonenumber",
-  "telefon",
-  "телефон",
-  "mobile",
-  "номер_телефона",
-  "номер телефона",
-  "raqam",
-];
-
-function autoMatchField(fields: { key: string }[], patterns: string[]): string {
-  for (const f of fields) {
-    const key = f.key.toLowerCase();
-    if (patterns.some(p => key.includes(p))) return f.key;
-  }
-  return "";
-}
-
-type ExtraFieldDraft = {
-  destKey: string;
-  sourceType: "form" | "static";
-  sourceField?: string;
-  staticValue?: string;
-  /** True for "Custom" rows: type source key manually (no dropdown). */
-  manualSource?: boolean;
-};
-
-const FB_METADATA_FIELDS = [
-  { key: "lead_id", label: "Lead ID" },
-  { key: "form_id", label: "Form ID" },
-  { key: "ad_id", label: "Ad ID" },
-  { key: "ad_name", label: "Ad Name" },
-  { key: "adset_id", label: "Ad Set ID" },
-  { key: "adset_name", label: "Ad Set Name" },
-  { key: "campaign_id", label: "Campaign ID" },
-  { key: "campaign_name", label: "Campaign Name" },
-] as const;
-
-const FB_METADATA_LABELS = Object.fromEntries(
-  FB_METADATA_FIELDS.map(field => [field.key, field.label])
-) as Record<string, string>;
-
-function createEmptyExtraField(): ExtraFieldDraft {
-  return {
-    destKey: "",
-    sourceType: "form",
-    sourceField: "",
-    staticValue: "",
-    manualSource: true,
-  };
-}
-
-function isKnownFormOrMetaFieldKey(
-  key: string,
-  formFields: Array<{ key: string }>
-): boolean {
-  const k = key.trim();
-  if (!k) return false;
-  if (formFields.some(f => f.key === k)) return true;
-  return FB_METADATA_FIELDS.some(m => m.key === k);
-}
+import {
+  FB_METADATA_FIELDS,
+  FB_METADATA_LABELS,
+  NAME_PATTERNS,
+  PHONE_PATTERNS,
+  TEMPLATE_VARIABLE_FIELDS,
+  autoMatchField,
+  createEmptyExtraField,
+  hydrateExtraFields,
+  isKnownFormOrMetaFieldKey,
+  serializeExtraFields,
+  type ExtraFieldDraft,
+} from "./lead-routing/shared";
 
 /** Custom rows, or saved keys that are not in the form/metadata lists. */
 function shouldUseManualSourceInput(
@@ -248,31 +187,6 @@ function shouldUseManualSourceInput(
   if (field.manualSource) return true;
   const k = field.sourceField?.trim() ?? "";
   return !!k && !isKnownFormOrMetaFieldKey(k, formFields);
-}
-
-function serializeExtraFields(extraFields: ExtraFieldDraft[]) {
-  return extraFields
-    .filter(field => field.destKey.trim())
-    .map(field => ({
-      destKey: field.destKey.trim(),
-      sourceField: field.sourceType === "form" ? field.sourceField : undefined,
-      staticValue:
-        field.sourceType === "static" ? field.staticValue?.trim() : undefined,
-    }));
-}
-
-function hydrateExtraFields(value: unknown): ExtraFieldDraft[] {
-  if (!Array.isArray(value)) return [];
-
-  return value.map(raw => {
-    const item = (raw ?? {}) as Record<string, unknown>;
-    return {
-      destKey: typeof item.destKey === "string" ? item.destKey : "",
-      sourceType: item.staticValue !== undefined ? "static" : "form",
-      sourceField: typeof item.sourceField === "string" ? item.sourceField : "",
-      staticValue: typeof item.staticValue === "string" ? item.staticValue : "",
-    };
-  });
 }
 
 function getSourceLabel(
@@ -341,35 +255,7 @@ const INITIAL: WizardState = {
   integrationName: "",
 };
 
-// ─── Template variable field definitions (client-side) ────────────────────────
-const TEMPLATE_VARIABLE_FIELDS: Record<
-  string,
-  Array<{ key: string; label: string; placeholder: string; required: boolean }>
-> = {
-  sotuvchi: [
-    {
-      key: "offer_id",
-      label: "Offer ID",
-      placeholder: "e.g. 123",
-      required: true,
-    },
-    {
-      key: "stream",
-      label: "Stream",
-      placeholder: "e.g. main",
-      required: true,
-    },
-  ],
-  "100k": [
-    {
-      key: "stream_id",
-      label: "Stream ID",
-      placeholder: "e.g. 456",
-      required: true,
-    },
-  ],
-  custom: [],
-};
+// TEMPLATE_VARIABLE_FIELDS moved to ./lead-routing/shared.ts (see import above).
 
 const STEPS = [
   { id: 1, label: "Account", icon: User },

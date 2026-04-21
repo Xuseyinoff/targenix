@@ -17,6 +17,7 @@ import Register from "./pages/Register";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import LeadRoutingWizard from "./pages/LeadRoutingWizard";
+import IntegrationWizardV2 from "./pages/IntegrationWizardV2";
 import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
 import DataDeletion from "./pages/DataDeletion";
@@ -126,6 +127,7 @@ function Router() {
       <Route path="/integrations" component={Integrations} />
       <Route path="/integrations/new-routing" component={LeadRoutingWizard} />
       <Route path="/integrations/edit-routing/:id" component={LeadRoutingWizard} />
+      <Route path="/integrations/new-v2" component={IntegrationWizardV2} />
       <Route path="/connections" component={Connections} />
       {/* Legacy redirects kept for any bookmarks */}
       <Route path="/facebook" component={Connections} />
