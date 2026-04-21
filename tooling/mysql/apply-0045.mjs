@@ -141,12 +141,20 @@ console.log(
 );
 
 // ─── Verify invariant: no row should have destinationId <> 0 on the legacy path
-const [legacy] = await conn.execute(
-  "SELECT COUNT(*) AS c FROM orders WHERE destinationId <> 0",
-);
-console.log(
-  `[apply-0045] rows with destinationId != 0: ${legacy[0].c} (expected 0 at this stage)`,
-);
+// Only runs when the column actually exists in the schema — under --dry-run
+// the ALTER was logged but not executed, so the column may still be missing.
+if (await columnExists("orders", "destinationId")) {
+  const [legacy] = await conn.execute(
+    "SELECT COUNT(*) AS c FROM orders WHERE destinationId <> 0",
+  );
+  console.log(
+    `[apply-0045] rows with destinationId != 0: ${legacy[0].c} (expected 0 at this stage)`,
+  );
+} else {
+  console.log(
+    "[apply-0045] skipping destinationId=0 invariant check (column not yet present, likely --dry-run)",
+  );
+}
 
 await conn.end();
 console.log(`[apply-0045] DONE ${DRY_RUN ? "(dry-run, no changes made)" : ""}`.trim());
