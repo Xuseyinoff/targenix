@@ -18,6 +18,7 @@ import { startRetryScheduler } from "../services/retryScheduler";
 import { startLogRetentionScheduler } from "../services/logRetentionScheduler";
 import { startFormsRefreshScheduler } from "../services/formsRefreshScheduler";
 import { startAdsSyncScheduler } from "../services/adsSyncScheduler";
+import { startLeadPollingScheduler } from "../services/leadPollingService";
 import { getDb } from "../db";
 
 if (!process.env.REDIS_URL) {
@@ -53,6 +54,10 @@ async function boot() {
   startLogRetentionScheduler();
   startFormsRefreshScheduler();
   startAdsSyncScheduler();
+  // Zapier-style polling fallback: harmless no-op unless ENABLE_LEAD_POLLING=true.
+  // When enabled, every 10 min it reconciles each active (user, page, form)
+  // against Facebook and saves + dispatches any leadgen the webhook missed.
+  startLeadPollingScheduler();
 
   console.log("[Worker] All systems running. Waiting for jobs...");
 
