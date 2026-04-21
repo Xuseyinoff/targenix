@@ -315,16 +315,32 @@ export const targetWebsitesRouter = router({
         }
       }
 
-      // Telegram destination — no URL needed
+      // Telegram destination — no URL needed.
+      //
+      // Two credential paths:
+      //   A) connectionId provided → botToken + chatId are resolved from the
+      //      connection at delivery time (telegramAdapter.tryResolveFromConnection).
+      //      The templateConfig only needs an optional messageTemplate + an
+      //      optional chatId override. This is the Make.com-style path used by
+      //      the v2 wizard's inline destination creation.
+      //   B) no connectionId → the caller must supply botToken + chatId
+      //      inline; we encrypt the token and persist it in templateConfig.
+      //      This is the legacy path used by the old destination form.
       if (input.templateType === "telegram") {
-        if (!input.botToken?.trim()) throw new Error("Bot Token is required");
-        if (!input.chatId?.trim()) throw new Error("Chat ID is required");
-        const config: Record<string, unknown> = {
-          botTokenEncrypted: encrypt(input.botToken),
-          chatId: input.chatId.trim(),
-          messageTemplate: input.messageTemplate?.trim() || "📋 Yangi lead\n\n👤 Ism: {{full_name}}\n📞 Telefon: {{phone_number}}\n📧 Email: {{email}}",
-        };
-        await db.insert(targetWebsites).values({
+        const defaultTemplate =
+          "📋 Yangi lead\n\n👤 Ism: {{full_name}}\n📞 Telefon: {{phone_number}}\n📧 Email: {{email}}";
+        const config: Record<string, unknown> = {};
+        if (validatedConnectionId) {
+          if (input.chatId?.trim()) config.chatId = input.chatId.trim();
+          config.messageTemplate = input.messageTemplate?.trim() || defaultTemplate;
+        } else {
+          if (!input.botToken?.trim()) throw new Error("Bot Token is required");
+          if (!input.chatId?.trim()) throw new Error("Chat ID is required");
+          config.botTokenEncrypted = encrypt(input.botToken);
+          config.chatId = input.chatId.trim();
+          config.messageTemplate = input.messageTemplate?.trim() || defaultTemplate;
+        }
+        const inserted = await db.insert(targetWebsites).values({
           userId: ctx.user.id,
           name: input.name,
           url: null,
@@ -334,7 +350,8 @@ export const targetWebsitesRouter = router({
           isActive: true,
           ...(validatedConnectionId ? { connectionId: validatedConnectionId } : {}),
         });
-        return { success: true };
+        const id = (inserted as unknown as { insertId?: number })?.insertId;
+        return { success: true, id, name: input.name, templateType: "telegram" as const };
       }
 
       // Google Sheets — append row per lead (no HTTP affiliate URL)
@@ -349,7 +366,7 @@ export const targetWebsitesRouter = router({
         };
         config.sheetHeaders = input.sheetHeaders ?? [];
         config.mapping = input.mapping ?? {};
-        await db.insert(targetWebsites).values({
+        const inserted = await db.insert(targetWebsites).values({
           userId: ctx.user.id,
           name: input.name,
           url: null,
@@ -360,7 +377,8 @@ export const targetWebsitesRouter = router({
           ...(autoChatId ? { telegramChatId: autoChatId } : {}),
           ...(validatedConnectionId ? { connectionId: validatedConnectionId } : {}),
         });
-        return { success: true };
+        const id = (inserted as unknown as { insertId?: number })?.insertId;
+        return { success: true, id, name: input.name, templateType: "google-sheets" as const };
       }
 
       // Build URL (pre-filled for known templates)
@@ -392,7 +410,7 @@ export const targetWebsitesRouter = router({
         if (input.variableFields) config.variableFields = input.variableFields;
       }
 
-      await db.insert(targetWebsites).values({
+      const inserted = await db.insert(targetWebsites).values({
         userId: ctx.user.id,
         name: input.name,
         url,
@@ -401,7 +419,13 @@ export const targetWebsitesRouter = router({
         ...(autoChatId ? { telegramChatId: autoChatId } : {}),
         isActive: true,
       });
-      return { success: true };
+      const id = (inserted as unknown as { insertId?: number })?.insertId;
+      return {
+        success: true,
+        id,
+        name: input.name,
+        templateType: input.templateType,
+      };
     }),
 
   /** Update a target website. Only owner can update. */
