@@ -416,6 +416,13 @@ export async function createIntegration(data: {
   name: string;
   config: unknown;
   telegramChatId?: string | null;
+  /**
+   * Ordered destination IDs for fan-out (Commit 6c).
+   * When provided, `integration_destinations` is populated with the full
+   * list (preserving order as `position`). Otherwise the single id from
+   * `config.targetWebsiteId` is used (legacy / single-destination path).
+   */
+  destinationIds?: number[];
 }): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -448,11 +455,27 @@ export async function createIntegration(data: {
     targetWebsiteId,
   });
 
-  // Dual-write into the new join table so Commit 5's dispatch fan-out
-  // sees the same destination set the legacy column already advertises.
+  // Dual-write into the new join table.
   const insertedId = (result as { insertId?: number })?.insertId;
   if (isLR && typeof insertedId === "number" && insertedId > 0) {
-    await safeSyncLegacyDestination(db, insertedId, targetWebsiteId);
+    const destIds = data.destinationIds;
+    if (destIds && destIds.length > 0) {
+      // Multi-destination path (Commit 6c): write all ids in order.
+      // `setIntegrationDestinations` runs inside a transaction, so the
+      // mapping is always consistent even if the process crashes mid-way.
+      try {
+        const { setIntegrationDestinations } = await import("./services/integrationDestinations");
+        await setIntegrationDestinations(db, insertedId, destIds);
+      } catch (err) {
+        console.warn(
+          `[dual-write] setIntegrationDestinations failed for integrationId=${insertedId}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    } else {
+      // Single-destination / legacy path: mirror the config column only.
+      await safeSyncLegacyDestination(db, insertedId, targetWebsiteId);
+    }
   }
 }
 

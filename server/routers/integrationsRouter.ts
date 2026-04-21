@@ -7,6 +7,7 @@ import {
   deleteIntegration,
   getDb,
 } from "../db";
+import { inArray } from "drizzle-orm";
 import { injectVariables } from "../services/affiliateService";
 import { sendLeadTelegramNotification } from "../services/leadService";
 import { sendTelegramRawMessage } from "../services/telegramService";
@@ -49,15 +50,47 @@ export const integrationsRouter = router({
         name: z.string().min(1).max(255),
         config: z.record(z.string(), z.any()),
         telegramChatId: z.string().max(64).optional(),
+        /**
+         * Ordered list of destination IDs to fan-out to (Commit 6c).
+         * When provided, `integration_destinations` is populated with the
+         * full list instead of only the single id embedded in config.
+         * The first entry also sets `integrations.targetWebsiteId` for
+         * legacy compat (dispatch falls back to that column when the flag
+         * is off).
+         * Max 20 destinations per integration — reasonable upper bound that
+         * prevents accidentally passing a large array.
+         */
+        destinationIds: z.array(z.number().int().positive()).max(20).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Ownership guard: ensure every destinationId belongs to this user.
+      // The wizard only surfaces owned destinations, so a mismatch here
+      // indicates a tampering attempt — silently filter to owned IDs.
+      let safeDestinationIds = input.destinationIds;
+      if (safeDestinationIds && safeDestinationIds.length > 0) {
+        const db = await getDb();
+        if (db) {
+          const { targetWebsites } = await import("../../drizzle/schema");
+          const owned = await db
+            .select({ id: targetWebsites.id })
+            .from(targetWebsites)
+            .where(
+              inArray(targetWebsites.id, safeDestinationIds),
+            );
+          const ownedSet = new Set(owned.map((r) => r.id));
+          // Preserve original ordering; drop ids not owned by this user.
+          safeDestinationIds = safeDestinationIds.filter((id) => ownedSet.has(id));
+        }
+      }
+
       await createIntegration({
         userId: ctx.user.id,
         type: input.type,
         name: input.name,
         config: input.config,
         telegramChatId: input.telegramChatId ?? null,
+        destinationIds: safeDestinationIds,
       });
       return { success: true };
     }),

@@ -41,7 +41,6 @@ import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
 import {
   ArrowLeft,
-  ArrowRight,
   CheckCircle2,
   ChevronDown,
   Circle,
@@ -59,6 +58,7 @@ import {
   Type,
   User,
   Webhook,
+  X,
   Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -79,6 +79,13 @@ import { DestinationCreatorDrawer } from "@/components/destinations/DestinationC
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/** One entry in the ordered destination list. */
+interface DestinationEntry {
+  id: number;
+  name: string;
+  templateType: string;
+}
+
 interface WizardState {
   // Trigger
   accountId: number | null;
@@ -87,11 +94,12 @@ interface WizardState {
   pageName: string;
   formId: string;
   formName: string;
-  // Destination
-  targetWebsiteId: number | null;
-  targetWebsiteName: string;
-  targetTemplateType: string;
-  // Mapping
+  // Destinations — ordered list (Commit 6c). The first entry is the
+  // "primary" destination: it drives field mapping + variable resolution
+  // and is written to `integrations.targetWebsiteId` for legacy compat.
+  // Additional entries fan-out via `integration_destinations`.
+  destinations: DestinationEntry[];
+  // Mapping (applies to the primary destination)
   nameField: string;
   phoneField: string;
   extraFields: ExtraFieldDraft[];
@@ -100,8 +108,8 @@ interface WizardState {
   integrationName: string;
   /**
    * True once the user has manually edited the integration name. Until then
-   * the auto-fill effect keeps it in sync with "page → destination" so that
-   * swapping destinations updates the suggested name automatically.
+   * the auto-fill effect keeps it in sync with "page → destinations" so that
+   * changing the destination list updates the preview automatically.
    */
   integrationNameTouched: boolean;
 }
@@ -113,9 +121,7 @@ const INITIAL_STATE: WizardState = {
   pageName: "",
   formId: "",
   formName: "",
-  targetWebsiteId: null,
-  targetWebsiteName: "",
-  targetTemplateType: "",
+  destinations: [],
   nameField: "",
   phoneField: "",
   extraFields: [],
@@ -318,14 +324,20 @@ export default function IntegrationWizardV2() {
   const { data: targetWebsites, isLoading: loadingTargets } =
     trpc.targetWebsites.list.useQuery(undefined, { enabled: isAllowed });
 
+  // Derived: primary destination (first in the list) drives field mapping.
+  const primaryDest: DestinationEntry | null = state.destinations[0] ?? null;
+  const primaryDestId = primaryDest?.id ?? null;
+  const primaryDestName = primaryDest?.name ?? "";
+  const primaryDestType = primaryDest?.templateType ?? "";
+
   const { data: customVarNames = [] } =
     trpc.targetWebsites.getCustomVariables.useQuery(
-      { id: state.targetWebsiteId ?? 0 },
+      { id: primaryDestId ?? 0 },
       {
         enabled:
           isAllowed &&
-          !!state.targetWebsiteId &&
-          state.targetTemplateType === "custom",
+          !!primaryDestId &&
+          primaryDestType === "custom",
       },
     );
 
@@ -352,22 +364,25 @@ export default function IntegrationWizardV2() {
     }));
   }, [formFields]);
 
-  // ─── Auto-fill: integration name once page + destination are chosen ─────────
+  // ─── Auto-fill: integration name once page + destinations are chosen ────────
   // Tracks the "auto" vs "user-edited" state via `integrationNameTouched`. As
   // long as the user hasn't typed into the name field, we keep the suggestion
-  // in sync with the currently-picked page and destination — swapping the
-  // destination should update the preview instead of leaving a stale name.
+  // in sync with the page name and destination list so adding/removing a
+  // destination updates the preview automatically.
   useEffect(() => {
     if (state.integrationNameTouched) return;
-    if (state.pageName && state.targetWebsiteName) {
-      const suggested = `${state.pageName} → ${state.targetWebsiteName}`;
-      if (state.integrationName !== suggested) {
-        setState((s) => ({ ...s, integrationName: suggested }));
-      }
+    if (!state.pageName || state.destinations.length === 0) return;
+    const destLabel =
+      state.destinations.length === 1
+        ? state.destinations[0]!.name
+        : `${state.destinations[0]!.name} +${state.destinations.length - 1} more`;
+    const suggested = `${state.pageName} → ${destLabel}`;
+    if (state.integrationName !== suggested) {
+      setState((s) => ({ ...s, integrationName: suggested }));
     }
   }, [
     state.pageName,
-    state.targetWebsiteName,
+    state.destinations,
     state.integrationName,
     state.integrationNameTouched,
   ]);
@@ -376,7 +391,7 @@ export default function IntegrationWizardV2() {
   // templates so the mapping card has something to render. Existing values
   // are preserved — we only fill in keys that aren't there yet.
   useEffect(() => {
-    if (state.targetTemplateType !== "custom") return;
+    if (primaryDestType !== "custom") return;
     if (!customVarNames.length) return;
     setState((s) => {
       const next = { ...s.variableFields };
@@ -389,20 +404,20 @@ export default function IntegrationWizardV2() {
       }
       return changed ? { ...s, variableFields: next } : s;
     });
-  }, [customVarNames, state.targetTemplateType]);
+  }, [customVarNames, primaryDestType]);
 
-  // ─── Derived: variables required by the chosen destination template ────────
+  // ─── Derived: variables required by the PRIMARY destination template ────────
   const requiredVarKeys = useMemo(() => {
-    if (state.targetTemplateType === "telegram") return [] as string[];
-    if (state.targetTemplateType === "custom") return customVarNames;
-    const defs = TEMPLATE_VARIABLE_FIELDS[state.targetTemplateType] ?? [];
+    if (primaryDestType === "telegram") return [] as string[];
+    if (primaryDestType === "custom") return customVarNames;
+    const defs = TEMPLATE_VARIABLE_FIELDS[primaryDestType] ?? [];
     return defs.filter((d) => d.required).map((d) => d.key);
-  }, [state.targetTemplateType, customVarNames]);
+  }, [primaryDestType, customVarNames]);
 
   // ─── Validation ────────────────────────────────────────────────────────────
   const triggerFilled =
     !!state.accountId && !!state.pageId && !!state.formId;
-  const destinationFilled = !!state.targetWebsiteId;
+  const destinationFilled = state.destinations.length > 0;
   const mappingFilled =
     !!state.nameField &&
     !!state.phoneField &&
@@ -476,18 +491,32 @@ export default function IntegrationWizardV2() {
     // After selecting form, auto-advance to destination card for momentum.
     setOpenCard("destination");
   };
-  const setDestination = (
-    id: number,
-    name: string,
-    templateType: string,
-  ) => {
-    patch({
-      targetWebsiteId: id,
-      targetWebsiteName: name,
-      targetTemplateType: templateType,
-      variableFields: {}, // reset — new template may have different vars
+
+  /** Add a destination to the list if not already present. */
+  const addDestination = (id: number, name: string, templateType: string) => {
+    setState((s) => {
+      if (s.destinations.some((d) => d.id === id)) return s; // already added
+      const next = [...s.destinations, { id, name, templateType }];
+      // If this is the first destination, reset variable fields (new template).
+      const variableFields = s.destinations.length === 0 ? {} : s.variableFields;
+      return { ...s, destinations: next, variableFields };
     });
+    // Auto-advance to mapping once we have at least one destination.
     setOpenCard("mapping");
+  };
+
+  /** Remove a destination from the list by id. */
+  const removeDestination = (id: number) => {
+    setState((s) => {
+      const next = s.destinations.filter((d) => d.id !== id);
+      // If we removed the primary destination, reset variable fields.
+      const removedPrimary = s.destinations[0]?.id === id;
+      return {
+        ...s,
+        destinations: next,
+        variableFields: removedPrimary ? {} : s.variableFields,
+      };
+    });
   };
 
   const addExtra = () =>
@@ -515,6 +544,9 @@ export default function IntegrationWizardV2() {
   // ─── Save handler ──────────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!canSave) return;
+    // The config embeds the PRIMARY destination for legacy dispatch compat.
+    // Additional destinations are tracked via integration_destinations, passed
+    // separately as destinationIds so the backend calls setIntegrationDestinations.
     const config = {
       facebookAccountId: state.accountId,
       pageId: state.pageId,
@@ -524,11 +556,13 @@ export default function IntegrationWizardV2() {
       nameField: state.nameField,
       phoneField: state.phoneField,
       extraFields: serializeExtraFields(state.extraFields),
-      targetWebsiteId: state.targetWebsiteId,
-      targetWebsiteName: state.targetWebsiteName,
-      targetTemplateType: state.targetTemplateType,
+      // Legacy compat: first destination id/name/type in config.
+      targetWebsiteId: primaryDestId,
+      targetWebsiteName: primaryDestName,
+      targetTemplateType: primaryDestType,
       variableFields: state.variableFields,
     };
+    const destinationIds = state.destinations.map((d) => d.id);
     try {
       if (state.accountId && state.pageId) {
         await subscribeMutation.mutateAsync({
@@ -540,6 +574,7 @@ export default function IntegrationWizardV2() {
         type: "LEAD_ROUTING",
         name: state.integrationName.trim(),
         config,
+        destinationIds,
       });
     } catch (err) {
       // toasts are already surfaced by the mutation's onError callback.
@@ -652,24 +687,32 @@ export default function IntegrationWizardV2() {
         <WizardCard
           stepNumber={2}
           icon={Send}
-          title="Destination"
-          description="Where should the lead be delivered?"
+          title="Destinations"
+          description="Where should the lead be delivered? Add one or more destinations."
           status={destinationStatus}
           open={openCard === "destination"}
           onToggle={() =>
             setOpenCard(openCard === "destination" ? null : "destination")
           }
           summary={
-            destinationFilled
-              ? state.targetWebsiteName
-              : "Pick a destination"
+            state.destinations.length === 0
+              ? "Pick a destination"
+              : state.destinations.length === 1
+                ? state.destinations[0]!.name
+                : `${state.destinations[0]!.name} +${state.destinations.length - 1} more`
           }
         >
           <DestinationEditor
             destinations={targetWebsites ?? []}
             loading={loadingTargets}
-            selectedId={state.targetWebsiteId}
-            onPick={setDestination}
+            selectedIds={state.destinations.map((d) => d.id)}
+            onToggle={(id, name, templateType) => {
+              if (state.destinations.some((d) => d.id === id)) {
+                removeDestination(id);
+              } else {
+                addDestination(id, name, templateType);
+              }
+            }}
             onOpenCreator={() => setCreatorOpen(true)}
           />
         </WizardCard>
@@ -701,6 +744,8 @@ export default function IntegrationWizardV2() {
             formFields={formFields ?? []}
             loadingFields={loadingFields}
             state={state}
+            primaryDestName={primaryDestName}
+            primaryDestType={primaryDestType}
             onPatch={patch}
             onAddExtra={addExtra}
             onUpdateExtra={updateExtra}
@@ -735,8 +780,8 @@ export default function IntegrationWizardV2() {
                 })
               }
               placeholder={
-                state.pageName && state.targetWebsiteName
-                  ? `${state.pageName} → ${state.targetWebsiteName}`
+                state.pageName && primaryDestName
+                  ? `${state.pageName} → ${primaryDestName}`
                   : "My integration"
               }
             />
@@ -757,12 +802,13 @@ export default function IntegrationWizardV2() {
           </div>
         </WizardCard>
 
-        {/* Inline destination creator */}
+        {/* Inline destination creator — adds to the list, doesn't replace */}
         <DestinationCreatorDrawer
           open={creatorOpen}
           onOpenChange={setCreatorOpen}
           onCreated={({ id, name, templateType }) => {
-            setDestination(id, name, templateType);
+            addDestination(id, name, templateType);
+            setCreatorOpen(false);
           }}
         />
 
@@ -965,18 +1011,22 @@ interface DestinationListItem {
 interface DestinationEditorProps {
   destinations: DestinationListItem[];
   loading: boolean;
-  selectedId: number | null;
-  onPick: (id: number, name: string, templateType: string) => void;
+  /** IDs currently in the wizard's selected list. */
+  selectedIds: number[];
+  /** Toggle a destination: add if not selected, remove if selected. */
+  onToggle: (id: number, name: string, templateType: string) => void;
   onOpenCreator: () => void;
 }
 
 function DestinationEditor({
   destinations,
   loading,
-  selectedId,
-  onPick,
+  selectedIds,
+  onToggle,
   onOpenCreator,
 }: DestinationEditorProps) {
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
   const grouped = useMemo(() => {
     const map = new Map<string, DestinationListItem[]>();
     for (const d of destinations) {
@@ -988,9 +1038,59 @@ function DestinationEditor({
   }, [destinations]);
 
   if (loading) return <LoadingBar />;
-  if (destinations.length === 0) {
-    return (
-      <div className="space-y-3">
+
+  return (
+    <div className="space-y-4">
+      {/* ── Selected destinations chip list ──────────────────────────────── */}
+      {selectedIds.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Selected ({selectedIds.length})
+          </div>
+          <div className="space-y-1.5">
+            {selectedIds.map((id, idx) => {
+              const d = destinations.find((x) => x.id === id);
+              if (!d) return null;
+              const Icon = iconForCategory(d.category);
+              const color = colorForCategory(d.category);
+              return (
+                <div
+                  key={id}
+                  className="flex items-center gap-2.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-2"
+                >
+                  <div
+                    className={cn(
+                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-xs font-semibold",
+                      color,
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{d.name}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">
+                      {idx === 0 ? "Primary (drives mapping)" : `Destination ${idx + 1}`}
+                      {" · "}
+                      {d.templateName || d.templateType}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onToggle(id, d.name, d.templateType)}
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                    aria-label={`Remove ${d.name}`}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Picker grid ──────────────────────────────────────────────────── */}
+      {destinations.length === 0 ? (
         <div className="flex items-center gap-3 rounded-md border border-dashed bg-muted/10 p-4">
           <div className="flex-1 text-xs text-muted-foreground">
             You haven&apos;t created any destinations yet. Set one up right here
@@ -1001,76 +1101,76 @@ function DestinationEditor({
             New destination
           </Button>
         </div>
-      </div>
-    );
-  }
+      ) : (
+        <div className="space-y-3">
+          {grouped.map(([category, items]) => {
+            const Icon = iconForCategory(category);
+            const color = colorForCategory(category);
+            const meta = CATEGORY_META[category as DestinationCategory];
+            return (
+              <div key={category} className="space-y-1.5">
+                <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                  {meta?.label ?? category}
+                </div>
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {items.map((d) => {
+                    const isSelected = selectedSet.has(d.id);
+                    return (
+                      <button
+                        key={d.id}
+                        type="button"
+                        onClick={() => onToggle(d.id, d.name, d.templateType)}
+                        className={cn(
+                          "flex items-center gap-2.5 rounded-md border bg-background p-2.5 text-left text-sm transition-colors",
+                          isSelected
+                            ? "border-primary ring-1 ring-primary/30 bg-primary/5"
+                            : "hover:border-primary/40 hover:bg-muted/30",
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
+                            color,
+                          )}
+                        >
+                          <Icon className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium">{d.name}</div>
+                          <div className="truncate text-[11px] text-muted-foreground">
+                            {d.templateName || d.templateType}
+                          </div>
+                        </div>
+                        {isSelected ? (
+                          <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
+                        ) : (
+                          <Plus className="h-4 w-4 text-muted-foreground/40 shrink-0" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
 
-  return (
-    <div className="space-y-3">
-      {grouped.map(([category, items]) => {
-        const Icon = iconForCategory(category);
-        const color = colorForCategory(category);
-        const meta = CATEGORY_META[category as DestinationCategory];
-        return (
-          <div key={category} className="space-y-1.5">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              {meta?.label ?? category}
-            </div>
-            <div className="grid gap-1.5 sm:grid-cols-2">
-              {items.map((d) => {
-                const isSelected = selectedId === d.id;
-                return (
-                  <button
-                    key={d.id}
-                    type="button"
-                    onClick={() => onPick(d.id, d.name, d.templateType)}
-                    className={cn(
-                      "flex items-center gap-2.5 rounded-md border bg-background p-2.5 text-left text-sm transition-colors",
-                      isSelected
-                        ? "border-primary ring-1 ring-primary/30 bg-primary/5"
-                        : "hover:border-primary/40 hover:bg-muted/30",
-                    )}
-                  >
-                    <div
-                      className={cn(
-                        "flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
-                        color,
-                      )}
-                    >
-                      <Icon className="h-4 w-4" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-medium">{d.name}</div>
-                      <div className="truncate text-[11px] text-muted-foreground">
-                        {d.templateName || d.templateType}
-                      </div>
-                    </div>
-                    {isSelected && (
-                      <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
-                    )}
-                  </button>
-                );
-              })}
-            </div>
+          <div className="flex items-center justify-between gap-2 border-t pt-3">
+            <p className="text-[11px] text-muted-foreground">
+              Need a different destination? Create one inline without leaving
+              the wizard.
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs shrink-0"
+              onClick={onOpenCreator}
+            >
+              <Plus className="h-3.5 w-3.5 mr-1.5" />
+              New destination
+            </Button>
           </div>
-        );
-      })}
-
-      <div className="pt-1 flex items-center justify-between gap-2 border-t pt-3">
-        <p className="text-[11px] text-muted-foreground">
-          Need a different destination? Create one inline without leaving the
-          wizard.
-        </p>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 text-xs shrink-0"
-          onClick={onOpenCreator}
-        >
-          <Plus className="h-3.5 w-3.5 mr-1.5" />
-          New destination
-        </Button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1081,6 +1181,10 @@ interface MappingEditorProps {
   formFields: Array<{ key: string; label?: string | null }>;
   loadingFields: boolean;
   state: WizardState;
+  /** Name of the primary destination (drives variable labels). */
+  primaryDestName: string;
+  /** Template type of the primary destination. */
+  primaryDestType: string;
   onPatch: (p: Partial<WizardState>) => void;
   onAddExtra: () => void;
   onUpdateExtra: (index: number, p: Partial<ExtraFieldDraft>) => void;
@@ -1091,14 +1195,16 @@ function MappingEditor({
   formFields,
   loadingFields,
   state,
+  primaryDestName,
+  primaryDestType,
   onPatch,
   onAddExtra,
   onUpdateExtra,
   onRemoveExtra,
 }: MappingEditorProps) {
-  const templateDefs = TEMPLATE_VARIABLE_FIELDS[state.targetTemplateType] ?? [];
-  const isCustom = state.targetTemplateType === "custom";
-  const isTelegram = state.targetTemplateType === "telegram";
+  const templateDefs = TEMPLATE_VARIABLE_FIELDS[primaryDestType] ?? [];
+  const isCustom = primaryDestType === "custom";
+  const isTelegram = primaryDestType === "telegram";
 
   // Compute a client-side equivalent of customVarNames from parent. In this
   // child we receive them indirectly via state — MappingEditor reads
@@ -1154,7 +1260,7 @@ function MappingEditor({
           <div className="text-xs font-semibold">
             Destination variables
             <span className="ml-1.5 text-muted-foreground font-normal">
-              ({state.targetWebsiteName})
+              ({primaryDestName})
             </span>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
