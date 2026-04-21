@@ -57,14 +57,10 @@ import {
 import { useT } from "@/hooks/useT";
 import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
+import { useGoogleOAuthPopup } from "@/hooks/useGoogleOAuthPopup";
 
 // Google-branded circle to match Facebook's blue bubble in the section above.
 const GOOGLE_COLOR = "#0F9D58";
-
-const GOOGLE_OAUTH_CHANNEL = "targenix_google_oauth";
-type GoogleOAuthMessage =
-  | { type: "google_oauth_success"; accountId: number; email?: string }
-  | { type: "google_oauth_error"; error?: string };
 
 export function GoogleConnectionsSection() {
   const t = useT();
@@ -76,7 +72,6 @@ export function GoogleConnectionsSection() {
     refetch,
   } = trpc.connections.list.useQuery({ type: "google_sheets" });
 
-  const [connecting, setConnecting] = React.useState(false);
   const [renameTarget, setRenameTarget] = React.useState<
     | { id: number; currentName: string }
     | null
@@ -85,10 +80,6 @@ export function GoogleConnectionsSection() {
   const [disconnectTarget, setDisconnectTarget] = React.useState<
     { id: number; name: string; usageCount: number } | null
   >(null);
-
-  const popupRef = React.useRef<Window | null>(null);
-  const pollRef = React.useRef<number | null>(null);
-  const completedRef = React.useRef(false);
 
   const renameMutation = trpc.connections.rename.useMutation({
     onSuccess: () => {
@@ -111,112 +102,32 @@ export function GoogleConnectionsSection() {
     onError: (err) => toast.error(err.message),
   });
 
-  const stopPopupWatch = React.useCallback(() => {
-    if (pollRef.current) {
-      window.clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }, []);
-
-  React.useEffect(() => {
-    const handleResult = (msg: GoogleOAuthMessage) => {
-      if (completedRef.current) return;
-      completedRef.current = true;
-      stopPopupWatch();
-      setConnecting(false);
-
-      if (msg.type === "google_oauth_success") {
-        toast.success(
-          msg.email
-            ? t("connections.google.connectedWithEmail", { email: msg.email })
-            : t("connections.google.connected"),
-        );
-        void refetch();
-      } else {
-        toast.error(msg.error ?? t("connections.google.connectFailed"));
-      }
-    };
-
-    const bc = new BroadcastChannel(GOOGLE_OAUTH_CHANNEL);
-    const bcHandler = (e: MessageEvent) => {
-      const data = e.data as GoogleOAuthMessage | undefined;
-      if (data?.type === "google_oauth_success" || data?.type === "google_oauth_error") {
-        handleResult(data);
-      }
-    };
-    bc.addEventListener("message", bcHandler);
-
-    const winHandler = (e: MessageEvent) => {
-      if (e.origin !== window.location.origin) return;
-      const data = e.data as GoogleOAuthMessage | undefined;
-      if (data?.type === "google_oauth_success" || data?.type === "google_oauth_error") {
-        handleResult(data);
-      }
-    };
-    window.addEventListener("message", winHandler);
-
-    return () => {
-      bc.removeEventListener("message", bcHandler);
-      bc.close();
-      window.removeEventListener("message", winHandler);
-      stopPopupWatch();
-    };
-  }, [refetch, stopPopupWatch, t]);
-
-  const handleConnect = async () => {
-    if (connecting) return;
-    setConnecting(true);
-    completedRef.current = false;
-
-    try {
-      const res = await fetch("/api/auth/google/initiate", { credentials: "include" });
-      const data = (await res.json()) as { oauthUrl?: string; error?: string };
-      if (!res.ok || !data.oauthUrl) {
-        throw new Error(data.error ?? t("connections.google.connectFailed"));
-      }
-
-      const width = 520;
-      const height = 640;
-      const left = Math.max(0, Math.floor(window.screenX + (window.outerWidth - width) / 2));
-      const top = Math.max(0, Math.floor(window.screenY + (window.outerHeight - height) / 2));
-      const popup = window.open(
-        data.oauthUrl,
-        "targenix_google_oauth_popup",
-        `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`,
+  const { start: startOAuth, isConnecting } = useGoogleOAuthPopup({
+    onConnected: (_accountId, email) => {
+      toast.success(
+        email
+          ? t("connections.google.connectedWithEmail", { email })
+          : t("connections.google.connected"),
       );
-      if (!popup) {
-        setConnecting(false);
-        toast.error(t("connections.google.popupBlocked"));
-        return;
-      }
-      popupRef.current = popup;
-      pollRef.current = window.setInterval(() => {
-        if (popup.closed) {
-          stopPopupWatch();
-          if (!completedRef.current) {
-            completedRef.current = true;
-            setConnecting(false);
-          }
-        }
-      }, 600);
-    } catch (err) {
-      setConnecting(false);
-      toast.error(err instanceof Error ? err.message : t("connections.google.connectFailed"));
-    }
-  };
+      void refetch();
+    },
+    onError: (message) => {
+      toast.error(message || t("connections.google.connectFailed"));
+    },
+  });
 
   const connectButton = (
     <Button
       type="button"
-      onClick={handleConnect}
-      disabled={connecting}
+      onClick={() => void startOAuth()}
+      disabled={isConnecting}
       className={cn(
         "gap-2 rounded-xl font-medium text-white shadow-sm transition-all hover:shadow-md active:scale-[0.99] min-h-10",
         "bg-[#0F9D58] hover:bg-[#0b8849]",
       )}
     >
-      {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-      {connecting
+      {isConnecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+      {isConnecting
         ? t("connections.google.connecting")
         : t("connections.google.connect")}
     </Button>

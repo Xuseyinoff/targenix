@@ -16,6 +16,7 @@
 
 import * as React from "react";
 import { Link } from "wouter";
+import { toast } from "sonner";
 import { CheckCircle2, Loader2, Plus, Link as LinkIcon, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -30,6 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useT } from "@/hooks/useT";
 import { trpc } from "@/lib/trpc";
+import { useGoogleOAuthPopup } from "@/hooks/useGoogleOAuthPopup";
 
 export type ConnectionPickerType = "google_sheets" | "telegram_bot";
 
@@ -85,9 +87,47 @@ export function ConnectionPicker({
   const selectValue = value == null ? NONE_VALUE : String(value);
   const hasAny = items.length > 0;
 
+  // Inline Google OAuth popup. After the popup completes we refetch the
+  // connections list and auto-select the connection that now points at the
+  // newly linked google_accounts row — this removes the "open new tab,
+  // come back, pick from dropdown" three-step dance Make.com/Zapier avoid.
+  const { start: startGoogleOAuth, isConnecting } = useGoogleOAuthPopup({
+    onConnected: async (googleAccountId, email) => {
+      toast.success(
+        email
+          ? t("connections.google.connectedWithEmail", { email })
+          : t("connections.google.connected"),
+      );
+      const res = await refetch();
+      const list = res.data ?? [];
+      const fresh = list.find((c) => c.google?.accountId === googleAccountId);
+      if (fresh) {
+        onChange(fresh.id);
+      }
+      if (onAfterConnect) onAfterConnect();
+    },
+    onError: (message) => {
+      toast.error(message);
+    },
+  });
+
+  const supportsInlineOAuth = type === "google_sheets";
+
   const handleOpenConnectionsPage = () => {
     if (onAfterConnect) onAfterConnect();
     void refetch();
+  };
+
+  const handleConnectNew = () => {
+    if (supportsInlineOAuth) {
+      void startGoogleOAuth();
+      return;
+    }
+    // Telegram bot connections require a manual bot token + chat id dialog
+    // — that flow lives on /connections for now. Opening the tab so the
+    // user can finish there, then refetch on focus-return.
+    window.open("/connections", "_blank", "noreferrer");
+    handleOpenConnectionsPage();
   };
 
   return (
@@ -145,34 +185,76 @@ export function ConnectionPicker({
           </SelectContent>
         </Select>
 
-        <Button
-          asChild
-          type="button"
-          variant="outline"
-          size="icon"
-          className="h-10 w-10 shrink-0"
-          onClick={handleOpenConnectionsPage}
-          title={t("connections.picker.manage")}
-        >
-          <Link href="/connections" target="_blank" rel="noreferrer">
-            {hasAny ? <LinkIcon className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-          </Link>
-        </Button>
+        {supportsInlineOAuth ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-10 w-10 shrink-0"
+            onClick={handleConnectNew}
+            disabled={disabled || isConnecting}
+            title={
+              hasAny
+                ? t("connections.picker.manage")
+                : t("connections.google.connect")
+            }
+          >
+            {isConnecting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : hasAny ? (
+              <LinkIcon className="h-4 w-4" />
+            ) : (
+              <Plus className="h-4 w-4" />
+            )}
+          </Button>
+        ) : (
+          <Button
+            asChild
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-10 w-10 shrink-0"
+            onClick={handleOpenConnectionsPage}
+            title={t("connections.picker.manage")}
+          >
+            <Link href="/connections" target="_blank" rel="noreferrer">
+              {hasAny ? <LinkIcon className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            </Link>
+          </Button>
+        )}
       </div>
 
       {helpText && <p className="text-xs text-muted-foreground">{helpText}</p>}
 
       {!isLoading && !hasAny && (
         <p className="text-xs text-muted-foreground">
-          {t("connections.picker.emptyHint")}{" "}
-          <Link
-            href="/connections"
-            target="_blank"
-            rel="noreferrer"
-            className="font-medium text-primary hover:underline"
-          >
-            {t("connections.picker.openConnections")}
-          </Link>
+          {supportsInlineOAuth ? (
+            <>
+              {t("connections.picker.emptyHint")}{" "}
+              <button
+                type="button"
+                onClick={handleConnectNew}
+                disabled={disabled || isConnecting}
+                className="font-medium text-primary hover:underline disabled:opacity-60"
+              >
+                {isConnecting
+                  ? t("connections.google.connecting")
+                  : t("connections.google.connect")}
+              </button>
+            </>
+          ) : (
+            <>
+              {t("connections.picker.emptyHint")}{" "}
+              <Link
+                href="/connections"
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-primary hover:underline"
+              >
+                {t("connections.picker.openConnections")}
+              </Link>
+            </>
+          )}
         </p>
       )}
     </div>
