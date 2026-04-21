@@ -36,6 +36,12 @@ import {
   CodeField,
   HiddenField,
 } from "@/components/dynamic-form/fields";
+import {
+  DynamicForm,
+  seedInitialValues,
+  validateFields,
+  type FieldValues,
+} from "@/components/dynamic-form";
 import type { ConfigField } from "@/components/dynamic-form/types";
 import type { FieldMapping } from "@/components/dynamic-form/fields";
 
@@ -168,6 +174,127 @@ function Section({
   );
 }
 
+/**
+ * Full Google Sheets module rendered through <DynamicForm>.
+ *
+ * This mirrors the manifest in server/integrations/apps/googleSheets.ts —
+ * kept inline here so the dev page doesn't depend on the server export (the
+ * shapes are intentionally serialisable). When we ship Commit 5 (wizard UI)
+ * the real manifest will flow in over tRPC and replace this literal.
+ */
+function FullFormDemo() {
+  const fields: ConfigField[] = React.useMemo(
+    () => [
+      {
+        key: "connectionId",
+        type: "connection-picker",
+        label: "Google connection",
+        required: true,
+        connectionType: "google_sheets",
+      },
+      {
+        key: "spreadsheetId",
+        type: "async-select",
+        label: "Spreadsheet",
+        required: true,
+        optionsSource: "listSpreadsheets",
+        dependsOn: ["connectionId"],
+      },
+      {
+        key: "sheetName",
+        type: "async-select",
+        label: "Sheet tab",
+        required: true,
+        optionsSource: "listSheetTabs",
+        dependsOn: ["connectionId", "spreadsheetId"],
+      },
+      {
+        key: "mapping",
+        type: "field-mapping",
+        label: "Column mapping",
+        headersSource: "getSheetHeaders",
+        dependsOn: ["connectionId", "spreadsheetId", "sheetName"],
+      },
+    ],
+    [],
+  );
+
+  const [values, setValues] = React.useState<FieldValues>(() =>
+    seedInitialValues(fields, {}),
+  );
+  const [errors, setErrors] = React.useState<Record<string, string>>({});
+  const [submitted, setSubmitted] = React.useState(false);
+
+  // Live validation after first submit attempt — matches the standard
+  // "show errors after they asked to save" UX.
+  React.useEffect(() => {
+    if (!submitted) return;
+    const r = validateFields(fields, values);
+    setErrors(r.errors);
+  }, [submitted, values, fields]);
+
+  const handleSubmit = () => {
+    setSubmitted(true);
+    const r = validateFields(fields, values);
+    setErrors(r.errors);
+    if (r.isValid) {
+      // In real wizards this kicks off a tRPC mutation.
+      // eslint-disable-next-line no-console
+      console.info("[DevFormPreview] would save:", values);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">
+          DynamicForm — full Google Sheets module
+        </CardTitle>
+        <CardDescription>
+          Renders the entire append_row module through the new engine.
+          ConnectionPicker → Spreadsheet → Sheet tab → Mapping cascades
+          automatically: changing any parent resets all dependents.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <DynamicForm
+          fields={fields}
+          appKey="google_sheets"
+          values={values}
+          onChange={setValues}
+          errors={errors}
+          availableVariables={[
+            { key: "full_name", label: "Full name" },
+            { key: "phone_number", label: "Phone number" },
+            { key: "email", label: "Email" },
+            { key: "created_time", label: "Created at" },
+          ]}
+        />
+        <div className="flex items-center gap-2 pt-2">
+          <Button type="button" onClick={handleSubmit}>
+            Validate &amp; log
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              setValues(seedInitialValues(fields, {}));
+              setErrors({});
+              setSubmitted(false);
+            }}
+          >
+            Reset
+          </Button>
+          {submitted && Object.keys(errors).length === 0 && (
+            <span className="text-xs text-emerald-600">All fields valid.</span>
+          )}
+        </div>
+        <StateInspector state={{ values, errors }} />
+      </CardContent>
+    </Card>
+  );
+}
+
 function StateInspector({ state }: { state: unknown }) {
   return (
     <details className="mt-3 text-xs">
@@ -246,6 +373,10 @@ export default function DevFormPreview() {
             </p>
           </div>
         </div>
+
+        <Separator />
+
+        <FullFormDemo />
 
         <Separator />
 

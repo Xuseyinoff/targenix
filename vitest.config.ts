@@ -14,6 +14,13 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["server/**/*.test.ts", "server/**/*.spec.ts"],
+    // Client-side pure-logic tests (e.g. dynamic-form validation) live next
+    // to their source but run in the same node environment — anything that
+    // needs jsdom stays out of this include list.
+    include: [
+      "server/**/*.test.ts",
+      "server/**/*.spec.ts",
+      "client/src/**/*.test.ts",
+    ],
   },
 });
