@@ -95,15 +95,52 @@ export const httpWebhookApp: AppManifest = {
           validation: { maxLength: 8192 },
           showWhen: { field: "method", equals: "POST" },
         },
+        // ── Advanced settings (Make.com-style collapsible group) ───────────
+        // Headers used to live at the top level as a raw "JSON blob" textarea
+        // which forced every user to hand-craft a tiny JSON object just to
+        // set a Bearer token. The Make.com pattern is far kinder: a tidy
+        // "+ Add header" row builder tucked behind an Advanced-settings
+        // chevron. We collapse it by default because 90% of webhook flows
+        // never need a header at all.
         {
-          key: "headers",
-          type: "code",
-          label: "Headers (JSON)",
-          description:
-            'Optional HTTP headers as a JSON object. Example: { "Authorization": "Bearer …" }',
+          key: "advanced",
+          type: "group",
+          label: "Advanced settings",
+          description: "Optional HTTP headers and extra request controls.",
           required: false,
-          placeholder: "{}",
-          validation: { maxLength: 4096 },
+          collapsible: true,
+          defaultCollapsed: true,
+          groupFields: [
+            {
+              key: "headers",
+              type: "repeatable",
+              label: "Headers",
+              description:
+                "Custom HTTP headers sent with every request. Values support {{variable}} placeholders.",
+              required: false,
+              addButtonLabel: "Add header",
+              maxItems: 32,
+              itemFields: [
+                {
+                  key: "name",
+                  type: "text",
+                  label: "Name",
+                  required: true,
+                  placeholder: "Authorization",
+                  validation: { maxLength: 256 },
+                },
+                {
+                  key: "value",
+                  type: "text",
+                  label: "Value",
+                  required: true,
+                  placeholder: "Bearer …",
+                  sensitive: true,
+                  validation: { maxLength: 2048 },
+                },
+              ],
+            },
+          ],
         },
       ],
     },

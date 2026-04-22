@@ -24,6 +24,9 @@ export { ConnectionPickerField } from "./ConnectionPickerField";
 export { FieldMappingField } from "./FieldMappingField";
 export { CodeField } from "./CodeField";
 export { HiddenField } from "./HiddenField";
+export { RepeatableField } from "./RepeatableField";
+export { GroupField } from "./GroupField";
+export { MapToggleWrapper } from "./MapToggleWrapper";
 
 export type { TextFieldProps } from "./TextField";
 export type { PasswordFieldProps } from "./PasswordField";
@@ -37,6 +40,9 @@ export type { ConnectionPickerFieldProps } from "./ConnectionPickerField";
 export type { FieldMappingFieldProps, FieldMapping } from "./FieldMappingField";
 export type { CodeFieldProps } from "./CodeField";
 export type { HiddenFieldProps } from "./HiddenField";
+export type { RepeatableFieldProps, RepeatableRowValues } from "./RepeatableField";
+export type { GroupFieldProps } from "./GroupField";
+export type { MapToggleWrapperProps, AvailableVariable } from "./MapToggleWrapper";
 
 import type { ConfigFieldType } from "../types";
 
@@ -58,4 +64,6 @@ export const FIELD_TYPES_WITH_COMPONENTS: ReadonlyArray<ConfigFieldType> = [
   "field-mapping",
   "code",
   "hidden",
+  "repeatable",
+  "group",
 ] as const;

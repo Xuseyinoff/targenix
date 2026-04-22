@@ -69,7 +69,10 @@ export type ConfigFieldType =
   | "connection-picker" // picks a row from the connections table by type
   | "field-mapping"     // destination-field → lead-variable map
   | "code"              // JSON/raw editor (monospace)
-  | "hidden";           // present in config but not rendered (defaults / legacy)
+  | "hidden"            // present in config but not rendered (defaults / legacy)
+  // ── Make.com parity widgets ────────────────────────────────────────────────
+  | "repeatable"        // array of sub-records (e.g. Headers as [{name, value}])
+  | "group";            // visual grouping of related sub-fields, optional collapse
 
 export interface ConfigFieldOption {
   value: string;
@@ -144,6 +147,56 @@ export interface ConfigField {
    * never print it. Useful for api keys inside 'text' fields.
    */
   sensitive?: boolean;
+
+  // ── Repeatable fields (type === "repeatable") ──────────────────────────────
+  /**
+   * Shape of ONE row inside a repeatable field. The dynamic form renders each
+   * row as a compact inline mini-form over these sub-fields. Sub-fields MUST
+   * NOT themselves be of type `repeatable` or `group` — nesting is flat on
+   * purpose so the validator + serializer stay easy to reason about.
+   *
+   * Example (Headers as rows):
+   *   { key: "headers", type: "repeatable",
+   *     itemFields: [
+   *       { key: "name",  type: "text", label: "Name",  required: true },
+   *       { key: "value", type: "text", label: "Value", required: true },
+   *     ] }
+   */
+  itemFields?: ConfigField[];
+  /** Minimum number of rows (0 = completely empty is valid). Default 0. */
+  minItems?: number;
+  /** Maximum number of rows a user can add. Default: unbounded. */
+  maxItems?: number;
+  /** Label shown on the "+ Add" button. Default "Add row". */
+  addButtonLabel?: string;
+
+  // ── Grouped fields (type === "group") ──────────────────────────────────────
+  /**
+   * Child fields rendered under a shared header. Useful for grouping an
+   * app's "Advanced settings" behind one collapsible toggle. Children live
+   * in the SAME top-level `values` namespace — group is purely a visual
+   * container, not a scope — so child.key stays globally unique within
+   * the module. Nesting a group inside a group or a repeatable is not
+   * supported (validator warns + ignores).
+   */
+  groupFields?: ConfigField[];
+  /** Render a chevron toggle; group collapses when clicked. Default false. */
+  collapsible?: boolean;
+  /** When collapsible === true, start collapsed. Default false. */
+  defaultCollapsed?: boolean;
+
+  // ── Make.com-style Map toggle ──────────────────────────────────────────────
+  /**
+   * When true, the form engine renders a per-field "Map" toggle (Make.com /
+   * Zapier style). Toggle ON → input becomes a trigger-variable picker
+   * (e.g. pick `{{full_name}}`). Toggle OFF → standard static input.
+   *
+   * Activation requires the host page to also pass `availableVariables` into
+   * DynamicForm — otherwise the toggle is hidden (architectural stub for
+   * future inbound-webhook / runtime-mapping flows). No behaviour change for
+   * existing apps that leave this unset.
+   */
+  mappable?: boolean;
 }
 
 export interface AppModule {

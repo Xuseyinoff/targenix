@@ -272,6 +272,44 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
     ).toThrow(/Invalid headers JSON/);
   });
 
+  // ── Repeatable "+ Add header" output (Make.com-style row builder) ─────────
+  it("converts a RepeatableField array of {name, value} rows into a Record", () => {
+    const payload = buildCreatePayload("plain-url", "x", {
+      url: "https://example.com",
+      headers: [
+        { name: "Authorization", value: "Bearer abc" },
+        { name: "X-Tag", value: "a" },
+      ],
+    });
+    if (payload.templateType !== "custom") {
+      throw new Error("expected custom payload");
+    }
+    expect(payload.headers).toEqual({
+      Authorization: "Bearer abc",
+      "X-Tag": "a",
+    });
+  });
+
+  it("drops fully-blank header rows and omits headers entirely when none remain", () => {
+    const payload = buildCreatePayload("plain-url", "x", {
+      url: "https://example.com",
+      headers: [{ name: "", value: "" }, { name: "", value: "" }],
+    });
+    if (payload.templateType !== "custom") {
+      throw new Error("expected custom payload");
+    }
+    expect(payload.headers).toBeUndefined();
+  });
+
+  it("rejects a header row with a value but no name", () => {
+    expect(() =>
+      buildCreatePayload("plain-url", "x", {
+        url: "https://example.com",
+        headers: [{ name: "", value: "Bearer abc" }],
+      }),
+    ).toThrow(/missing a name/);
+  });
+
   it("requires a URL", () => {
     expect(() => buildCreatePayload("plain-url", "x", {})).toThrow(
       /URL is required/,

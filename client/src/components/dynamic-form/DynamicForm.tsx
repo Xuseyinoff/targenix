@@ -35,18 +35,24 @@ import {
   CodeField,
   ConnectionPickerField,
   FieldMappingField,
+  GroupField,
   HiddenField,
+  MapToggleWrapper,
   MultiSelectField,
   NumberField,
   PasswordField,
+  RepeatableField,
   SelectField,
   TextField,
   TextareaField,
+  type AvailableVariable,
   type FieldMapping,
+  type RepeatableRowValues,
 } from "./fields";
 import type { ConfigField } from "./types";
 import {
   collectDependentKeys,
+  flattenFields,
   initialValueForField,
   isFieldVisible,
   type FieldValues,
@@ -88,13 +94,19 @@ export interface DynamicFormProps {
   connectionFieldKey?: string;
 }
 
-/** Seed any undefined values with type-appropriate defaults, idempotently. */
+/** Seed any undefined values with type-appropriate defaults, idempotently.
+ *
+ * Groups are flattened so a child rendered inside an `Advanced settings`
+ * collapsible still gets seeded exactly like a top-level sibling. Repeatable
+ * fields are seeded once at the top level — their per-row sub-field defaults
+ * are applied by RepeatableField when a user clicks "+ Add row".
+ */
 export function seedInitialValues(
   fields: ConfigField[],
   existing: FieldValues | undefined,
 ): FieldValues {
   const next: FieldValues = { ...(existing ?? {}) };
-  for (const f of fields) {
+  for (const f of flattenFields(fields)) {
     if (next[f.key] === undefined) {
       next[f.key] = initialValueForField(f);
     }
@@ -121,6 +133,12 @@ export function DynamicForm({
       ? connectionIdRaw
       : null;
 
+  // Flat view used by every state-aware helper below. Groups are visual-only,
+  // so cascade cleanup and dependency tracking MUST see the children as flat
+  // siblings — otherwise a dep declared across the group boundary would never
+  // match and we'd leak stale values.
+  const flatFields = React.useMemo(() => flattenFields(fields), [fields]);
+
   /**
    * When a field changes we:
    *   1. write the new value
@@ -139,9 +157,9 @@ export function DynamicForm({
       if (Object.is(previous, newValue)) return;
 
       const next: FieldValues = { ...values, [fieldKey]: newValue };
-      const dependents = collectDependentKeys(fields, fieldKey);
+      const dependents = collectDependentKeys(flatFields, fieldKey);
       if (dependents.length > 0) {
-        const byKey = new Map(fields.map((f) => [f.key, f]));
+        const byKey = new Map(flatFields.map((f) => [f.key, f]));
         for (const depKey of dependents) {
           const depField = byKey.get(depKey);
           if (!depField) continue;
@@ -150,7 +168,7 @@ export function DynamicForm({
       }
       onChange(next);
     },
-    [fields, values, onChange],
+    [flatFields, values, onChange],
   );
 
   /**
@@ -171,185 +189,245 @@ export function DynamicForm({
     [values, connectionFieldKey],
   );
 
+  // Variable catalogue used both by FieldMappingField (legacy) and by the
+  // new per-field Map toggle (Make.com parity). Narrowed to the shape the
+  // toggle expects so we don't drag FieldMapping's extra metadata into it.
+  const mapToggleVariables: AvailableVariable[] | undefined =
+    availableVariables && availableVariables.length > 0
+      ? availableVariables.map((v) => ({ key: v.key, label: v.label }))
+      : undefined;
+
+  /**
+   * Render ONE field. Extracted from the render tree so GroupField can call
+   * back into it to render its children without duplicating the dispatch
+   * table. Also the place where every scalar renderer is wrapped in
+   * MapToggleWrapper — when the manifest opts in AND variables exist, the
+   * wrapper swaps the input for a variable picker; otherwise it's a no-op
+   * pass-through and existing forms render identically to before.
+   */
+  const renderField = (field: ConfigField): React.ReactNode => {
+    if (!isFieldVisible(field, values)) return null;
+
+    const error = errors?.[field.key];
+    const setValue = (v: unknown) => handleFieldChange(field.key, v);
+
+    // Helper: wrap scalar renderers in the Map toggle when opted in. Group,
+    // repeatable, field-mapping, connection-picker and hidden are NOT wrapped
+    // because "map to a trigger variable" doesn't make sense for them.
+    const withMapToggle = (node: React.ReactNode) => (
+      <MapToggleWrapper
+        field={field}
+        value={values[field.key]}
+        onChange={setValue}
+        availableVariables={mapToggleVariables}
+        disabled={disabled}
+      >
+        {node}
+      </MapToggleWrapper>
+    );
+
+    // The switch dispatches by field.type. Every field component is
+    // strictly controlled, so we can render any of them with the same
+    // general wiring and narrow the value type locally.
+    switch (field.type) {
+      case "text":
+        return withMapToggle(
+          <TextField
+            key={field.key}
+            field={field}
+            value={typeof values[field.key] === "string" ? (values[field.key] as string) : ""}
+            onChange={setValue}
+            error={error}
+            disabled={disabled}
+          />,
+        );
+
+      case "password":
+        return withMapToggle(
+          <PasswordField
+            key={field.key}
+            field={field}
+            value={typeof values[field.key] === "string" ? (values[field.key] as string) : ""}
+            onChange={setValue}
+            error={error}
+            disabled={disabled}
+          />,
+        );
+
+      case "textarea":
+        return withMapToggle(
+          <TextareaField
+            key={field.key}
+            field={field}
+            value={typeof values[field.key] === "string" ? (values[field.key] as string) : ""}
+            onChange={setValue}
+            error={error}
+            disabled={disabled}
+          />,
+        );
+
+      case "code":
+        return (
+          <CodeField
+            key={field.key}
+            field={field}
+            value={typeof values[field.key] === "string" ? (values[field.key] as string) : ""}
+            onChange={setValue}
+            error={error}
+            disabled={disabled}
+          />
+        );
+
+      case "number": {
+        const raw = values[field.key];
+        const num = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+        return withMapToggle(
+          <NumberField
+            key={field.key}
+            field={field}
+            value={num}
+            onChange={setValue}
+            error={error}
+            disabled={disabled}
+          />,
+        );
+      }
+
+      case "boolean":
+        return (
+          <BooleanField
+            key={field.key}
+            field={field}
+            value={values[field.key] === true}
+            onChange={setValue}
+            error={error}
+            disabled={disabled}
+          />
+        );
+
+      case "select":
+        return withMapToggle(
+          <SelectField
+            key={field.key}
+            field={field}
+            value={
+              typeof values[field.key] === "string" ? (values[field.key] as string) : null
+            }
+            onChange={setValue}
+            error={error}
+            disabled={disabled}
+          />,
+        );
+
+      case "multi-select":
+        return (
+          <MultiSelectField
+            key={field.key}
+            field={field}
+            value={Array.isArray(values[field.key]) ? (values[field.key] as string[]) : []}
+            onChange={setValue}
+            error={error}
+            disabled={disabled}
+          />
+        );
+
+      case "async-select":
+        return (
+          <AsyncSelectField
+            key={field.key}
+            field={field}
+            appKey={appKey}
+            value={
+              typeof values[field.key] === "string" ? (values[field.key] as string) : null
+            }
+            onChange={setValue}
+            connectionId={connectionId}
+            params={paramsFor(field)}
+            error={error}
+            disabled={disabled}
+          />
+        );
+
+      case "connection-picker": {
+        const raw = values[field.key];
+        const id = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+        return (
+          <ConnectionPickerField
+            key={field.key}
+            field={field}
+            value={id}
+            onChange={setValue}
+            error={error}
+            disabled={disabled}
+          />
+        );
+      }
+
+      case "field-mapping":
+        return (
+          <FieldMappingField
+            key={field.key}
+            field={field}
+            appKey={appKey}
+            value={
+              values[field.key] && typeof values[field.key] === "object"
+                ? (values[field.key] as FieldMapping)
+                : {}
+            }
+            onChange={setValue}
+            connectionId={connectionId}
+            params={paramsFor(field)}
+            error={error}
+            disabled={disabled}
+            availableVariables={availableVariables}
+          />
+        );
+
+      case "repeatable": {
+        const raw = values[field.key];
+        const rows = Array.isArray(raw) ? (raw as RepeatableRowValues[]) : [];
+        return (
+          <RepeatableField
+            key={field.key}
+            field={field}
+            value={rows}
+            onChange={setValue}
+            error={error}
+            disabled={disabled}
+          />
+        );
+      }
+
+      case "group":
+        return (
+          <GroupField
+            key={field.key}
+            field={field}
+            disabled={disabled}
+            renderChild={(child) => renderField(child)}
+          />
+        );
+
+      case "hidden":
+        return (
+          <HiddenField key={field.key} field={field} value={values[field.key]} />
+        );
+
+      default: {
+        // Exhaustiveness guard — adding a new ConfigFieldType without
+        // wiring it here will fail at compile time.
+        const _exhaustive: never = field.type;
+        void _exhaustive;
+        return null;
+      }
+    }
+  };
+
   return (
     <div className={cn("flex flex-col gap-5", className)}>
-      {fields.map((field) => {
-        if (!isFieldVisible(field, values)) return null;
-
-        const error = errors?.[field.key];
-        const setValue = (v: unknown) => handleFieldChange(field.key, v);
-
-        // The switch dispatches by field.type. Every field component is
-        // strictly controlled, so we can render any of them with the same
-        // general wiring and narrow the value type locally.
-        switch (field.type) {
-          case "text":
-            return (
-              <TextField
-                key={field.key}
-                field={field}
-                value={typeof values[field.key] === "string" ? (values[field.key] as string) : ""}
-                onChange={setValue}
-                error={error}
-                disabled={disabled}
-              />
-            );
-
-          case "password":
-            return (
-              <PasswordField
-                key={field.key}
-                field={field}
-                value={typeof values[field.key] === "string" ? (values[field.key] as string) : ""}
-                onChange={setValue}
-                error={error}
-                disabled={disabled}
-              />
-            );
-
-          case "textarea":
-            return (
-              <TextareaField
-                key={field.key}
-                field={field}
-                value={typeof values[field.key] === "string" ? (values[field.key] as string) : ""}
-                onChange={setValue}
-                error={error}
-                disabled={disabled}
-              />
-            );
-
-          case "code":
-            return (
-              <CodeField
-                key={field.key}
-                field={field}
-                value={typeof values[field.key] === "string" ? (values[field.key] as string) : ""}
-                onChange={setValue}
-                error={error}
-                disabled={disabled}
-              />
-            );
-
-          case "number": {
-            const raw = values[field.key];
-            const num = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
-            return (
-              <NumberField
-                key={field.key}
-                field={field}
-                value={num}
-                onChange={setValue}
-                error={error}
-                disabled={disabled}
-              />
-            );
-          }
-
-          case "boolean":
-            return (
-              <BooleanField
-                key={field.key}
-                field={field}
-                value={values[field.key] === true}
-                onChange={setValue}
-                error={error}
-                disabled={disabled}
-              />
-            );
-
-          case "select":
-            return (
-              <SelectField
-                key={field.key}
-                field={field}
-                value={
-                  typeof values[field.key] === "string" ? (values[field.key] as string) : null
-                }
-                onChange={setValue}
-                error={error}
-                disabled={disabled}
-              />
-            );
-
-          case "multi-select":
-            return (
-              <MultiSelectField
-                key={field.key}
-                field={field}
-                value={Array.isArray(values[field.key]) ? (values[field.key] as string[]) : []}
-                onChange={setValue}
-                error={error}
-                disabled={disabled}
-              />
-            );
-
-          case "async-select":
-            return (
-              <AsyncSelectField
-                key={field.key}
-                field={field}
-                appKey={appKey}
-                value={
-                  typeof values[field.key] === "string" ? (values[field.key] as string) : null
-                }
-                onChange={setValue}
-                connectionId={connectionId}
-                params={paramsFor(field)}
-                error={error}
-                disabled={disabled}
-              />
-            );
-
-          case "connection-picker": {
-            const raw = values[field.key];
-            const id = typeof raw === "number" && Number.isFinite(raw) ? raw : null;
-            return (
-              <ConnectionPickerField
-                key={field.key}
-                field={field}
-                value={id}
-                onChange={setValue}
-                error={error}
-                disabled={disabled}
-              />
-            );
-          }
-
-          case "field-mapping":
-            return (
-              <FieldMappingField
-                key={field.key}
-                field={field}
-                appKey={appKey}
-                value={
-                  values[field.key] && typeof values[field.key] === "object"
-                    ? (values[field.key] as FieldMapping)
-                    : {}
-                }
-                onChange={setValue}
-                connectionId={connectionId}
-                params={paramsFor(field)}
-                error={error}
-                disabled={disabled}
-                availableVariables={availableVariables}
-              />
-            );
-
-          case "hidden":
-            return (
-              <HiddenField key={field.key} field={field} value={values[field.key]} />
-            );
-
-          default: {
-            // Exhaustiveness guard — adding a new ConfigFieldType without
-            // wiring it here will fail at compile time.
-            const _exhaustive: never = field.type;
-            void _exhaustive;
-            return null;
-          }
-        }
-      })}
+      {fields.map((field) => (
+        <React.Fragment key={field.key}>{renderField(field)}</React.Fragment>
+      ))}
     </div>
   );
 }

@@ -129,7 +129,15 @@ export function buildCreatePayload(
         ? (contentTypeRaw as "form-urlencoded" | "multipart")
         : "json";
     const bodyTemplate = asString(v.bodyTemplate);
-    const headers = parseHeadersJson(asString(v.headers));
+    // Headers switched from a JSON-blob `code` field to a Make.com-style
+    // "+ Add header" row builder (type: "repeatable"). To keep the server
+    // contract identical we accept BOTH shapes:
+    //   • Array<{ name, value }>  (new row-builder output)
+    //   • string (legacy raw JSON) (persisted templates, unit tests)
+    // and always emit Record<string, string> to targetWebsites.create.
+    const headers = Array.isArray(v.headers)
+      ? collectHeadersArray(v.headers as Array<Record<string, unknown>>)
+      : parseHeadersJson(asString(v.headers));
     return {
       name,
       templateType: "custom",
@@ -159,6 +167,31 @@ export function asString(v: unknown): string {
   if (typeof v === "string") return v;
   if (typeof v === "number") return String(v);
   return "";
+}
+
+/**
+ * Collect an array of `{ name, value }` rows (the RepeatableField output)
+ * into a flat Record. Blank rows are dropped silently — they're the empty
+ * template the form seeds on "+ Add header" and users often leave one
+ * unfilled at the bottom. Throws only when a row has a value but no name,
+ * which always indicates a bug the user needs to fix.
+ */
+export function collectHeadersArray(
+  rows: Array<Record<string, unknown>>,
+): Record<string, string> | undefined {
+  const out: Record<string, string> = {};
+  for (const row of rows) {
+    const name = asString(row?.name).trim();
+    const value = asString(row?.value);
+    if (!name && !value) continue; // blank row — ignore
+    if (!name) {
+      throw new Error(
+        `Header value "${value.slice(0, 40)}" is missing a name.`,
+      );
+    }
+    out[name] = value;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export function parseHeadersJson(

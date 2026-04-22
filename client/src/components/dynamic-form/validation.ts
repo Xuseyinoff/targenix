@@ -111,9 +111,40 @@ export function initialValueForField(field: ConfigField): unknown {
       return {} as Record<string, string>;
     case "hidden":
       return null;
+    case "repeatable":
+      // Seed with `minItems` empty rows so the form never renders a
+      // required-repeatable as "add something from scratch" — if the admin
+      // declared minItems=1 we want at least one pre-filled blank.
+      {
+        const min = Math.max(0, field.minItems ?? 0);
+        if (min === 0 || !Array.isArray(field.itemFields)) return [];
+        const row = initialRowForRepeatable(field);
+        return Array.from({ length: min }, () => ({ ...row }));
+      }
+    case "group":
+      // Group is a visual container only — it does NOT own a value. Its
+      // children live in the top-level values namespace. Returning null
+      // keeps the seeder idempotent; DynamicForm is responsible for
+      // seeding each child via `seedInitialValues`.
+      return null;
     default:
       return null;
   }
+}
+
+/**
+ * Default record shape for ONE repeatable row — each sub-field seeded via
+ * its own `initialValueForField`. Exposed so the RepeatableField component
+ * can synthesize new rows on "+ Add" click without duplicating the logic.
+ */
+export function initialRowForRepeatable(
+  field: ConfigField,
+): Record<string, unknown> {
+  const row: Record<string, unknown> = {};
+  for (const sub of field.itemFields ?? []) {
+    row[sub.key] = initialValueForField(sub);
+  }
+  return row;
 }
 
 // ─── validation ────────────────────────────────────────────────────────────
@@ -173,18 +204,100 @@ export function validateField(field: ConfigField, value: unknown): string | null
  * Validate an entire module's fields at once. Hidden fields (failing
  * showWhen) are skipped — a form should never complain about an input the
  * user cannot see.
+ *
+ * Recursive rules for the new widgets:
+ *   - "group"      — child fields live in the SAME values namespace; we
+ *                    just walk them as if they were siblings of the group.
+ *   - "repeatable" — each row is validated against the declared itemFields.
+ *                    Errors from any row collapse into a single message on
+ *                    the repeatable's own key ("Row N: <field> is required")
+ *                    so the form can surface one inline hint without
+ *                    inventing a nested error schema.
  */
 export function validateFields(
   fields: ConfigField[],
   values: FieldValues,
 ): ValidationResult {
   const errors: Record<string, string> = {};
+  walkAndValidate(fields, values, errors);
+  return { errors, isValid: Object.keys(errors).length === 0 };
+}
+
+function walkAndValidate(
+  fields: ConfigField[],
+  values: FieldValues,
+  errors: Record<string, string>,
+): void {
   for (const field of fields) {
     if (!isFieldVisible(field, values)) continue;
+
+    if (field.type === "group") {
+      // Visual container only — descend into its children.
+      if (Array.isArray(field.groupFields)) {
+        walkAndValidate(field.groupFields, values, errors);
+      }
+      continue;
+    }
+
+    if (field.type === "repeatable") {
+      const rows = Array.isArray(values[field.key])
+        ? (values[field.key] as Array<Record<string, unknown>>)
+        : [];
+      const min = Math.max(0, field.minItems ?? 0);
+      const max = field.maxItems;
+      if (field.required && rows.length === 0) {
+        errors[field.key] = `${field.label} requires at least one row.`;
+        continue;
+      }
+      if (rows.length < min) {
+        errors[field.key] = `${field.label} requires at least ${min} row(s).`;
+        continue;
+      }
+      if (typeof max === "number" && rows.length > max) {
+        errors[field.key] = `${field.label} allows at most ${max} row(s).`;
+        continue;
+      }
+      const sub = field.itemFields ?? [];
+      // Surface the FIRST invalid sub-field so the user sees where to fix —
+      // overwriting on subsequent hits would hide the problem above.
+      for (let i = 0; i < rows.length; i += 1) {
+        for (const sf of sub) {
+          const rowErr = validateField(sf, rows[i]?.[sf.key]);
+          if (rowErr) {
+            errors[field.key] = `Row ${i + 1}: ${rowErr}`;
+            return;
+          }
+        }
+      }
+      continue;
+    }
+
     const err = validateField(field, values[field.key]);
     if (err) errors[field.key] = err;
   }
-  return { errors, isValid: Object.keys(errors).length === 0 };
+}
+
+// ─── flattening (groups only) ──────────────────────────────────────────────
+
+/**
+ * Produce a flat list of logical fields by descending into `group.groupFields`.
+ * Groups are visual-only containers (their children share the top-level
+ * values namespace) so callers that care about state — seeding, cascade
+ * cleanup, connection lookup — should work off the flattened view.
+ *
+ * Repeatable fields are NOT flattened: their sub-fields live in per-row
+ * sub-documents, not the top-level namespace.
+ */
+export function flattenFields(fields: ConfigField[]): ConfigField[] {
+  const out: ConfigField[] = [];
+  for (const f of fields) {
+    if (f.type === "group" && Array.isArray(f.groupFields)) {
+      out.push(...flattenFields(f.groupFields));
+      continue;
+    }
+    out.push(f);
+  }
+  return out;
 }
 
 // ─── dependency cascade ────────────────────────────────────────────────────
