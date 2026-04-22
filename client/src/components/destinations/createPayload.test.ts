@@ -310,6 +310,106 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
     ).toThrow(/missing a name/);
   });
 
+  // ── Body fields for form-urlencoded / multipart (Make.com parity) ────────
+  it("passes bodyFields through when contentType is form-urlencoded", () => {
+    const payload = buildCreatePayload("plain-url", "x", {
+      url: "https://example.com",
+      contentType: "form-urlencoded",
+      bodyFields: [
+        { key: "full_name", value: "{{full_name}}" },
+        { key: "phone", value: "{{phone_number}}" },
+      ],
+    });
+    if (payload.templateType !== "custom") {
+      throw new Error("expected custom payload");
+    }
+    expect(payload.contentType).toBe("form-urlencoded");
+    expect(payload.bodyFields).toEqual([
+      { key: "full_name", value: "{{full_name}}" },
+      { key: "phone", value: "{{phone_number}}" },
+    ]);
+    // bodyTemplate must NOT leak when the form is in field-rows mode —
+    // stale textarea content would otherwise survive a contentType flip.
+    expect(payload).not.toHaveProperty("bodyTemplate");
+  });
+
+  it("drops blank body-field rows but rejects a valued row without a name", () => {
+    const ok = buildCreatePayload("plain-url", "x", {
+      url: "https://example.com",
+      contentType: "multipart",
+      bodyFields: [
+        { key: "full_name", value: "John" },
+        { key: "", value: "" }, // seed row — silently ignored
+      ],
+    });
+    if (ok.templateType !== "custom") throw new Error();
+    expect(ok.bodyFields).toEqual([{ key: "full_name", value: "John" }]);
+
+    expect(() =>
+      buildCreatePayload("plain-url", "x", {
+        url: "https://example.com",
+        contentType: "multipart",
+        bodyFields: [{ key: "", value: "orphan" }],
+      }),
+    ).toThrow(/missing a name/);
+  });
+
+  it("swaps body payload key when the user flips between JSON and form rows", () => {
+    // JSON mode → bodyTemplate lands, bodyFields is suppressed.
+    const jsonPayload = buildCreatePayload("plain-url", "x", {
+      url: "https://example.com",
+      contentType: "json",
+      bodyTemplate: '{"x":1}',
+      bodyFields: [{ key: "stale", value: "value" }],
+    });
+    if (jsonPayload.templateType !== "custom") throw new Error();
+    expect(jsonPayload.bodyTemplate).toBe('{"x":1}');
+    expect(jsonPayload).not.toHaveProperty("bodyFields");
+
+    // Form mode → the reverse.
+    const formPayload = buildCreatePayload("plain-url", "x", {
+      url: "https://example.com",
+      contentType: "form-urlencoded",
+      bodyTemplate: '{"should-not-leak":1}',
+      bodyFields: [{ key: "real", value: "value" }],
+    });
+    if (formPayload.templateType !== "custom") throw new Error();
+    expect(formPayload.bodyFields).toEqual([{ key: "real", value: "value" }]);
+    expect(formPayload).not.toHaveProperty("bodyTemplate");
+  });
+
+  it("appends queryParams rows to the URL as proper query string", () => {
+    const payload = buildCreatePayload("plain-url", "x", {
+      url: "https://example.com/hook",
+      queryParams: [
+        { name: "utm_source", value: "facebook" },
+        { name: "lead", value: "{{full_name}}" },
+      ],
+    });
+    if (payload.templateType !== "custom") throw new Error();
+    expect(payload.url).toBe(
+      "https://example.com/hook?utm_source=facebook&lead=%7B%7Bfull_name%7D%7D",
+    );
+  });
+
+  it("preserves existing URL query when appending queryParams rows", () => {
+    const payload = buildCreatePayload("plain-url", "x", {
+      url: "https://example.com/hook?v=1",
+      queryParams: [{ name: "utm_source", value: "fb" }],
+    });
+    if (payload.templateType !== "custom") throw new Error();
+    expect(payload.url).toBe("https://example.com/hook?v=1&utm_source=fb");
+  });
+
+  it("omits query append when every row is blank", () => {
+    const payload = buildCreatePayload("plain-url", "x", {
+      url: "https://example.com/hook",
+      queryParams: [{ name: "", value: "" }],
+    });
+    if (payload.templateType !== "custom") throw new Error();
+    expect(payload.url).toBe("https://example.com/hook");
+  });
+
   it("requires a URL", () => {
     expect(() => buildCreatePayload("plain-url", "x", {})).toThrow(
       /URL is required/,

@@ -391,7 +391,13 @@ export function DestinationCreatorInline({
         )}
       </div>
 
-      {/* Dynamic form fields */}
+      {/* Dynamic form fields.
+          `availableVariables` wakes up the Make.com-style per-field Map
+          toggle — when the manifest marks a field `mappable: true` we want
+          the user to be able to drop a lead variable in with one click.
+          The list is the canonical set of keys affiliateService's
+          injectVariables() expands at delivery, so what users pick here is
+          exactly what they'll receive at runtime. */}
       <DynamicForm
         fields={fields}
         appKey={selectedApp.key}
@@ -399,6 +405,7 @@ export function DestinationCreatorInline({
         onChange={setFormValues}
         errors={formErrors}
         disabled={isSaving}
+        availableVariables={LEAD_VARIABLE_SUGGESTIONS}
       />
 
       {/* Footer: cancel + save */}
@@ -419,6 +426,25 @@ export function DestinationCreatorInline({
     </div>
   );
 }
+
+// ─── Lead variable catalogue ────────────────────────────────────────────────
+//
+// Keep this list in sync with affiliateService.injectVariables() — every key
+// below MUST be expanded at delivery time, otherwise the Map toggle would
+// let a user pick a variable that silently renders as "{{full_name}}" in
+// the outbound request. Adding a new key here without wiring it server-side
+// is the most likely way to regress this feature.
+const LEAD_VARIABLE_SUGGESTIONS: Array<{ key: string; label: string }> = [
+  { key: "full_name", label: "Full name" },
+  { key: "phone_number", label: "Phone number" },
+  { key: "email", label: "Email" },
+  { key: "pageName", label: "Page name" },
+  { key: "formName", label: "Form name" },
+  { key: "leadgen_id", label: "Lead ID" },
+  { key: "page_id", label: "Page ID" },
+  { key: "form_id", label: "Form ID" },
+  { key: "createdAt", label: "Lead created at" },
+];
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

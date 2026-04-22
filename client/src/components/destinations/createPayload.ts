@@ -64,6 +64,9 @@ export type CreatePayload =
       method?: "POST" | "GET";
       contentType?: "json" | "form" | "form-urlencoded" | "multipart";
       bodyTemplate?: string;
+      // Used when contentType is form-urlencoded or multipart — matches the
+      // shape affiliateService.buildCustomBody already consumes at delivery.
+      bodyFields?: Array<{ key: string; value: string }>;
       headers?: Record<string, string>;
     };
 
@@ -120,15 +123,15 @@ export function buildCreatePayload(
   }
 
   if (appKey === "plain-url") {
-    const url = asString(v.url).trim();
-    if (!url) throw new Error("URL is required.");
+    const rawUrl = asString(v.url).trim();
+    if (!rawUrl) throw new Error("URL is required.");
     const method = asString(v.method) === "GET" ? "GET" : "POST";
     const contentTypeRaw = asString(v.contentType);
     const contentType: "json" | "form-urlencoded" | "multipart" =
       contentTypeRaw === "form-urlencoded" || contentTypeRaw === "multipart"
         ? (contentTypeRaw as "form-urlencoded" | "multipart")
         : "json";
-    const bodyTemplate = asString(v.bodyTemplate);
+
     // Headers switched from a JSON-blob `code` field to a Make.com-style
     // "+ Add header" row builder (type: "repeatable"). To keep the server
     // contract identical we accept BOTH shapes:
@@ -138,13 +141,43 @@ export function buildCreatePayload(
     const headers = Array.isArray(v.headers)
       ? collectHeadersArray(v.headers as Array<Record<string, unknown>>)
       : parseHeadersJson(asString(v.headers));
+
+    // Query string is a repeatable too, but the server schema has no
+    // `queryParams` field — we merge onto the URL here instead. Existing
+    // query in the URL is preserved (Make.com does the same). Blank rows
+    // drop silently so "+ Add parameter" doesn't force users to remove the
+    // empty seed row before saving.
+    const url = Array.isArray(v.queryParams)
+      ? appendQueryParams(rawUrl, v.queryParams as Array<Record<string, unknown>>)
+      : rawUrl;
+
+    // Body: JSON mode uses `bodyTemplate` (string). Form-urlencoded /
+    // multipart use `bodyFields` (array of {key, value}) — the EXACT shape
+    // affiliateService.buildCustomBody reads at delivery time, so we pass
+    // it straight through without translation.
+    const bodyTemplate = asString(v.bodyTemplate);
+    const bodyFields =
+      method === "POST" && (contentType === "form-urlencoded" || contentType === "multipart")
+        ? collectBodyFieldsArray(
+            Array.isArray(v.bodyFields)
+              ? (v.bodyFields as Array<Record<string, unknown>>)
+              : [],
+          )
+        : undefined;
+
     return {
       name,
       templateType: "custom",
       url,
       method,
       contentType,
-      ...(bodyTemplate ? { bodyTemplate } : {}),
+      // Only surface the body key that matches the current contentType —
+      // avoids sending a stale JSON template when the user switched to
+      // form-urlencoded but never cleared the old textarea value.
+      ...(method === "POST" && contentType === "json" && bodyTemplate
+        ? { bodyTemplate }
+        : {}),
+      ...(bodyFields && bodyFields.length > 0 ? { bodyFields } : {}),
       ...(headers ? { headers } : {}),
     };
   }
@@ -192,6 +225,59 @@ export function collectHeadersArray(
     out[name] = value;
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Collect the body-fields RepeatableField output into the exact shape
+ * affiliateService.buildCustomBody expects — an array of `{ key, value }`.
+ * Blank rows drop silently (the seed row left at the bottom of the builder
+ * should never fail a save). A row with a value but no key is a bug the
+ * user must fix, so we throw with a pointed message.
+ */
+export function collectBodyFieldsArray(
+  rows: Array<Record<string, unknown>>,
+): Array<{ key: string; value: string }> {
+  const out: Array<{ key: string; value: string }> = [];
+  for (const row of rows) {
+    const key = asString(row?.key).trim();
+    const value = asString(row?.value);
+    if (!key && !value) continue;
+    if (!key) {
+      throw new Error(`Body field value "${value.slice(0, 40)}" is missing a name.`);
+    }
+    out.push({ key, value });
+  }
+  return out;
+}
+
+/**
+ * Append RepeatableField-shaped `{ name, value }` rows to the URL as query
+ * parameters. Preserves any existing query already typed into `rawUrl` and
+ * keeps user-supplied ordering. Rows with a missing name throw the same
+ * error pattern as headers/body-fields so the user gets one consistent
+ * failure mode across the three row builders.
+ */
+export function appendQueryParams(
+  rawUrl: string,
+  rows: Array<Record<string, unknown>>,
+): string {
+  const clean: Array<[string, string]> = [];
+  for (const row of rows) {
+    const name = asString(row?.name).trim();
+    const value = asString(row?.value);
+    if (!name && !value) continue;
+    if (!name) {
+      throw new Error(`Query value "${value.slice(0, 40)}" is missing a parameter name.`);
+    }
+    clean.push([name, value]);
+  }
+  if (clean.length === 0) return rawUrl;
+
+  const qs = clean
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join("&");
+  const sep = rawUrl.includes("?") ? "&" : "?";
+  return `${rawUrl}${sep}${qs}`;
 }
 
 export function parseHeadersJson(
