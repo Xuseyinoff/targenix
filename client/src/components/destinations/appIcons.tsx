@@ -66,3 +66,20 @@ export function appIconBgClass(category: string): string {
       return "bg-muted text-muted-foreground";
   }
 }
+
+/** Hover border colour for an app shortcut card, matched to its category. */
+export function appIconRingClass(category: string): string {
+  switch (category) {
+    case "messaging":
+      return "hover:border-sky-300 dark:hover:border-sky-600";
+    case "spreadsheet":
+      return "hover:border-emerald-300 dark:hover:border-emerald-600";
+    case "webhook":
+      return "hover:border-violet-300 dark:hover:border-violet-600";
+    case "ecommerce":
+    case "affiliate":
+      return "hover:border-amber-300 dark:hover:border-amber-600";
+    default:
+      return "hover:border-primary/30";
+  }
+}

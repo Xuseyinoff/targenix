@@ -53,7 +53,6 @@ import {
   Pencil,
   Plus,
   Search,
-  Send,
   Sparkles,
   Tag,
   Trash2,
@@ -77,6 +76,8 @@ import {
   type FieldMapping,
 } from "./lead-routing/shared";
 import { DestinationCreatorInline } from "@/components/destinations/DestinationCreatorInline";
+import { resolveAppIcon, appIconBgClass, appIconRingClass } from "@/components/destinations/appIcons";
+import { isSupportedAppKey } from "@/components/destinations/createPayload";
 import type { AppManifestService } from "./lead-routing/shared";
 
 // ─── resolveDestManifest ───────────────────────────────────────────────────────
@@ -1298,36 +1299,6 @@ interface DestinationEditorProps {
   onOpenCreatorForApp: (appKey?: string) => void;
 }
 
-/** Quick-connect cards shown at the top of the destination picker. */
-const DEST_APP_SHORTCUTS = [
-  {
-    key: "telegram",
-    name: "Telegram",
-    desc: "Send as a message",
-    Icon: Send,
-    bg: "bg-sky-100 dark:bg-sky-900/40",
-    text: "text-sky-600 dark:text-sky-400",
-    ring: "hover:border-sky-300 dark:hover:border-sky-600",
-  },
-  {
-    key: "google-sheets",
-    name: "Google Sheets",
-    desc: "Append a row",
-    Icon: FileText,
-    bg: "bg-emerald-100 dark:bg-emerald-900/40",
-    text: "text-emerald-600 dark:text-emerald-400",
-    ring: "hover:border-emerald-300 dark:hover:border-emerald-600",
-  },
-  {
-    key: "plain-url",
-    name: "HTTP Webhook",
-    desc: "POST to any URL",
-    Icon: Globe,
-    bg: "bg-violet-100 dark:bg-violet-900/40",
-    text: "text-violet-600 dark:text-violet-400",
-    ring: "hover:border-violet-300 dark:hover:border-violet-600",
-  },
-] as const;
 
 function DestinationEditor({
   destinations,
@@ -1336,6 +1307,20 @@ function DestinationEditor({
   onToggle,
   onOpenCreatorForApp,
 }: DestinationEditorProps) {
+  const { data: appList = [] } = trpc.apps.list.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+  });
+  const shortcutApps = useMemo(
+    () =>
+      appList.filter(
+        (a) =>
+          a.availability !== "deprecated" &&
+          isSupportedAppKey(a.key) &&
+          (a.modules[0]?.fields?.length ?? 0) > 0,
+      ),
+    [appList],
+  );
+
   // showPicker: true  = full picker (app cards + existing list)
   //             false = chip view (selected destinations summary)
   // Starts as true when nothing selected, false once something is selected.
@@ -1451,34 +1436,42 @@ function DestinationEditor({
           Connect a new destination
         </div>
         <div className="grid grid-cols-3 gap-2">
-          {DEST_APP_SHORTCUTS.map((app) => (
-            <button
-              key={app.key}
-              type="button"
-              onClick={() => onOpenCreatorForApp(app.key)}
-              className={cn(
-                "group flex flex-col items-center gap-2.5 rounded-xl border bg-background p-3.5 text-center transition-all hover:shadow-sm",
-                app.ring,
-              )}
-            >
-              <div
+          {shortcutApps.map((app) => {
+            const Icon = resolveAppIcon(app.icon);
+            const desc = app.description
+              ? app.description.length > 38
+                ? app.description.slice(0, 38) + "…"
+                : app.description
+              : "";
+            return (
+              <button
+                key={app.key}
+                type="button"
+                onClick={() => onOpenCreatorForApp(app.key)}
                 className={cn(
-                  "flex h-11 w-11 items-center justify-center rounded-xl transition-transform group-hover:scale-105",
-                  app.bg,
+                  "group flex flex-col items-center gap-2.5 rounded-xl border bg-background p-3.5 text-center transition-all hover:shadow-sm",
+                  appIconRingClass(app.category),
                 )}
               >
-                <app.Icon className={cn("h-5 w-5", app.text)} />
-              </div>
-              <div>
-                <div className="text-xs font-semibold leading-tight">
-                  {app.name}
+                <div
+                  className={cn(
+                    "flex h-11 w-11 items-center justify-center rounded-xl transition-transform group-hover:scale-105",
+                    appIconBgClass(app.category),
+                  )}
+                >
+                  <Icon className="h-5 w-5" />
                 </div>
-                <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground">
-                  {app.desc}
+                <div>
+                  <div className="text-xs font-semibold leading-tight">
+                    {app.name}
+                  </div>
+                  <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground">
+                    {desc}
+                  </div>
                 </div>
-              </div>
-            </button>
-          ))}
+              </button>
+            );
+          })}
         </div>
       </div>
 
