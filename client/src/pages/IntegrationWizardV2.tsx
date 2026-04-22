@@ -169,8 +169,17 @@ function resolveDestManifest(
 ): AppManifestService | null {
   if (!destType) return null;
 
-  // ⓪ Custom webhook — no schema, wizard uses FieldMappingsEditor.
-  if (destType === "custom") return CUSTOM_MANIFEST;
+  // ⓪ Real (bare) custom webhook — no schema, wizard uses FieldMappingsEditor.
+  //
+  // Caveat: admin-managed template destinations (sotuvchi, 100k, inbaza, …)
+  // are ALSO persisted with `templateType: "custom"` for backwards-compat
+  // with the original UZ-CPA schema; what distinguishes them is a
+  // non-null `templateId` pointing at the destination_templates row.
+  // Skipping path ⓪ in that case lets path ① build the dynamic
+  // auto/static/secret mapping grid instead of short-circuiting to the
+  // generic custom-webhook row builder.
+  const hasTemplate = (destRecord?.templateId ?? null) !== null;
+  if (destType === "custom" && !hasTemplate) return CUSTOM_MANIFEST;
 
   const dbAutoFields = (
     Array.isArray(destRecord?.autoMappedFields) ? destRecord!.autoMappedFields : []
