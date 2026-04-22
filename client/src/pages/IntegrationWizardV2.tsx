@@ -557,8 +557,8 @@ export default function IntegrationWizardV2() {
       phoneField: "",
       extraFields: [],
     });
-    // Auto-advance to step 2 (action) for forward momentum.
-    setActiveStep(2);
+    // Stay in Step 1 — the "Map lead fields" section will now appear below
+    // the trigger editor so the user maps name/phone before continuing.
   };
 
   /** Add a destination to the list if not already present. */
