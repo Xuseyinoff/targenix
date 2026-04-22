@@ -92,8 +92,8 @@ import type { AppManifestService } from "./lead-routing/shared";
 //   ②. templateId set, AMF empty → UZ-CPA convention (name+phone FROM_LEAD)
 //   ③. Server manifest app.key   → default name+phone leadFields
 //
-// The old client-side APP_MANIFEST (hardcoded sotuvchi/100k/telegram entries)
-// was retired in favour of the two sources above.
+// The client-side APP_MANIFEST registry (hardcoded sotuvchi/100k/telegram
+// entries) was retired in favour of the two sources above.
 type DestRecordLike = {
   templateId?: number | null;
   templateName?: string | null;

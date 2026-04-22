@@ -253,7 +253,8 @@ export const targetWebsitesRouter = router({
          * FROM_LEAD fields defined by the admin template.
          * Wizard uses these to build the "Field mapping" section.
          * Empty for legacy non-template destinations → wizard falls back to
-         * APP_MANIFEST (sotuvchi/100k/telegram hardcoded list).
+         * the server manifest's default name+phone schema via
+         * `resolveDestManifest` (client/src/pages/IntegrationWizardV2.tsx).
          */
         autoMappedFields: tplMeta?.autoMappedFields ?? [],
         /** Keys shown read-only in the wizard "Connection config" section. */

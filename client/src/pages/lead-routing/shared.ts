@@ -207,29 +207,10 @@ export interface AppManifestService {
 }
 
 /**
- * @deprecated Use `resolveDestManifest()` in IntegrationWizardV2 instead.
- *
- * This registry used to hold per-service metadata for sotuvchi, 100k, telegram,
- * google-sheets and custom. Those entries were removed in the "unified spine"
- * refactor (Phase-3, Step 1):
- *
- *   • sotuvchi / 100k / inbaza / mycpa → admin-defined `destination_templates`
- *     with autoMappedFields + variableFields (Path ① of resolveDestManifest).
- *     Bonus: fixes a latent bug where 100k.uz used `name`/`phone` here but
- *     the DB template correctly uses `client_full_name`/`customer_phone`.
- *   • telegram / google-sheets → server manifest (Path ③b, via trpc.apps.list).
- *   • custom → inline CUSTOM_MANIFEST constant inside IntegrationWizardV2.
- *
- * The object is kept (empty) to preserve the exported symbol and types for any
- * downstream tooling, and to keep the Path ③a fallback shape valid. Nothing
- * should ever be added here — all new services must flow through the server
- * manifest registry or admin destination templates.
- */
-export const APP_MANIFEST: Record<string, AppManifestService> = {};
-
-/**
- * Legacy TEMPLATE_VARIABLE_FIELDS kept for backward compatibility.
- * New code should use APP_MANIFEST instead.
+ * Legacy TEMPLATE_VARIABLE_FIELDS kept for the old LeadRoutingWizard (edit
+ * routes) and the server's `targetWebsitesRouter.getVariableFields` query.
+ * New wizards resolve this data via the admin `destination_templates` rows
+ * (see `resolveDestManifest` in IntegrationWizardV2.tsx).
  */
 export const TEMPLATE_VARIABLE_FIELDS: Record<
   string,
