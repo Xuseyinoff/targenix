@@ -479,14 +479,40 @@ export async function createIntegration(data: {
   }
 }
 
-export async function updateIntegration(id: number, data: Partial<{ name: string; config: unknown; isActive: boolean; telegramChatId: string | null }>): Promise<void> {
+export async function updateIntegration(
+  id: number,
+  data: Partial<{
+    name: string;
+    config: unknown;
+    isActive: boolean;
+    telegramChatId: string | null;
+    /**
+     * Optional ordered list of destination ids (Stage B opt-in write).
+     *
+     * When provided, `integration_destinations` is authoritatively rewritten
+     * to this exact list AND the legacy `integrations.targetWebsiteId`
+     * column is set to the first entry (or null for an empty list).
+     * Callers must have already verified ownership of each id — this helper
+     * does not re-check (same contract as `createIntegration`).
+     *
+     * When omitted, the legacy single-id mirror (`safeSyncLegacyDestination`)
+     * runs with the ID extracted from `config.targetWebsiteId` — EXCEPT
+     * when the integration already has multiple destinations wired up; see
+     * the guard below.
+     */
+    destinationIds: number[];
+  }>,
+): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  // Keep dedicated columns in sync when config is updated
-  const updateData: Record<string, unknown> = { ...data };
+  // Keep dedicated columns in sync when config is updated.
+  // `destinationIds` is handled separately below — strip it before the
+  // plain SQL UPDATE so it doesn't land as a bogus column value.
+  const { destinationIds, ...dbFields } = data;
+  const updateData: Record<string, unknown> = { ...dbFields };
   let twIdForSync: number | null | undefined;
-  if (data.config !== undefined) {
-    const cfg = data.config as Record<string, unknown> | null;
+  if (dbFields.config !== undefined) {
+    const cfg = dbFields.config as Record<string, unknown> | null;
     updateData.pageId = String(cfg?.pageId ?? "") || null;
     updateData.formId = String(cfg?.formId ?? "") || null;
     updateData.pageName = String(cfg?.pageName ?? "") || null;
@@ -497,12 +523,78 @@ export async function updateIntegration(id: number, data: Partial<{ name: string
     twIdForSync = extractTargetWebsiteId(cfg);
     updateData.targetWebsiteId = twIdForSync;
   }
+
+  // When an explicit destinationIds list is provided, let it override the
+  // legacy column write so both surfaces agree with the caller's intent.
+  if (destinationIds !== undefined) {
+    const firstId =
+      destinationIds.length > 0 ? destinationIds[0] : null;
+    updateData.targetWebsiteId = firstId;
+  }
+
   await db.update(integrations).set(updateData).where(eq(integrations.id, id));
-  // Dual-write: mirror the new targetWebsiteId into integration_destinations.
-  // Undefined means "config was not part of this update" → leave the mapping
-  // alone. A config update with no targetWebsiteId clears the mapping.
-  if (twIdForSync !== undefined) {
-    await safeSyncLegacyDestination(db, id, twIdForSync);
+
+  // ── Destination-mapping sync ──────────────────────────────────────────────
+  //
+  // Three branches, in strictest-safest order:
+  //
+  //   1. EXPLICIT LIST — the caller passed `destinationIds`. Rewrite the
+  //      join table to match exactly. This is the V2 wizard path.
+  //
+  //   2. LEGACY MIRROR with GUARD — no explicit list, but `config` was part
+  //      of the update (so `twIdForSync` was computed from it). Only mirror
+  //      the single id if the integration currently has ≤1 row in the join
+  //      table. When it already has MULTIPLE destinations we leave the
+  //      join alone to avoid silently collapsing a 3-dest integration into
+  //      1 every time the user renames it. This is the Stage B data-loss
+  //      guard — the bug the classic edit wizard could trigger.
+  //
+  //   3. NO CHANGE — `config` wasn't touched and no explicit list was
+  //      passed. Leave the mapping as-is (matches old behaviour).
+  //
+  // Notes:
+  //   - The guard uses `countIntegrationDestinations` (single small SELECT)
+  //     so overhead on every update is negligible.
+  //   - `safeSyncLegacyDestination` stays best-effort (swallows errors) so
+  //     a transient DB glitch can never break integration updates.
+  if (destinationIds !== undefined) {
+    try {
+      const { setIntegrationDestinations } = await import(
+        "./services/integrationDestinations"
+      );
+      await setIntegrationDestinations(db, id, destinationIds);
+    } catch (err) {
+      console.warn(
+        `[dual-write] setIntegrationDestinations failed for integrationId=${id}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  } else if (twIdForSync !== undefined) {
+    let existingCount = 0;
+    try {
+      const { countIntegrationDestinations } = await import(
+        "./services/integrationDestinations"
+      );
+      existingCount = await countIntegrationDestinations(db, id);
+    } catch (err) {
+      console.warn(
+        `[dual-write] countIntegrationDestinations failed for integrationId=${id}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+
+    if (existingCount > 1) {
+      // Multi-destination integration — DO NOT mirror the single id.
+      // Silently skipping keeps the existing mapping rows intact; the
+      // caller can opt into overwrite by passing `destinationIds`.
+      console.warn(
+        `[updateIntegration] integrationId=${id} has ${existingCount} destinations; ` +
+          `skipping legacy single-id mirror to prevent data loss. ` +
+          `Pass destinationIds to the update to rewrite the list explicitly.`,
+      );
+    } else {
+      await safeSyncLegacyDestination(db, id, twIdForSync);
+    }
   }
 }
 

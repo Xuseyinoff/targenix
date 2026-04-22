@@ -104,14 +104,54 @@ export const integrationsRouter = router({
         name: z.string().min(1).max(255).optional(),
         config: z.record(z.string(), z.any()).optional(),
         isActive: z.boolean().optional(),
+        /**
+         * Stage B opt-in: when provided, `integration_destinations` is
+         * rewritten to this exact ordered list and the legacy
+         * `integrations.targetWebsiteId` is set to the first id.
+         *
+         * Omitting the field preserves the pre-Stage-B behaviour for every
+         * existing caller (classic routing wizard, toggle, rename). The new
+         * V2 wizard will start sending this field when it grows an edit
+         * flow — then and only then does the join table get rewritten.
+         *
+         * Max 20 destinations per integration — same upper bound enforced
+         * on `create`, prevents accidental large arrays.
+         */
+        destinationIds: z.array(z.number().int().positive()).max(20).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
       const list = await getIntegrations(ctx.user.id);
       const owned = list.find((i) => i.id === input.id);
       if (!owned) throw new Error("Integration not found");
-      const { id, ...data } = input;
-      await updateIntegration(id, data);
+
+      // Ownership guard: when an explicit destinationIds list is passed,
+      // ensure every id belongs to this user. Mirrors the guard in
+      // `create` — silently filters out non-owned ids so a tampering
+      // attempt cannot reach into another tenant's destinations.
+      let safeDestinationIds = input.destinationIds;
+      if (safeDestinationIds && safeDestinationIds.length > 0) {
+        const db = await getDb();
+        if (db) {
+          const { targetWebsites } = await import("../../drizzle/schema");
+          const ownedRows = await db
+            .select({ id: targetWebsites.id })
+            .from(targetWebsites)
+            .where(inArray(targetWebsites.id, safeDestinationIds));
+          const ownedSet = new Set(ownedRows.map((r) => r.id));
+          safeDestinationIds = safeDestinationIds.filter((id) =>
+            ownedSet.has(id),
+          );
+        }
+      }
+
+      const { id, ...rest } = input;
+      // Overwrite with the ownership-filtered list so the CRUD layer never
+      // sees the raw (possibly tampered) input.
+      await updateIntegration(id, {
+        ...rest,
+        destinationIds: safeDestinationIds,
+      });
       return { success: true };
     }),
 

@@ -121,6 +121,30 @@ export async function syncLegacyDestination(
 }
 
 /**
+ * Count the current rows in integration_destinations for ONE integration.
+ *
+ * Used by `updateIntegration` (Stage B data-loss guard): if a caller updates
+ * an integration that already has MORE than one destination wired up, we
+ * must NOT let the legacy single-id mirror wipe the rest of them. This
+ * helper lets the CRUD layer make that call cheaply (one row returned,
+ * even for integrations with 20 destinations).
+ *
+ * Returns 0 for integrations that have never been backfilled — callers can
+ * treat `== 0` as "fresh row, mirror is safe".
+ */
+export async function countIntegrationDestinations(
+  db: DbClient,
+  integrationId: number,
+): Promise<number> {
+  if (!Number.isFinite(integrationId) || integrationId <= 0) return 0;
+  const rows = await db
+    .select({ id: integrationDestinations.id })
+    .from(integrationDestinations)
+    .where(eq(integrationDestinations.integrationId, integrationId));
+  return rows.length;
+}
+
+/**
  * Read the current destination set, in position order. Safe to call at any
  * time — even before Commit 5 wires dispatch to consume it — because this
  * returns an empty array for integrations not yet backfilled.
