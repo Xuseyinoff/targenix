@@ -31,9 +31,7 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -76,6 +74,10 @@ import {
   type FieldMapping,
 } from "./lead-routing/shared";
 import { DestinationCreatorInline } from "@/components/destinations/DestinationCreatorInline";
+import {
+  GroupedFieldPicker,
+  type GroupedFieldPickerGroup,
+} from "@/components/common/GroupedFieldPicker";
 import { resolveAppIcon, appIconBgClass, appIconRingClass } from "@/components/destinations/appIcons";
 import { isSupportedAppKey } from "@/components/destinations/createPayload";
 import { WizardActionPickerModal } from "@/components/wizard/WizardActionPickerModal";
@@ -1987,45 +1989,45 @@ function FieldMappingRow({
     );
   }
 
-  // mode === "auto"
+  // mode === "auto" — Make.com-style grouped, searchable, collapsible picker.
+  // Groups are built from the two FB sources (form questions + lead metadata)
+  // and handed to the shared GroupedFieldPicker. Empty-state is handled by
+  // the picker itself via the `emptyMessage` prop when no options exist.
+  const sourceGroups: GroupedFieldPickerGroup[] =
+    formFields.length === 0
+      ? []
+      : [
+          {
+            id: "form-fields",
+            label: "Form fields",
+            defaultExpanded: true,
+            options: formFields.map((f) => ({
+              key: f.key,
+              label: f.label || f.key,
+            })),
+          },
+          {
+            id: "fb-metadata",
+            label: "FB metadata",
+            defaultExpanded: true,
+            options: FB_METADATA_FIELDS.map((m) => ({
+              key: m.key,
+              label: FB_METADATA_LABELS[m.key] ?? m.key,
+            })),
+          },
+        ];
+
   return (
     <div className={containerCls}>
       {labelCell}
       {arrow}
-      <Select
-        value={leadValue || undefined}
-        onValueChange={onUpdateLeadField}
-      >
-        <SelectTrigger className="h-8 text-xs">
-          <SelectValue placeholder="Pick FB form field…" />
-        </SelectTrigger>
-        <SelectContent>
-          {formFields.length === 0 ? (
-            <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
-              Pick a form in Step 1 to see fields.
-            </div>
-          ) : (
-            <>
-              <SelectGroup>
-                <SelectLabel className="text-[11px]">Form fields</SelectLabel>
-                {formFields.map((f) => (
-                  <SelectItem key={f.key} value={f.key}>
-                    {f.label ? `${f.label} (${f.key})` : f.key}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-              <SelectGroup>
-                <SelectLabel className="text-[11px]">FB metadata</SelectLabel>
-                {FB_METADATA_FIELDS.map((m) => (
-                  <SelectItem key={m.key} value={m.key}>
-                    {FB_METADATA_LABELS[m.key]} ({m.key})
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </>
-          )}
-        </SelectContent>
-      </Select>
+      <GroupedFieldPicker
+        groups={sourceGroups}
+        value={leadValue || null}
+        onChange={onUpdateLeadField}
+        placeholder="Pick FB form field…"
+        emptyMessage="Pick a form in Step 1 to see fields."
+      />
     </div>
   );
 }
@@ -2230,32 +2232,32 @@ function FieldMappingsEditor({
           >
             {/* Source: form field dropdown OR static value input */}
             {m.from !== null ? (
-              <Select
-                value={m.from || undefined}
-                onValueChange={(v) => onUpdate(i, { from: v })}
-              >
-                <SelectTrigger className="h-8 text-xs border-0 shadow-none bg-transparent px-1 focus:ring-0">
-                  <SelectValue placeholder="Pick form field…" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectLabel className="text-[11px]">Form fields</SelectLabel>
-                    {formFields.map((f) => (
-                      <SelectItem key={f.key} value={f.key}>
-                        {f.label ? `${f.label} (${f.key})` : f.key}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                  <SelectGroup>
-                    <SelectLabel className="text-[11px]">FB metadata</SelectLabel>
-                    {FB_METADATA_FIELDS.map((mf) => (
-                      <SelectItem key={mf.key} value={mf.key}>
-                        {FB_METADATA_LABELS[mf.key]} ({mf.key})
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              <GroupedFieldPicker
+                groups={[
+                  {
+                    id: "form-fields",
+                    label: "Form fields",
+                    defaultExpanded: true,
+                    options: formFields.map((f) => ({
+                      key: f.key,
+                      label: f.label || f.key,
+                    })),
+                  },
+                  {
+                    id: "fb-metadata",
+                    label: "FB metadata",
+                    defaultExpanded: true,
+                    options: FB_METADATA_FIELDS.map((mf) => ({
+                      key: mf.key,
+                      label: FB_METADATA_LABELS[mf.key] ?? mf.key,
+                    })),
+                  },
+                ]}
+                value={m.from || null}
+                onChange={(v) => onUpdate(i, { from: v })}
+                placeholder="Pick form field…"
+                className="border-0 shadow-none bg-transparent px-1"
+              />
             ) : (
               <Input
                 className="h-8 text-xs border-0 shadow-none bg-transparent px-1 focus-visible:ring-0"
