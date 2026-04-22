@@ -43,6 +43,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   Circle,
   Facebook,
   FileText,
@@ -76,7 +77,7 @@ import {
   serializeExtraFields,
   type ExtraFieldDraft,
 } from "./lead-routing/shared";
-import { DestinationCreatorDrawer } from "@/components/destinations/DestinationCreatorDrawer";
+import { DestinationCreatorInline } from "@/components/destinations/DestinationCreatorInline";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -178,98 +179,159 @@ function colorForCategory(category: string) {
   );
 }
 
-// ─── Reusable card chrome ─────────────────────────────────────────────────────
+// ─── Zapier-style step chrome ─────────────────────────────────────────────────
 
-interface WizardCardProps {
-  stepNumber: number;
-  title: string;
-  description?: string;
-  status: "locked" | "empty" | "filled";
-  summary?: React.ReactNode;
-  /** When true card renders expanded regardless of status. */
-  open: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-  /** Icon shown in the left rail. */
-  icon?: typeof Zap;
+interface ZapperStepProps {
+  /** Icon shown in the circle (step 1 = Facebook, step 2 = app icon or Zap). */
+  icon: React.ComponentType<{ className?: string }>;
+  /** Tailwind bg+text classes for the icon badge when not done. */
+  iconColor: string;
+  /** Small ALL-CAPS label above the app name: "TRIGGER" or "ACTION". */
+  label: string;
+  /** Prominent app name: "Facebook Lead Ads", "Telegram", etc. */
+  appName: string;
+  /** Step is visually highlighted (primary border on circle). */
+  isActive: boolean;
+  /** Step is fully filled — circle becomes solid primary, shows checkmark. */
+  isDone: boolean;
+  /** Step is not yet reachable — content is hidden and circle is dimmed. */
+  isLocked?: boolean;
+  /** Whether to render the content card (controlled by parent). */
+  isOpen: boolean;
+  /** Whether to draw the vertical connector below this step. */
+  isLast?: boolean;
+  /** One-line summary shown when isDone && !isOpen. */
+  summary?: string;
+  /** Clicking the header when isDone triggers this to re-open the step. */
+  onHeaderClick?: () => void;
+  children?: React.ReactNode;
 }
 
-function WizardCard({
-  stepNumber,
-  title,
-  description,
-  status,
+function ZapperStep({
+  icon: Icon,
+  iconColor,
+  label,
+  appName,
+  isActive,
+  isDone,
+  isLocked,
+  isOpen,
+  isLast,
   summary,
-  open,
-  onToggle,
+  onHeaderClick,
   children,
-  icon: IconComp,
-}: WizardCardProps) {
-  const isLocked = status === "locked";
-  const isFilled = status === "filled";
-  const StatusIcon = isFilled ? CheckCircle2 : isLocked ? Circle : Circle;
-
+}: ZapperStepProps) {
   return (
-    <Card
-      className={cn(
-        "overflow-hidden transition-colors",
-        isLocked && "opacity-50",
-        open && "ring-1 ring-primary/20",
-      )}
-    >
-      <button
-        type="button"
-        disabled={isLocked}
-        onClick={onToggle}
-        className={cn(
-          "flex w-full items-center gap-3 p-4 text-left",
-          !isLocked && "hover:bg-muted/30",
-        )}
-        aria-expanded={open}
-      >
-        <div
+    <div className="flex gap-4">
+      {/* ── Left rail: circle + connector line ── */}
+      <div className="flex flex-col items-center shrink-0 w-10">
+        <button
+          type="button"
+          disabled={isLocked}
+          onClick={onHeaderClick}
           className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2",
-            isFilled
-              ? "border-primary bg-primary/10 text-primary"
-              : "border-muted-foreground/30 text-muted-foreground",
+            "relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 bg-background transition-colors",
+            isDone && !isOpen
+              ? "border-primary bg-primary"
+              : isActive
+                ? "border-primary"
+                : isLocked
+                  ? "border-muted-foreground/20"
+                  : "border-muted-foreground/30",
           )}
+          aria-label={`Go to ${label}`}
         >
-          {IconComp ? (
-            <IconComp className="h-4 w-4" />
+          {isDone && !isOpen ? (
+            <CheckCircle2 className="h-4 w-4 text-primary-foreground" />
           ) : (
-            <span className="text-sm font-semibold">{stepNumber}</span>
-          )}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold truncate">{title}</h3>
-            <StatusIcon
+            <Icon
               className={cn(
-                "h-3.5 w-3.5 shrink-0",
-                isFilled ? "text-primary" : "text-muted-foreground/40",
+                "h-4 w-4 transition-colors",
+                isLocked
+                  ? "text-muted-foreground/25"
+                  : isActive
+                    ? iconColor
+                    : "text-muted-foreground/50",
               )}
             />
-          </div>
-          {!open && summary ? (
-            <div className="text-xs text-muted-foreground mt-0.5 truncate">
-              {summary}
-            </div>
-          ) : description ? (
-            <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
-          ) : null}
-        </div>
-        <ChevronDown
-          className={cn(
-            "text-muted-foreground h-4 w-4 shrink-0 transition-transform",
-            open && "rotate-180",
           )}
-        />
-      </button>
-      {open && (
-        <div className="border-t bg-muted/10 p-4 space-y-3">{children}</div>
-      )}
-    </Card>
+        </button>
+        {/* Vertical connector */}
+        {!isLast && (
+          <div
+            className={cn(
+              "w-px flex-1 mt-1",
+              isDone ? "bg-primary/30" : "bg-border",
+            )}
+            style={{ minHeight: "32px" }}
+          />
+        )}
+      </div>
+
+      {/* ── Right content ── */}
+      <div className={cn("flex-1 pb-6", isLast && "pb-2")}>
+        {/* Step header (clickable when done) */}
+        <div className="flex items-start justify-between min-h-[40px] mb-3">
+          <button
+            type="button"
+            disabled={isLocked || isOpen}
+            onClick={onHeaderClick}
+            className={cn(
+              "text-left",
+              !isLocked && !isOpen && "hover:opacity-80",
+            )}
+          >
+            <div
+              className={cn(
+                "text-[10px] uppercase tracking-widest font-semibold leading-none mb-1",
+                isLocked ? "text-muted-foreground/40" : "text-muted-foreground",
+              )}
+            >
+              {label}
+            </div>
+            <div
+              className={cn(
+                "text-sm font-bold leading-none",
+                isLocked && "text-muted-foreground/40",
+              )}
+            >
+              {appName}
+            </div>
+          </button>
+          {isDone && !isOpen && (
+            <button
+              type="button"
+              onClick={onHeaderClick}
+              className="ml-3 text-[11px] text-primary hover:underline shrink-0 mt-0.5"
+            >
+              Edit
+            </button>
+          )}
+        </div>
+
+        {/* Done summary pill (when collapsed) */}
+        {isDone && !isOpen && summary && (
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-primary/8 border border-primary/20 px-3 py-1 text-xs text-primary font-medium mb-2">
+            <CheckCircle2 className="h-3 w-3" />
+            {summary}
+          </div>
+        )}
+
+        {/* Content card (when open) */}
+        {isOpen && !isLocked && (
+          <div className="rounded-xl border bg-card shadow-sm p-5">
+            {children}
+          </div>
+        )}
+
+        {/* Locked placeholder */}
+        {isLocked && (
+          <div className="rounded-xl border border-dashed bg-muted/5 px-4 py-3 text-xs text-muted-foreground/50">
+            Complete the trigger step first.
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -280,23 +342,21 @@ export default function IntegrationWizardV2() {
   const utils = trpc.useUtils();
   const [state, setState] = useState<WizardState>(INITIAL_STATE);
 
-  // Which card is currently expanded. We track a single open card at a time so
-  // the UI stays focused. Users can always click back to a previous card.
-  const [openCard, setOpenCard] = useState<
-    "trigger" | "destination" | "mapping" | "name" | null
-  >("trigger");
+  // Zapier-style: which step is currently "focused" (highlighted header + open).
+  // Step 1 = Trigger, Step 2 = Action.
+  const [activeStep, setActiveStep] = useState<1 | 2>(1);
 
-  // Inline destination-creator drawer. Opened from the Destination card's
-  // app shortcut cards — opens pre-configured for the chosen app type so the
-  // user skips the app-picker step and goes straight to the form.
-  const [creatorOpen, setCreatorOpen] = useState(false);
-  const [creatorInitialApp, setCreatorInitialApp] = useState<string | undefined>(
-    undefined,
-  );
+  // Inline destination creator state.
+  // undefined  → showing the normal destination picker / mapping / publish view
+  // null       → showing inline creator in "pick app" mode (full app list)
+  // string     → showing inline creator starting at configure for that app key
+  const [inlineCreatorAppKey, setInlineCreatorAppKey] = useState<
+    string | null | undefined
+  >(undefined);
 
   const handleOpenCreatorForApp = (appKey?: string) => {
-    setCreatorInitialApp(appKey);
-    setCreatorOpen(true);
+    // undefined means "open the full app picker" (null), a key skips to config.
+    setInlineCreatorAppKey(appKey ?? null);
   };
 
   // ─── Flag gate ─────────────────────────────────────────────────────────────
@@ -497,8 +557,8 @@ export default function IntegrationWizardV2() {
       phoneField: "",
       extraFields: [],
     });
-    // After selecting form, auto-advance to destination card for momentum.
-    setOpenCard("destination");
+    // Auto-advance to step 2 (action) for forward momentum.
+    setActiveStep(2);
   };
 
   /** Add a destination to the list if not already present. */
@@ -510,8 +570,8 @@ export default function IntegrationWizardV2() {
       const variableFields = s.destinations.length === 0 ? {} : s.variableFields;
       return { ...s, destinations: next, variableFields };
     });
-    // Auto-advance to mapping once we have at least one destination.
-    setOpenCard("mapping");
+    // In the Zapier-style layout, mapping is shown inline in step 2 — no card
+    // jump needed. We stay in step 2 and the mapping section appears below.
   };
 
   /** Remove a destination from the list by id. */
@@ -630,234 +690,249 @@ export default function IntegrationWizardV2() {
     );
   }
 
+  // ─── Derived: step 2 app icon + color ─────────────────────────────────────
+  // Show the primary destination's category icon in the step 2 circle; fall
+  // back to Zap when nothing is selected yet.
+  const step2Icon = destinationFilled
+    ? iconForCategory(
+        targetWebsites?.find((t) => t.id === primaryDestId)?.category ?? "",
+      )
+    : Zap;
+  const step2IconColor = destinationFilled
+    ? (
+        CATEGORY_META[
+          (targetWebsites?.find((t) => t.id === primaryDestId)
+            ?.category ?? "") as DestinationCategory
+        ]?.colorClass ?? "text-muted-foreground"
+      )
+        .split(" ")
+        .find((c) => c.startsWith("text-")) ?? "text-primary"
+    : "text-muted-foreground";
+
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <DashboardLayout>
-      <div className="max-w-3xl mx-auto space-y-4 pb-24">
-        {/* Header */}
-        <div className="flex items-center gap-2">
+      <div className="max-w-2xl mx-auto py-6 px-4 pb-16">
+        {/* ── Page header ── */}
+        <div className="flex items-center gap-2 mb-1">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => navigate("/integrations")}
-            className="h-8 -ml-2"
+            className="h-8 -ml-2 text-muted-foreground"
           >
-            <ArrowLeft className="h-4 w-4 mr-1.5" />
+            <ArrowLeft className="h-4 w-4 mr-1" />
             Integrations
           </Button>
-        </div>
-
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">New integration</h1>
-            <p className="text-sm text-muted-foreground mt-1 max-w-lg">
-              Connect a Facebook Lead Ads form to a destination. Leads will be
-              delivered in real time as they arrive.
-            </p>
-          </div>
-          <span className="inline-flex items-center gap-1 rounded-full border bg-primary/10 text-primary px-2 py-1 text-[11px] font-medium shrink-0">
-            <Sparkles className="h-3 w-3" />
+          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
+          <span className="text-sm text-muted-foreground">New integration</span>
+          <span className="ml-auto inline-flex items-center gap-1 rounded-full border bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium">
+            <Sparkles className="h-2.5 w-2.5" />
             Beta
           </span>
         </div>
 
-        {/* Card 1 — Trigger */}
-        <WizardCard
-          stepNumber={1}
-          icon={Facebook}
-          title="Trigger — Facebook Lead Ads"
-          description="Which Facebook form should we watch for new leads?"
-          status={triggerStatus}
-          open={openCard === "trigger"}
-          onToggle={() =>
-            setOpenCard(openCard === "trigger" ? null : "trigger")
-          }
-          summary={
-            triggerFilled
-              ? `${state.pageName} / ${state.formName}`
-              : "Not configured yet"
-          }
-        >
-          <TriggerEditor
-            accounts={accounts ?? []}
-            loadingAccounts={loadingAccounts}
-            pages={pages ?? []}
-            loadingPages={loadingPages}
-            forms={forms ?? []}
-            loadingForms={loadingForms}
-            state={state}
-            onPickAccount={setAccount}
-            onPickPage={setPage}
-            onPickForm={setForm}
-          />
-        </WizardCard>
+        <h1 className="text-xl font-bold tracking-tight mb-8">
+          New Zap
+        </h1>
 
-        {/* Card 2 — Destination */}
-        <WizardCard
-          stepNumber={2}
-          icon={Send}
-          title="Destinations"
-          description="Where should the lead be delivered? Add one or more destinations."
-          status={destinationStatus}
-          open={openCard === "destination"}
-          onToggle={() =>
-            setOpenCard(openCard === "destination" ? null : "destination")
-          }
-          summary={
-            state.destinations.length === 0
-              ? "Pick a destination"
-              : state.destinations.length === 1
-                ? state.destinations[0]!.name
-                : `${state.destinations[0]!.name} +${state.destinations.length - 1} more`
-          }
-        >
-          <DestinationEditor
-            destinations={targetWebsites ?? []}
-            loading={loadingTargets}
-            selectedIds={state.destinations.map((d) => d.id)}
-            onToggle={(id, name, templateType) => {
-              if (state.destinations.some((d) => d.id === id)) {
-                removeDestination(id);
-              } else {
-                addDestination(id, name, templateType);
-              }
-            }}
-            onOpenCreatorForApp={handleOpenCreatorForApp}
-          />
-        </WizardCard>
-
-        {/* Card 3 — Mapping */}
-        <WizardCard
-          stepNumber={3}
-          icon={Tag}
-          title="Field mapping"
-          description="Match the form fields to the destination, and fill in any required variables."
-          status={mappingStatus}
-          open={openCard === "mapping"}
-          onToggle={() =>
-            setOpenCard(openCard === "mapping" ? null : "mapping")
-          }
-          summary={
-            mappingFilled
-              ? `Name → ${state.nameField}, Phone → ${state.phoneField}${
-                  state.extraFields.length
-                    ? `, +${
-                        state.extraFields.filter((f) => f.destKey.trim()).length
-                      } extra`
-                    : ""
-                }`
-              : "Not complete"
-          }
-        >
-          <MappingEditor
-            formFields={formFields ?? []}
-            loadingFields={loadingFields}
-            state={state}
-            primaryDestName={primaryDestName}
-            primaryDestType={primaryDestType}
-            onPatch={patch}
-            onAddExtra={addExtra}
-            onUpdateExtra={updateExtra}
-            onRemoveExtra={removeExtra}
-          />
-        </WizardCard>
-
-        {/* Card 4 — Name */}
-        <WizardCard
-          stepNumber={4}
-          icon={Type}
-          title="Integration name"
-          description="How it appears on your dashboard."
-          status={nameStatus}
-          open={openCard === "name"}
-          onToggle={() => setOpenCard(openCard === "name" ? null : "name")}
-          summary={
-            nameFilled ? state.integrationName : "Auto-generated from page → destination"
-          }
-        >
-          <div className="space-y-2">
-            <Label htmlFor="integration-name" className="text-xs">
-              Name
-            </Label>
-            <Input
-              id="integration-name"
-              value={state.integrationName}
-              onChange={(e) =>
-                patch({
-                  integrationName: e.target.value,
-                  integrationNameTouched: true,
-                })
-              }
-              placeholder={
-                state.pageName && primaryDestName
-                  ? `${state.pageName} → ${primaryDestName}`
-                  : "My integration"
-              }
+        {/* ── Zapier-style vertical flow ── */}
+        <div>
+          {/* ─ Step 1: Trigger ─ */}
+          <ZapperStep
+            icon={Facebook}
+            iconColor="text-blue-600"
+            label="Trigger"
+            appName="Facebook Lead Ads"
+            isActive={activeStep === 1}
+            isDone={triggerFilled}
+            isOpen={activeStep === 1}
+            isLast={false}
+            summary={
+              triggerFilled
+                ? `${state.pageName} / ${state.formName}`
+                : undefined
+            }
+            onHeaderClick={() => setActiveStep(1)}
+          >
+            <TriggerEditor
+              accounts={accounts ?? []}
+              loadingAccounts={loadingAccounts}
+              pages={pages ?? []}
+              loadingPages={loadingPages}
+              forms={forms ?? []}
+              loadingForms={loadingForms}
+              state={state}
+              onPickAccount={setAccount}
+              onPickPage={setPage}
+              onPickForm={setForm}
             />
-            {state.integrationNameTouched && (
-              <button
-                type="button"
-                onClick={() =>
-                  patch({
-                    integrationName: "",
-                    integrationNameTouched: false,
-                  })
-                }
-                className="text-[11px] text-muted-foreground hover:text-primary"
-              >
-                Reset to auto-generated name
-              </button>
+            {/* Continue button — advances to step 2 */}
+            {triggerFilled && (
+              <div className="flex justify-end pt-4 mt-1 border-t">
+                <Button
+                  size="sm"
+                  onClick={() => setActiveStep(2)}
+                >
+                  Continue
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
             )}
-          </div>
-        </WizardCard>
+          </ZapperStep>
 
-        {/* Inline destination creator — opens pre-configured for the selected
-            app type so the user skips the app-picker step entirely. */}
-        <DestinationCreatorDrawer
-          open={creatorOpen}
-          onOpenChange={(v) => {
-            setCreatorOpen(v);
-            if (!v) setCreatorInitialApp(undefined);
-          }}
-          initialAppKey={creatorInitialApp}
-          onCreated={({ id, name, templateType }) => {
-            addDestination(id, name, templateType);
-            setCreatorOpen(false);
-            setCreatorInitialApp(undefined);
-          }}
-        />
+          {/* ─ Step 2: Action ─ */}
+          <ZapperStep
+            icon={step2Icon}
+            iconColor={step2IconColor}
+            label="Action"
+            appName={
+              destinationFilled
+                ? state.destinations.length === 1
+                  ? primaryDestName
+                  : `${primaryDestName} +${state.destinations.length - 1} more`
+                : "Choose destination"
+            }
+            isActive={activeStep === 2}
+            isDone={canSave}
+            isLocked={!triggerFilled}
+            isOpen={triggerFilled}
+            isLast={true}
+            summary={canSave ? state.integrationName : undefined}
+            onHeaderClick={() => triggerFilled && setActiveStep(2)}
+          >
+            {inlineCreatorAppKey !== undefined ? (
+              /* ── Inline destination creator (Zapier-style, no drawer) ── */
+              <DestinationCreatorInline
+                initialAppKey={inlineCreatorAppKey ?? undefined}
+                onCreated={({ id, name, templateType }) => {
+                  addDestination(id, name, templateType);
+                  setInlineCreatorAppKey(undefined);
+                }}
+                onCancel={() => setInlineCreatorAppKey(undefined)}
+              />
+            ) : (
+              /* ── Normal picker → mapping → publish flow ── */
+              <>
+                {/* Destination picker */}
+                <div>
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+                    Destination
+                  </div>
+                  <DestinationEditor
+                    destinations={targetWebsites ?? []}
+                    loading={loadingTargets}
+                    selectedIds={state.destinations.map((d) => d.id)}
+                    onToggle={(id, name, templateType) => {
+                      if (state.destinations.some((d) => d.id === id)) {
+                        removeDestination(id);
+                      } else {
+                        addDestination(id, name, templateType);
+                      }
+                    }}
+                    onOpenCreatorForApp={handleOpenCreatorForApp}
+                  />
+                </div>
 
-        {/* Footer — sticky save bar */}
-        <div className="fixed bottom-0 inset-x-0 bg-background/95 backdrop-blur border-t z-10">
-          <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
-            <div className="text-xs text-muted-foreground">
-              {canSave
-                ? "Ready to save. Activates immediately."
-                : "Fill in the highlighted cards to continue."}
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate("/integrations")}
-                disabled={isSaving}
-              >
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleSave}
-                disabled={!canSave || isSaving}
-              >
-                {isSaving ? (
-                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                ) : (
-                  <Zap className="h-4 w-4 mr-1.5" />
+                {/* Field mapping (shown once a destination is picked) */}
+                {destinationFilled && (
+                  <div className="border-t mt-5 pt-5 space-y-4">
+                    <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                      Map fields
+                      <span className="ml-1.5 normal-case font-normal">
+                        ({primaryDestName})
+                      </span>
+                    </div>
+                    <MappingEditor
+                      formFields={formFields ?? []}
+                      loadingFields={loadingFields}
+                      state={state}
+                      primaryDestName={primaryDestName}
+                      primaryDestType={primaryDestType}
+                      onPatch={patch}
+                      onAddExtra={addExtra}
+                      onUpdateExtra={updateExtra}
+                      onRemoveExtra={removeExtra}
+                    />
+                  </div>
                 )}
-                Save & activate
-              </Button>
-            </div>
-          </div>
+
+                {/* Integration name + Publish (shown once destination is picked) */}
+                {destinationFilled && (
+                  <div className="border-t mt-5 pt-5 space-y-4">
+                    <div className="space-y-1.5">
+                      <Label
+                        htmlFor="integration-name"
+                        className="text-xs font-semibold text-muted-foreground uppercase tracking-wide"
+                      >
+                        Integration name
+                      </Label>
+                      <Input
+                        id="integration-name"
+                        value={state.integrationName}
+                        onChange={(e) =>
+                          patch({
+                            integrationName: e.target.value,
+                            integrationNameTouched: true,
+                          })
+                        }
+                        placeholder={
+                          state.pageName && primaryDestName
+                            ? `${state.pageName} → ${primaryDestName}`
+                            : "My integration"
+                        }
+                      />
+                      {state.integrationNameTouched && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            patch({
+                              integrationName: "",
+                              integrationNameTouched: false,
+                            })
+                          }
+                          className="text-[11px] text-muted-foreground hover:text-primary"
+                        >
+                          Reset to auto-generated name
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Publish row */}
+                    <div className="flex items-center justify-between pt-1">
+                      <p className="text-xs text-muted-foreground">
+                        {canSave
+                          ? "Ready to publish — activates immediately."
+                          : "Fill in Name and Phone fields to publish."}
+                      </p>
+                      <div className="flex items-center gap-2 ml-4 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => navigate("/integrations")}
+                          disabled={isSaving}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={handleSave}
+                          disabled={!canSave || isSaving}
+                        >
+                          {isSaving ? (
+                            <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                          ) : (
+                            <Zap className="h-4 w-4 mr-1.5" />
+                          )}
+                          Publish
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </ZapperStep>
         </div>
       </div>
     </DashboardLayout>
