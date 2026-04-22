@@ -2034,7 +2034,10 @@ function AppManifestMapper({
   onAddCustomStaticRow,
   onRemoveCustomMapping,
 }: AppManifestMapperProps) {
-  const isCustom = manifest.id === "custom";
+  // Admin-managed templates (sotuvchi, 100k, …) also have templateType="custom"
+  // in the DB for legacy compat — but they carry leadFields from the template.
+  // Use leadFields.length as the true signal, not manifest.id.
+  const isCustom = manifest.leadFields.length === 0;
   const hasConnection = Object.keys(connectionConfig).length > 0;
   // Hide the legacy "Connection config" box whenever secret rows already
   // surface the same information inline — prevents duplicate UI for new
