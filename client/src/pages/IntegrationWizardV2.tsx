@@ -81,15 +81,14 @@ import { isSupportedAppKey } from "@/components/destinations/createPayload";
 import type { AppManifestService } from "./lead-routing/shared";
 
 // ─── resolveDestManifest ───────────────────────────────────────────────────────
-// Pure helper — resolves the AppManifestService for a destination record.
+// Resolves the AppManifestService for a destination record.
 // Priority:
-//   1. DB template has autoMappedFields set by admin → use them (fully dynamic)
-//   2. DB template (templateId present) but autoMappedFields empty →
-//      apply the universal UZ-CPA convention: name+phone are FROM_LEAD,
-//      variableFields from DB are the connection keys.
-//      (works for Inbaza, Sotuvchi, 100k, MyCPA — all have same name/phone shape)
-//   3. Legacy static templateType (sotuvchi/100k/telegram) without templateId →
-//      fall back to hardcoded APP_MANIFEST.
+//   1. DB template has autoMappedFields set by admin → fully dynamic
+//   2. DB template with templateId but no autoMappedFields → UZ-CPA convention
+//      (name+phone FROM_LEAD, variableFields as connectionKeys)
+//   3a. Legacy static templateType in APP_MANIFEST → hardcoded entry
+//   3b. Key matches a server manifest app → default name+phone leadFields
+//      (covers new manifest services without APP_MANIFEST entries)
 type DestRecordLike = {
   templateId?: number | null;
   templateName?: string | null;
@@ -97,10 +96,18 @@ type DestRecordLike = {
   variableFields?: unknown;
 };
 
+type ServerAppStub = { key: string; name: string; description: string | null };
+
+const DEFAULT_LEAD_FIELDS = [
+  { key: "name",  label: "Ism (to'liq)",   required: true, autoDetect: "name"  as const },
+  { key: "phone", label: "Telefon raqami",  required: true, autoDetect: "phone" as const },
+];
+
 function resolveDestManifest(
   destRecord: DestRecordLike | null | undefined,
   destType: string,
   destName: string,
+  serverApps: ServerAppStub[] = [],
 ): AppManifestService | null {
   if (!destType) return null;
 
@@ -148,8 +155,22 @@ function resolveDestManifest(
     };
   }
 
-  // ③ Legacy static templateType fallback (sotuvchi/100k/telegram without templateId)
-  return APP_MANIFEST[destType] ?? null;
+  // ③a Hardcoded APP_MANIFEST (telegram, google-sheets, legacy affiliate types)
+  if (APP_MANIFEST[destType]) return APP_MANIFEST[destType]!;
+
+  // ③b Server manifest fallback — new JSON-manifest services not yet in APP_MANIFEST
+  const serverApp = serverApps.find((a) => a.key === destType);
+  if (serverApp) {
+    return {
+      id: serverApp.key,
+      label: serverApp.name,
+      description: serverApp.description ?? "",
+      leadFields: DEFAULT_LEAD_FIELDS,
+      connectionKeys: [],
+    };
+  }
+
+  return null;
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -469,6 +490,11 @@ export default function IntegrationWizardV2() {
   const { data: targetWebsites, isLoading: loadingTargets } =
     trpc.targetWebsites.list.useQuery(undefined, { enabled: isAllowed });
 
+  const { data: appManifests = [] } = trpc.apps.list.useQuery(undefined, {
+    enabled: isAllowed,
+    staleTime: 5 * 60 * 1000,
+  });
+
   // Derived: primary destination (first in the list) drives field mapping.
   const primaryDest: DestinationEntry | null = state.destinations[0] ?? null;
   const primaryDestId = primaryDest?.id ?? null;
@@ -503,7 +529,7 @@ export default function IntegrationWizardV2() {
     setState((s) => {
       const updated = s.destinations.map((d) => {
         const destRecord = targetWebsites?.find((t) => t.id === d.id);
-        const manifest = resolveDestManifest(destRecord, d.templateType, d.name);
+        const manifest = resolveDestManifest(destRecord, d.templateType, d.name, appManifests);
         if (!manifest?.leadFields.length) return d;
 
         let changed = false;
@@ -558,7 +584,7 @@ export default function IntegrationWizardV2() {
     if (!destinationFilled) return false;
     for (const dest of state.destinations) {
       const destRecord = targetWebsites?.find((t) => t.id === dest.id);
-      const manifest = resolveDestManifest(destRecord, dest.templateType, dest.name);
+      const manifest = resolveDestManifest(destRecord, dest.templateType, dest.name, appManifests);
       if (manifest && manifest.leadFields.length > 0) {
         for (const lf of manifest.leadFields) {
           if (lf.required && !dest.leadFields[lf.key]) return false;
@@ -651,7 +677,7 @@ export default function IntegrationWizardV2() {
     // Read destination record from already-fetched list (may be undefined if list
     // hasn't loaded yet — auto-populate effect will fill in once it does).
     const destRecord = targetWebsites?.find((t) => t.id === id);
-    const manifest = resolveDestManifest(destRecord, templateType, name);
+    const manifest = resolveDestManifest(destRecord, templateType, name, appManifests);
     const fields = formFields ?? [];
 
     setState((s) => {
@@ -857,8 +883,8 @@ export default function IntegrationWizardV2() {
 
   // ─── Derived: primary manifest — DB template first, then APP_MANIFEST ──────
   const primaryManifest = useMemo(
-    () => resolveDestManifest(primaryDestRecord, primaryDestType, primaryDestName),
-    [primaryDestRecord, primaryDestType, primaryDestName],
+    () => resolveDestManifest(primaryDestRecord, primaryDestType, primaryDestName, appManifests),
+    [primaryDestRecord, primaryDestType, primaryDestName, appManifests],
   );
 
   // ─── Derived: read-only connection config shown in Step 2 ──────────────────
