@@ -66,7 +66,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import {
-  APP_MANIFEST,
   FB_METADATA_FIELDS,
   FB_METADATA_LABELS,
   NAME_PATTERNS,
@@ -82,13 +81,19 @@ import type { AppManifestService } from "./lead-routing/shared";
 
 // ─── resolveDestManifest ───────────────────────────────────────────────────────
 // Resolves the AppManifestService for a destination record.
-// Priority:
-//   1. DB template has autoMappedFields set by admin → fully dynamic
-//   2. DB template with templateId but no autoMappedFields → UZ-CPA convention
-//      (name+phone FROM_LEAD, variableFields as connectionKeys)
-//   3a. Legacy static templateType in APP_MANIFEST → hardcoded entry
-//   3b. Key matches a server manifest app → default name+phone leadFields
-//      (covers new manifest services without APP_MANIFEST entries)
+//
+// This is the single "spine" merging the two service-definition worlds:
+//   • admin-managed `destination_templates` (DB rows, infinite scale)
+//   • code-registered server manifests (Telegram, Sheets, HTTP Webhook, …)
+//
+// Priority (first match wins):
+//   ⓪. destType === "custom"    → CUSTOM_MANIFEST (row-builder UI)
+//   ①. DB autoMappedFields set   → fully dynamic manifest from DB
+//   ②. templateId set, AMF empty → UZ-CPA convention (name+phone FROM_LEAD)
+//   ③. Server manifest app.key   → default name+phone leadFields
+//
+// The old client-side APP_MANIFEST (hardcoded sotuvchi/100k/telegram entries)
+// was retired in favour of the two sources above.
 type DestRecordLike = {
   templateId?: number | null;
   templateName?: string | null;
@@ -103,6 +108,17 @@ const DEFAULT_LEAD_FIELDS = [
   { key: "phone", label: "Telefon raqami",  required: true, autoDetect: "phone" as const },
 ];
 
+// Custom Webhook is the only "app" that genuinely has no lead schema — the
+// user builds the mapping row-by-row via FieldMappingsEditor. Kept inline
+// (rather than in shared.ts) because it is rendering glue, not a service def.
+const CUSTOM_MANIFEST: AppManifestService = {
+  id: "custom",
+  label: "Custom Webhook",
+  description: "POST to any URL",
+  leadFields: [],
+  connectionKeys: [],
+};
+
 function resolveDestManifest(
   destRecord: DestRecordLike | null | undefined,
   destType: string,
@@ -111,11 +127,15 @@ function resolveDestManifest(
 ): AppManifestService | null {
   if (!destType) return null;
 
+  // ⓪ Custom webhook — no schema, wizard uses FieldMappingsEditor.
+  if (destType === "custom") return CUSTOM_MANIFEST;
+
   const dbAutoFields = (
     Array.isArray(destRecord?.autoMappedFields) ? destRecord!.autoMappedFields : []
   ) as Array<{ key: string; label: string }>;
 
-  // ① DB has explicit autoMappedFields — fully dynamic manifest
+  // ① DB has explicit autoMappedFields — fully dynamic manifest.
+  // Covers admin destination_templates (sotuvchi, 100k, inbaza, mycpa, …).
   if (dbAutoFields.length > 0) {
     return {
       id: destType,
@@ -126,9 +146,9 @@ function resolveDestManifest(
         label: f.label,
         required: true,
         autoDetect:
-          f.key === "name"
+          f.key === "name" || /name/i.test(f.key)
             ? ("name" as const)
-            : f.key === "phone"
+            : f.key === "phone" || /phone/i.test(f.key)
               ? ("phone" as const)
               : undefined,
       })),
@@ -138,27 +158,24 @@ function resolveDestManifest(
     };
   }
 
-  // ② Admin-created template (has templateId) — apply UZ-CPA name/phone convention
+  // ② Admin-created template (templateId set) but autoMappedFields empty —
+  // fall back to the universal UZ-CPA convention (name + phone FROM_LEAD).
   const isAdminTemplate = (destRecord?.templateId ?? null) !== null;
-  if (isAdminTemplate && destType !== "custom") {
+  if (isAdminTemplate) {
     return {
       id: destType,
       label: destRecord?.templateName ?? destName,
       description: "",
-      leadFields: [
-        { key: "name",  label: "Ism (to'liq)",   required: true, autoDetect: "name"  as const },
-        { key: "phone", label: "Telefon raqami",  required: true, autoDetect: "phone" as const },
-      ],
+      leadFields: DEFAULT_LEAD_FIELDS,
       connectionKeys: (
         Array.isArray(destRecord?.variableFields) ? destRecord!.variableFields : []
       ) as string[],
     };
   }
 
-  // ③a Hardcoded APP_MANIFEST (telegram, google-sheets, legacy affiliate types)
-  if (APP_MANIFEST[destType]) return APP_MANIFEST[destType]!;
-
-  // ③b Server manifest fallback — new JSON-manifest services not yet in APP_MANIFEST
+  // ③ Server manifest fallback — telegram, google-sheets, http-webhook,
+  // and every future code-defined app. Default lead schema (name + phone)
+  // because the FROM_LEAD stage is universal for inbound lead triggers.
   const serverApp = serverApps.find((a) => a.key === destType);
   if (serverApp) {
     return {
@@ -178,7 +195,7 @@ function resolveDestManifest(
 /**
  * One entry in the ordered destination list.
  *
- * `leadFields` — per-destination FROM_LEAD mapping driven by APP_MANIFEST.
+ * `leadFields` — per-destination FROM_LEAD mapping (via resolveDestManifest).
  *   key   = manifest field key ("name", "phone", or custom for custom type)
  *   value = FB form field key that feeds this payload key ("full_name", etc.)
  * For `custom` template type, `leadFields` is empty and `customMappings` is
@@ -881,7 +898,7 @@ export default function IntegrationWizardV2() {
     [targetWebsites, primaryDestId],
   );
 
-  // ─── Derived: primary manifest — DB template first, then APP_MANIFEST ──────
+  // ─── Derived: primary manifest — DB template first, then server apps ──────
   const primaryManifest = useMemo(
     () => resolveDestManifest(primaryDestRecord, primaryDestType, primaryDestName, appManifests),
     [primaryDestRecord, primaryDestType, primaryDestName, appManifests],
@@ -1585,7 +1602,8 @@ function DestinationEditor({
 
 
 // ─── AppManifestMapper ─────────────────────────────────────────────────────────
-// Make.com / Zapier level: per-service field mapping driven by APP_MANIFEST.
+// Make.com / Zapier level: per-service field mapping driven by the manifest
+// returned by resolveDestManifest (DB template or server manifest).
 //
 //  For manifest services (sotuvchi, 100k, telegram …):
 //    FIELD MAPPING

@@ -206,56 +206,26 @@ export interface AppManifestService {
   connectionKeys: string[];
 }
 
-export const APP_MANIFEST: Record<string, AppManifestService> = {
-  sotuvchi: {
-    id: "sotuvchi",
-    label: "Sotuvchi.com",
-    description: "Uzbekistan CPA affiliate",
-    leadFields: [
-      { key: "name",  label: "Ism (to'liq)",   required: true,  autoDetect: "name"  },
-      { key: "phone", label: "Telefon raqami",  required: true,  autoDetect: "phone" },
-    ],
-    connectionKeys: ["offer_id", "stream"],
-  },
-  "100k": {
-    id: "100k",
-    label: "100K.uz",
-    description: "Uzbekistan CPA affiliate",
-    leadFields: [
-      { key: "name",  label: "Ism",     required: true,  autoDetect: "name"  },
-      { key: "phone", label: "Telefon", required: true,  autoDetect: "phone" },
-    ],
-    connectionKeys: ["stream_id"],
-  },
-  telegram: {
-    id: "telegram",
-    label: "Telegram",
-    description: "Telegram channel/group notification",
-    leadFields: [
-      { key: "name",  label: "Ism",     required: true,  autoDetect: "name"  },
-      { key: "phone", label: "Telefon", required: true,  autoDetect: "phone" },
-    ],
-    connectionKeys: [],
-  },
-  "google-sheets": {
-    id: "google-sheets",
-    label: "Google Sheets",
-    description: "Append row to a Google Sheet",
-    leadFields: [
-      { key: "name",  label: "Ism",     required: true,  autoDetect: "name"  },
-      { key: "phone", label: "Telefon", required: true,  autoDetect: "phone" },
-    ],
-    connectionKeys: ["spreadsheetId", "sheetName"],
-  },
-  custom: {
-    id: "custom",
-    label: "Custom Webhook",
-    description: "POST to any URL",
-    // Dynamic — user builds their own mapping via FieldMappingsEditor.
-    leadFields: [],
-    connectionKeys: [],
-  },
-};
+/**
+ * @deprecated Use `resolveDestManifest()` in IntegrationWizardV2 instead.
+ *
+ * This registry used to hold per-service metadata for sotuvchi, 100k, telegram,
+ * google-sheets and custom. Those entries were removed in the "unified spine"
+ * refactor (Phase-3, Step 1):
+ *
+ *   • sotuvchi / 100k / inbaza / mycpa → admin-defined `destination_templates`
+ *     with autoMappedFields + variableFields (Path ① of resolveDestManifest).
+ *     Bonus: fixes a latent bug where 100k.uz used `name`/`phone` here but
+ *     the DB template correctly uses `client_full_name`/`customer_phone`.
+ *   • telegram / google-sheets → server manifest (Path ③b, via trpc.apps.list).
+ *   • custom → inline CUSTOM_MANIFEST constant inside IntegrationWizardV2.
+ *
+ * The object is kept (empty) to preserve the exported symbol and types for any
+ * downstream tooling, and to keep the Path ③a fallback shape valid. Nothing
+ * should ever be added here — all new services must flow through the server
+ * manifest registry or admin destination templates.
+ */
+export const APP_MANIFEST: Record<string, AppManifestService> = {};
 
 /**
  * Legacy TEMPLATE_VARIABLE_FIELDS kept for backward compatibility.
