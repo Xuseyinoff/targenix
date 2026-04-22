@@ -899,6 +899,45 @@ export const targetWebsitesRouter = router({
         .limit(1);
       if (!template) throw new Error("Template not found or inactive");
 
+      // ── Dedupe guard ────────────────────────────────────────────────────
+      //
+      // A connection is a REUSABLE credential bundle ("my 100k.uz api key")
+      // — the whole point of having it is that the user should not need a
+      // separate destination row per integration. Before this guard landed,
+      // the wizard's "Use my 100k.uz connection" one-click button created a
+      // brand new target_websites row every time, so users who wired the
+      // same affiliate into three integrations ended up with "100k.uz (1)",
+      // "100k.uz (2)", "100k.uz (3)" cluttering the destination list.
+      //
+      // The product-intent contract is 1 connection × 1 template = 1
+      // destination. If that pair already has an active row, return it
+      // instead of creating another. Users who genuinely want a second
+      // destination with the same credential can still build one by
+      // passing an explicit `name` — in that case we fall through to
+      // create a fresh row (keeps power-user path open without UX
+      // regression for the common case).
+      if (!input.name) {
+        const [reusable] = await db
+          .select({ id: targetWebsites.id, name: targetWebsites.name })
+          .from(targetWebsites)
+          .where(
+            and(
+              eq(targetWebsites.userId, ctx.user.id),
+              eq(targetWebsites.connectionId, conn.id),
+              eq(targetWebsites.templateId, template.id),
+              eq(targetWebsites.isActive, true),
+            ),
+          )
+          .limit(1);
+        if (reusable) {
+          return {
+            id: reusable.id,
+            name: reusable.name,
+            templateId: template.id,
+          };
+        }
+      }
+
       // Auto-name with a " (n)" suffix if the user already has destinations
       // sharing this template name — keeps the picker self-contained while
       // avoiding duplicates that would confuse the "pick from existing" list.
