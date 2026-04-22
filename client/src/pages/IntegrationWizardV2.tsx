@@ -67,11 +67,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import {
+  APP_MANIFEST,
   FB_METADATA_FIELDS,
   FB_METADATA_LABELS,
   NAME_PATTERNS,
   PHONE_PATTERNS,
-  TEMPLATE_VARIABLE_FIELDS,
   autoMatchField,
   serializeFieldMappings,
   type FieldMapping,
@@ -80,11 +80,23 @@ import { DestinationCreatorInline } from "@/components/destinations/DestinationC
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-/** One entry in the ordered destination list. */
+/**
+ * One entry in the ordered destination list.
+ *
+ * `leadFields` — per-destination FROM_LEAD mapping driven by APP_MANIFEST.
+ *   key   = manifest field key ("name", "phone", or custom for custom type)
+ *   value = FB form field key that feeds this payload key ("full_name", etc.)
+ * For `custom` template type, `leadFields` is empty and `customMappings` is
+ * used instead (the FieldMappingsEditor rows).
+ */
 interface DestinationEntry {
   id: number;
   name: string;
   templateType: string;
+  /** Manifest-driven FROM_LEAD mappings: { name: "full_name", phone: "phone_number" } */
+  leadFields: Record<string, string>;
+  /** Custom/extra mappings for destinations without a fixed manifest (type="custom"). */
+  customMappings: FieldMapping[];
 }
 
 interface WizardState {
@@ -100,17 +112,6 @@ interface WizardState {
   // and is written to `integrations.targetWebsiteId` for legacy compat.
   // Additional entries fan-out via `integration_destinations`.
   destinations: DestinationEntry[];
-  /**
-   * Universal field mapping rows — one per lead field we want to forward.
-   * `from` = FB form field key (or null for a static value).
-   * `to`   = destination payload key.
-   * Auto-populated from ALL form fields when the form is selected;
-   * user can add / remove / reorder rows freely.
-   * Stored as `config.fieldMappings`; leadService falls back to the old
-   * `nameField`/`phoneField`/`extraFields` shape for legacy integrations.
-   */
-  fieldMappings: FieldMapping[];
-  variableFields: Record<string, string>;
   // Meta
   integrationName: string;
   /**
@@ -129,8 +130,6 @@ const INITIAL_STATE: WizardState = {
   formId: "",
   formName: "",
   destinations: [],
-  fieldMappings: [],
-  variableFields: {},
   integrationName: "",
   integrationNameTouched: false,
 };
@@ -424,25 +423,31 @@ export default function IntegrationWizardV2() {
     onError: (err) => toast.error(err.message),
   });
 
-  // ─── Auto-populate fieldMappings when form fields load ─────────────────────
-  // Runs once per form selection (setForm resets fieldMappings to []).
-  // Detects name/phone keys automatically, then adds all remaining fields so
-  // the user sees the full lead form at a glance (Make.com-style).
+  // ─── Auto-populate per-destination leadFields when form fields load ─────────
+  // When formFields become available and a destination is already selected,
+  // auto-detect name/phone for any leadFields that are still empty.
   useEffect(() => {
     if (!formFields?.length) return;
     setState((s) => {
-      if (s.fieldMappings.length > 0) return s; // already populated
-      const nameKey = autoMatchField(formFields, NAME_PATTERNS);
-      const phoneKey = autoMatchField(formFields, PHONE_PATTERNS);
-      const mappings: FieldMapping[] = [];
-      if (nameKey) mappings.push({ from: nameKey, to: "name" });
-      if (phoneKey) mappings.push({ from: phoneKey, to: "phone" });
-      for (const f of formFields) {
-        if (f.key !== nameKey && f.key !== phoneKey) {
-          mappings.push({ from: f.key, to: f.key });
+      const updated = s.destinations.map((d) => {
+        const manifest = APP_MANIFEST[d.templateType] ?? null;
+        if (!manifest || manifest.leadFields.length === 0) return d;
+        let changed = false;
+        const leadFields = { ...d.leadFields };
+        for (const lf of manifest.leadFields) {
+          if (leadFields[lf.key]) continue; // already mapped
+          if (lf.autoDetect === "name") {
+            const m = autoMatchField(formFields, NAME_PATTERNS);
+            if (m) { leadFields[lf.key] = m; changed = true; }
+          } else if (lf.autoDetect === "phone") {
+            const m = autoMatchField(formFields, PHONE_PATTERNS);
+            if (m) { leadFields[lf.key] = m; changed = true; }
+          }
         }
-      }
-      return mappings.length > 0 ? { ...s, fieldMappings: mappings } : s;
+        return changed ? { ...d, leadFields } : d;
+      });
+      const anyChanged = updated.some((d, i) => d !== s.destinations[i]);
+      return anyChanged ? { ...s, destinations: updated } : s;
     });
   }, [formFields]);
 
@@ -469,49 +474,36 @@ export default function IntegrationWizardV2() {
     state.integrationNameTouched,
   ]);
 
-  // ─── Auto-fill: seed variableFields with empty placeholders for custom ────
-  // templates so the mapping card has something to render. Existing values
-  // are preserved — we only fill in keys that aren't there yet.
-  useEffect(() => {
-    if (primaryDestType !== "custom") return;
-    if (!customVarNames.length) return;
-    setState((s) => {
-      const next = { ...s.variableFields };
-      let changed = false;
-      for (const key of customVarNames) {
-        if (next[key] === undefined) {
-          next[key] = "";
-          changed = true;
-        }
-      }
-      return changed ? { ...s, variableFields: next } : s;
-    });
-  }, [customVarNames, primaryDestType]);
-
-  // ─── Derived: variables required by the PRIMARY destination template ────────
-  const requiredVarKeys = useMemo(() => {
-    if (primaryDestType === "telegram") return [] as string[];
-    if (primaryDestType === "custom") return customVarNames;
-    const defs = TEMPLATE_VARIABLE_FIELDS[primaryDestType] ?? [];
-    return defs.filter((d) => d.required).map((d) => d.key);
-  }, [primaryDestType, customVarNames]);
 
   // ─── Validation ────────────────────────────────────────────────────────────
   const triggerFilled =
     !!state.accountId && !!state.pageId && !!state.formId;
   const destinationFilled = state.destinations.length > 0;
-  const mappingFilled =
-    // Must have at least a name row and a phone row with a source field picked
-    state.fieldMappings.some((m) => m.to === "name" && !!m.from) &&
-    state.fieldMappings.some((m) => m.to === "phone" && !!m.from) &&
-    // All rows that have a `to` key must also have a source (from or staticValue)
-    state.fieldMappings.every(
-      (m) =>
-        !m.to.trim() ||
-        (m.from !== null ? !!m.from : !!m.staticValue?.trim()),
-    ) &&
-    // Destination-specific required variables must be filled
-    requiredVarKeys.every((k) => !!state.variableFields[k]?.trim());
+  const mappingFilled = useMemo(() => {
+    if (!destinationFilled) return false;
+    // Check each destination's required leadFields are mapped
+    for (const dest of state.destinations) {
+      const manifest = APP_MANIFEST[dest.templateType] ?? null;
+      if (manifest && manifest.leadFields.length > 0) {
+        // Every required manifest field must have a form-field source
+        for (const lf of manifest.leadFields) {
+          if (lf.required && !dest.leadFields[lf.key]) return false;
+        }
+      } else if (dest.templateType === "custom") {
+        // Custom: at least one valid row
+        if (dest.customMappings.length === 0) return false;
+        if (
+          !dest.customMappings.every(
+            (m) =>
+              !m.to.trim() ||
+              (m.from !== null ? !!m.from : !!m.staticValue?.trim()),
+          )
+        )
+          return false;
+      }
+    }
+    return true;
+  }, [destinationFilled, state.destinations]);
   const nameFilled = !!state.integrationName.trim();
 
   const canSave =
@@ -547,7 +539,12 @@ export default function IntegrationWizardV2() {
       pageName: "",
       formId: "",
       formName: "",
-      fieldMappings: [],
+      // Reset destination leadFields — form fields change, old mappings invalid.
+      destinations: state.destinations.map((d) => ({
+        ...d,
+        leadFields: {},
+        customMappings: [],
+      })),
     });
   };
   const setPage = (id: string, name: string) => {
@@ -556,75 +553,142 @@ export default function IntegrationWizardV2() {
       pageName: name,
       formId: "",
       formName: "",
-      fieldMappings: [],
+      destinations: state.destinations.map((d) => ({
+        ...d,
+        leadFields: {},
+        customMappings: [],
+      })),
     });
   };
   const setForm = (id: string, name: string) => {
-    // Changing the form clears all mappings — auto-populate effect will
-    // re-detect name/phone and add all remaining form fields from the new form.
-    patch({ formId: id, formName: name, fieldMappings: [] });
-    // Stay in Step 1 — the "Map lead fields" section appears below the trigger.
+    patch({
+      formId: id,
+      formName: name,
+      // Changing form invalidates all FROM_LEAD mappings.
+      destinations: state.destinations.map((d) => ({
+        ...d,
+        leadFields: {},
+        customMappings: [],
+      })),
+    });
   };
 
   /** Add a destination to the list if not already present. */
   const addDestination = (id: number, name: string, templateType: string) => {
     setState((s) => {
-      if (s.destinations.some((d) => d.id === id)) return s; // already added
-      const next = [...s.destinations, { id, name, templateType }];
-      // If this is the first destination, reset variable fields (new template).
-      const variableFields = s.destinations.length === 0 ? {} : s.variableFields;
-      return { ...s, destinations: next, variableFields };
+      if (s.destinations.some((d) => d.id === id)) return s;
+      // Auto-populate leadFields from APP_MANIFEST + available formFields.
+      const manifest = APP_MANIFEST[templateType] ?? null;
+      const fields = formFields ?? [];
+      const leadFields: Record<string, string> = {};
+      if (manifest) {
+        for (const lf of manifest.leadFields) {
+          if (lf.autoDetect === "name") {
+            const m = autoMatchField(fields, NAME_PATTERNS);
+            if (m) leadFields[lf.key] = m;
+          } else if (lf.autoDetect === "phone") {
+            const m = autoMatchField(fields, PHONE_PATTERNS);
+            if (m) leadFields[lf.key] = m;
+          }
+        }
+      }
+      const entry: DestinationEntry = {
+        id, name, templateType, leadFields, customMappings: [],
+      };
+      return { ...s, destinations: [...s.destinations, entry] };
     });
-    // In the Zapier-style layout, mapping is shown inline in step 2 — no card
-    // jump needed. We stay in step 2 and the mapping section appears below.
   };
 
   /** Remove a destination from the list by id. */
   const removeDestination = (id: number) => {
-    setState((s) => {
-      const next = s.destinations.filter((d) => d.id !== id);
-      // If we removed the primary destination, reset variable fields.
-      const removedPrimary = s.destinations[0]?.id === id;
-      return {
-        ...s,
-        destinations: next,
-        variableFields: removedPrimary ? {} : s.variableFields,
-      };
-    });
+    setState((s) => ({
+      ...s,
+      destinations: s.destinations.filter((d) => d.id !== id),
+    }));
   };
 
-  const addFormMappingRow = () =>
+  /** Update a single FROM_LEAD field for a destination (manifest-driven). */
+  const updateLeadField = (destId: number, fieldKey: string, formFieldKey: string) =>
     setState((s) => ({
       ...s,
-      fieldMappings: [...s.fieldMappings, { from: "", to: "" }],
+      destinations: s.destinations.map((d) =>
+        d.id === destId
+          ? { ...d, leadFields: { ...d.leadFields, [fieldKey]: formFieldKey } }
+          : d,
+      ),
     }));
-  const addStaticMappingRow = () =>
+
+  /** Update custom mappings (FieldMappingsEditor rows) for a destination. */
+  const updateCustomMapping = (destId: number, index: number, p: Partial<FieldMapping>) =>
     setState((s) => ({
       ...s,
-      fieldMappings: [...s.fieldMappings, { from: null, to: "", staticValue: "" }],
+      destinations: s.destinations.map((d) => {
+        if (d.id !== destId) return d;
+        const next = [...d.customMappings];
+        const ex = next[index];
+        if (!ex) return d;
+        next[index] = { ...ex, ...p };
+        return { ...d, customMappings: next };
+      }),
     }));
-  const updateMapping = (index: number, p: Partial<FieldMapping>) =>
-    setState((s) => {
-      const next = [...s.fieldMappings];
-      const existing = next[index];
-      if (!existing) return s;
-      next[index] = { ...existing, ...p };
-      return { ...s, fieldMappings: next };
-    });
-  const removeMapping = (index: number) =>
+  const addCustomMappingFormRow = (destId: number) =>
     setState((s) => ({
       ...s,
-      fieldMappings: s.fieldMappings.filter((_, i) => i !== index),
+      destinations: s.destinations.map((d) =>
+        d.id === destId
+          ? { ...d, customMappings: [...d.customMappings, { from: "", to: "" }] }
+          : d,
+      ),
+    }));
+  const addCustomMappingStaticRow = (destId: number) =>
+    setState((s) => ({
+      ...s,
+      destinations: s.destinations.map((d) =>
+        d.id === destId
+          ? { ...d, customMappings: [...d.customMappings, { from: null, to: "", staticValue: "" }] }
+          : d,
+      ),
+    }));
+  const removeCustomMapping = (destId: number, index: number) =>
+    setState((s) => ({
+      ...s,
+      destinations: s.destinations.map((d) =>
+        d.id === destId
+          ? { ...d, customMappings: d.customMappings.filter((_, i) => i !== index) }
+          : d,
+      ),
     }));
 
   // ─── Save handler ──────────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!canSave) return;
-    // Derive legacy nameField/phoneField from fieldMappings so that any path
-    // in leadService that hasn't been migrated to fieldMappings yet still works.
-    const serialized = serializeFieldMappings(state.fieldMappings);
-    const nameMapping = serialized.find((m) => m.to === "name" && m.from);
-    const phoneMapping = serialized.find((m) => m.to === "phone" && m.from);
+    const primaryDest_ = state.destinations[0]!;
+
+    // Build fieldMappings from primary destination's manifest leadFields.
+    // For custom destinations, use customMappings rows.
+    let fieldMappings: FieldMapping[];
+    if (primaryManifest && primaryManifest.leadFields.length > 0) {
+      fieldMappings = serializeFieldMappings(
+        Object.entries(primaryDest_.leadFields)
+          .filter(([, from]) => from)
+          .map(([to, from]) => ({ from, to })),
+      );
+    } else {
+      fieldMappings = serializeFieldMappings(primaryDest_.customMappings);
+    }
+
+    // Extract legacy compat fields from fieldMappings
+    const nameMapping = fieldMappings.find((m) => m.to === "name" && m.from);
+    const phoneMapping = fieldMappings.find((m) => m.to === "phone" && m.from);
+
+    // Build variableFields from the destination's templateConfig (connection keys).
+    // This avoids requiring the user to re-enter offer_id/stream in the wizard.
+    const tplCfg = (primaryDestRecord?.templateConfig ?? {}) as Record<string, unknown>;
+    const variableFields: Record<string, string> = {};
+    for (const key of (primaryManifest?.connectionKeys ?? [])) {
+      const v = tplCfg[key];
+      if (typeof v === "string" && v) variableFields[key] = v;
+    }
 
     const config = {
       facebookAccountId: state.accountId,
@@ -632,16 +696,14 @@ export default function IntegrationWizardV2() {
       pageName: state.pageName,
       formId: state.formId,
       formName: state.formName,
-      // New universal mapping (leadService reads this first)
-      fieldMappings: serialized,
-      // Legacy compat columns — derived from fieldMappings above
+      fieldMappings,
+      // Legacy compat
       nameField: nameMapping?.from ?? "",
       phoneField: phoneMapping?.from ?? "",
-      // Legacy compat: first destination id/name/type in config.
       targetWebsiteId: primaryDestId,
       targetWebsiteName: primaryDestName,
       targetTemplateType: primaryDestType,
-      variableFields: state.variableFields,
+      variableFields,
     };
     const destinationIds = state.destinations.map((d) => d.id);
     try {
@@ -702,27 +764,31 @@ export default function IntegrationWizardV2() {
     );
   }
 
-  // ─── Derived: destination-specific variable entries for Step 2 ────────────
-  // Name/phone/extra fields stay in Step 1 (Facebook trigger context).
-  // Only destination-specific variables (offer_id, stream, etc.) live in Step 2.
-  const destVarEntries = useMemo(() => {
-    if (!primaryDestType || primaryDestType === "telegram") return [];
-    const isCustom = primaryDestType === "custom";
-    if (isCustom) {
-      return Object.keys(state.variableFields).map((k) => ({
-        key: k,
-        label: k,
-        placeholder: `Value for ${k}`,
-        required: true as const,
-      }));
+  // ─── Derived: primary destination's APP_MANIFEST entry ─────────────────────
+  const primaryManifest = useMemo(
+    () => (primaryDestType ? (APP_MANIFEST[primaryDestType] ?? null) : null),
+    [primaryDestType],
+  );
+
+  // ─── Derived: connection config for primary destination (for read-only display)
+  const primaryDestRecord = useMemo(
+    () => targetWebsites?.find((t) => t.id === primaryDestId) ?? null,
+    [targetWebsites, primaryDestId],
+  );
+  const connectionConfig = useMemo(() => {
+    if (!primaryManifest || !primaryDestRecord) return {};
+    const cfg = (primaryDestRecord.templateConfig ?? {}) as Record<string, unknown>;
+    const result: Record<string, string> = {};
+    // Show declared connection keys (non-secret display values)
+    for (const key of primaryManifest.connectionKeys) {
+      const v = cfg[key];
+      if (typeof v === "string" && v) result[key] = v;
     }
-    return (TEMPLATE_VARIABLE_FIELDS[primaryDestType] ?? []) as Array<{
-      key: string;
-      label: string;
-      placeholder: string;
-      required: boolean;
-    }>;
-  }, [primaryDestType, state.variableFields]);
+    // Also show masked secrets if present
+    if (typeof cfg.apiKeyMasked === "string") result.api_key = cfg.apiKeyMasked;
+    if (typeof cfg.botTokenMasked === "string") result.bot_token = cfg.botTokenMasked;
+    return result;
+  }, [primaryManifest, primaryDestRecord]);
 
   // ─── Derived: step 2 app icon + color ─────────────────────────────────────
   // Show the primary destination's category icon in the step 2 circle; fall
@@ -802,39 +868,7 @@ export default function IntegrationWizardV2() {
               onPickForm={setForm}
             />
 
-            {/* ── Map lead fields (shown after form is selected) ── */}
-            {triggerFilled && (
-              <div className="border-t mt-5 pt-5 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                    Map lead fields
-                  </div>
-                  {!loadingFields && (formFields ?? []).length > 0 && (
-                    <span className="text-[11px] text-muted-foreground">
-                      {state.fieldMappings.length} field
-                      {state.fieldMappings.length !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                </div>
-
-                {loadingFields ? (
-                  <LoadingBar />
-                ) : (formFields ?? []).length > 0 ? (
-                  <FieldMappingsEditor
-                    formFields={formFields ?? []}
-                    mappings={state.fieldMappings}
-                    onUpdate={updateMapping}
-                    onRemove={removeMapping}
-                    onAddFormRow={addFormMappingRow}
-                    onAddStaticRow={addStaticMappingRow}
-                  />
-                ) : (
-                  <EmptyHint message="The selected form has no fields yet. Try a different form or check its status in Facebook." />
-                )}
-              </div>
-            )}
-
-            {/* Continue button — advances to step 2 */}
+            {/* Continue — field mapping lives in Step 2 per destination */}
             {triggerFilled && (
               <div className="flex justify-end pt-4 mt-2 border-t">
                 <Button size="sm" onClick={() => setActiveStep(2)}>
@@ -898,42 +932,24 @@ export default function IntegrationWizardV2() {
                   />
                 </div>
 
-                {/* Destination-specific variables (offer_id, stream, etc.)
-                    Name/phone/extra fields live in Step 1 (trigger). */}
-                {destinationFilled && destVarEntries.length > 0 && (
-                  <div className="border-t mt-5 pt-5 space-y-3">
-                    <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Destination variables
-                      <span className="ml-1.5 normal-case font-normal">
-                        ({primaryDestName})
-                      </span>
-                    </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      {destVarEntries.map((v) => (
-                        <div key={v.key} className="space-y-1">
-                          <Label className="text-xs">
-                            {v.label}
-                            {v.required && (
-                              <span className="text-destructive"> *</span>
-                            )}
-                          </Label>
-                          <Input
-                            className="h-8 text-sm"
-                            placeholder={v.placeholder}
-                            value={state.variableFields[v.key] ?? ""}
-                            onChange={(e) =>
-                              patch({
-                                variableFields: {
-                                  ...state.variableFields,
-                                  [v.key]: e.target.value,
-                                },
-                              })
-                            }
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                {/* AppManifest-driven field mapping (Make.com / Zapier level) */}
+                {destinationFilled && primaryManifest && (
+                  <AppManifestMapper
+                    manifest={primaryManifest}
+                    destEntry={primaryDest!}
+                    formFields={formFields ?? []}
+                    loadingFields={loadingFields}
+                    connectionConfig={connectionConfig}
+                    onUpdateLeadField={(key, formField) =>
+                      updateLeadField(primaryDest!.id, key, formField)
+                    }
+                    onUpdateCustomMapping={(i, p) =>
+                      updateCustomMapping(primaryDest!.id, i, p)
+                    }
+                    onAddCustomFormRow={() => addCustomMappingFormRow(primaryDest!.id)}
+                    onAddCustomStaticRow={() => addCustomMappingStaticRow(primaryDest!.id)}
+                    onRemoveCustomMapping={(i) => removeCustomMapping(primaryDest!.id, i)}
+                  />
                 )}
 
                 {/* Integration name + Publish (shown once destination is picked) */}
@@ -1458,6 +1474,174 @@ function DestinationEditor({
   );
 }
 
+
+// ─── AppManifestMapper ─────────────────────────────────────────────────────────
+// Make.com / Zapier level: per-service field mapping driven by APP_MANIFEST.
+//
+//  For manifest services (sotuvchi, 100k, telegram …):
+//    FIELD MAPPING
+//      Ism *    ← [Full name (full_name) ▼]
+//      Telefon* ← [Phone number        ▼]
+//    CONNECTION CONFIG  (read-only)
+//      offer_id: 456   stream: main   api_key: ••••
+//
+//  For "custom" type: falls back to the FieldMappingsEditor (dynamic rows).
+
+interface AppManifestMapperProps {
+  manifest: import("./lead-routing/shared").AppManifestService;
+  destEntry: DestinationEntry;
+  formFields: Array<{ key: string; label?: string | null }>;
+  loadingFields: boolean;
+  connectionConfig: Record<string, string>;
+  onUpdateLeadField: (key: string, formField: string) => void;
+  onUpdateCustomMapping: (index: number, p: Partial<FieldMapping>) => void;
+  onAddCustomFormRow: () => void;
+  onAddCustomStaticRow: () => void;
+  onRemoveCustomMapping: (index: number) => void;
+}
+
+function AppManifestMapper({
+  manifest,
+  destEntry,
+  formFields,
+  loadingFields,
+  connectionConfig,
+  onUpdateLeadField,
+  onUpdateCustomMapping,
+  onAddCustomFormRow,
+  onAddCustomStaticRow,
+  onRemoveCustomMapping,
+}: AppManifestMapperProps) {
+  const isCustom = manifest.id === "custom";
+  const hasConnection = Object.keys(connectionConfig).length > 0;
+
+  return (
+    <div className="border-t mt-5 pt-5 space-y-5">
+      {/* ── FROM_LEAD field mapping ── */}
+      {!isCustom && manifest.leadFields.length > 0 && (
+        <div className="space-y-3">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Field mapping
+            <span className="ml-1.5 normal-case font-normal">
+              ({manifest.label})
+            </span>
+          </div>
+
+          {loadingFields ? (
+            <LoadingBar />
+          ) : formFields.length === 0 ? (
+            <EmptyHint message="No form fields loaded. Select a form in Step 1 first." />
+          ) : (
+            <div className="space-y-2">
+              {manifest.leadFields.map((lf) => {
+                const currentVal = destEntry.leadFields[lf.key] ?? "";
+                return (
+                  <div
+                    key={lf.key}
+                    className={cn(
+                      "grid grid-cols-[120px_12px_1fr] items-center gap-2 rounded-lg border px-3 py-2",
+                      lf.required
+                        ? "border-primary/25 bg-primary/4"
+                        : "border-border bg-background",
+                    )}
+                  >
+                    {/* Destination field label */}
+                    <div className="text-xs font-medium leading-tight">
+                      {lf.label}
+                      {lf.required && (
+                        <span className="text-destructive ml-0.5">*</span>
+                      )}
+                    </div>
+                    <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+                    {/* FB form field picker */}
+                    <Select
+                      value={currentVal || undefined}
+                      onValueChange={(v) => onUpdateLeadField(lf.key, v)}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Pick FB form field…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectLabel className="text-[11px]">Form fields</SelectLabel>
+                          {formFields.map((f) => (
+                            <SelectItem key={f.key} value={f.key}>
+                              {f.label ? `${f.label} (${f.key})` : f.key}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                        <SelectGroup>
+                          <SelectLabel className="text-[11px]">FB metadata</SelectLabel>
+                          {FB_METADATA_FIELDS.map((m) => (
+                            <SelectItem key={m.key} value={m.key}>
+                              {FB_METADATA_LABELS[m.key]} ({m.key})
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Custom (dynamic) type uses full FieldMappingsEditor ── */}
+      {isCustom && (
+        <div className="space-y-3">
+          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            Field mapping
+            <span className="ml-1.5 normal-case font-normal">(Custom Webhook)</span>
+          </div>
+          {loadingFields ? (
+            <LoadingBar />
+          ) : (
+            <FieldMappingsEditor
+              formFields={formFields}
+              mappings={destEntry.customMappings}
+              onUpdate={onUpdateCustomMapping}
+              onRemove={onRemoveCustomMapping}
+              onAddFormRow={onAddCustomFormRow}
+              onAddStaticRow={onAddCustomStaticRow}
+            />
+          )}
+        </div>
+      )}
+
+      {/* ── Connection config (read-only) ── */}
+      {hasConnection && (
+        <div className="space-y-2 rounded-xl border bg-muted/30 px-3 py-3">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />
+            <span className="text-xs font-semibold">
+              Connection
+              <span className="ml-1 font-normal text-muted-foreground">
+                ({destEntry.name})
+              </span>
+            </span>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+            {Object.entries(connectionConfig).map(([k, v]) => (
+              <div key={k} className="flex items-center gap-1.5 text-xs">
+                <span className="text-muted-foreground font-mono">{k}:</span>
+                <span
+                  className={cn(
+                    "font-mono",
+                    v.startsWith("•") ? "text-muted-foreground" : "font-medium",
+                  )}
+                >
+                  {v}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─── FieldMappingsEditor ───────────────────────────────────────────────────────
 // Make.com-style row-per-field mapper.  Every row:

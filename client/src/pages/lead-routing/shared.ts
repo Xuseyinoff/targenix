@@ -174,13 +174,92 @@ export function hydrateExtraFields(value: unknown): ExtraFieldDraft[] {
   });
 }
 
-// ─── Template variable-field definitions (known destination templates) ───────
+// ─── App Manifest — JSON-driven service schema (Make.com/Zapier level) ────────
 
 /**
- * Destination templates known at build time. When a user picks a template
- * with required variables (e.g. "sotuvchi" → offer_id + stream), the wizard
- * renders those inputs. "custom" is handled separately via an API that
- * extracts variables from the template body.
+ * A "lead field" is a field whose value comes FROM the Facebook form payload.
+ * The user maps: FB form field key → this key in the outbound payload.
+ * e.g. "Full name (full_name)" → "name"
+ */
+export interface AppManifestLeadField {
+  key: string;       // outbound payload key: "name", "phone"
+  label: string;     // UI label shown to user: "Ism (to'liq)"
+  required: boolean;
+  /** Auto-detection hint: which global pattern set to use. */
+  autoDetect?: "name" | "phone";
+}
+
+/**
+ * One service (destination template) known at build time.
+ *
+ * leadFields        — fields mapped FROM the FB form by the user.
+ * connectionKeys    — keys inside destination.templateConfig that are shown
+ *                     read-only in the wizard as the "connection config".
+ *                     Secret keys (apiKeyMasked, botTokenMasked) are always
+ *                     added automatically; only non-secret display keys go here.
+ */
+export interface AppManifestService {
+  id: string;
+  label: string;
+  description: string;
+  leadFields: AppManifestLeadField[];
+  connectionKeys: string[];
+}
+
+export const APP_MANIFEST: Record<string, AppManifestService> = {
+  sotuvchi: {
+    id: "sotuvchi",
+    label: "Sotuvchi.com",
+    description: "Uzbekistan CPA affiliate",
+    leadFields: [
+      { key: "name",  label: "Ism (to'liq)",   required: true,  autoDetect: "name"  },
+      { key: "phone", label: "Telefon raqami",  required: true,  autoDetect: "phone" },
+    ],
+    connectionKeys: ["offer_id", "stream"],
+  },
+  "100k": {
+    id: "100k",
+    label: "100K.uz",
+    description: "Uzbekistan CPA affiliate",
+    leadFields: [
+      { key: "name",  label: "Ism",     required: true,  autoDetect: "name"  },
+      { key: "phone", label: "Telefon", required: true,  autoDetect: "phone" },
+    ],
+    connectionKeys: ["stream_id"],
+  },
+  telegram: {
+    id: "telegram",
+    label: "Telegram",
+    description: "Telegram channel/group notification",
+    leadFields: [
+      { key: "name",  label: "Ism",     required: true,  autoDetect: "name"  },
+      { key: "phone", label: "Telefon", required: true,  autoDetect: "phone" },
+    ],
+    connectionKeys: [],
+  },
+  "google-sheets": {
+    id: "google-sheets",
+    label: "Google Sheets",
+    description: "Append row to a Google Sheet",
+    leadFields: [
+      { key: "name",  label: "Ism",     required: true,  autoDetect: "name"  },
+      { key: "phone", label: "Telefon", required: true,  autoDetect: "phone" },
+    ],
+    connectionKeys: ["spreadsheetId", "sheetName"],
+  },
+  custom: {
+    id: "custom",
+    label: "Custom Webhook",
+    description: "POST to any URL",
+    // Dynamic — user builds their own mapping via FieldMappingsEditor.
+    leadFields: [],
+    connectionKeys: [],
+  },
+};
+
+/**
+ * Legacy TEMPLATE_VARIABLE_FIELDS kept for backward compatibility.
+ * New code should use APP_MANIFEST instead.
  */
 export const TEMPLATE_VARIABLE_FIELDS: Record<
   string,
