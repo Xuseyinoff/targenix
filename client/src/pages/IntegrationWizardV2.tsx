@@ -690,6 +690,28 @@ export default function IntegrationWizardV2() {
     );
   }
 
+  // ─── Derived: destination-specific variable entries for Step 2 ────────────
+  // Name/phone/extra fields stay in Step 1 (Facebook trigger context).
+  // Only destination-specific variables (offer_id, stream, etc.) live in Step 2.
+  const destVarEntries = useMemo(() => {
+    if (!primaryDestType || primaryDestType === "telegram") return [];
+    const isCustom = primaryDestType === "custom";
+    if (isCustom) {
+      return Object.keys(state.variableFields).map((k) => ({
+        key: k,
+        label: k,
+        placeholder: `Value for ${k}`,
+        required: true as const,
+      }));
+    }
+    return (TEMPLATE_VARIABLE_FIELDS[primaryDestType] ?? []) as Array<{
+      key: string;
+      label: string;
+      placeholder: string;
+      required: boolean;
+    }>;
+  }, [primaryDestType, state.variableFields]);
+
   // ─── Derived: step 2 app icon + color ─────────────────────────────────────
   // Show the primary destination's category icon in the step 2 circle; fall
   // back to Zap when nothing is selected yet.
@@ -767,13 +789,84 @@ export default function IntegrationWizardV2() {
               onPickPage={setPage}
               onPickForm={setForm}
             />
+
+            {/* ── Map lead fields (shown after form is selected) ── */}
+            {triggerFilled && (
+              <div className="border-t mt-5 pt-5 space-y-4">
+                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Map lead fields
+                </div>
+
+                {loadingFields ? (
+                  <LoadingBar />
+                ) : (formFields ?? []).length > 0 ? (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <FieldSelect
+                        label="Name field"
+                        value={state.nameField}
+                        formFields={formFields ?? []}
+                        onChange={(v) => patch({ nameField: v })}
+                        placeholder="Pick the lead's name field"
+                      />
+                      <FieldSelect
+                        label="Phone field"
+                        value={state.phoneField}
+                        formFields={formFields ?? []}
+                        onChange={(v) => patch({ phoneField: v })}
+                        placeholder="Pick the lead's phone field"
+                      />
+                    </div>
+
+                    {/* Extra fields */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">
+                          Extra fields
+                          <span className="ml-1 text-muted-foreground font-normal">
+                            (optional)
+                          </span>
+                        </Label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={addExtra}
+                        >
+                          <Plus className="h-3.5 w-3.5 mr-1" />
+                          Add field
+                        </Button>
+                      </div>
+                      {state.extraFields.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">
+                          Map additional form answers or static values (e.g.
+                          UTM tags) to the destination payload.
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {state.extraFields.map((ef, i) => (
+                            <ExtraFieldRow
+                              key={i}
+                              field={ef}
+                              formFields={formFields ?? []}
+                              onChange={(p) => updateExtra(i, p)}
+                              onRemove={() => removeExtra(i)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <EmptyHint message="The selected form has no fields yet. Try a different form or check its status in Facebook." />
+                )}
+              </div>
+            )}
+
             {/* Continue button — advances to step 2 */}
             {triggerFilled && (
-              <div className="flex justify-end pt-4 mt-1 border-t">
-                <Button
-                  size="sm"
-                  onClick={() => setActiveStep(2)}
-                >
+              <div className="flex justify-end pt-4 mt-2 border-t">
+                <Button size="sm" onClick={() => setActiveStep(2)}>
                   Continue
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
@@ -834,26 +927,41 @@ export default function IntegrationWizardV2() {
                   />
                 </div>
 
-                {/* Field mapping (shown once a destination is picked) */}
-                {destinationFilled && (
-                  <div className="border-t mt-5 pt-5 space-y-4">
+                {/* Destination-specific variables (offer_id, stream, etc.)
+                    Name/phone/extra fields live in Step 1 (trigger). */}
+                {destinationFilled && destVarEntries.length > 0 && (
+                  <div className="border-t mt-5 pt-5 space-y-3">
                     <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                      Map fields
+                      Destination variables
                       <span className="ml-1.5 normal-case font-normal">
                         ({primaryDestName})
                       </span>
                     </div>
-                    <MappingEditor
-                      formFields={formFields ?? []}
-                      loadingFields={loadingFields}
-                      state={state}
-                      primaryDestName={primaryDestName}
-                      primaryDestType={primaryDestType}
-                      onPatch={patch}
-                      onAddExtra={addExtra}
-                      onUpdateExtra={updateExtra}
-                      onRemoveExtra={removeExtra}
-                    />
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {destVarEntries.map((v) => (
+                        <div key={v.key} className="space-y-1">
+                          <Label className="text-xs">
+                            {v.label}
+                            {v.required && (
+                              <span className="text-destructive"> *</span>
+                            )}
+                          </Label>
+                          <Input
+                            className="h-8 text-sm"
+                            placeholder={v.placeholder}
+                            value={state.variableFields[v.key] ?? ""}
+                            onChange={(e) =>
+                              patch({
+                                variableFields: {
+                                  ...state.variableFields,
+                                  [v.key]: e.target.value,
+                                },
+                              })
+                            }
+                          />
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 )}
 
