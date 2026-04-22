@@ -703,6 +703,41 @@ export default function IntegrationWizardV2() {
     });
   }, [formFields, targetWebsites]);
 
+  // ─── Trigger variable catalogue (for the Make.com-style Map toggle) ────────
+  //
+  // Build a "Field data" VariableGroup from the currently selected Facebook
+  // lead form's questions, so every `mappable` field inside
+  // DestinationCreatorInline gets a picker that lists the exact set of
+  // tokens the server's extraFields will populate at delivery time.
+  //
+  // We intentionally exclude the two CORE questions (`full_name`,
+  // `phone_number`) because those are NOT forwarded as extraFields server
+  // side — they already live in the adapter's top-level metadata group as
+  // `{{name}}` / `{{phone}}` (or `{{full_name}}` / `{{phone_number}}` for
+  // Telegram). Surfacing them here would let users pick a token that
+  // silently renders blank.
+  const triggerVariableGroups = useMemo(() => {
+    if (!formFields?.length) return undefined;
+    const vars = formFields
+      .filter((f) => {
+        const k = f.key.toLowerCase();
+        return k !== "full_name" && k !== "phone_number";
+      })
+      .map((f) => ({ key: f.key, label: f.label || f.key }));
+    if (vars.length === 0) return undefined;
+    return [
+      {
+        id: "form-fields",
+        label: "Field data",
+        description: state.formName
+          ? `From "${state.formName}"`
+          : "From your Facebook lead form",
+        variables: vars,
+        defaultExpanded: true,
+      },
+    ];
+  }, [formFields, state.formName]);
+
   // ─── Auto-fill: integration name once page + destinations are chosen ────────
   // Tracks the "auto" vs "user-edited" state via `integrationNameTouched`. As
   // long as the user hasn't typed into the name field, we keep the suggestion
@@ -1222,6 +1257,7 @@ export default function IntegrationWizardV2() {
                   setInlineCreatorAppKey(undefined);
                 }}
                 onCancel={() => setInlineCreatorAppKey(undefined)}
+                triggerVariables={triggerVariableGroups}
               />
             ) : !destinationFilled ? (
               /* ── Empty Action step: one big "+ Add action" CTA ──

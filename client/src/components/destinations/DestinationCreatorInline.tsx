@@ -28,7 +28,11 @@ import {
   validateFields,
   type FieldValues,
 } from "@/components/dynamic-form";
-import type { ConfigField } from "@/components/dynamic-form";
+import type {
+  ConfigField,
+  AvailableVariable,
+  VariableGroup,
+} from "@/components/dynamic-form";
 import { AppIcon, appIconBgClass } from "./appIcons";
 import {
   APP_KEY_TO_TEMPLATE_TYPE,
@@ -53,6 +57,16 @@ export interface DestinationCreatorInlineProps {
   }) => void;
   /** Called when the user clicks "Cancel" or "← Back" from the pick step. */
   onCancel: () => void;
+  /**
+   * Extra variable groups to surface in the per-field Map toggle on top of
+   * the app-specific "Lead metadata" baseline. Typically populated by the
+   * integration wizard from the selected Facebook lead form's questions
+   * (e.g. "Field data" → Full name, Phone number, Vehicle, Custom 1, …).
+   *
+   * When omitted, only the adapter's metadata group is shown — safe default
+   * for the standalone /destinations page where no trigger is bound yet.
+   */
+  triggerVariables?: VariableGroup[];
 }
 
 interface AppListItem {
@@ -79,6 +93,7 @@ export function DestinationCreatorInline({
   initialAppKey,
   onCreated,
   onCancel,
+  triggerVariables,
 }: DestinationCreatorInlineProps) {
   const [step, setStep] = React.useState<"pick" | "configure">(
     initialAppKey ? "configure" : "pick",
@@ -393,11 +408,16 @@ export function DestinationCreatorInline({
 
       {/* Dynamic form fields.
           `availableVariables` wakes up the Make.com-style per-field Map
-          toggle — when the manifest marks a field `mappable: true` we want
-          the user to be able to drop a lead variable in with one click.
-          The list is the canonical set of keys affiliateService's
-          injectVariables() expands at delivery, so what users pick here is
-          exactly what they'll receive at runtime. */}
+          toggle. We compose it from two sources so the picker shows BOTH
+          the adapter-specific metadata ({{name}}, {{phone}}, …) AND —
+          when the wizard supplies one — a "Field data" group built from
+          the actual Facebook lead form's questions.
+
+          The adapter metadata list is hand-kept in sync with the server's
+          buildVariableContext() / per-adapter ctx, so every key the user
+          can pick here is one injectVariables() will actually expand at
+          delivery. Introducing a new key here requires a matching server
+          change, or the token will render as an empty string. */}
       <DynamicForm
         fields={fields}
         appKey={selectedApp.key}
@@ -405,7 +425,10 @@ export function DestinationCreatorInline({
         onChange={setFormValues}
         errors={formErrors}
         disabled={isSaving}
-        availableVariables={LEAD_VARIABLE_SUGGESTIONS}
+        availableVariables={[
+          adapterVariableGroup(selectedApp.key),
+          ...(triggerVariables ?? []),
+        ]}
       />
 
       {/* Footer: cancel + save */}
@@ -427,24 +450,59 @@ export function DestinationCreatorInline({
   );
 }
 
-// ─── Lead variable catalogue ────────────────────────────────────────────────
+// ─── Adapter-specific lead variable catalogues ───────────────────────────────
 //
-// Keep this list in sync with affiliateService.injectVariables() — every key
-// below MUST be expanded at delivery time, otherwise the Map toggle would
-// let a user pick a variable that silently renders as "{{full_name}}" in
-// the outbound request. Adding a new key here without wiring it server-side
-// is the most likely way to regress this feature.
-const LEAD_VARIABLE_SUGGESTIONS: Array<{ key: string; label: string }> = [
-  { key: "full_name", label: "Full name" },
-  { key: "phone_number", label: "Phone number" },
+// The set of keys injectVariables() can actually expand DIFFERS between
+// adapters. telegramAdapter builds its own ctx ({{full_name}}, {{pageName}}
+// …) while plainUrl / httpWebhook use buildVariableContext() in
+// affiliateService.ts ({{name}}, {{phone}}, {{lead_id}} …). Exposing the
+// wrong set would silently render blanks at delivery, so the picker is
+// parametrised per app key.
+//
+// IMPORTANT: every key below MUST have a matching entry server-side. If you
+// add one here without a corresponding ctx.<key> = … line in the adapter,
+// users will see the variable in the picker but the outbound request will
+// contain an empty string where the token was.
+
+const ADAPTER_METADATA_GROUPS: Record<string, AvailableVariable[]> = {
+  // Telegram builds its own ctx in telegramAdapter.ts:
+  //   ctx.full_name / phone_number / email / pageName / formName /
+  //   campaignName / createdAt, plus spread extraFields.
+  telegram: [
+    { key: "full_name", label: "Full name" },
+    { key: "phone_number", label: "Phone number" },
+    { key: "email", label: "Email" },
+    { key: "pageName", label: "Page name" },
+    { key: "formName", label: "Form name" },
+    { key: "campaignName", label: "Campaign name" },
+    { key: "createdAt", label: "Lead created at" },
+  ],
+};
+
+// Default = what affiliateService.buildVariableContext() exposes. Used by
+// every plainUrl / httpWebhook / custom-template destination and — safely —
+// by any manifest whose adapter wasn't explicitly listed above, because
+// those adapters all eventually feed buildCustomBody() which takes the same
+// ctx shape.
+const DEFAULT_METADATA: AvailableVariable[] = [
+  { key: "name", label: "Full name" },
+  { key: "phone", label: "Phone number" },
   { key: "email", label: "Email" },
-  { key: "pageName", label: "Page name" },
-  { key: "formName", label: "Form name" },
-  { key: "leadgen_id", label: "Lead ID" },
+  { key: "lead_id", label: "Lead ID" },
   { key: "page_id", label: "Page ID" },
   { key: "form_id", label: "Form ID" },
-  { key: "createdAt", label: "Lead created at" },
 ];
+
+function adapterVariableGroup(appKey: string): VariableGroup {
+  const vars = ADAPTER_METADATA_GROUPS[appKey] ?? DEFAULT_METADATA;
+  return {
+    id: "lead-meta",
+    label: "Lead metadata",
+    description: "Always available for this destination",
+    variables: vars,
+    defaultExpanded: true,
+  };
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

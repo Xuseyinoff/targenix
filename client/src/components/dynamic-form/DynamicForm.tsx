@@ -45,9 +45,11 @@ import {
   SelectField,
   TextField,
   TextareaField,
+  flattenVariables,
   type AvailableVariable,
   type FieldMapping,
   type RepeatableRowValues,
+  type VariableCatalogue,
 } from "./fields";
 import type { ConfigField } from "./types";
 import {
@@ -78,10 +80,12 @@ export interface DynamicFormProps {
   /** Disable every field (e.g. while saving). */
   disabled?: boolean;
   /**
-   * Trigger-time variables available to FieldMapping rows. Forwarded as-is
-   * to each FieldMappingField. Typically the lead/trigger schema.
+   * Trigger-time variables available to FieldMapping rows AND the per-field
+   * Map toggle. Accepts either a legacy flat list OR a grouped tree (Make.com
+   * style, e.g. "Lead metadata" + "Field data"). Grouped trees render as a
+   * searchable, collapsible picker; flat lists render as a single group.
    */
-  availableVariables?: Array<{ key: string; label: string }>;
+  availableVariables?: VariableCatalogue;
   /** Extra className on the outer container. */
   className?: string;
   /**
@@ -189,12 +193,18 @@ export function DynamicForm({
     [values, connectionFieldKey],
   );
 
-  // Variable catalogue used both by FieldMappingField (legacy) and by the
-  // new per-field Map toggle (Make.com parity). Narrowed to the shape the
-  // toggle expects so we don't drag FieldMapping's extra metadata into it.
-  const mapToggleVariables: AvailableVariable[] | undefined =
+  // Variable catalogue forwarded to the per-field Map toggle unchanged —
+  // the picker itself knows how to render either a flat list or a grouped
+  // tree, so we don't normalise here.
+  const mapToggleVariables = availableVariables;
+
+  // Legacy `FieldMappingField` (the big 1-row-per-lead-field widget) only
+  // needs a flat list of selectable keys, so we flatten any grouped tree
+  // into a single array for it. This keeps that component oblivious to the
+  // new group shape and avoids touching its internals.
+  const flatMappingVariables: AvailableVariable[] | undefined =
     availableVariables && availableVariables.length > 0
-      ? availableVariables.map((v) => ({ key: v.key, label: v.label }))
+      ? flattenVariables(availableVariables)
       : undefined;
 
   /**
@@ -379,7 +389,7 @@ export function DynamicForm({
             params={paramsFor(field)}
             error={error}
             disabled={disabled}
-            availableVariables={availableVariables}
+            availableVariables={flatMappingVariables}
           />
         );
 

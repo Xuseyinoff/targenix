@@ -41,3 +41,12 @@ export type {
   FieldError,
   LoadedOption,
 } from "./types";
+
+// Public variable-catalogue types for the per-field Map toggle. Callers
+// (e.g. DestinationCreatorInline, IntegrationWizardV2) import these when
+// they build a grouped "Lead metadata" + "Field data" picker tree.
+export type {
+  AvailableVariable,
+  VariableGroup,
+  VariableCatalogue,
+} from "./fields";

@@ -26,7 +26,7 @@ export { CodeField } from "./CodeField";
 export { HiddenField } from "./HiddenField";
 export { RepeatableField } from "./RepeatableField";
 export { GroupField } from "./GroupField";
-export { MapToggleWrapper } from "./MapToggleWrapper";
+export { MapToggleWrapper, toVariableGroups, flattenVariables } from "./MapToggleWrapper";
 
 export type { TextFieldProps } from "./TextField";
 export type { PasswordFieldProps } from "./PasswordField";
@@ -42,7 +42,12 @@ export type { CodeFieldProps } from "./CodeField";
 export type { HiddenFieldProps } from "./HiddenField";
 export type { RepeatableFieldProps, RepeatableRowValues } from "./RepeatableField";
 export type { GroupFieldProps } from "./GroupField";
-export type { MapToggleWrapperProps, AvailableVariable } from "./MapToggleWrapper";
+export type {
+  MapToggleWrapperProps,
+  AvailableVariable,
+  VariableGroup,
+  VariableCatalogue,
+} from "./MapToggleWrapper";
 
 import type { ConfigFieldType } from "../types";
 
