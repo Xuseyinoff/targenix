@@ -193,34 +193,72 @@ export const targetWebsitesRouter = router({
       .where(eq(targetWebsites.userId, ctx.user.id))
       .orderBy(desc(targetWebsites.createdAt));
 
-    // Enrich with template name for dynamic-template destinations (active templates only — unchanged)
-    const templateIds = Array.from(new Set(rows.map(r => r.templateId).filter((id): id is number => id !== null && id !== undefined)));
-    let templateMap: Map<number, string> = new Map();
-    /** category from DB for rows with templateId (includes inactive templates; missing row → no entry) */
-    let templateCategoryById = new Map<number, string>();
-    if (templateIds.length > 0) {
-      const templates = await db
-        .select({ id: destinationTemplates.id, name: destinationTemplates.name })
-        .from(destinationTemplates)
-        .where(eq(destinationTemplates.isActive, true));
-      templateMap = new Map(templates.map(t => [t.id, t.name]));
+    // Enrich with template metadata for dynamic-template destinations.
+    const templateIds = Array.from(
+      new Set(
+        rows
+          .map((r) => r.templateId)
+          .filter((id): id is number => id !== null && id !== undefined),
+      ),
+    );
 
-      const tplCategories = await db
-        .select({ id: destinationTemplates.id, category: destinationTemplates.category })
+    /** Full template metadata keyed by id (only for templateIds present in this user's rows). */
+    interface TplMeta {
+      name: string;
+      category: string;
+      /** Fields auto-filled from lead — [{key, label}] — drives wizard FROM_LEAD mapping. */
+      autoMappedFields: Array<{ key: string; label: string }>;
+      /** Keys user fills per routing rule (e.g. ["offer_id","stream"]) — shown read-only in wizard. */
+      variableFields: string[];
+      /** Keys user fills once at destination creation (e.g. ["api_key"]) */
+      userVisibleFields: string[];
+    }
+    const tplMetaById = new Map<number, TplMeta>();
+    if (templateIds.length > 0) {
+      const tplRows = await db
+        .select({
+          id: destinationTemplates.id,
+          name: destinationTemplates.name,
+          category: destinationTemplates.category,
+          autoMappedFields: destinationTemplates.autoMappedFields,
+          variableFields: destinationTemplates.variableFields,
+          userVisibleFields: destinationTemplates.userVisibleFields,
+        })
         .from(destinationTemplates)
         .where(inArray(destinationTemplates.id, templateIds));
-      templateCategoryById = new Map(tplCategories.map((t) => [t.id, t.category]));
+      for (const t of tplRows) {
+        tplMetaById.set(t.id, {
+          name: t.name,
+          category: t.category,
+          autoMappedFields: (t.autoMappedFields as Array<{ key: string; label: string }>) ?? [],
+          variableFields: (t.variableFields as string[]) ?? [],
+          userVisibleFields: (t.userVisibleFields as string[]) ?? [],
+        });
+      }
     }
 
     return rows.map((r) => {
-      const dbCategory =
-        r.templateId != null ? templateCategoryById.get(r.templateId) : undefined;
-      const category = resolveListDestinationCategory(r.templateId, dbCategory, r.templateType);
+      const tplMeta = r.templateId != null ? tplMetaById.get(r.templateId) : undefined;
+      const category = resolveListDestinationCategory(
+        r.templateId,
+        tplMeta?.category,
+        r.templateType,
+      );
       return {
         ...r,
         templateConfig: maskConfig(r.templateConfig),
-        templateName: r.templateId ? (templateMap.get(r.templateId) ?? null) : null,
+        templateName: tplMeta?.name ?? null,
         category,
+        /**
+         * FROM_LEAD fields defined by the admin template.
+         * Wizard uses these to build the "Field mapping" section.
+         * Empty for legacy non-template destinations → wizard falls back to
+         * APP_MANIFEST (sotuvchi/100k/telegram hardcoded list).
+         */
+        autoMappedFields: tplMeta?.autoMappedFields ?? [],
+        /** Keys shown read-only in the wizard "Connection config" section. */
+        variableFields: tplMeta?.variableFields ?? [],
+        userVisibleFields: tplMeta?.userVisibleFields ?? [],
       };
     });
   }),

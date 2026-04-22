@@ -424,18 +424,40 @@ export default function IntegrationWizardV2() {
   });
 
   // ─── Auto-populate per-destination leadFields when form fields load ─────────
-  // When formFields become available and a destination is already selected,
-  // auto-detect name/phone for any leadFields that are still empty.
+  // DB template's autoMappedFields take precedence; APP_MANIFEST is the fallback.
   useEffect(() => {
     if (!formFields?.length) return;
     setState((s) => {
       const updated = s.destinations.map((d) => {
-        const manifest = APP_MANIFEST[d.templateType] ?? null;
-        if (!manifest || manifest.leadFields.length === 0) return d;
+        const destRecord = targetWebsites?.find((t) => t.id === d.id);
+        const dbAutoFields = (destRecord?.autoMappedFields ?? []) as Array<{
+          key: string;
+        }>;
+        // Determine which fields to auto-detect
+        const autoDetectFields: Array<{
+          key: string;
+          autoDetect: "name" | "phone" | undefined;
+        }> =
+          dbAutoFields.length > 0
+            ? dbAutoFields.map((af) => ({
+                key: af.key,
+                autoDetect:
+                  af.key === "name"
+                    ? ("name" as const)
+                    : af.key === "phone"
+                      ? ("phone" as const)
+                      : undefined,
+              }))
+            : (APP_MANIFEST[d.templateType]?.leadFields ?? []).map((lf) => ({
+                key: lf.key,
+                autoDetect: lf.autoDetect as "name" | "phone" | undefined,
+              }));
+
+        if (autoDetectFields.length === 0) return d;
         let changed = false;
         const leadFields = { ...d.leadFields };
-        for (const lf of manifest.leadFields) {
-          if (leadFields[lf.key]) continue; // already mapped
+        for (const lf of autoDetectFields) {
+          if (leadFields[lf.key]) continue;
           if (lf.autoDetect === "name") {
             const m = autoMatchField(formFields, NAME_PATTERNS);
             if (m) { leadFields[lf.key] = m; changed = true; }
@@ -446,10 +468,11 @@ export default function IntegrationWizardV2() {
         }
         return changed ? { ...d, leadFields } : d;
       });
-      const anyChanged = updated.some((d, i) => d !== s.destinations[i]);
-      return anyChanged ? { ...s, destinations: updated } : s;
+      return updated.some((d, i) => d !== s.destinations[i])
+        ? { ...s, destinations: updated }
+        : s;
     });
-  }, [formFields]);
+  }, [formFields, targetWebsites]);
 
   // ─── Auto-fill: integration name once page + destinations are chosen ────────
   // Tracks the "auto" vs "user-edited" state via `integrationNameTouched`. As
@@ -481,29 +504,37 @@ export default function IntegrationWizardV2() {
   const destinationFilled = state.destinations.length > 0;
   const mappingFilled = useMemo(() => {
     if (!destinationFilled) return false;
-    // Check each destination's required leadFields are mapped
     for (const dest of state.destinations) {
-      const manifest = APP_MANIFEST[dest.templateType] ?? null;
-      if (manifest && manifest.leadFields.length > 0) {
-        // Every required manifest field must have a form-field source
-        for (const lf of manifest.leadFields) {
-          if (lf.required && !dest.leadFields[lf.key]) return false;
+      const destRecord = targetWebsites?.find((t) => t.id === dest.id);
+      const dbAutoFields = (destRecord?.autoMappedFields ?? []) as Array<{
+        key: string;
+      }>;
+      if (dbAutoFields.length > 0) {
+        // Dynamic template: every DB autoMappedField must have a mapping
+        for (const af of dbAutoFields) {
+          if (!dest.leadFields[af.key]) return false;
         }
-      } else if (dest.templateType === "custom") {
-        // Custom: at least one valid row
-        if (dest.customMappings.length === 0) return false;
-        if (
-          !dest.customMappings.every(
-            (m) =>
-              !m.to.trim() ||
-              (m.from !== null ? !!m.from : !!m.staticValue?.trim()),
+      } else {
+        const manifest = APP_MANIFEST[dest.templateType] ?? null;
+        if (manifest && manifest.leadFields.length > 0) {
+          for (const lf of manifest.leadFields) {
+            if (lf.required && !dest.leadFields[lf.key]) return false;
+          }
+        } else if (dest.templateType === "custom") {
+          if (dest.customMappings.length === 0) return false;
+          if (
+            !dest.customMappings.every(
+              (m) =>
+                !m.to.trim() ||
+                (m.from !== null ? !!m.from : !!m.staticValue?.trim()),
+            )
           )
-        )
-          return false;
+            return false;
+        }
       }
     }
     return true;
-  }, [destinationFilled, state.destinations]);
+  }, [destinationFilled, state.destinations, targetWebsites]);
   const nameFilled = !!state.integrationName.trim();
 
   const canSave =
@@ -575,27 +606,52 @@ export default function IntegrationWizardV2() {
 
   /** Add a destination to the list if not already present. */
   const addDestination = (id: number, name: string, templateType: string) => {
+    // Read destination record from already-fetched list (may be undefined if list
+    // hasn't loaded yet — auto-populate effect will fill in once it does).
+    const destRecord = targetWebsites?.find((t) => t.id === id);
+    const dbAutoFields = (destRecord?.autoMappedFields ?? []) as Array<{
+      key: string;
+      label: string;
+    }>;
+    const fields = formFields ?? [];
+
     setState((s) => {
       if (s.destinations.some((d) => d.id === id)) return s;
-      // Auto-populate leadFields from APP_MANIFEST + available formFields.
-      const manifest = APP_MANIFEST[templateType] ?? null;
-      const fields = formFields ?? [];
       const leadFields: Record<string, string> = {};
-      if (manifest) {
-        for (const lf of manifest.leadFields) {
-          if (lf.autoDetect === "name") {
+
+      if (dbAutoFields.length > 0) {
+        // Dynamic template — use DB autoMappedFields
+        for (const af of dbAutoFields) {
+          if (af.key === "name") {
             const m = autoMatchField(fields, NAME_PATTERNS);
-            if (m) leadFields[lf.key] = m;
-          } else if (lf.autoDetect === "phone") {
+            if (m) leadFields[af.key] = m;
+          } else if (af.key === "phone") {
             const m = autoMatchField(fields, PHONE_PATTERNS);
-            if (m) leadFields[lf.key] = m;
+            if (m) leadFields[af.key] = m;
+          }
+        }
+      } else {
+        // Legacy — fall back to APP_MANIFEST
+        const manifest = APP_MANIFEST[templateType] ?? null;
+        if (manifest) {
+          for (const lf of manifest.leadFields) {
+            if (lf.autoDetect === "name") {
+              const m = autoMatchField(fields, NAME_PATTERNS);
+              if (m) leadFields[lf.key] = m;
+            } else if (lf.autoDetect === "phone") {
+              const m = autoMatchField(fields, PHONE_PATTERNS);
+              if (m) leadFields[lf.key] = m;
+            }
           }
         }
       }
-      const entry: DestinationEntry = {
-        id, name, templateType, leadFields, customMappings: [],
+      return {
+        ...s,
+        destinations: [
+          ...s.destinations,
+          { id, name, templateType, leadFields, customMappings: [] },
+        ],
       };
-      return { ...s, destinations: [...s.destinations, entry] };
     });
   };
 
@@ -681,11 +737,15 @@ export default function IntegrationWizardV2() {
     const nameMapping = fieldMappings.find((m) => m.to === "name" && m.from);
     const phoneMapping = fieldMappings.find((m) => m.to === "phone" && m.from);
 
-    // Build variableFields from the destination's templateConfig (connection keys).
-    // This avoids requiring the user to re-enter offer_id/stream in the wizard.
+    // Build variableFields from the destination's templateConfig.
+    // Keys come from DB variableFields (dynamic template) OR manifest connectionKeys (legacy).
     const tplCfg = (primaryDestRecord?.templateConfig ?? {}) as Record<string, unknown>;
+    const varKeys =
+      ((primaryDestRecord?.variableFields ?? []) as string[]).length > 0
+        ? (primaryDestRecord!.variableFields as string[])
+        : (primaryManifest?.connectionKeys ?? []);
     const variableFields: Record<string, string> = {};
-    for (const key of (primaryManifest?.connectionKeys ?? [])) {
+    for (const key of varKeys) {
       const v = tplCfg[key];
       if (typeof v === "string" && v) variableFields[key] = v;
     }
@@ -764,31 +824,66 @@ export default function IntegrationWizardV2() {
     );
   }
 
-  // ─── Derived: primary destination's APP_MANIFEST entry ─────────────────────
-  const primaryManifest = useMemo(
-    () => (primaryDestType ? (APP_MANIFEST[primaryDestType] ?? null) : null),
-    [primaryDestType],
-  );
-
-  // ─── Derived: connection config for primary destination (for read-only display)
+  // ─── Derived: primary destination's DB record ──────────────────────────────
   const primaryDestRecord = useMemo(
     () => targetWebsites?.find((t) => t.id === primaryDestId) ?? null,
     [targetWebsites, primaryDestId],
   );
+
+  // ─── Derived: primary manifest — DB template first, then APP_MANIFEST ──────
+  // For admin-created dynamic templates (templateId set): `autoMappedFields`
+  //   from the DB drives the wizard FROM_LEAD section.
+  // For legacy static template types (no templateId): fall back to APP_MANIFEST.
+  const primaryManifest = useMemo(() => {
+    if (!primaryDestType) return null;
+    const dbFields = (primaryDestRecord?.autoMappedFields ?? []) as Array<{
+      key: string;
+      label: string;
+    }>;
+    if (dbFields.length > 0) {
+      // Build an AppManifestService-shaped object from DB data so AppManifestMapper
+      // doesn't need separate code paths.
+      return {
+        id: primaryDestType,
+        label: primaryDestRecord?.templateName ?? primaryDestName,
+        description: "",
+        leadFields: dbFields.map((f) => ({
+          key: f.key,
+          label: f.label,
+          required: true,
+          autoDetect:
+            f.key === "name"
+              ? ("name" as const)
+              : f.key === "phone"
+                ? ("phone" as const)
+                : undefined,
+        })),
+        connectionKeys: (primaryDestRecord?.variableFields ?? []) as string[],
+      };
+    }
+    // Legacy fallback — hardcoded for sotuvchi/100k/telegram/custom
+    return APP_MANIFEST[primaryDestType] ?? null;
+  }, [primaryDestType, primaryDestRecord, primaryDestName]);
+
+  // ─── Derived: read-only connection config shown in Step 2 ──────────────────
   const connectionConfig = useMemo(() => {
-    if (!primaryManifest || !primaryDestRecord) return {};
+    if (!primaryDestRecord) return {};
     const cfg = (primaryDestRecord.templateConfig ?? {}) as Record<string, unknown>;
     const result: Record<string, string> = {};
-    // Show declared connection keys (non-secret display values)
-    for (const key of primaryManifest.connectionKeys) {
+    // Non-secret display keys: from DB variableFields OR manifest connectionKeys
+    const displayKeys =
+      ((primaryDestRecord.variableFields ?? []) as string[]).length > 0
+        ? (primaryDestRecord.variableFields as string[])
+        : (primaryManifest?.connectionKeys ?? []);
+    for (const key of displayKeys) {
       const v = cfg[key];
       if (typeof v === "string" && v) result[key] = v;
     }
-    // Also show masked secrets if present
+    // Masked secrets (always shown if present)
     if (typeof cfg.apiKeyMasked === "string") result.api_key = cfg.apiKeyMasked;
     if (typeof cfg.botTokenMasked === "string") result.bot_token = cfg.botTokenMasked;
     return result;
-  }, [primaryManifest, primaryDestRecord]);
+  }, [primaryDestRecord, primaryManifest]);
 
   // ─── Derived: step 2 app icon + color ─────────────────────────────────────
   // Show the primary destination's category icon in the step 2 circle; fall
