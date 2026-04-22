@@ -63,7 +63,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import {
@@ -1151,8 +1151,27 @@ function DestinationEditor({
   onToggle,
   onOpenCreatorForApp,
 }: DestinationEditorProps) {
+  // showPicker: true  = full picker (app cards + existing list)
+  //             false = chip view (selected destinations summary)
+  // Starts as true when nothing selected, false once something is selected.
+  const [showPicker, setShowPicker] = useState(selectedIds.length === 0);
   const [search, setSearch] = useState("");
+
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  // Auto-show picker when all destinations are removed.
+  const prevLen = useRef(selectedIds.length);
+  useEffect(() => {
+    if (selectedIds.length === 0) setShowPicker(true);
+    prevLen.current = selectedIds.length;
+  }, [selectedIds.length]);
+
+  // Wrap toggle: auto-close picker when a destination is ADDED.
+  const handleToggle = (id: number, name: string, templateType: string) => {
+    const isAdding = !selectedSet.has(id);
+    onToggle(id, name, templateType);
+    if (isAdding) setShowPicker(false);
+  };
 
   const filteredExisting = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1162,57 +1181,86 @@ function DestinationEditor({
 
   if (loading) return <LoadingBar />;
 
+  // ── Chip view: destination is selected, picker is hidden ───────────────
+  if (!showPicker && selectedIds.length > 0) {
+    return (
+      <div className="space-y-2">
+        {selectedIds.map((id, idx) => {
+          const d = destinations.find((x) => x.id === id);
+          if (!d) return null;
+          const Icon = iconForCategory(d.category);
+          const color = colorForCategory(d.category);
+          return (
+            <div
+              key={id}
+              className="flex items-center gap-3 rounded-xl border border-primary/25 bg-primary/5 px-3 py-3"
+            >
+              <div
+                className={cn(
+                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
+                  color,
+                )}
+              >
+                <Icon className="h-4 w-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold">{d.name}</div>
+                <div className="truncate text-[11px] text-muted-foreground">
+                  {idx === 0 ? "Primary · drives mapping" : `Destination ${idx + 1}`}
+                  {" · "}
+                  {d.templateName || d.templateType}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => onToggle(id, d.name, d.templateType)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                aria-label={`Remove ${d.name}`}
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        })}
+
+        {/* Actions row */}
+        <div className="flex items-center justify-between pt-1">
+          <button
+            type="button"
+            onClick={() => setShowPicker(true)}
+            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add another destination
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowPicker(true)}
+            className="text-xs text-muted-foreground hover:text-primary transition-colors underline underline-offset-2"
+          >
+            Change
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Picker view: app shortcut cards + existing list ─────────────────────
   return (
     <div className="space-y-4">
-      {/* ── Selected destinations list ───────────────────────────────────── */}
+      {/* Back link when some destinations already chosen */}
       {selectedIds.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            Selected ({selectedIds.length})
-          </div>
-          <div className="space-y-1.5">
-            {selectedIds.map((id, idx) => {
-              const d = destinations.find((x) => x.id === id);
-              if (!d) return null;
-              const Icon = iconForCategory(d.category);
-              const color = colorForCategory(d.category);
-              return (
-                <div
-                  key={id}
-                  className="flex items-center gap-2.5 rounded-md border border-primary/30 bg-primary/5 px-2.5 py-2"
-                >
-                  <div
-                    className={cn(
-                      "flex h-7 w-7 shrink-0 items-center justify-center rounded-md",
-                      color,
-                    )}
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{d.name}</div>
-                    <div className="truncate text-[11px] text-muted-foreground">
-                      {idx === 0 ? "Primary · drives mapping" : `Destination ${idx + 1}`}
-                      {" · "}
-                      {d.templateName || d.templateType}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onToggle(id, d.name, d.templateType)}
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                    aria-label={`Remove ${d.name}`}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowPicker(false)}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to selected ({selectedIds.length})
+        </button>
       )}
 
-      {/* ── App shortcut cards ───────────────────────────────────────────── */}
+      {/* App shortcut cards */}
       <div>
         <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground mb-2">
           Connect a new destination
@@ -1249,7 +1297,7 @@ function DestinationEditor({
         </div>
       </div>
 
-      {/* ── Pick from existing ───────────────────────────────────────────── */}
+      {/* Pick from existing */}
       {destinations.length > 0 && (
         <div className="space-y-2">
           <div className="flex items-center gap-2">
@@ -1260,7 +1308,6 @@ function DestinationEditor({
             <div className="h-px flex-1 bg-border" />
           </div>
 
-          {/* Search */}
           <div className="relative">
             <Search className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
             <input
@@ -1275,14 +1322,13 @@ function DestinationEditor({
                 type="button"
                 onClick={() => setSearch("")}
                 className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                aria-label="Clear search"
+                aria-label="Clear"
               >
                 <X className="h-3 w-3" />
               </button>
             )}
           </div>
 
-          {/* List */}
           {filteredExisting.length === 0 ? (
             <p className="py-3 text-center text-xs text-muted-foreground">
               No destinations match &ldquo;{search}&rdquo;.
@@ -1297,12 +1343,10 @@ function DestinationEditor({
                   <button
                     key={d.id}
                     type="button"
-                    onClick={() => onToggle(d.id, d.name, d.templateType)}
+                    onClick={() => handleToggle(d.id, d.name, d.templateType)}
                     className={cn(
                       "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm transition-colors",
-                      isSelected
-                        ? "bg-primary/8 font-medium"
-                        : "hover:bg-muted/60",
+                      isSelected ? "bg-primary/8 font-medium" : "hover:bg-muted/60",
                     )}
                   >
                     <div
@@ -1314,9 +1358,7 @@ function DestinationEditor({
                       <Icon className="h-3 w-3" />
                     </div>
                     <div className="min-w-0 flex-1">
-                      <span className="block truncate leading-tight">
-                        {d.name}
-                      </span>
+                      <span className="block truncate leading-tight">{d.name}</span>
                       <span className="block truncate text-[10px] text-muted-foreground">
                         {d.templateName || d.templateType}
                       </span>
