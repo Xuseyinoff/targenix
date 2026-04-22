@@ -952,9 +952,35 @@ export async function processLead(params: {
     const intPageId = integration.pageId ?? "";
     const intFormId = integration.formId ?? "";
     if (intPageId === params.pageId && intFormId === params.formId) {
-      nameField = config.nameField as string | undefined;
-      phoneField = config.phoneField as string | undefined;
-      extraFields = config.extraFields as typeof extraFields | undefined;
+      // New integrations created by IntegrationWizardV2 store a `fieldMappings`
+      // array.  Legacy integrations (classic routing wizard) use the flat
+      // `nameField` / `phoneField` / `extraFields` shape.  We support both here
+      // so that old integrations are completely unaffected.
+      const fieldMappings = config.fieldMappings as
+        | Array<{ from: string | null; to: string; staticValue?: string }>
+        | undefined;
+
+      if (fieldMappings && fieldMappings.length > 0) {
+        const nameEntry = fieldMappings.find((m) => m.to === "name" && m.from);
+        const phoneEntry = fieldMappings.find(
+          (m) => m.to === "phone" && m.from,
+        );
+        nameField = nameEntry?.from ?? undefined;
+        phoneField = phoneEntry?.from ?? undefined;
+        // Every other row becomes an extraField entry
+        extraFields = fieldMappings
+          .filter((m) => m.to !== "name" && m.to !== "phone" && m.to.trim())
+          .map((m) => ({
+            destKey: m.to,
+            sourceField: m.from ?? undefined,
+            staticValue: m.staticValue,
+          }));
+      } else {
+        // Legacy format
+        nameField = config.nameField as string | undefined;
+        phoneField = config.phoneField as string | undefined;
+        extraFields = config.extraFields as typeof extraFields | undefined;
+      }
       break;
     }
   }

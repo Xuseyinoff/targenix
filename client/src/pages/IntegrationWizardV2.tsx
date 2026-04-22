@@ -73,9 +73,8 @@ import {
   PHONE_PATTERNS,
   TEMPLATE_VARIABLE_FIELDS,
   autoMatchField,
-  createEmptyExtraField,
-  serializeExtraFields,
-  type ExtraFieldDraft,
+  serializeFieldMappings,
+  type FieldMapping,
 } from "./lead-routing/shared";
 import { DestinationCreatorInline } from "@/components/destinations/DestinationCreatorInline";
 
@@ -101,10 +100,16 @@ interface WizardState {
   // and is written to `integrations.targetWebsiteId` for legacy compat.
   // Additional entries fan-out via `integration_destinations`.
   destinations: DestinationEntry[];
-  // Mapping (applies to the primary destination)
-  nameField: string;
-  phoneField: string;
-  extraFields: ExtraFieldDraft[];
+  /**
+   * Universal field mapping rows — one per lead field we want to forward.
+   * `from` = FB form field key (or null for a static value).
+   * `to`   = destination payload key.
+   * Auto-populated from ALL form fields when the form is selected;
+   * user can add / remove / reorder rows freely.
+   * Stored as `config.fieldMappings`; leadService falls back to the old
+   * `nameField`/`phoneField`/`extraFields` shape for legacy integrations.
+   */
+  fieldMappings: FieldMapping[];
   variableFields: Record<string, string>;
   // Meta
   integrationName: string;
@@ -124,9 +129,7 @@ const INITIAL_STATE: WizardState = {
   formId: "",
   formName: "",
   destinations: [],
-  nameField: "",
-  phoneField: "",
-  extraFields: [],
+  fieldMappings: [],
   variableFields: {},
   integrationName: "",
   integrationNameTouched: false,
@@ -421,16 +424,26 @@ export default function IntegrationWizardV2() {
     onError: (err) => toast.error(err.message),
   });
 
-  // ─── Auto-fill: name/phone fields when form fields load ────────────────────
+  // ─── Auto-populate fieldMappings when form fields load ─────────────────────
+  // Runs once per form selection (setForm resets fieldMappings to []).
+  // Detects name/phone keys automatically, then adds all remaining fields so
+  // the user sees the full lead form at a glance (Make.com-style).
   useEffect(() => {
     if (!formFields?.length) return;
-    const autoName = autoMatchField(formFields, NAME_PATTERNS);
-    const autoPhone = autoMatchField(formFields, PHONE_PATTERNS);
-    setState((s) => ({
-      ...s,
-      nameField: s.nameField || autoName,
-      phoneField: s.phoneField || autoPhone,
-    }));
+    setState((s) => {
+      if (s.fieldMappings.length > 0) return s; // already populated
+      const nameKey = autoMatchField(formFields, NAME_PATTERNS);
+      const phoneKey = autoMatchField(formFields, PHONE_PATTERNS);
+      const mappings: FieldMapping[] = [];
+      if (nameKey) mappings.push({ from: nameKey, to: "name" });
+      if (phoneKey) mappings.push({ from: phoneKey, to: "phone" });
+      for (const f of formFields) {
+        if (f.key !== nameKey && f.key !== phoneKey) {
+          mappings.push({ from: f.key, to: f.key });
+        }
+      }
+      return mappings.length > 0 ? { ...s, fieldMappings: mappings } : s;
+    });
   }, [formFields]);
 
   // ─── Auto-fill: integration name once page + destinations are chosen ────────
@@ -488,14 +501,17 @@ export default function IntegrationWizardV2() {
     !!state.accountId && !!state.pageId && !!state.formId;
   const destinationFilled = state.destinations.length > 0;
   const mappingFilled =
-    !!state.nameField &&
-    !!state.phoneField &&
-    requiredVarKeys.every((k) => !!state.variableFields[k]?.trim()) &&
-    state.extraFields.every(
-      (f) =>
-        !f.destKey.trim() ||
-        (f.sourceType === "form" ? !!f.sourceField : !!f.staticValue?.trim()),
-    );
+    // Must have at least a name row and a phone row with a source field picked
+    state.fieldMappings.some((m) => m.to === "name" && !!m.from) &&
+    state.fieldMappings.some((m) => m.to === "phone" && !!m.from) &&
+    // All rows that have a `to` key must also have a source (from or staticValue)
+    state.fieldMappings.every(
+      (m) =>
+        !m.to.trim() ||
+        (m.from !== null ? !!m.from : !!m.staticValue?.trim()),
+    ) &&
+    // Destination-specific required variables must be filled
+    requiredVarKeys.every((k) => !!state.variableFields[k]?.trim());
   const nameFilled = !!state.integrationName.trim();
 
   const canSave =
@@ -531,9 +547,7 @@ export default function IntegrationWizardV2() {
       pageName: "",
       formId: "",
       formName: "",
-      nameField: "",
-      phoneField: "",
-      extraFields: [],
+      fieldMappings: [],
     });
   };
   const setPage = (id: string, name: string) => {
@@ -542,23 +556,14 @@ export default function IntegrationWizardV2() {
       pageName: name,
       formId: "",
       formName: "",
-      nameField: "",
-      phoneField: "",
-      extraFields: [],
+      fieldMappings: [],
     });
   };
   const setForm = (id: string, name: string) => {
-    // Changing the form invalidates any previous name/phone auto-match and any
-    // extras the user may have configured against the old field set.
-    patch({
-      formId: id,
-      formName: name,
-      nameField: "",
-      phoneField: "",
-      extraFields: [],
-    });
-    // Stay in Step 1 — the "Map lead fields" section will now appear below
-    // the trigger editor so the user maps name/phone before continuing.
+    // Changing the form clears all mappings — auto-populate effect will
+    // re-detect name/phone and add all remaining form fields from the new form.
+    patch({ formId: id, formName: name, fieldMappings: [] });
+    // Stay in Step 1 — the "Map lead fields" section appears below the trigger.
   };
 
   /** Add a destination to the list if not already present. */
@@ -588,43 +593,50 @@ export default function IntegrationWizardV2() {
     });
   };
 
-  const addExtra = () =>
+  const addFormMappingRow = () =>
     setState((s) => ({
       ...s,
-      extraFields: [...s.extraFields, createEmptyExtraField()],
+      fieldMappings: [...s.fieldMappings, { from: "", to: "" }],
     }));
-  const updateExtra = (index: number, p: Partial<ExtraFieldDraft>) =>
+  const addStaticMappingRow = () =>
+    setState((s) => ({
+      ...s,
+      fieldMappings: [...s.fieldMappings, { from: null, to: "", staticValue: "" }],
+    }));
+  const updateMapping = (index: number, p: Partial<FieldMapping>) =>
     setState((s) => {
-      const next = [...s.extraFields];
+      const next = [...s.fieldMappings];
       const existing = next[index];
       if (!existing) return s;
-      const updated: ExtraFieldDraft = { ...existing, ...p };
-      if (p.sourceType === "form") updated.staticValue = "";
-      if (p.sourceType === "static") updated.sourceField = "";
-      next[index] = updated;
-      return { ...s, extraFields: next };
+      next[index] = { ...existing, ...p };
+      return { ...s, fieldMappings: next };
     });
-  const removeExtra = (index: number) =>
+  const removeMapping = (index: number) =>
     setState((s) => ({
       ...s,
-      extraFields: s.extraFields.filter((_, i) => i !== index),
+      fieldMappings: s.fieldMappings.filter((_, i) => i !== index),
     }));
 
   // ─── Save handler ──────────────────────────────────────────────────────────
   const handleSave = async () => {
     if (!canSave) return;
-    // The config embeds the PRIMARY destination for legacy dispatch compat.
-    // Additional destinations are tracked via integration_destinations, passed
-    // separately as destinationIds so the backend calls setIntegrationDestinations.
+    // Derive legacy nameField/phoneField from fieldMappings so that any path
+    // in leadService that hasn't been migrated to fieldMappings yet still works.
+    const serialized = serializeFieldMappings(state.fieldMappings);
+    const nameMapping = serialized.find((m) => m.to === "name" && m.from);
+    const phoneMapping = serialized.find((m) => m.to === "phone" && m.from);
+
     const config = {
       facebookAccountId: state.accountId,
       pageId: state.pageId,
       pageName: state.pageName,
       formId: state.formId,
       formName: state.formName,
-      nameField: state.nameField,
-      phoneField: state.phoneField,
-      extraFields: serializeExtraFields(state.extraFields),
+      // New universal mapping (leadService reads this first)
+      fieldMappings: serialized,
+      // Legacy compat columns — derived from fieldMappings above
+      nameField: nameMapping?.from ?? "",
+      phoneField: phoneMapping?.from ?? "",
       // Legacy compat: first destination id/name/type in config.
       targetWebsiteId: primaryDestId,
       targetWebsiteName: primaryDestName,
@@ -793,70 +805,29 @@ export default function IntegrationWizardV2() {
             {/* ── Map lead fields (shown after form is selected) ── */}
             {triggerFilled && (
               <div className="border-t mt-5 pt-5 space-y-4">
-                <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-                  Map lead fields
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Map lead fields
+                  </div>
+                  {!loadingFields && (formFields ?? []).length > 0 && (
+                    <span className="text-[11px] text-muted-foreground">
+                      {state.fieldMappings.length} field
+                      {state.fieldMappings.length !== 1 ? "s" : ""}
+                    </span>
+                  )}
                 </div>
 
                 {loadingFields ? (
                   <LoadingBar />
                 ) : (formFields ?? []).length > 0 ? (
-                  <>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <FieldSelect
-                        label="Name field"
-                        value={state.nameField}
-                        formFields={formFields ?? []}
-                        onChange={(v) => patch({ nameField: v })}
-                        placeholder="Pick the lead's name field"
-                      />
-                      <FieldSelect
-                        label="Phone field"
-                        value={state.phoneField}
-                        formFields={formFields ?? []}
-                        onChange={(v) => patch({ phoneField: v })}
-                        placeholder="Pick the lead's phone field"
-                      />
-                    </div>
-
-                    {/* Extra fields */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs">
-                          Extra fields
-                          <span className="ml-1 text-muted-foreground font-normal">
-                            (optional)
-                          </span>
-                        </Label>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 text-xs"
-                          onClick={addExtra}
-                        >
-                          <Plus className="h-3.5 w-3.5 mr-1" />
-                          Add field
-                        </Button>
-                      </div>
-                      {state.extraFields.length === 0 ? (
-                        <p className="text-xs text-muted-foreground">
-                          Map additional form answers or static values (e.g.
-                          UTM tags) to the destination payload.
-                        </p>
-                      ) : (
-                        <div className="space-y-2">
-                          {state.extraFields.map((ef, i) => (
-                            <ExtraFieldRow
-                              key={i}
-                              field={ef}
-                              formFields={formFields ?? []}
-                              onChange={(p) => updateExtra(i, p)}
-                              onRemove={() => removeExtra(i)}
-                            />
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </>
+                  <FieldMappingsEditor
+                    formFields={formFields ?? []}
+                    mappings={state.fieldMappings}
+                    onUpdate={updateMapping}
+                    onRemove={removeMapping}
+                    onAddFormRow={addFormMappingRow}
+                    onAddStaticRow={addStaticMappingRow}
+                  />
                 ) : (
                   <EmptyHint message="The selected form has no fields yet. Try a different form or check its status in Facebook." />
                 )}
@@ -1487,275 +1458,144 @@ function DestinationEditor({
   );
 }
 
-// ─── MappingEditor ────────────────────────────────────────────────────────────
 
-interface MappingEditorProps {
+// ─── FieldMappingsEditor ───────────────────────────────────────────────────────
+// Make.com-style row-per-field mapper.  Every row:
+//   [FB form field ▼  OR  static value input]  →  [destination key]  [×]
+// Rows whose `to` is "name" or "phone" are highlighted as required.
+
+interface FieldMappingsEditorProps {
   formFields: Array<{ key: string; label?: string | null }>;
-  loadingFields: boolean;
-  state: WizardState;
-  /** Name of the primary destination (drives variable labels). */
-  primaryDestName: string;
-  /** Template type of the primary destination. */
-  primaryDestType: string;
-  onPatch: (p: Partial<WizardState>) => void;
-  onAddExtra: () => void;
-  onUpdateExtra: (index: number, p: Partial<ExtraFieldDraft>) => void;
-  onRemoveExtra: (index: number) => void;
+  mappings: FieldMapping[];
+  onUpdate: (index: number, patch: Partial<FieldMapping>) => void;
+  onRemove: (index: number) => void;
+  onAddFormRow: () => void;
+  onAddStaticRow: () => void;
 }
 
-function MappingEditor({
+function FieldMappingsEditor({
   formFields,
-  loadingFields,
-  state,
-  primaryDestName,
-  primaryDestType,
-  onPatch,
-  onAddExtra,
-  onUpdateExtra,
-  onRemoveExtra,
-}: MappingEditorProps) {
-  const templateDefs = TEMPLATE_VARIABLE_FIELDS[primaryDestType] ?? [];
-  const isCustom = primaryDestType === "custom";
-  const isTelegram = primaryDestType === "telegram";
-
-  // Compute a client-side equivalent of customVarNames from parent. In this
-  // child we receive them indirectly via state — MappingEditor reads
-  // state.variableFields to know which keys are already filled. The parent
-  // actually owns the variableFields/customVarNames lifecycle.
-  //
-  // We keep the rendering local: iterate known defs OR — for custom — iterate
-  // the currently-known variable keys. The parent will re-render once
-  // customVarNames arrives and updates state.
-  const variableEntries = useMemo(() => {
-    if (isTelegram) return [];
-    if (isCustom) {
-      return Object.keys(state.variableFields).map((k) => ({
-        key: k,
-        label: k,
-        placeholder: `Value for ${k}`,
-        required: true,
-      }));
-    }
-    return templateDefs;
-  }, [isTelegram, isCustom, templateDefs, state.variableFields]);
-
-  if (loadingFields) return <LoadingBar />;
-  if (formFields.length === 0) {
-    return (
-      <EmptyHint message="The selected form has no fields yet. Try a different form or check the Facebook form's status." />
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      {/* Name + phone */}
-      <div className="grid gap-3 sm:grid-cols-2">
-        <FieldSelect
-          label="Name field"
-          value={state.nameField}
-          formFields={formFields}
-          onChange={(v) => onPatch({ nameField: v })}
-          placeholder="Pick the lead's name field"
-        />
-        <FieldSelect
-          label="Phone field"
-          value={state.phoneField}
-          formFields={formFields}
-          onChange={(v) => onPatch({ phoneField: v })}
-          placeholder="Pick the lead's phone field"
-        />
-      </div>
-
-      {/* Variable fields for chosen template */}
-      {variableEntries.length > 0 && (
-        <div className="space-y-2 rounded-md border bg-background p-3">
-          <div className="text-xs font-semibold">
-            Destination variables
-            <span className="ml-1.5 text-muted-foreground font-normal">
-              ({primaryDestName})
-            </span>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2">
-            {variableEntries.map((v) => (
-              <div key={v.key} className="space-y-1">
-                <Label className="text-xs">
-                  {v.label}
-                  {v.required && <span className="text-destructive"> *</span>}
-                </Label>
-                <Input
-                  className="h-8 text-sm"
-                  placeholder={v.placeholder}
-                  value={state.variableFields[v.key] ?? ""}
-                  onChange={(e) =>
-                    onPatch({
-                      variableFields: {
-                        ...state.variableFields,
-                        [v.key]: e.target.value,
-                      },
-                    })
-                  }
-                />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Extra fields */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
-          <Label className="text-xs">Extra fields (optional)</Label>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={onAddExtra}
-          >
-            <Plus className="h-3.5 w-3.5 mr-1" /> Add field
-          </Button>
-        </div>
-        {state.extraFields.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
-            Map additional form answers or hard-coded values (e.g. UTM tags) to
-            the destination payload.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {state.extraFields.map((ef, i) => (
-              <ExtraFieldRow
-                key={i}
-                field={ef}
-                formFields={formFields}
-                onChange={(p) => onUpdateExtra(i, p)}
-                onRemove={() => onRemoveExtra(i)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── FieldSelect ──────────────────────────────────────────────────────────────
-
-interface FieldSelectProps {
-  label: string;
-  value: string;
-  formFields: Array<{ key: string; label?: string | null }>;
-  onChange: (v: string) => void;
-  placeholder: string;
-}
-
-function FieldSelect({
-  label,
-  value,
-  formFields,
-  onChange,
-  placeholder,
-}: FieldSelectProps) {
+  mappings,
+  onUpdate,
+  onRemove,
+  onAddFormRow,
+  onAddStaticRow,
+}: FieldMappingsEditorProps) {
   return (
     <div className="space-y-1.5">
-      <Label className="text-xs">{label}</Label>
-      <Select value={value || undefined} onValueChange={onChange}>
-        <SelectTrigger className="h-9 text-sm">
-          <SelectValue placeholder={placeholder} />
-        </SelectTrigger>
-        <SelectContent>
-          {formFields.map((f) => (
-            <SelectItem key={f.key} value={f.key}>
-              {f.label ? `${f.label} (${f.key})` : f.key}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-    </div>
-  );
-}
-
-// ─── ExtraFieldRow ────────────────────────────────────────────────────────────
-
-interface ExtraFieldRowProps {
-  field: ExtraFieldDraft;
-  formFields: Array<{ key: string; label?: string | null }>;
-  onChange: (p: Partial<ExtraFieldDraft>) => void;
-  onRemove: () => void;
-}
-
-function ExtraFieldRow({
-  field,
-  formFields,
-  onChange,
-  onRemove,
-}: ExtraFieldRowProps) {
-  return (
-    <div className="flex items-start gap-2 rounded-md border bg-background p-2">
-      <div className="grid flex-1 gap-2 sm:grid-cols-[140px_100px_1fr]">
-        <Input
-          className="h-8 text-xs font-mono"
-          placeholder="dest_key"
-          value={field.destKey}
-          onChange={(e) => onChange({ destKey: e.target.value })}
-        />
-        <Select
-          value={field.sourceType}
-          onValueChange={(v) =>
-            onChange({ sourceType: v as "form" | "static" })
-          }
-        >
-          <SelectTrigger className="h-8 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="form">From form</SelectItem>
-            <SelectItem value="static">Static value</SelectItem>
-          </SelectContent>
-        </Select>
-        {field.sourceType === "form" ? (
-          <Select
-            value={field.sourceField || undefined}
-            onValueChange={(v) => onChange({ sourceField: v })}
-          >
-            <SelectTrigger className="h-8 text-xs">
-              <SelectValue placeholder="Pick source" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                <SelectLabel className="text-[11px]">Form fields</SelectLabel>
-                {formFields.map((f) => (
-                  <SelectItem key={f.key} value={f.key}>
-                    {f.label ? `${f.label} (${f.key})` : f.key}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-              <SelectGroup>
-                <SelectLabel className="text-[11px]">FB metadata</SelectLabel>
-                {FB_METADATA_FIELDS.map((m) => (
-                  <SelectItem key={m.key} value={m.key}>
-                    {FB_METADATA_LABELS[m.key]} ({m.key})
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        ) : (
-          <Input
-            className="h-8 text-xs"
-            placeholder="Static value"
-            value={field.staticValue ?? ""}
-            onChange={(e) => onChange({ staticValue: e.target.value })}
-          />
-        )}
+      {/* Column headers */}
+      <div className="grid grid-cols-[1fr_12px_120px_28px] items-center gap-2 px-1 pb-0.5">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          Facebook form field / static value
+        </div>
+        <div />
+        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          Destination key
+        </div>
+        <div />
       </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
-        onClick={onRemove}
-        aria-label="Remove field"
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </Button>
+
+      {/* Rows */}
+      {mappings.map((m, i) => {
+        const isRequired = m.to === "name" || m.to === "phone";
+        return (
+          <div
+            key={i}
+            className={cn(
+              "grid grid-cols-[1fr_12px_120px_28px] items-center gap-2 rounded-lg border px-2 py-1.5 transition-colors",
+              isRequired
+                ? "border-primary/25 bg-primary/4"
+                : "border-border bg-background hover:bg-muted/20",
+            )}
+          >
+            {/* Source: form field dropdown OR static value input */}
+            {m.from !== null ? (
+              <Select
+                value={m.from || undefined}
+                onValueChange={(v) => onUpdate(i, { from: v })}
+              >
+                <SelectTrigger className="h-8 text-xs border-0 shadow-none bg-transparent px-1 focus:ring-0">
+                  <SelectValue placeholder="Pick form field…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectLabel className="text-[11px]">Form fields</SelectLabel>
+                    {formFields.map((f) => (
+                      <SelectItem key={f.key} value={f.key}>
+                        {f.label ? `${f.label} (${f.key})` : f.key}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                  <SelectGroup>
+                    <SelectLabel className="text-[11px]">FB metadata</SelectLabel>
+                    {FB_METADATA_FIELDS.map((mf) => (
+                      <SelectItem key={mf.key} value={mf.key}>
+                        {FB_METADATA_LABELS[mf.key]} ({mf.key})
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input
+                className="h-8 text-xs border-0 shadow-none bg-transparent px-1 focus-visible:ring-0"
+                placeholder="Static value…"
+                value={m.staticValue ?? ""}
+                onChange={(e) => onUpdate(i, { staticValue: e.target.value })}
+              />
+            )}
+
+            {/* Arrow */}
+            <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+
+            {/* Destination key */}
+            <Input
+              className={cn(
+                "h-8 text-xs font-mono border-0 shadow-none bg-transparent px-1 focus-visible:ring-0",
+                isRequired && "font-semibold text-primary",
+              )}
+              placeholder="dest_key"
+              value={m.to}
+              onChange={(e) => onUpdate(i, { to: e.target.value })}
+            />
+
+            {/* Remove */}
+            <button
+              type="button"
+              onClick={() => onRemove(i)}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground/60 hover:text-destructive transition-colors"
+              aria-label="Remove row"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        );
+      })}
+
+      {/* Add row actions */}
+      <div className="flex items-center gap-1.5 pt-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs text-muted-foreground hover:text-foreground"
+          onClick={onAddFormRow}
+        >
+          <Plus className="h-3.5 w-3.5 mr-1" />
+          Add form field
+        </Button>
+        <span className="text-muted-foreground/40 text-xs">·</span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 text-xs text-muted-foreground hover:text-foreground"
+          onClick={onAddStaticRow}
+        >
+          <Plus className="h-3.5 w-3.5 mr-1" />
+          Static value
+        </Button>
+      </div>
     </div>
   );
 }

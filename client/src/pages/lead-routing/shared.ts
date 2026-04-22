@@ -80,6 +80,37 @@ export const FB_METADATA_LABELS: Record<string, string> = Object.fromEntries(
   FB_METADATA_FIELDS.map((f) => [f.key, f.label]),
 );
 
+// ─── FieldMapping — new universal mapping row (IntegrationWizardV2) ──────────
+
+/**
+ * One row in the "Map lead fields" section of the new wizard.
+ *
+ * • `from !== null`  → value comes from the FB form payload (field key)
+ * • `from === null`  → value is a hard-coded static string (`staticValue`)
+ * • `to`             → the key the value lands under in the destination payload
+ *
+ * Stored as `config.fieldMappings` on new integrations.  Legacy integrations
+ * produced by the old routing wizard keep using `config.nameField` /
+ * `config.phoneField` / `config.extraFields` — leadService supports both.
+ */
+export interface FieldMapping {
+  from: string | null;
+  to: string;
+  staticValue?: string;
+}
+
+export function serializeFieldMappings(
+  mappings: FieldMapping[],
+): FieldMapping[] {
+  return mappings
+    .filter((m) => m.to.trim() !== "")
+    .map((m) => ({
+      from: m.from,
+      to: m.to.trim(),
+      ...(m.from === null ? { staticValue: m.staticValue ?? "" } : {}),
+    }));
+}
+
 // ─── ExtraField draft type (UI-side representation) ───────────────────────────
 
 export type ExtraFieldDraft = {
