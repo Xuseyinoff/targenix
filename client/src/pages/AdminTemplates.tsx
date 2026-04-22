@@ -48,10 +48,13 @@ interface AutoMappedField {
   label: string;
 }
 
+type TemplateCategory = "messaging" | "data" | "webhooks" | "affiliate" | "crm";
+
 interface TemplateForm {
   name: string;
   description: string;
   color: string;
+  category: TemplateCategory;
   endpointUrl: string;
   method: "POST" | "GET";
   contentType: string;
@@ -62,6 +65,35 @@ interface TemplateForm {
   variableFields: string[];
   autoMappedFields: AutoMappedField[];
   isActive: boolean;
+}
+
+/**
+ * Category catalog shown in the admin form + list badges. The labels are
+ * short and user-facing; `hint` is rendered under the <select> to help admins
+ * pick the right bucket. Keep in sync with TEMPLATE_CATEGORIES on the server
+ * and the `category` mysqlEnum in drizzle/schema.ts.
+ */
+const CATEGORIES: Array<{ value: TemplateCategory; label: string; hint: string }> = [
+  { value: "affiliate", label: "Affiliate",  hint: "Uzbekistan CPA / offer networks (Sotuvchi, 100k, Inbaza…)" },
+  { value: "messaging", label: "Messaging",  hint: "Chat / notification endpoints (custom Telegram bots, Discord…)" },
+  { value: "data",      label: "Data",       hint: "Spreadsheets, data warehouses, analytics sinks" },
+  { value: "webhooks",  label: "Webhooks",   hint: "Generic HTTP endpoints that do not fit any other bucket" },
+  { value: "crm",       label: "CRM",        hint: "CRM / sales pipelines (amoCRM, Bitrix24, Pipedrive…)" },
+];
+
+/** Pick badge styling by category so the list reads at a glance. */
+function categoryBadgeClass(c: TemplateCategory): string {
+  switch (c) {
+    case "affiliate": return "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20";
+    case "messaging": return "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20";
+    case "data":      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20";
+    case "webhooks":  return "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20";
+    case "crm":       return "bg-pink-500/10 text-pink-600 dark:text-pink-400 border-pink-500/20";
+  }
+}
+
+function categoryLabel(c: TemplateCategory): string {
+  return CATEGORIES.find((x) => x.value === c)?.label ?? c;
 }
 
 const JSON_TEMPLATE_KEY = "__json_template__";
@@ -92,6 +124,7 @@ function defaultForm(): TemplateForm {
     name: "",
     description: "",
     color: "#3B82F6",
+    category: "affiliate",
     endpointUrl: "",
     method: "POST",
     contentType: "application/x-www-form-urlencoded",
@@ -304,6 +337,7 @@ export default function AdminTemplates() {
       name: t.name,
       description: t.description ?? "",
       color: t.color,
+      category: ((t as { category?: TemplateCategory }).category ?? "affiliate") as TemplateCategory,
       endpointUrl: t.endpointUrl,
       method: (t.method ?? "POST") as "POST" | "GET",
       contentType: ct,
@@ -363,6 +397,7 @@ export default function AdminTemplates() {
       name: form.name.trim(),
       description: form.description.trim() || undefined,
       color: form.color,
+      category: form.category,
       endpointUrl: form.endpointUrl.trim(),
       method: form.method,
       contentType: form.contentType,
@@ -418,6 +453,7 @@ export default function AdminTemplates() {
               const bodyFields = (t.bodyFields as BodyField[]) ?? [];
               const secrets = bodyFields.filter(f => f.isSecret).length;
               const varFields = (t.variableFields as string[]) ?? [];
+              const category = ((t as { category?: TemplateCategory }).category ?? "affiliate") as TemplateCategory;
               return (
                 <div key={t.id} className="flex items-center gap-4 border rounded-lg p-4 bg-card hover:bg-accent/5 transition-colors">
                   {/* Color bar */}
@@ -426,6 +462,9 @@ export default function AdminTemplates() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-semibold">{t.name}</span>
+                      <Badge variant="outline" className={`text-xs ${categoryBadgeClass(category)}`}>
+                        {categoryLabel(category)}
+                      </Badge>
                       {!t.isActive && <Badge variant="outline" className="text-xs">Inactive</Badge>}
                     </div>
                     {t.description && (
@@ -491,25 +530,45 @@ export default function AdminTemplates() {
               </div>
             </div>
 
-            {/* Color */}
-            <div className="space-y-1.5">
-              <Label>Color</Label>
-              <div className="flex gap-2 flex-wrap">
-                {PRESET_COLORS.map(c => (
-                  <button
-                    key={c}
-                    onClick={() => setField("color", c)}
-                    className={`w-7 h-7 rounded-full border-2 transition-all ${form.color === c ? "border-foreground scale-110" : "border-transparent"}`}
-                    style={{ backgroundColor: c }}
+            {/* Color + Category */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <Label>Color</Label>
+                <div className="flex gap-2 flex-wrap">
+                  {PRESET_COLORS.map(c => (
+                    <button
+                      key={c}
+                      onClick={() => setField("color", c)}
+                      className={`w-7 h-7 rounded-full border-2 transition-all ${form.color === c ? "border-foreground scale-110" : "border-transparent"}`}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                  <input
+                    type="color"
+                    value={form.color}
+                    onChange={e => setField("color", e.target.value)}
+                    className="w-7 h-7 rounded-full border cursor-pointer bg-transparent"
+                    title="Custom color"
                   />
-                ))}
-                <input
-                  type="color"
-                  value={form.color}
-                  onChange={e => setField("color", e.target.value)}
-                  className="w-7 h-7 rounded-full border cursor-pointer bg-transparent"
-                  title="Custom color"
-                />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Category</Label>
+                <select
+                  className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                  value={form.category}
+                  onChange={e => setField("category", e.target.value as TemplateCategory)}
+                >
+                  {CATEGORIES.map(c => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-muted-foreground">
+                  {CATEGORIES.find(c => c.value === form.category)?.hint}
+                </p>
               </div>
             </div>
 
@@ -616,6 +675,11 @@ export default function AdminTemplates() {
             {/* Auto-mapped fields */}
             <div className="space-y-2">
               <Label>Auto-mapped Fields (from lead data)</Label>
+              <p className="text-xs text-muted-foreground -mt-1">
+                The wizard will ask the user to map a Facebook form field into each of these keys.
+                Keys named <code className="bg-muted px-1 rounded">name</code> / <code className="bg-muted px-1 rounded">phone</code>
+                {" "}(or containing those words, e.g. <code className="bg-muted px-1 rounded">customer_phone</code>) are auto-detected from the lead.
+              </p>
               <div className="space-y-2">
                 {form.autoMappedFields.map((f, i) => (
                   <AutoMappedRow

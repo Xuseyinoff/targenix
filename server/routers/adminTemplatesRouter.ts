@@ -26,10 +26,25 @@ const autoMappedFieldSchema = z.object({
   label: z.string().min(1),
 });
 
+/**
+ * Product category — drives how the template is grouped in the user-facing
+ * Destinations picker. Must match the mysqlEnum in drizzle/schema.ts.
+ */
+export const TEMPLATE_CATEGORIES = [
+  "messaging",
+  "data",
+  "webhooks",
+  "affiliate",
+  "crm",
+] as const;
+
+const categorySchema = z.enum(TEMPLATE_CATEGORIES);
+
 const templateInputSchema = z.object({
   name: z.string().min(1).max(255),
   description: z.string().max(500).optional(),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).default("#3B82F6"),
+  category: categorySchema.default("affiliate"),
   endpointUrl: z.string().url().max(500),
   method: z.enum(["POST", "GET"]).default("POST"),
   contentType: z.string().max(100).default("application/x-www-form-urlencoded"),
@@ -64,6 +79,7 @@ export const adminTemplatesRouter = router({
         name: input.name,
         description: input.description ?? null,
         color: input.color,
+        category: input.category,
         endpointUrl: input.endpointUrl,
         method: input.method,
         contentType: input.contentType,
@@ -89,6 +105,7 @@ export const adminTemplatesRouter = router({
       if (fields.name !== undefined) updates.name = fields.name;
       if (fields.description !== undefined) updates.description = fields.description;
       if (fields.color !== undefined) updates.color = fields.color;
+      if (fields.category !== undefined) updates.category = fields.category;
       if (fields.endpointUrl !== undefined) updates.endpointUrl = fields.endpointUrl;
       if (fields.method !== undefined) updates.method = fields.method;
       if (fields.contentType !== undefined) updates.contentType = fields.contentType;
