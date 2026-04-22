@@ -77,6 +77,79 @@ import {
   type FieldMapping,
 } from "./lead-routing/shared";
 import { DestinationCreatorInline } from "@/components/destinations/DestinationCreatorInline";
+import type { AppManifestService } from "./lead-routing/shared";
+
+// ─── resolveDestManifest ───────────────────────────────────────────────────────
+// Pure helper — resolves the AppManifestService for a destination record.
+// Priority:
+//   1. DB template has autoMappedFields set by admin → use them (fully dynamic)
+//   2. DB template (templateId present) but autoMappedFields empty →
+//      apply the universal UZ-CPA convention: name+phone are FROM_LEAD,
+//      variableFields from DB are the connection keys.
+//      (works for Inbaza, Sotuvchi, 100k, MyCPA — all have same name/phone shape)
+//   3. Legacy static templateType (sotuvchi/100k/telegram) without templateId →
+//      fall back to hardcoded APP_MANIFEST.
+type DestRecordLike = {
+  templateId?: number | null;
+  templateName?: string | null;
+  autoMappedFields?: unknown;
+  variableFields?: unknown;
+};
+
+function resolveDestManifest(
+  destRecord: DestRecordLike | null | undefined,
+  destType: string,
+  destName: string,
+): AppManifestService | null {
+  if (!destType) return null;
+
+  const dbAutoFields = (
+    Array.isArray(destRecord?.autoMappedFields) ? destRecord!.autoMappedFields : []
+  ) as Array<{ key: string; label: string }>;
+
+  // ① DB has explicit autoMappedFields — fully dynamic manifest
+  if (dbAutoFields.length > 0) {
+    return {
+      id: destType,
+      label: destRecord?.templateName ?? destName,
+      description: "",
+      leadFields: dbAutoFields.map((f) => ({
+        key: f.key,
+        label: f.label,
+        required: true,
+        autoDetect:
+          f.key === "name"
+            ? ("name" as const)
+            : f.key === "phone"
+              ? ("phone" as const)
+              : undefined,
+      })),
+      connectionKeys: (
+        Array.isArray(destRecord?.variableFields) ? destRecord!.variableFields : []
+      ) as string[],
+    };
+  }
+
+  // ② Admin-created template (has templateId) — apply UZ-CPA name/phone convention
+  const isAdminTemplate = (destRecord?.templateId ?? null) !== null;
+  if (isAdminTemplate && destType !== "custom") {
+    return {
+      id: destType,
+      label: destRecord?.templateName ?? destName,
+      description: "",
+      leadFields: [
+        { key: "name",  label: "Ism (to'liq)",   required: true, autoDetect: "name"  as const },
+        { key: "phone", label: "Telefon raqami",  required: true, autoDetect: "phone" as const },
+      ],
+      connectionKeys: (
+        Array.isArray(destRecord?.variableFields) ? destRecord!.variableFields : []
+      ) as string[],
+    };
+  }
+
+  // ③ Legacy static templateType fallback (sotuvchi/100k/telegram without templateId)
+  return APP_MANIFEST[destType] ?? null;
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -424,39 +497,17 @@ export default function IntegrationWizardV2() {
   });
 
   // ─── Auto-populate per-destination leadFields when form fields load ─────────
-  // DB template's autoMappedFields take precedence; APP_MANIFEST is the fallback.
   useEffect(() => {
     if (!formFields?.length) return;
     setState((s) => {
       const updated = s.destinations.map((d) => {
         const destRecord = targetWebsites?.find((t) => t.id === d.id);
-        const dbAutoFields = (destRecord?.autoMappedFields ?? []) as Array<{
-          key: string;
-        }>;
-        // Determine which fields to auto-detect
-        const autoDetectFields: Array<{
-          key: string;
-          autoDetect: "name" | "phone" | undefined;
-        }> =
-          dbAutoFields.length > 0
-            ? dbAutoFields.map((af) => ({
-                key: af.key,
-                autoDetect:
-                  af.key === "name"
-                    ? ("name" as const)
-                    : af.key === "phone"
-                      ? ("phone" as const)
-                      : undefined,
-              }))
-            : (APP_MANIFEST[d.templateType]?.leadFields ?? []).map((lf) => ({
-                key: lf.key,
-                autoDetect: lf.autoDetect as "name" | "phone" | undefined,
-              }));
+        const manifest = resolveDestManifest(destRecord, d.templateType, d.name);
+        if (!manifest?.leadFields.length) return d;
 
-        if (autoDetectFields.length === 0) return d;
         let changed = false;
         const leadFields = { ...d.leadFields };
-        for (const lf of autoDetectFields) {
+        for (const lf of manifest.leadFields) {
           if (leadFields[lf.key]) continue;
           if (lf.autoDetect === "name") {
             const m = autoMatchField(formFields, NAME_PATTERNS);
@@ -506,31 +557,21 @@ export default function IntegrationWizardV2() {
     if (!destinationFilled) return false;
     for (const dest of state.destinations) {
       const destRecord = targetWebsites?.find((t) => t.id === dest.id);
-      const dbAutoFields = (destRecord?.autoMappedFields ?? []) as Array<{
-        key: string;
-      }>;
-      if (dbAutoFields.length > 0) {
-        // Dynamic template: every DB autoMappedField must have a mapping
-        for (const af of dbAutoFields) {
-          if (!dest.leadFields[af.key]) return false;
+      const manifest = resolveDestManifest(destRecord, dest.templateType, dest.name);
+      if (manifest && manifest.leadFields.length > 0) {
+        for (const lf of manifest.leadFields) {
+          if (lf.required && !dest.leadFields[lf.key]) return false;
         }
-      } else {
-        const manifest = APP_MANIFEST[dest.templateType] ?? null;
-        if (manifest && manifest.leadFields.length > 0) {
-          for (const lf of manifest.leadFields) {
-            if (lf.required && !dest.leadFields[lf.key]) return false;
-          }
-        } else if (dest.templateType === "custom") {
-          if (dest.customMappings.length === 0) return false;
-          if (
-            !dest.customMappings.every(
-              (m) =>
-                !m.to.trim() ||
-                (m.from !== null ? !!m.from : !!m.staticValue?.trim()),
-            )
+      } else if (dest.templateType === "custom") {
+        if (dest.customMappings.length === 0) return false;
+        if (
+          !dest.customMappings.every(
+            (m) =>
+              !m.to.trim() ||
+              (m.from !== null ? !!m.from : !!m.staticValue?.trim()),
           )
-            return false;
-        }
+        )
+          return false;
       }
     }
     return true;
@@ -609,42 +650,25 @@ export default function IntegrationWizardV2() {
     // Read destination record from already-fetched list (may be undefined if list
     // hasn't loaded yet — auto-populate effect will fill in once it does).
     const destRecord = targetWebsites?.find((t) => t.id === id);
-    const dbAutoFields = (destRecord?.autoMappedFields ?? []) as Array<{
-      key: string;
-      label: string;
-    }>;
+    const manifest = resolveDestManifest(destRecord, templateType, name);
     const fields = formFields ?? [];
 
     setState((s) => {
       if (s.destinations.some((d) => d.id === id)) return s;
       const leadFields: Record<string, string> = {};
 
-      if (dbAutoFields.length > 0) {
-        // Dynamic template — use DB autoMappedFields
-        for (const af of dbAutoFields) {
-          if (af.key === "name") {
+      if (manifest) {
+        for (const lf of manifest.leadFields) {
+          if (lf.autoDetect === "name") {
             const m = autoMatchField(fields, NAME_PATTERNS);
-            if (m) leadFields[af.key] = m;
-          } else if (af.key === "phone") {
+            if (m) leadFields[lf.key] = m;
+          } else if (lf.autoDetect === "phone") {
             const m = autoMatchField(fields, PHONE_PATTERNS);
-            if (m) leadFields[af.key] = m;
-          }
-        }
-      } else {
-        // Legacy — fall back to APP_MANIFEST
-        const manifest = APP_MANIFEST[templateType] ?? null;
-        if (manifest) {
-          for (const lf of manifest.leadFields) {
-            if (lf.autoDetect === "name") {
-              const m = autoMatchField(fields, NAME_PATTERNS);
-              if (m) leadFields[lf.key] = m;
-            } else if (lf.autoDetect === "phone") {
-              const m = autoMatchField(fields, PHONE_PATTERNS);
-              if (m) leadFields[lf.key] = m;
-            }
+            if (m) leadFields[lf.key] = m;
           }
         }
       }
+
       return {
         ...s,
         destinations: [
@@ -831,39 +855,10 @@ export default function IntegrationWizardV2() {
   );
 
   // ─── Derived: primary manifest — DB template first, then APP_MANIFEST ──────
-  // For admin-created dynamic templates (templateId set): `autoMappedFields`
-  //   from the DB drives the wizard FROM_LEAD section.
-  // For legacy static template types (no templateId): fall back to APP_MANIFEST.
-  const primaryManifest = useMemo(() => {
-    if (!primaryDestType) return null;
-    const dbFields = (primaryDestRecord?.autoMappedFields ?? []) as Array<{
-      key: string;
-      label: string;
-    }>;
-    if (dbFields.length > 0) {
-      // Build an AppManifestService-shaped object from DB data so AppManifestMapper
-      // doesn't need separate code paths.
-      return {
-        id: primaryDestType,
-        label: primaryDestRecord?.templateName ?? primaryDestName,
-        description: "",
-        leadFields: dbFields.map((f) => ({
-          key: f.key,
-          label: f.label,
-          required: true,
-          autoDetect:
-            f.key === "name"
-              ? ("name" as const)
-              : f.key === "phone"
-                ? ("phone" as const)
-                : undefined,
-        })),
-        connectionKeys: (primaryDestRecord?.variableFields ?? []) as string[],
-      };
-    }
-    // Legacy fallback — hardcoded for sotuvchi/100k/telegram/custom
-    return APP_MANIFEST[primaryDestType] ?? null;
-  }, [primaryDestType, primaryDestRecord, primaryDestName]);
+  const primaryManifest = useMemo(
+    () => resolveDestManifest(primaryDestRecord, primaryDestType, primaryDestName),
+    [primaryDestRecord, primaryDestType, primaryDestName],
+  );
 
   // ─── Derived: read-only connection config shown in Step 2 ──────────────────
   const connectionConfig = useMemo(() => {
