@@ -18,8 +18,11 @@ import {
   fetchLeadsFromForm,
   extractLeadFields,
 } from "../services/facebookService";
-import { extractWithMappingForPoll } from "../services/leadService";
-import { processLead } from "../services/leadService";
+import {
+  extractWithMappingForPoll,
+  processLead,
+  resolveLeadMappingFromConfig,
+} from "../services/leadService";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
 
@@ -354,7 +357,14 @@ export const leadsRouter = router({
         return { synced: 0, skipped: 0, message: "No leads found in this form." };
       }
 
-      // Load LEAD_ROUTING integration config for this page+form to use nameField/phoneField
+      // Load LEAD_ROUTING integration config for this page+form to derive the
+      // right nameField / phoneField. This path used to read ONLY the legacy
+      // flat shape (`config.nameField`, `config.phoneField`), which meant
+      // V2-wizard-created integrations that store their mapping under
+      // `config.fieldMappings` were silently ignored here — producing empty
+      // leads after a Graph poll. `resolveLeadMappingFromConfig` implements
+      // the exact same dual-read precedence as `processLead`, so poll and
+      // webhook paths now agree on which field feeds which lead column.
       const [routingIntg] = await db
         .select({ config: integrations.config })
         .from(integrations)
@@ -368,9 +378,9 @@ export const leadsRouter = router({
         )
         .limit(1);
 
-      const routingCfg = (routingIntg?.config ?? {}) as Record<string, unknown>;
-      const nameField = routingCfg.nameField as string | undefined;
-      const phoneField = routingCfg.phoneField as string | undefined;
+      const { nameField, phoneField } = resolveLeadMappingFromConfig(
+        routingIntg?.config as Record<string, unknown> | null | undefined,
+      );
 
       let synced = 0;
       let skipped = 0;

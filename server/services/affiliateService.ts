@@ -88,23 +88,6 @@ export interface AffiliateConfig {
   fieldMap?: Record<string, string>;
 }
 
-// ─── Template definitions ────────────────────────────────────────────────────
-export const TEMPLATE_DEFINITIONS = {
-  custom: {
-    label: "Custom",
-    endpoint: "",
-    method: "POST" as const,
-    contentType: "json" as const,
-    savedFields: [
-      { key: "url", label: "Endpoint URL", placeholder: "https://your-crm.com/api/leads", secret: false },
-    ],
-    variableFields: [] as Array<{ key: string; label: string; placeholder: string; required: boolean }>,
-    autoMapped: {} as Record<string, string>,
-    infoText: "Custom endpoint — configure field mapping as needed",
-    successCheck: (_data: unknown, status: number) => status >= 200 && status < 300,
-  },
-} as const;
-
 // ─── Built-in variable map ────────────────────────────────────────────────────
 /**
  * Build the variable context from a lead payload.

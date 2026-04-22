@@ -191,6 +191,72 @@ export function extractWithMappingForPoll(
   return extractWithMapping(fieldData, {}, nameField, phoneField);
 }
 
+/**
+ * Convert an integration's `config` JSON into the trio of values every lead
+ * extraction call needs: `nameField`, `phoneField`, and the list of extra
+ * field mappings.
+ *
+ * Two persisted shapes coexist today — this helper hides the dual-read from
+ * callers so the logic only lives in one place and can never drift between
+ * the realtime webhook path (`processLead`) and the Graph-polling path
+ * (`leadsRouter.pollFromForm`).
+ *
+ *   1. New (IntegrationWizardV2) — `config.fieldMappings: Array<{ from, to,
+ *      staticValue? }>`. Rows with `to === "name"` / `"phone"` become the
+ *      core field pointers; every other row becomes an `extraFields` entry
+ *      (dest key → source FB form field or literal static value).
+ *
+ *   2. Legacy (classic routing wizard) — flat `config.nameField`,
+ *      `config.phoneField`, and `config.extraFields` in the final shape
+ *      `extractWithMapping` already understands.
+ *
+ * When BOTH shapes are present (V2 wizard writes legacy duplicates for
+ * compat) the new `fieldMappings` wins, matching the precedence
+ * `processLead` already uses — so this refactor is behaviour-preserving.
+ */
+export function resolveLeadMappingFromConfig(
+  config: Record<string, unknown> | null | undefined,
+): {
+  nameField: string | undefined;
+  phoneField: string | undefined;
+  extraFields:
+    | Array<{ destKey: string; sourceField?: string; staticValue?: string }>
+    | undefined;
+} {
+  const cfg = (config ?? {}) as Record<string, unknown>;
+
+  const fieldMappings = cfg.fieldMappings as
+    | Array<{ from: string | null; to: string; staticValue?: string }>
+    | undefined;
+
+  if (fieldMappings && fieldMappings.length > 0) {
+    const nameEntry = fieldMappings.find((m) => m.to === "name" && m.from);
+    const phoneEntry = fieldMappings.find(
+      (m) => m.to === "phone" && m.from,
+    );
+    const extraFields = fieldMappings
+      .filter((m) => m.to !== "name" && m.to !== "phone" && m.to.trim())
+      .map((m) => ({
+        destKey: m.to,
+        sourceField: m.from ?? undefined,
+        staticValue: m.staticValue,
+      }));
+    return {
+      nameField: nameEntry?.from ?? undefined,
+      phoneField: phoneEntry?.from ?? undefined,
+      extraFields,
+    };
+  }
+
+  return {
+    nameField: cfg.nameField as string | undefined,
+    phoneField: cfg.phoneField as string | undefined,
+    extraFields: cfg.extraFields as
+      | Array<{ destKey: string; sourceField?: string; staticValue?: string }>
+      | undefined,
+  };
+}
+
 function extractWithMapping(
   fieldData: Array<{ name: string; values: string[] }>,
   leadMeta: {
@@ -952,35 +1018,14 @@ export async function processLead(params: {
     const intPageId = integration.pageId ?? "";
     const intFormId = integration.formId ?? "";
     if (intPageId === params.pageId && intFormId === params.formId) {
-      // New integrations created by IntegrationWizardV2 store a `fieldMappings`
-      // array.  Legacy integrations (classic routing wizard) use the flat
-      // `nameField` / `phoneField` / `extraFields` shape.  We support both here
-      // so that old integrations are completely unaffected.
-      const fieldMappings = config.fieldMappings as
-        | Array<{ from: string | null; to: string; staticValue?: string }>
-        | undefined;
-
-      if (fieldMappings && fieldMappings.length > 0) {
-        const nameEntry = fieldMappings.find((m) => m.to === "name" && m.from);
-        const phoneEntry = fieldMappings.find(
-          (m) => m.to === "phone" && m.from,
-        );
-        nameField = nameEntry?.from ?? undefined;
-        phoneField = phoneEntry?.from ?? undefined;
-        // Every other row becomes an extraField entry
-        extraFields = fieldMappings
-          .filter((m) => m.to !== "name" && m.to !== "phone" && m.to.trim())
-          .map((m) => ({
-            destKey: m.to,
-            sourceField: m.from ?? undefined,
-            staticValue: m.staticValue,
-          }));
-      } else {
-        // Legacy format
-        nameField = config.nameField as string | undefined;
-        phoneField = config.phoneField as string | undefined;
-        extraFields = config.extraFields as typeof extraFields | undefined;
-      }
+      // Dual-shape read — new V2 `fieldMappings` takes precedence, legacy
+      // `nameField` / `phoneField` / `extraFields` is the fallback. The
+      // helper centralises this so `pollFromForm` (Graph poller) stays in
+      // lock-step and can never drift from the webhook path.
+      const resolved = resolveLeadMappingFromConfig(config);
+      nameField = resolved.nameField;
+      phoneField = resolved.phoneField;
+      extraFields = resolved.extraFields;
       break;
     }
   }

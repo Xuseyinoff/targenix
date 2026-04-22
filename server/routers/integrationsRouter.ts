@@ -12,10 +12,12 @@ import { injectVariables } from "../services/affiliateService";
 import { sendLeadTelegramNotification } from "../services/leadService";
 import { sendTelegramRawMessage } from "../services/telegramService";
 import { decrypt } from "../encryption";
-import { targetWebsites } from "../../drizzle/schema";
+import { targetWebsites, type TargetWebsite } from "../../drizzle/schema";
 import { eq, and } from "drizzle-orm";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getAdapter } from "../integrations";
+import { resolveIntegrationDestinations } from "../services/integrationDestinations";
+import type { DbClient } from "../db";
 
 export const integrationsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
@@ -146,8 +148,8 @@ export const integrationsRouter = router({
       const config = integration.config as Record<string, unknown>;
       const variableFields = (config.variableFields as Record<string, string> | undefined) ?? {};
 
-      // Synthetic test lead payload
-      // Use dedicated columns (indexed) with config JSON as fallback
+      // Synthetic test lead payload — identical shape to every other code
+      // path so adapters receive the same LeadPayload they'd get in prod.
       const testLead = {
         leadgenId: "test-lead-000",
         fullName: "Test Foydalanuvchi",
@@ -158,98 +160,88 @@ export const integrationsRouter = router({
       };
       const testLeadTimestamp = new Date();
 
-      let success = false;
-      let responseData: unknown = null;
-      let errorMsg: string | undefined;
-      let durationMs = 0;
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
 
-      const t0 = Date.now();
-      try {
-        const twId = integration.targetWebsiteId ?? (config.targetWebsiteId ? Number(config.targetWebsiteId) : null);
-        if (twId) {
-          const db = await getDb();
-          if (!db) throw new Error("Database not available");
-          const [tw] = await db
-            .select()
-            .from(targetWebsites)
-            .where(and(eq(targetWebsites.id, twId), eq(targetWebsites.userId, ctx.user.id)))
-            .limit(1);
-          if (!tw) throw new Error("Target website not found or not owned by you");
+      // Fan-out: resolve EVERY destination the integration is wired to
+      // (multi-destination users get the full list; legacy single-dest
+      // users get an array of one). Matches the runtime delivery path so
+      // "Test lead" is a real dry-run of what production would do — fixes
+      // the old behaviour where only the primary `targetWebsiteId` got
+      // exercised and the other N-1 destinations stayed untested.
+      const destinations = await resolveIntegrationDestinations(db, {
+        id: integration.id,
+        userId: integration.userId,
+        targetWebsiteId: integration.targetWebsiteId,
+        config: integration.config,
+      });
 
-          let result: { success: boolean; responseData?: unknown; error?: string };
-          if (tw.templateId) {
-            // Admin template-based destination → dynamicTemplateAdapter (resolves template from DB).
-            const adapter = getAdapter("dynamic-template");
-            if (!adapter) throw new Error("Adapter not found: dynamic-template");
-            result = await adapter.send(
-              { db, targetWebsite: tw, variableFields },
-              testLead,
-            );
-          } else if (tw.templateType === "telegram") {
-            const cfg = (tw.templateConfig ?? {}) as {
-              botTokenEncrypted?: string;
-              chatId?: string;
-              messageTemplate?: string;
-            };
-            if (!cfg.botTokenEncrypted || !cfg.chatId) {
-              result = { success: false, error: "Telegram destination missing botToken or chatId" };
-            } else {
-              const token = decrypt(cfg.botTokenEncrypted);
-              const ctx: Record<string, string> = {
-                full_name: testLead.fullName,
-                phone_number: testLead.phone,
-                email: testLead.email,
-                pageName: "",
-                formName: "",
-                campaignName: "",
-                createdAt: testLeadTimestamp.toLocaleString("uz-UZ"),
-              };
-              const messageTemplate =
-                cfg.messageTemplate ||
-                "📋 Yangi lead\n\n👤 Ism: {{full_name}}\n📞 Telefon: {{phone_number}}\n📧 Email: {{email}}";
-              const message = `[TEST] ${injectVariables(messageTemplate, ctx)}`;
-              result = await sendTelegramRawMessage(token, cfg.chatId, message);
-            }
-          } else if (tw.templateType === "google-sheets") {
-            const adapter = getAdapter("google-sheets");
-            if (!adapter) throw new Error("Adapter not found: google-sheets");
-            result = await adapter.send(
-              {
-                templateConfig: tw.templateConfig,
-                userId: ctx.user.id,
-                leadRow: { createdAt: testLeadTimestamp },
-                db,
-                connectionId: tw.connectionId ?? null,
-              },
-              { ...testLead, extraFields: {} },
-            );
-          } else {
-            // Legacy custom/sotuvchi/100k destination → legacyTemplateAdapter
-            const adapter = getAdapter("legacy-template");
-            if (!adapter) throw new Error("Adapter not found: legacy-template");
-            result = await adapter.send(
-              {
-                templateType: tw.templateType,
-                templateConfig: tw.templateConfig,
-                variableFields,
-                url: tw.url,
-              },
-              testLead,
-            );
-          }
-          success = result.success;
-          responseData = result.responseData;
-          errorMsg = result.error;
-        } else {
-          throw new Error("No target website configured for this integration");
-        }
-      } catch (err) {
-        success = false;
-        errorMsg = err instanceof Error ? err.message : String(err);
+      if (destinations.length === 0) {
+        throw new Error("No destinations configured for this integration");
       }
-      durationMs = Date.now() - t0;
 
-      // Send Telegram notification with [TEST] badge — same format as real leads
+      // Run all deliveries sequentially — keeps log output deterministic
+      // and avoids bursting the same Telegram bot / webhook endpoint in
+      // parallel during a test. Small N (≤20 enforced at create) so total
+      // wall time stays well under the tRPC timeout.
+      const perDestinationResults: Array<{
+        destinationId: number;
+        name: string;
+        success: boolean;
+        responseData?: unknown;
+        error?: string;
+        durationMs: number;
+      }> = [];
+
+      for (const d of destinations) {
+        const tStart = Date.now();
+        let r: { success: boolean; responseData?: unknown; error?: string };
+        try {
+          r = await sendTestLeadToDestination({
+            db,
+            tw: d.targetWebsite,
+            testLead,
+            testLeadTimestamp,
+            variableFields,
+            userId: ctx.user.id,
+          });
+        } catch (err) {
+          r = {
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+        perDestinationResults.push({
+          destinationId: d.targetWebsite.id,
+          name: d.targetWebsite.name,
+          success: r.success,
+          responseData: r.responseData,
+          error: r.error,
+          durationMs: Date.now() - tStart,
+        });
+      }
+
+      // Aggregate fields keep the existing client contract intact:
+      //   - `success` is true only when EVERY destination accepted the test
+      //   - `error` surfaces the first failure so the existing toast still
+      //     tells the user what went wrong
+      //   - `responseData` / `durationMs` mirror the first-destination
+      //     values to preserve today's single-dest behaviour; the full
+      //     per-destination breakdown lives in the new `results` array so
+      //     richer UIs can opt in later without a tRPC contract break.
+      const success = perDestinationResults.every((r) => r.success);
+      const firstFailure = perDestinationResults.find((r) => !r.success);
+      const errorMsg = firstFailure?.error;
+      const responseData = perDestinationResults[0]?.responseData ?? null;
+      const durationMs = perDestinationResults.reduce(
+        (acc, r) => acc + r.durationMs,
+        0,
+      );
+
+      // Telegram notification: one message per integration, not per
+      // destination — we already fan out live leads to N destinations and
+      // send ONE Telegram summary, so mirroring that keeps "[TEST]"
+      // notifications quiet and the format unchanged.
       void sendLeadTelegramNotification({
         integration: {
           userId: integration.userId,
@@ -270,6 +262,110 @@ export const integrationsRouter = router({
         isTest: true,
       }).catch(() => { /* non-critical */ });
 
-      return { success, responseData, error: errorMsg, durationMs };
+      return {
+        success,
+        responseData,
+        error: errorMsg,
+        durationMs,
+        results: perDestinationResults,
+      };
     }),
 });
+
+/**
+ * Dispatch a synthetic test lead to a SINGLE resolved destination.
+ *
+ * Mirrors the adapter-routing logic that lived inline in `testLead` before
+ * this helper existed — extracting it lets the fan-out loop call it once
+ * per destination without duplicating the Telegram `[TEST]` prefix, the
+ * Google Sheets extraFields shim, or the dynamic-template bridge.
+ *
+ * Returns a normalised `{ success, responseData?, error? }` — the caller is
+ * responsible for timing and aggregating.
+ */
+async function sendTestLeadToDestination(args: {
+  db: DbClient;
+  tw: TargetWebsite;
+  testLead: {
+    leadgenId: string;
+    fullName: string;
+    phone: string;
+    email: string;
+    pageId: string;
+    formId: string;
+  };
+  testLeadTimestamp: Date;
+  variableFields: Record<string, string>;
+  userId: number;
+}): Promise<{ success: boolean; responseData?: unknown; error?: string }> {
+  const { db, tw, testLead, testLeadTimestamp, variableFields, userId } = args;
+
+  if (tw.templateId) {
+    // Admin template-based destination → dynamicTemplateAdapter (resolves template from DB).
+    const adapter = getAdapter("dynamic-template");
+    if (!adapter) throw new Error("Adapter not found: dynamic-template");
+    return adapter.send(
+      { db, targetWebsite: tw, variableFields },
+      testLead,
+    );
+  }
+
+  if (tw.templateType === "telegram") {
+    // Preserve the "[TEST]" message prefix — this is the only cue users
+    // have that a test message isn't a real lead, so it MUST stay.
+    const cfg = (tw.templateConfig ?? {}) as {
+      botTokenEncrypted?: string;
+      chatId?: string;
+      messageTemplate?: string;
+    };
+    if (!cfg.botTokenEncrypted || !cfg.chatId) {
+      return {
+        success: false,
+        error: "Telegram destination missing botToken or chatId",
+      };
+    }
+    const token = decrypt(cfg.botTokenEncrypted);
+    const templateCtx: Record<string, string> = {
+      full_name: testLead.fullName,
+      phone_number: testLead.phone,
+      email: testLead.email,
+      pageName: "",
+      formName: "",
+      campaignName: "",
+      createdAt: testLeadTimestamp.toLocaleString("uz-UZ"),
+    };
+    const messageTemplate =
+      cfg.messageTemplate ||
+      "📋 Yangi lead\n\n👤 Ism: {{full_name}}\n📞 Telefon: {{phone_number}}\n📧 Email: {{email}}";
+    const message = `[TEST] ${injectVariables(messageTemplate, templateCtx)}`;
+    return sendTelegramRawMessage(token, cfg.chatId, message);
+  }
+
+  if (tw.templateType === "google-sheets") {
+    const adapter = getAdapter("google-sheets");
+    if (!adapter) throw new Error("Adapter not found: google-sheets");
+    return adapter.send(
+      {
+        templateConfig: tw.templateConfig,
+        userId,
+        leadRow: { createdAt: testLeadTimestamp },
+        db,
+        connectionId: tw.connectionId ?? null,
+      },
+      { ...testLead, extraFields: {} },
+    );
+  }
+
+  // Legacy custom/sotuvchi/100k destination → legacyTemplateAdapter.
+  const adapter = getAdapter("legacy-template");
+  if (!adapter) throw new Error("Adapter not found: legacy-template");
+  return adapter.send(
+    {
+      templateType: tw.templateType,
+      templateConfig: tw.templateConfig,
+      variableFields,
+      url: tw.url,
+    },
+    testLead,
+  );
+}
