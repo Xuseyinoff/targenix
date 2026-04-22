@@ -49,6 +49,7 @@ import {
   FileText,
   Globe,
   Loader2,
+  Lock,
   MessageSquare,
   Pencil,
   Plus,
@@ -98,14 +99,29 @@ type DestRecordLike = {
   templateId?: number | null;
   templateName?: string | null;
   autoMappedFields?: unknown;
+  /** List of keys admin declared as per-integration variables (offer_id, stream, …). */
   variableFields?: unknown;
+  /** List of keys backed by saved credentials (api_key, bot_token, …). */
+  userVisibleFields?: unknown;
+  /** Already-masked view from targetWebsites.list — holds admin defaults + masked secrets. */
+  templateConfig?: unknown;
 };
 
 type ServerAppStub = { key: string; name: string; description: string | null };
 
-const DEFAULT_LEAD_FIELDS = [
-  { key: "name",  label: "Ism (to'liq)",   required: true, autoDetect: "name"  as const },
-  { key: "phone", label: "Telefon raqami",  required: true, autoDetect: "phone" as const },
+// Turn a machine key into something humans tolerate reading: "offer_id" → "Offer id".
+// We keep it minimal (Title Case on the first word, spaces instead of
+// underscores) so translated labels from admin-managed templates win whenever
+// they're provided.
+function humanizeKey(key: string): string {
+  if (!key) return "";
+  const spaced = key.replace(/[_-]+/g, " ").trim();
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+const DEFAULT_LEAD_FIELDS: import("./lead-routing/shared").AppManifestLeadField[] = [
+  { key: "name",  label: "Ism (to'liq)",   required: true, mode: "auto", autoDetect: "name"  },
+  { key: "phone", label: "Telefon raqami",  required: true, mode: "auto", autoDetect: "phone" },
 ];
 
 // Custom Webhook is the only "app" that genuinely has no lead schema — the
@@ -118,6 +134,31 @@ const CUSTOM_MANIFEST: AppManifestService = {
   leadFields: [],
   connectionKeys: [],
 };
+
+/**
+ * Resolve the secret preview shown in mode="secret" chips.
+ *
+ * Admin-managed templates currently stash masked previews inside
+ * `templateConfig.apiKeyMasked` / `templateConfig.botTokenMasked` (via
+ * maskConfig on the server). Other secret keys fall back to a generic
+ * "••••" indicator so the user still sees that a credential is on file.
+ */
+function previewForSecretKey(
+  key: string,
+  templateConfig: Record<string, unknown>,
+): string {
+  if (key.includes("api_key") || key === "apiKey") {
+    const masked = templateConfig.apiKeyMasked;
+    if (typeof masked === "string" && masked) return masked;
+  }
+  if (key.includes("bot_token") || key === "botToken") {
+    const masked = templateConfig.botTokenMasked;
+    if (typeof masked === "string" && masked) return masked;
+  }
+  const direct = templateConfig[`${key}Masked`];
+  if (typeof direct === "string" && direct) return direct;
+  return "••••";
+}
 
 function resolveDestManifest(
   destRecord: DestRecordLike | null | undefined,
@@ -136,30 +177,85 @@ function resolveDestManifest(
 
   // ① DB has explicit autoMappedFields — fully dynamic manifest.
   // Covers admin destination_templates (sotuvchi, 100k, inbaza, mycpa, …).
+  //
+  // We walk THREE ordered sources to build the Make.com-style mapping grid:
+  //   A) autoMappedFields  → mode="auto"   (name, phone — FB form dropdown)
+  //   B) variableFields    → mode="static" (offer_id, stream — per-integration text)
+  //   C) userVisibleFields → mode="secret" (api_key — from the saved connection)
+  //
+  // A key appearing in more than one list wins in this order (auto > static >
+  // secret) so admins can't accidentally make a FROM_LEAD field also a secret.
   if (dbAutoFields.length > 0) {
+    const variableKeys = (
+      Array.isArray(destRecord?.variableFields) ? destRecord!.variableFields : []
+    ) as string[];
+    const secretKeys = (
+      Array.isArray(destRecord?.userVisibleFields) ? destRecord!.userVisibleFields : []
+    ) as string[];
+    const tplCfg = (destRecord?.templateConfig ?? {}) as Record<string, unknown>;
+
+    const leadFields: import("./lead-routing/shared").AppManifestLeadField[] = [];
+    const seen = new Set<string>();
+
+    for (const f of dbAutoFields) {
+      if (!f.key || seen.has(f.key)) continue;
+      seen.add(f.key);
+      leadFields.push({
+        key: f.key,
+        label: f.label || humanizeKey(f.key),
+        required: true,
+        mode: "auto",
+        autoDetect:
+          f.key === "name" || /name/i.test(f.key)
+            ? "name"
+            : f.key === "phone" || /phone/i.test(f.key)
+              ? "phone"
+              : undefined,
+      });
+    }
+
+    for (const key of variableKeys) {
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const preset = tplCfg[key];
+      leadFields.push({
+        key,
+        label: humanizeKey(key),
+        required: true,
+        mode: "static",
+        staticDefault: typeof preset === "string" ? preset : "",
+      });
+    }
+
+    for (const key of secretKeys) {
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      leadFields.push({
+        key,
+        label: humanizeKey(key),
+        required: false, // already captured at destination creation; UI is read-only
+        mode: "secret",
+        secretLabel: previewForSecretKey(key, tplCfg),
+      });
+    }
+
     return {
       id: destType,
       label: destRecord?.templateName ?? destName,
       description: "",
-      leadFields: dbAutoFields.map((f) => ({
-        key: f.key,
-        label: f.label,
-        required: true,
-        autoDetect:
-          f.key === "name" || /name/i.test(f.key)
-            ? ("name" as const)
-            : f.key === "phone" || /phone/i.test(f.key)
-              ? ("phone" as const)
-              : undefined,
-      })),
-      connectionKeys: (
-        Array.isArray(destRecord?.variableFields) ? destRecord!.variableFields : []
-      ) as string[],
+      leadFields,
+      // connectionKeys is now redundant for this path: secret + variable keys
+      // are inline rows in leadFields. Left empty so the "Connection config"
+      // block in AppManifestMapper hides itself.
+      connectionKeys: [],
     };
   }
 
   // ② Admin-created template (templateId set) but autoMappedFields empty —
   // fall back to the universal UZ-CPA convention (name + phone FROM_LEAD).
+  // Still expose variableFields as legacy connection keys for the read-only
+  // Connection box so existing destinations keep rendering identically until
+  // their admin adds autoMappedFields.
   const isAdminTemplate = (destRecord?.templateId ?? null) !== null;
   if (isAdminTemplate) {
     return {
@@ -207,6 +303,15 @@ interface DestinationEntry {
   templateType: string;
   /** Manifest-driven FROM_LEAD mappings: { name: "full_name", phone: "phone_number" } */
   leadFields: Record<string, string>;
+  /**
+   * Per-key static overrides for manifest fields with `mode: "static"`.
+   * Seeded from the destination's `templateConfig[key]` admin default and
+   * persisted to `integration.config.variableFields` on save so
+   * `sendLeadViaTemplate` picks them up via `{{key}}` substitution in
+   * bodyFields. Secrets (mode="secret") NEVER live here — they come from
+   * the destination's stored credential and are read-only in the wizard.
+   */
+  staticValues: Record<string, string>;
   /** Custom/extra mappings for destinations without a fixed manifest (type="custom"). */
   customMappings: FieldMapping[];
 }
@@ -541,8 +646,15 @@ export default function IntegrationWizardV2() {
   });
 
   // ─── Auto-populate per-destination leadFields when form fields load ─────────
+  // Runs after the FB form fields arrive (or the destination list updates with
+  // fresh template metadata) and backfills two things:
+  //   1. FROM_LEAD matches for mode="auto" fields (name / phone heuristics)
+  //   2. Admin defaults for mode="static" fields (offer_id, stream, …) so
+  //      when a user picks an existing destination they immediately see what
+  //      will be sent instead of an empty box.
+  // Existing user edits are never overwritten — we only fill EMPTY keys.
   useEffect(() => {
-    if (!formFields?.length) return;
+    if (!formFields?.length && !targetWebsites?.length) return;
     setState((s) => {
       const updated = s.destinations.map((d) => {
         const destRecord = targetWebsites?.find((t) => t.id === d.id);
@@ -551,17 +663,25 @@ export default function IntegrationWizardV2() {
 
         let changed = false;
         const leadFields = { ...d.leadFields };
+        const staticValues = { ...d.staticValues };
         for (const lf of manifest.leadFields) {
-          if (leadFields[lf.key]) continue;
-          if (lf.autoDetect === "name") {
-            const m = autoMatchField(formFields, NAME_PATTERNS);
-            if (m) { leadFields[lf.key] = m; changed = true; }
-          } else if (lf.autoDetect === "phone") {
-            const m = autoMatchField(formFields, PHONE_PATTERNS);
-            if (m) { leadFields[lf.key] = m; changed = true; }
+          if (lf.mode === "auto") {
+            if (leadFields[lf.key]) continue;
+            if (!formFields?.length) continue;
+            if (lf.autoDetect === "name") {
+              const m = autoMatchField(formFields, NAME_PATTERNS);
+              if (m) { leadFields[lf.key] = m; changed = true; }
+            } else if (lf.autoDetect === "phone") {
+              const m = autoMatchField(formFields, PHONE_PATTERNS);
+              if (m) { leadFields[lf.key] = m; changed = true; }
+            }
+          } else if (lf.mode === "static") {
+            if (staticValues[lf.key] !== undefined) continue;
+            staticValues[lf.key] = lf.staticDefault ?? "";
+            changed = true;
           }
         }
-        return changed ? { ...d, leadFields } : d;
+        return changed ? { ...d, leadFields, staticValues } : d;
       });
       return updated.some((d, i) => d !== s.destinations[i])
         ? { ...s, destinations: updated }
@@ -604,7 +724,12 @@ export default function IntegrationWizardV2() {
       const manifest = resolveDestManifest(destRecord, dest.templateType, dest.name, appManifests);
       if (manifest && manifest.leadFields.length > 0) {
         for (const lf of manifest.leadFields) {
-          if (lf.required && !dest.leadFields[lf.key]) return false;
+          if (!lf.required) continue;
+          if (lf.mode === "auto" && !dest.leadFields[lf.key]) return false;
+          if (lf.mode === "static" && !(dest.staticValues[lf.key] ?? "").trim()) {
+            return false;
+          }
+          // mode="secret" — filled at destination creation; nothing to validate here.
         }
       } else if (dest.templateType === "custom") {
         if (dest.customMappings.length === 0) return false;
@@ -647,6 +772,10 @@ export default function IntegrationWizardV2() {
   // ─── State patches ─────────────────────────────────────────────────────────
   const patch = (p: Partial<WizardState>) => setState((s) => ({ ...s, ...p }));
 
+  // We intentionally preserve `staticValues` across trigger changes: offer_id /
+  // stream / etc. are per-integration constants the user picked for this
+  // destination and have nothing to do with which FB form is the trigger. Only
+  // the FB-field mappings (`leadFields`, `customMappings`) need to be reset.
   const setAccount = (id: number, name: string) => {
     patch({
       accountId: id,
@@ -655,7 +784,6 @@ export default function IntegrationWizardV2() {
       pageName: "",
       formId: "",
       formName: "",
-      // Reset destination leadFields — form fields change, old mappings invalid.
       destinations: state.destinations.map((d) => ({
         ...d,
         leadFields: {},
@@ -680,7 +808,6 @@ export default function IntegrationWizardV2() {
     patch({
       formId: id,
       formName: name,
-      // Changing form invalidates all FROM_LEAD mappings.
       destinations: state.destinations.map((d) => ({
         ...d,
         leadFields: {},
@@ -700,16 +827,27 @@ export default function IntegrationWizardV2() {
     setState((s) => {
       if (s.destinations.some((d) => d.id === id)) return s;
       const leadFields: Record<string, string> = {};
+      const staticValues: Record<string, string> = {};
 
       if (manifest) {
         for (const lf of manifest.leadFields) {
-          if (lf.autoDetect === "name") {
-            const m = autoMatchField(fields, NAME_PATTERNS);
-            if (m) leadFields[lf.key] = m;
-          } else if (lf.autoDetect === "phone") {
-            const m = autoMatchField(fields, PHONE_PATTERNS);
-            if (m) leadFields[lf.key] = m;
+          if (lf.mode === "auto") {
+            if (lf.autoDetect === "name") {
+              const m = autoMatchField(fields, NAME_PATTERNS);
+              if (m) leadFields[lf.key] = m;
+            } else if (lf.autoDetect === "phone") {
+              const m = autoMatchField(fields, PHONE_PATTERNS);
+              if (m) leadFields[lf.key] = m;
+            }
+          } else if (lf.mode === "static") {
+            // Pre-fill with the admin's default so the user sees what will be
+            // sent and can override per-integration without retyping common
+            // values. Empty string when no default exists keeps the field
+            // editable but shows the placeholder.
+            staticValues[lf.key] = lf.staticDefault ?? "";
           }
+          // mode="secret" → value comes from the saved credential at delivery;
+          // nothing to seed into wizard state.
         }
       }
 
@@ -717,7 +855,7 @@ export default function IntegrationWizardV2() {
         ...s,
         destinations: [
           ...s.destinations,
-          { id, name, templateType, leadFields, customMappings: [] },
+          { id, name, templateType, leadFields, staticValues, customMappings: [] },
         ],
       };
     });
@@ -738,6 +876,19 @@ export default function IntegrationWizardV2() {
       destinations: s.destinations.map((d) =>
         d.id === destId
           ? { ...d, leadFields: { ...d.leadFields, [fieldKey]: formFieldKey } }
+          : d,
+      ),
+    }));
+
+  /** Update a mode="static" value for a destination — the user typing a
+   *  per-integration offer_id / stream / custom variable. Saved to
+   *  integration.config.variableFields on submit. */
+  const updateStaticValue = (destId: number, fieldKey: string, value: string) =>
+    setState((s) => ({
+      ...s,
+      destinations: s.destinations.map((d) =>
+        d.id === destId
+          ? { ...d, staticValues: { ...d.staticValues, [fieldKey]: value } }
           : d,
       ),
     }));
@@ -805,8 +956,16 @@ export default function IntegrationWizardV2() {
     const nameMapping = fieldMappings.find((m) => m.to === "name" && m.from);
     const phoneMapping = fieldMappings.find((m) => m.to === "phone" && m.from);
 
-    // Build variableFields from the destination's templateConfig.
-    // Keys come from DB variableFields (dynamic template) OR manifest connectionKeys (legacy).
+    // Build variableFields — the per-integration values that sendLeadViaTemplate
+    // substitutes into admin template bodyFields via {{key}} tokens.
+    //
+    // Layering (last-write-wins):
+    //   1. Destination's admin defaults (targetWebsite.templateConfig[key])
+    //      keep working for destinations that were never edited in the wizard
+    //      (preserves existing behaviour for pre-Commit-8 integrations).
+    //   2. The wizard's `staticValues` overrides every key the user actually
+    //      touched in the mapping grid. Empty strings are intentionally sent
+    //      so admins can blank out a destination-level default per integration.
     const tplCfg = (primaryDestRecord?.templateConfig ?? {}) as Record<string, unknown>;
     const varKeys =
       ((primaryDestRecord?.variableFields ?? []) as string[]).length > 0
@@ -816,6 +975,9 @@ export default function IntegrationWizardV2() {
     for (const key of varKeys) {
       const v = tplCfg[key];
       if (typeof v === "string" && v) variableFields[key] = v;
+    }
+    for (const [key, value] of Object.entries(primaryDest_.staticValues)) {
+      if (typeof value === "string") variableFields[key] = value;
     }
 
     const config = {
@@ -1076,6 +1238,9 @@ export default function IntegrationWizardV2() {
                     connectionConfig={connectionConfig}
                     onUpdateLeadField={(key, formField) =>
                       updateLeadField(primaryDest!.id, key, formField)
+                    }
+                    onUpdateStaticValue={(key, value) =>
+                      updateStaticValue(primaryDest!.id, key, value)
                     }
                     onUpdateCustomMapping={(i, p) =>
                       updateCustomMapping(primaryDest!.id, i, p)
@@ -1614,6 +1779,149 @@ function DestinationEditor({
 //
 //  For "custom" type: falls back to the FieldMappingsEditor (dynamic rows).
 
+// ─── FieldMappingRow — one unified row in the Make.com-style mapping grid ─────
+//
+// The row shape stays constant across all three modes so the grid reads as a
+// vertical table: LABEL → WIDGET. The widget is what switches:
+//   • auto   → <Select> of FB form fields + metadata (with an inline
+//              "Empty — pick a form field" warning when no match is set yet)
+//   • static → <Input> with the admin default as placeholder + a small muted
+//              helper line that surfaces the default when the user clears it
+//   • secret → a read-only chip with the masked credential + a Lock icon so
+//              users instantly recognise it's coming from the connection
+//              they configured at destination creation time.
+
+interface FieldMappingRowProps {
+  field: import("./lead-routing/shared").AppManifestLeadField;
+  leadValue: string;
+  staticValue: string;
+  formFields: Array<{ key: string; label?: string | null }>;
+  onUpdateLeadField: (formFieldKey: string) => void;
+  onUpdateStaticValue: (value: string) => void;
+}
+
+function FieldMappingRow({
+  field,
+  leadValue,
+  staticValue,
+  formFields,
+  onUpdateLeadField,
+  onUpdateStaticValue,
+}: FieldMappingRowProps) {
+  const containerCls = cn(
+    "grid grid-cols-[120px_12px_1fr] items-center gap-2 rounded-lg border px-3 py-2",
+    field.required
+      ? "border-primary/25 bg-primary/4"
+      : "border-border bg-background",
+  );
+
+  const labelCell = (
+    <div className="text-xs font-medium leading-tight">
+      {field.label}
+      {field.required && <span className="text-destructive ml-0.5">*</span>}
+    </div>
+  );
+
+  const arrow = (
+    <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/50" />
+  );
+
+  if (field.mode === "secret") {
+    return (
+      <div
+        className={cn(
+          containerCls,
+          "border-border bg-muted/20", // secrets never look "required empty"
+        )}
+      >
+        {labelCell}
+        {arrow}
+        <div
+          className="flex items-center gap-2 rounded-md border border-dashed bg-background px-2.5 py-1.5 text-xs"
+          title="This value comes from the connection you configured on the destination."
+        >
+          <Lock className="h-3 w-3 shrink-0 text-muted-foreground" />
+          <span className="font-mono text-muted-foreground truncate">
+            {field.secretLabel ?? "••••"}
+          </span>
+          <span className="ml-auto text-[10px] uppercase tracking-wider text-muted-foreground/70 font-semibold">
+            From connection
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  if (field.mode === "static") {
+    const showDefaultHint =
+      !staticValue && !!field.staticDefault;
+    return (
+      <div className={containerCls}>
+        {labelCell}
+        {arrow}
+        <div className="space-y-0.5">
+          <Input
+            className="h-8 text-xs"
+            placeholder={field.staticDefault || `Enter ${field.label.toLowerCase()}…`}
+            value={staticValue}
+            onChange={(e) => onUpdateStaticValue(e.target.value)}
+          />
+          {showDefaultHint && (
+            <div className="text-[10px] text-muted-foreground/80 pl-0.5">
+              Default:{" "}
+              <span className="font-mono text-muted-foreground">
+                {field.staticDefault}
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // mode === "auto"
+  return (
+    <div className={containerCls}>
+      {labelCell}
+      {arrow}
+      <Select
+        value={leadValue || undefined}
+        onValueChange={onUpdateLeadField}
+      >
+        <SelectTrigger className="h-8 text-xs">
+          <SelectValue placeholder="Pick FB form field…" />
+        </SelectTrigger>
+        <SelectContent>
+          {formFields.length === 0 ? (
+            <div className="px-2 py-1.5 text-[11px] text-muted-foreground">
+              Pick a form in Step 1 to see fields.
+            </div>
+          ) : (
+            <>
+              <SelectGroup>
+                <SelectLabel className="text-[11px]">Form fields</SelectLabel>
+                {formFields.map((f) => (
+                  <SelectItem key={f.key} value={f.key}>
+                    {f.label ? `${f.label} (${f.key})` : f.key}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+              <SelectGroup>
+                <SelectLabel className="text-[11px]">FB metadata</SelectLabel>
+                {FB_METADATA_FIELDS.map((m) => (
+                  <SelectItem key={m.key} value={m.key}>
+                    {FB_METADATA_LABELS[m.key]} ({m.key})
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </>
+          )}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 interface AppManifestMapperProps {
   manifest: import("./lead-routing/shared").AppManifestService;
   destEntry: DestinationEntry;
@@ -1621,12 +1929,26 @@ interface AppManifestMapperProps {
   loadingFields: boolean;
   connectionConfig: Record<string, string>;
   onUpdateLeadField: (key: string, formField: string) => void;
+  onUpdateStaticValue: (key: string, value: string) => void;
   onUpdateCustomMapping: (index: number, p: Partial<FieldMapping>) => void;
   onAddCustomFormRow: () => void;
   onAddCustomStaticRow: () => void;
   onRemoveCustomMapping: (index: number) => void;
 }
 
+/**
+ * Make.com / Zapier-style field mapping grid.
+ *
+ * The heart of this component is the `manifest.leadFields.map(...)` loop: it
+ * renders ONE row per destination key, picking the widget based on `lf.mode`:
+ *   • mode="auto"   → Select of Facebook form fields + metadata (FROM_LEAD)
+ *   • mode="static" → Text input with admin default placeholder (user-editable)
+ *   • mode="secret" → Read-only chip sourced from the saved connection
+ *
+ * For legacy destinations whose manifest only carries auto fields the grid
+ * looks identical to the pre-dynamic-mapping version, so this is a no-op for
+ * Telegram / Sheets / UZ-CPA-fallback admin templates.
+ */
 function AppManifestMapper({
   manifest,
   destEntry,
@@ -1634,6 +1956,7 @@ function AppManifestMapper({
   loadingFields,
   connectionConfig,
   onUpdateLeadField,
+  onUpdateStaticValue,
   onUpdateCustomMapping,
   onAddCustomFormRow,
   onAddCustomStaticRow,
@@ -1641,10 +1964,19 @@ function AppManifestMapper({
 }: AppManifestMapperProps) {
   const isCustom = manifest.id === "custom";
   const hasConnection = Object.keys(connectionConfig).length > 0;
+  // Hide the legacy "Connection config" box whenever secret rows already
+  // surface the same information inline — prevents duplicate UI for new
+  // admin templates that expose userVisibleFields.
+  const hasInlineSecretRow = manifest.leadFields.some((lf) => lf.mode === "secret");
+  // Auto rows can't be filled until the trigger form fields arrive. We still
+  // render them (with disabled Select) but flag the situation with a banner so
+  // static / secret rows stay accessible without hiding the whole grid.
+  const hasAutoRow = manifest.leadFields.some((lf) => lf.mode === "auto");
+  const needsFormFields = hasAutoRow && formFields.length === 0 && !loadingFields;
 
   return (
     <div className="border-t mt-5 pt-5 space-y-5">
-      {/* ── FROM_LEAD field mapping ── */}
+      {/* ── Unified per-destination field mapping grid ── */}
       {!isCustom && manifest.leadFields.length > 0 && (
         <div className="space-y-3">
           <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
@@ -1656,61 +1988,25 @@ function AppManifestMapper({
 
           {loadingFields ? (
             <LoadingBar />
-          ) : formFields.length === 0 ? (
-            <EmptyHint message="No form fields loaded. Select a form in Step 1 first." />
           ) : (
-            <div className="space-y-2">
-              {manifest.leadFields.map((lf) => {
-                const currentVal = destEntry.leadFields[lf.key] ?? "";
-                return (
-                  <div
+            <>
+              {needsFormFields && (
+                <EmptyHint message="Pick a form in Step 1 to fill the highlighted fields." />
+              )}
+              <div className="space-y-2">
+                {manifest.leadFields.map((lf) => (
+                  <FieldMappingRow
                     key={lf.key}
-                    className={cn(
-                      "grid grid-cols-[120px_12px_1fr] items-center gap-2 rounded-lg border px-3 py-2",
-                      lf.required
-                        ? "border-primary/25 bg-primary/4"
-                        : "border-border bg-background",
-                    )}
-                  >
-                    {/* Destination field label */}
-                    <div className="text-xs font-medium leading-tight">
-                      {lf.label}
-                      {lf.required && (
-                        <span className="text-destructive ml-0.5">*</span>
-                      )}
-                    </div>
-                    <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground/50" />
-                    {/* FB form field picker */}
-                    <Select
-                      value={currentVal || undefined}
-                      onValueChange={(v) => onUpdateLeadField(lf.key, v)}
-                    >
-                      <SelectTrigger className="h-8 text-xs">
-                        <SelectValue placeholder="Pick FB form field…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectGroup>
-                          <SelectLabel className="text-[11px]">Form fields</SelectLabel>
-                          {formFields.map((f) => (
-                            <SelectItem key={f.key} value={f.key}>
-                              {f.label ? `${f.label} (${f.key})` : f.key}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                        <SelectGroup>
-                          <SelectLabel className="text-[11px]">FB metadata</SelectLabel>
-                          {FB_METADATA_FIELDS.map((m) => (
-                            <SelectItem key={m.key} value={m.key}>
-                              {FB_METADATA_LABELS[m.key]} ({m.key})
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                );
-              })}
-            </div>
+                    field={lf}
+                    leadValue={destEntry.leadFields[lf.key] ?? ""}
+                    staticValue={destEntry.staticValues[lf.key] ?? ""}
+                    formFields={formFields}
+                    onUpdateLeadField={(v) => onUpdateLeadField(lf.key, v)}
+                    onUpdateStaticValue={(v) => onUpdateStaticValue(lf.key, v)}
+                  />
+                ))}
+              </div>
+            </>
           )}
         </div>
       )}
@@ -1737,8 +2033,10 @@ function AppManifestMapper({
         </div>
       )}
 
-      {/* ── Connection config (read-only) ── */}
-      {hasConnection && (
+      {/* ── Connection config (read-only, legacy path only) ──
+           Hidden when secret rows are already inline in the mapping grid so
+           there's only one place to look for the api_key / bot_token badge. */}
+      {hasConnection && !hasInlineSecretRow && (
         <div className="space-y-2 rounded-xl border bg-muted/30 px-3 py-3">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-3.5 w-3.5 text-green-500 shrink-0" />

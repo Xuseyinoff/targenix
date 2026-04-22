@@ -177,16 +177,39 @@ export function hydrateExtraFields(value: unknown): ExtraFieldDraft[] {
 // ─── App Manifest — JSON-driven service schema (Make.com/Zapier level) ────────
 
 /**
- * A "lead field" is a field whose value comes FROM the Facebook form payload.
- * The user maps: FB form field key → this key in the outbound payload.
- * e.g. "Full name (full_name)" → "name"
+ * A single row in the wizard's "Field mapping" grid for a destination.
+ *
+ * Historically every row was a FROM-lead mapping (pick an FB form field that
+ * feeds the outbound key). With admin-managed destination templates that
+ * declare `bodyFields` + `userVisibleFields` + `variableFields`, the same
+ * grid now hosts three very different widgets:
+ *
+ *   • mode="auto"   → Select of Facebook form fields + metadata.
+ *                     Pre-matched from `autoDetect` (name / phone).
+ *   • mode="static" → Plain text input. User types the per-integration value
+ *                     (e.g. offer_id, stream). `staticDefault` pre-fills from
+ *                     the destination's templateConfig so the admin default
+ *                     shows up until the user overrides it.
+ *   • mode="secret" → Read-only chip sourced from the saved connection /
+ *                     destination credentials. `secretLabel` holds the
+ *                     masked preview (e.g. "••••cd21") so the user can
+ *                     visually confirm which credential is being used.
+ *
+ * The legacy code path (server manifest apps like Telegram / Sheets, and
+ * the UZ-CPA fallback for admin templates without `autoMappedFields`) stays
+ * on `mode="auto"` so behaviour is unchanged.
  */
 export interface AppManifestLeadField {
-  key: string;       // outbound payload key: "name", "phone"
+  key: string;       // outbound payload key: "name", "phone", "offer_id", …
   label: string;     // UI label shown to user: "Ism (to'liq)"
   required: boolean;
-  /** Auto-detection hint: which global pattern set to use. */
+  mode: "auto" | "static" | "secret";
+  /** mode="auto" only — which global pattern set feeds first-load matching. */
   autoDetect?: "name" | "phone";
+  /** mode="static" only — placeholder shown in the input (admin default). */
+  staticDefault?: string;
+  /** mode="secret" only — short masked preview shown in the read-only chip. */
+  secretLabel?: string;
 }
 
 /**
