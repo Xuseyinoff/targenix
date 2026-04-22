@@ -827,6 +827,130 @@ export const targetWebsitesRouter = router({
     }),
 
   /**
+   * Create a target_websites row from an EXISTING api_key connection —
+   * Make.com/Zapier's "reuse an app I've already connected" shortcut used by
+   * the wizard's Action picker.
+   *
+   * Why this is a dedicated mutation rather than a variant of
+   * `createFromTemplate`:
+   *   • The user never retypes the secret. We copy the already-encrypted
+   *     secret bytes straight from `connections.credentialsJson.secretsEncrypted`
+   *     into `targetWebsites.templateConfig.secrets`, so the same ciphertext
+   *     is addressable from the delivery path (`buildBody`) without any
+   *     additional decrypt/re-encrypt round-trip.
+   *   • We link `targetWebsites.connectionId` so future phases can migrate
+   *     delivery to read secrets straight off the connection row (Phase 4).
+   *   • The destination name defaults to the template name with a
+   *     " (n)" suffix if one already exists — matches the wizard's "Sotuvchi.com (1)"
+   *     UX the user approved.
+   */
+  createFromConnection: protectedProcedure
+    .input(
+      z.object({
+        connectionId: z.number().int().positive(),
+        /** Optional override; generated from template name otherwise. */
+        name: z.string().trim().min(1).max(255).optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB not available");
+
+      const [conn] = await db
+        .select({
+          id: connections.id,
+          userId: connections.userId,
+          type: connections.type,
+          displayName: connections.displayName,
+          credentialsJson: connections.credentialsJson,
+        })
+        .from(connections)
+        .where(eq(connections.id, input.connectionId))
+        .limit(1);
+
+      if (!conn || conn.userId !== ctx.user.id) {
+        throw new Error("Connection not found");
+      }
+      if (conn.type !== "api_key") {
+        throw new Error(
+          `createFromConnection only supports api_key connections (got ${conn.type})`,
+        );
+      }
+
+      const creds = (conn.credentialsJson ?? {}) as {
+        templateId?: number;
+        secretsEncrypted?: Record<string, string>;
+      };
+      const templateId = creds.templateId;
+      if (typeof templateId !== "number") {
+        throw new Error("Connection has no associated template");
+      }
+      const secretsEncrypted = creds.secretsEncrypted ?? {};
+
+      const [template] = await db
+        .select()
+        .from(destinationTemplates)
+        .where(
+          and(
+            eq(destinationTemplates.id, templateId),
+            eq(destinationTemplates.isActive, true),
+          ),
+        )
+        .limit(1);
+      if (!template) throw new Error("Template not found or inactive");
+
+      // Auto-name with a " (n)" suffix if the user already has destinations
+      // sharing this template name — keeps the picker self-contained while
+      // avoiding duplicates that would confuse the "pick from existing" list.
+      const baseName = input.name?.trim() || template.name;
+      const existing = await db
+        .select({ name: targetWebsites.name })
+        .from(targetWebsites)
+        .where(eq(targetWebsites.userId, ctx.user.id));
+      let finalName = baseName;
+      if (!input.name) {
+        const used = new Set(existing.map((e) => e.name));
+        let n = 1;
+        while (used.has(finalName)) {
+          finalName = `${baseName} (${n})`;
+          n += 1;
+        }
+      }
+
+      const [me] = await db
+        .select({
+          mode: users.telegramDestinationDeliveryMode,
+          defaultChatId: users.telegramDestinationDefaultChatId,
+        })
+        .from(users)
+        .where(eq(users.id, ctx.user.id))
+        .limit(1);
+      const autoChatId =
+        me?.mode === "ALL" && me.defaultChatId ? String(me.defaultChatId) : null;
+
+      const [inserted] = await db.insert(targetWebsites).values({
+        userId: ctx.user.id,
+        name: finalName,
+        url: template.endpointUrl,
+        templateType: "custom",
+        templateId: template.id,
+        color: template.color,
+        // The already-encrypted secret bytes are copied verbatim so the
+        // delivery path (buildBody) keeps working byte-for-byte unchanged.
+        templateConfig: {
+          secrets: secretsEncrypted,
+          variables: {},
+        },
+        connectionId: conn.id,
+        ...(autoChatId ? { telegramChatId: autoChatId } : {}),
+        isActive: true,
+      });
+      const id = (inserted as unknown as { insertId?: number })?.insertId;
+      if (!id) throw new Error("Failed to create destination");
+      return { id, name: finalName, templateId: template.id };
+    }),
+
+  /**
    * Load row 1 of a Google Sheet tab as header labels (for column mapping UI).
    */
   getSheetHeaders: protectedProcedure

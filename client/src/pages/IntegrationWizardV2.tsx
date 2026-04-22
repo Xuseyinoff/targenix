@@ -78,6 +78,7 @@ import {
 import { DestinationCreatorInline } from "@/components/destinations/DestinationCreatorInline";
 import { resolveAppIcon, appIconBgClass, appIconRingClass } from "@/components/destinations/appIcons";
 import { isSupportedAppKey } from "@/components/destinations/createPayload";
+import { WizardActionPickerModal } from "@/components/wizard/WizardActionPickerModal";
 import type { AppManifestService } from "./lead-routing/shared";
 
 // ─── resolveDestManifest ───────────────────────────────────────────────────────
@@ -577,6 +578,10 @@ export default function IntegrationWizardV2() {
     // undefined means "open the full app picker" (null), a key skips to config.
     setInlineCreatorAppKey(appKey ?? null);
   };
+
+  // Zapier-style app picker — opened by the "+ Add action" button below the
+  // collapsed trigger and by "Add another destination" inside the chip view.
+  const [actionPickerOpen, setActionPickerOpen] = useState(false);
 
   // ─── Flag gate ─────────────────────────────────────────────────────────────
   const { data: flags, isLoading: flagsLoading } =
@@ -1190,7 +1195,11 @@ export default function IntegrationWizardV2() {
             isActive={activeStep === 2}
             isDone={canSave}
             isLocked={!triggerFilled}
-            isOpen={triggerFilled}
+            /* Only opens after Continue on the trigger (activeStep=2).
+               Keeping it closed while the trigger is still active matches
+               the Zapier/Make flow the user asked for: trigger → Continue
+               → downward connector → "+ Add action" revealed. */
+            isOpen={activeStep === 2}
             isLast={true}
             summary={canSave ? state.integrationName : undefined}
             onHeaderClick={() => triggerFilled && setActiveStep(2)}
@@ -1205,10 +1214,36 @@ export default function IntegrationWizardV2() {
                 }}
                 onCancel={() => setInlineCreatorAppKey(undefined)}
               />
+            ) : !destinationFilled ? (
+              /* ── Empty Action step: one big "+ Add action" CTA ──
+                   Matches the Zapier/Make.com pattern the user approved:
+                   after Continue on the trigger, step 2 just shows this
+                   button — the full app picker lives inside the modal so
+                   the wizard stays uncluttered. */
+              <div className="flex flex-col items-center justify-center py-6">
+                <button
+                  type="button"
+                  onClick={() => setActionPickerOpen(true)}
+                  className={cn(
+                    "flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-primary/30 bg-primary/5 px-10 py-8 transition-all",
+                    "hover:border-primary/60 hover:bg-primary/10 active:scale-[0.99]",
+                  )}
+                >
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                    <Plus className="h-5 w-5" strokeWidth={2.5} />
+                  </span>
+                  <span className="text-sm font-semibold text-foreground">
+                    Add action
+                  </span>
+                  <span className="max-w-[220px] text-center text-[11px] leading-snug text-muted-foreground">
+                    Choose where each new Facebook lead should go
+                  </span>
+                </button>
+              </div>
             ) : (
-              /* ── Normal picker → mapping → publish flow ── */
+              /* ── Destination selected → chip view + mapping + publish ── */
               <>
-                {/* Destination picker */}
+                {/* Destination chip list (picker UI lives in the modal now) */}
                 <div>
                   <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
                     Destination
@@ -1225,6 +1260,7 @@ export default function IntegrationWizardV2() {
                       }
                     }}
                     onOpenCreatorForApp={handleOpenCreatorForApp}
+                    onAddAnother={() => setActionPickerOpen(true)}
                   />
                 </div>
 
@@ -1329,6 +1365,26 @@ export default function IntegrationWizardV2() {
           </ZapperStep>
         </div>
       </div>
+
+      {/* Zapier-style app picker modal. Mounted once at the page level so
+          opening/closing it preserves all wizard state (trigger choices,
+          mapping edits, etc.). */}
+      <WizardActionPickerModal
+        open={actionPickerOpen}
+        onOpenChange={setActionPickerOpen}
+        onDestinationReady={(id, name, templateType) => {
+          addDestination(id, name, templateType);
+          setActiveStep(2);
+        }}
+        onPickManifestApp={(appKey) => {
+          // Sheets / Telegram / Custom HTTP still need the multi-step inline
+          // creator (OAuth popup, bot token form, webhook builder). Hand off
+          // to the existing flow instead of duplicating those forms inside
+          // the picker.
+          setInlineCreatorAppKey(appKey);
+          setActiveStep(2);
+        }}
+      />
     </DashboardLayout>
   );
 }
@@ -1505,6 +1561,12 @@ interface DestinationEditorProps {
    * Omit (or pass undefined) to show the full app picker.
    */
   onOpenCreatorForApp: (appKey?: string) => void;
+  /**
+   * Optional — when provided, the chip view's "Add another destination"
+   * link opens the Zapier-style WizardActionPickerModal instead of the
+   * embedded picker. Falls back to the internal picker when undefined.
+   */
+  onAddAnother?: () => void;
 }
 
 
@@ -1514,6 +1576,7 @@ function DestinationEditor({
   selectedIds,
   onToggle,
   onOpenCreatorForApp,
+  onAddAnother,
 }: DestinationEditorProps) {
   const { data: appList = [] } = trpc.apps.list.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
@@ -1605,7 +1668,7 @@ function DestinationEditor({
         <div className="flex items-center justify-between pt-1">
           <button
             type="button"
-            onClick={() => setShowPicker(true)}
+            onClick={() => (onAddAnother ? onAddAnother() : setShowPicker(true))}
             className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-primary transition-colors"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -1613,7 +1676,7 @@ function DestinationEditor({
           </button>
           <button
             type="button"
-            onClick={() => setShowPicker(true)}
+            onClick={() => (onAddAnother ? onAddAnother() : setShowPicker(true))}
             className="text-xs text-muted-foreground hover:text-primary transition-colors underline underline-offset-2"
           >
             Change
