@@ -1,8 +1,14 @@
 import type { AppManifest } from "../manifest";
 
 /**
- * Admin-managed destination template — defined in destination_templates.
- * Drives ~99.997% of production traffic (100k.uz, sotuvchi.com, …).
+ * Admin-managed destination template — meta-adapter for every row in
+ * destination_templates. End users never pick this directly; they pick the
+ * concrete affiliate (Sotuvchi.com, 100k.uz, Inbaza.uz, MyCPA, …) which is
+ * then dispatched to this adapter server-side.
+ *
+ * Marked `internal: true` so it's filtered out of user-facing app pickers.
+ * The admin templates surface is exposed through a separate route —
+ * `targetWebsites.getTemplates` — which returns the actual affiliate rows.
  */
 export const dynamicTemplateApp: AppManifest = {
   key: "dynamic-template",
@@ -16,4 +22,5 @@ export const dynamicTemplateApp: AppManifest = {
   connectionType: "none",
   modules: [{ key: "send_lead", name: "Send lead", kind: "action" }],
   availability: "stable",
+  internal: true,
 };

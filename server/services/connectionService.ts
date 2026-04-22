@@ -132,6 +132,49 @@ export async function insertTelegramConnection(
   return (inserted as unknown as { insertId: number }).insertId;
 }
 
+// ─── API-key (admin template) connection ─────────────────────────────────────
+// Generic credential bucket for admin-managed affiliates. The shape is
+// deliberately schema-agnostic: `secretsEncrypted` is a flat map of
+// userVisibleFields key → encrypted value. The adapter looks up the template
+// by `templateId` at delivery time and knows which fields to substitute.
+
+interface InsertApiKeyConnectionInput {
+  userId: number;
+  /** Must be a valid destination_templates.id; verified by the caller. */
+  templateId: number;
+  /** Label shown in the /connections list, e.g. "Sotuvchi main key". */
+  displayName: string;
+  /**
+   * Already-encrypted values keyed by `userVisibleFields` entries —
+   * e.g. `{ api_key: encrypt("BD...XK") }`. Never pass plaintext here.
+   */
+  secretsEncrypted: Record<string, string>;
+}
+
+/**
+ * Insert an api_key connection row. Mirrors `insertTelegramConnection` so
+ * connectionsRouter stays a thin pass-through — all validation (template
+ * existence, field keys) lives in the router.
+ */
+export async function insertApiKeyConnection(
+  db: DbClient,
+  input: InsertApiKeyConnectionInput,
+): Promise<number> {
+  const displayName = input.displayName.trim() || "API key";
+  const [inserted] = await db.insert(connections).values({
+    userId: input.userId,
+    type: "api_key",
+    displayName,
+    status: "active",
+    credentialsJson: {
+      templateId: input.templateId,
+      secretsEncrypted: input.secretsEncrypted,
+    },
+    lastVerifiedAt: new Date(),
+  });
+  return (inserted as unknown as { insertId: number }).insertId;
+}
+
 // ─── Shared read helpers ─────────────────────────────────────────────────────
 
 /**

@@ -24,6 +24,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import {
   connections,
+  destinationTemplates,
   googleAccounts,
   targetWebsites,
 } from "../../drizzle/schema";
@@ -31,6 +32,7 @@ import { encrypt } from "../encryption";
 import {
   countDestinationsUsingConnection,
   findConnectionForUser,
+  insertApiKeyConnection,
   insertTelegramConnection,
   mapConnectionUsage,
 } from "../services/connectionService";
@@ -59,6 +61,16 @@ interface ListedConnection {
    *  only echo the chat id for display. */
   telegram?: {
     chatId: string;
+  } | null;
+  /** api_key only — the admin-managed template this connection belongs to.
+   *  Powers the icon / color / name in the unified /connections list so the
+   *  user doesn't see a faceless "api_key" row. */
+  apiKey?: {
+    templateId: number;
+    templateName: string;
+    templateColor: string;
+    /** Keys present in credentialsJson.secretsEncrypted — for display only. */
+    secretKeys: string[];
   } | null;
 }
 
@@ -139,6 +151,33 @@ export const connectionsRouter = router({
         for (const a of accounts) googleById.set(a.id, a);
       }
 
+      // Resolve template metadata for api_key rows in one round-trip. The
+      // templateId lives inside credentialsJson.templateId (stored at create
+      // time), so we dig it out before querying destination_templates.
+      const templateIds = rows
+        .filter((r) => r.type === "api_key")
+        .map((r) => {
+          const creds = (r.credentialsJson ?? {}) as Record<string, unknown>;
+          return typeof creds.templateId === "number" ? creds.templateId : null;
+        })
+        .filter((id): id is number => id !== null);
+
+      const templateById = new Map<
+        number,
+        { id: number; name: string; color: string }
+      >();
+      if (templateIds.length > 0) {
+        const tpls = await db
+          .select({
+            id: destinationTemplates.id,
+            name: destinationTemplates.name,
+            color: destinationTemplates.color,
+          })
+          .from(destinationTemplates)
+          .where(inArray(destinationTemplates.id, templateIds));
+        for (const t of tpls) templateById.set(t.id, t);
+      }
+
       const now = Date.now();
 
       return rows.map((r): ListedConnection => {
@@ -163,6 +202,26 @@ export const connectionsRouter = router({
           telegram = { chatId };
         }
 
+        let apiKey: ListedConnection["apiKey"] = null;
+        if (r.type === "api_key") {
+          const creds = (r.credentialsJson ?? {}) as Record<string, unknown>;
+          const tplId =
+            typeof creds.templateId === "number" ? creds.templateId : null;
+          const secretsEncrypted = (creds.secretsEncrypted ??
+            {}) as Record<string, unknown>;
+          if (tplId != null) {
+            const meta = templateById.get(tplId);
+            if (meta) {
+              apiKey = {
+                templateId: meta.id,
+                templateName: meta.name,
+                templateColor: meta.color,
+                secretKeys: Object.keys(secretsEncrypted),
+              };
+            }
+          }
+        }
+
         return {
           id: r.id,
           type: r.type,
@@ -173,6 +232,7 @@ export const connectionsRouter = router({
           usageCount: usage.get(r.id) ?? 0,
           google,
           telegram,
+          apiKey,
         };
       });
     }),
@@ -371,6 +431,95 @@ export const connectionsRouter = router({
       await log.info("CONNECTIONS", "telegram connection created", {
         userId: ctx.user.id,
         connectionId: id,
+      });
+
+      return { success: true, id };
+    }),
+
+  /**
+   * Create an api_key connection for an admin-managed destination template.
+   *
+   * The schema is intentionally driven by `destination_templates.userVisibleFields`:
+   *   • the router loads the template, reads `userVisibleFields` (e.g. ["api_key"])
+   *   • every key present there MUST have a value in `secrets`
+   *   • extra keys are rejected so we never silently persist mystery values
+   *
+   * Storing the encrypted map under `credentialsJson.secretsEncrypted` keeps
+   * the existing `dynamicTemplateAdapter` `{{SECRET:...}}` substitution
+   * compatible: once Phase 2D migrates adapters to read from `connections`,
+   * the lookup path is a drop-in.
+   */
+  createApiKey: protectedProcedure
+    .input(
+      z.object({
+        templateId: z.number().int().positive(),
+        displayName: z.string().trim().min(1).max(255),
+        secrets: z.record(z.string().min(1), z.string().trim().min(1)),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Database not available",
+        });
+      }
+
+      const [tpl] = await db
+        .select({
+          id: destinationTemplates.id,
+          name: destinationTemplates.name,
+          isActive: destinationTemplates.isActive,
+          userVisibleFields: destinationTemplates.userVisibleFields,
+        })
+        .from(destinationTemplates)
+        .where(eq(destinationTemplates.id, input.templateId))
+        .limit(1);
+
+      if (!tpl || !tpl.isActive) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Template not found or inactive",
+        });
+      }
+
+      const expectedKeys = (tpl.userVisibleFields as string[]) ?? [];
+      const missing = expectedKeys.filter((k) => !input.secrets[k]);
+      if (missing.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Missing required fields: ${missing.join(", ")}`,
+        });
+      }
+      const extra = Object.keys(input.secrets).filter(
+        (k) => !expectedKeys.includes(k),
+      );
+      if (extra.length > 0) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Unknown fields for this template: ${extra.join(", ")}`,
+        });
+      }
+
+      const secretsEncrypted: Record<string, string> = {};
+      for (const key of expectedKeys) {
+        secretsEncrypted[key] = encrypt(input.secrets[key]);
+      }
+
+      const id = await insertApiKeyConnection(db, {
+        userId,
+        templateId: tpl.id,
+        displayName: input.displayName,
+        secretsEncrypted,
+      });
+
+      await log.info("CONNECTIONS", "api_key connection created", {
+        userId,
+        connectionId: id,
+        templateId: tpl.id,
+        templateName: tpl.name,
       });
 
       return { success: true, id };

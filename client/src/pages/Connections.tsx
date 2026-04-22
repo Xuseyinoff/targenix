@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Link } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import { DisconnectFacebookAccountDialog } from "@/components/DisconnectFacebookAccountDialog";
-import { GoogleConnectionsSection } from "@/components/connections/GoogleConnectionsSection";
-import { TelegramConnectionsSection } from "@/components/connections/TelegramConnectionsSection";
+import { AppPickerModal } from "@/components/connections/AppPickerModal";
+import { ConnectionsList } from "@/components/connections/ConnectionsList";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -112,6 +112,7 @@ export default function Connections() {
     pageCount: number;
   } | null>(null);
   const [howOpen, setHowOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const popupRef = useRef<Window | null>(null);
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -728,20 +729,37 @@ export default function Connections() {
           </div>
         )}
 
-        {/* Phase 3 — delivery-side connections (Google, Telegram).
-            Each section is self-contained: queries the connections router,
-            renders its own connect flow, and exposes rename / disconnect. */}
-        <div className="space-y-6 pt-2">
-          <div className="flex items-center gap-3">
-            <div className="h-px flex-1 bg-border/60" />
-            <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-              {t("connections.deliverySectionLabel")}
-            </span>
-            <div className="h-px flex-1 bg-border/60" />
-          </div>
-          <GoogleConnectionsSection />
-          <TelegramConnectionsSection />
+        {/* Phase 2C — delivery-side connections. Facebook logic above is
+            untouched; the "+ Add connection" button opens a Zapier-style
+            picker modal (AppPickerModal). Clicking an app inside the modal
+            drives the right credential flow inline:
+              - Google Sheets → the existing Google OAuth popup
+              - Telegram      → TelegramConnectDialog (bot token + chat id)
+              - Admin tpl     → /destinations?template=<id>
+            No bespoke Google / Telegram sections live on this page anymore;
+            their saved rows surface through the unified list (coming next). */}
+        <div className="flex items-center justify-between gap-3 pt-2">
+          <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            {t("connections.deliverySectionLabel")}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            className="h-9 shrink-0 gap-1.5 rounded-lg"
+            onClick={() => setPickerOpen(true)}
+          >
+            <Plus className="h-4 w-4" />
+            Add connection
+          </Button>
         </div>
+
+        {/* Unified rows for every saved delivery credential (Sheets / Telegram
+            / admin-template API keys). Facebook accounts stay in the
+            Collapsible cards above because their page-level management
+            doesn't fit a flat row. */}
+        <ConnectionsList />
+
+        <AppPickerModal open={pickerOpen} onOpenChange={setPickerOpen} />
 
         {/* Sticky primary CTA — mobile (hidden when empty to avoid duplicate with empty state) */}
         {!isLoading && accountsWithPages.length > 0 && (
