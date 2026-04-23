@@ -711,11 +711,14 @@ export function buildBody(
       const secretKey = value.replace("{{SECRET:", "").replace("}}", "").trim();
       const encrypted = secrets[secretKey];
       if (encrypted) {
-        try {
-          body[field.key] = decrypt(encrypted);
-        } catch {
-          body[field.key] = "";
-        }
+        // Use safeResolveForDelivery so a decrypt failure throws DeliveryBlockedError
+        // rather than silently sending an empty credential (same contract as buildCustomBody).
+        body[field.key] = safeResolveForDelivery(
+          value,
+          {},
+          secrets,
+          "dynamic-template/body",
+        );
       } else {
         body[field.key] = "";
       }
@@ -998,11 +1001,9 @@ export async function sendLeadViaTemplate(
         // (pre-Stage-0 behaviour for this branch — tightening it is
         // out of Stage 2 scope per "do not touch encryption logic").
         let tpl = bodyFieldsArr[0].value;
-        tpl = tpl.replace(/\{\{SECRET:([^}]+)\}\}/g, (_, key: string) => {
-          const encrypted = secretsMap[key.trim()];
-          if (!encrypted) return "";
-          try { return decrypt(encrypted); } catch { return ""; }
-        });
+        // Use safeResolveForDelivery so a decrypt failure throws DeliveryBlockedError
+        // instead of silently sending an empty credential (mirrors buildCustomBody contract).
+        tpl = safeResolveForDelivery(tpl, varCtx, secretsMap, "dynamic-template/body/json-raw");
         // Resolve {{variable}} substitutions
         tpl = injectVariables(tpl, varCtx);
         body = tpl; // raw JSON string — axios sends as-is
