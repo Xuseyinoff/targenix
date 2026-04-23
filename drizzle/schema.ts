@@ -245,6 +245,44 @@ export const googleOauthStates = mysqlTable("google_oauth_states", {
 export type GoogleOauthState = typeof googleOauthStates.$inferSelect;
 export type InsertGoogleOauthState = typeof googleOauthStates.$inferInsert;
 
+// ─── Connection App Specs (Admin-managed — Stage 1 contract) ──────────────────
+// The authoritative catalogue of apps that users can connect to (affiliate
+// networks, messaging platforms, OAuth providers). Each row defines the shape
+// of credentials an app requires: `authType` + `fields[]`.
+//
+// Source of truth:
+//   server/integrations/connectionAppSpecs.ts — a typed TS constant. This
+//   table is a DB mirror of that constant used for admin UI queries and
+//   backfill. Runtime validation consumes the TS constant, NOT this table,
+//   so the validator stays deterministic and doesn't need a DB roundtrip.
+//
+// Contract: every `{{SECRET:key}}` token in `destination_templates.bodyFields`
+// MUST name a field declared in the matching spec's `fields[]` with
+// `sensitive: true`. Enforced at admin save AND at server boot.
+//
+// fields JSON shape: Array<{
+//   key: string;          // matches the token: {{SECRET:<key>}}
+//   label: string;
+//   required: boolean;
+//   sensitive: boolean;   // if true, the value is encrypted at rest
+//   validationRegex?: string;
+//   helpText?: string;
+// }>
+export const connectionAppSpecs = mysqlTable("connection_app_specs", {
+  id: int("id").autoincrement().primaryKey(),
+  appKey: varchar("appKey", { length: 64 }).notNull().unique(),
+  displayName: varchar("displayName", { length: 128 }).notNull(),
+  authType: mysqlEnum("authType", ["api_key", "oauth2", "bearer", "basic"]).notNull(),
+  category: varchar("category", { length: 32 }).default("affiliate").notNull(),
+  /** Array of ConnectionAppSpecField — see shape in the block comment above. */
+  fields: json("fields").notNull(),
+  iconUrl: varchar("iconUrl", { length: 512 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ConnectionAppSpecRow = typeof connectionAppSpecs.$inferSelect;
+export type InsertConnectionAppSpecRow = typeof connectionAppSpecs.$inferInsert;
+
 // ─── Destination Templates (Admin-managed) ─────────────────────────────────────
 // Admin-defined affiliate endpoint templates.
 // Users pick a template when creating a destination — no code changes needed for new affiliates.
@@ -254,6 +292,10 @@ export type InsertGoogleOauthState = typeof googleOauthStates.$inferInsert;
 // userVisibleFields: fields user fills once (e.g. ["api_key"])
 // variableFields:    fields user fills per routing rule (e.g. ["offer_id", "stream"])
 // autoMappedFields:  fields auto-filled from lead data (e.g. [{ key: "name", label: "Full Name" }])
+//
+// appKey links this template to a connection_app_specs row. Nullable until
+// every legacy row is backfilled (migration 0046 does this for the 4 current
+// rows). New rows MUST set appKey — enforced by adminTemplatesRouter.
 export const destinationTemplates = mysqlTable("destination_templates", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
@@ -263,6 +305,8 @@ export const destinationTemplates = mysqlTable("destination_templates", {
   category: mysqlEnum("category", ["messaging", "data", "webhooks", "affiliate", "crm"])
     .default("affiliate")
     .notNull(),
+  /** FK-in-spirit → connection_app_specs.appKey. See block comment above. */
+  appKey: varchar("appKey", { length: 64 }),
   endpointUrl: varchar("endpointUrl", { length: 500 }).notNull(),
   method: varchar("method", { length: 10 }).default("POST").notNull(),
   contentType: varchar("contentType", { length: 100 }).default("application/x-www-form-urlencoded").notNull(),
@@ -276,7 +320,9 @@ export const destinationTemplates = mysqlTable("destination_templates", {
   autoMappedFields: json("autoMappedFields").notNull(),
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  idxAppKey: index("idx_destination_templates_appKey").on(t.appKey),
+}));
 
 export type DestinationTemplate = typeof destinationTemplates.$inferSelect;
 export type InsertDestinationTemplate = typeof destinationTemplates.$inferInsert;
@@ -299,6 +345,13 @@ export const connections = mysqlTable("connections", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
   type: mysqlEnum("type", ["google_sheets", "telegram_bot", "api_key"]).notNull(),
+  /**
+   * FK-in-spirit → connection_app_specs.appKey. Identifies which app this
+   * connection is for (e.g. 'sotuvchi', 'mgoods', 'telegram'). Nullable
+   * for legacy rows; future writes set it, and `uniq_user_app_label`
+   * prevents duplicate connection names within the same app for one user.
+   */
+  appKey: varchar("appKey", { length: 64 }),
   /** Human-readable label shown in the UI, e.g. "Google Sheets (user@gmail.com)" */
   displayName: varchar("displayName", { length: 255 }).notNull(),
   /** Lifecycle status; adapters treat non-'active' as "fall back to templateConfig". */
@@ -314,6 +367,9 @@ export const connections = mysqlTable("connections", {
 }, (t) => ({
   idxUserId: index("idx_connections_user_id").on(t.userId),
   idxUserType: index("idx_connections_user_type").on(t.userId, t.type),
+  uniqUserAppLabel: uniqueIndex("uniq_user_app_label").on(
+    t.userId, t.appKey, t.displayName,
+  ),
 }));
 
 export type Connection = typeof connections.$inferSelect;

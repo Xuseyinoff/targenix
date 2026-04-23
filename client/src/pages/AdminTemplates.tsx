@@ -55,6 +55,13 @@ interface TemplateForm {
   description: string;
   color: string;
   category: TemplateCategory;
+  /**
+   * Connection app key. Links the template to an entry in
+   * `connection_app_specs` so every {{SECRET:key}} token can be
+   * validated against that spec's declared sensitive fields. Required
+   * on the server — the form enforces selection before save.
+   */
+  appKey: string;
   endpointUrl: string;
   method: "POST" | "GET";
   contentType: string;
@@ -125,6 +132,7 @@ function defaultForm(): TemplateForm {
     description: "",
     color: "#3B82F6",
     category: "affiliate",
+    appKey: "",
     endpointUrl: "",
     method: "POST",
     contentType: "application/x-www-form-urlencoded",
@@ -300,6 +308,7 @@ export default function AdminTemplates() {
 
   const utils = trpc.useUtils();
   const { data: templates = [], isLoading } = trpc.adminTemplates.list.useQuery();
+  const { data: appKeyOptions = [] } = trpc.adminTemplates.listAppKeys.useQuery();
 
   const createMutation = trpc.adminTemplates.create.useMutation({
     onSuccess: () => { utils.adminTemplates.list.invalidate(); setOpen(false); toast.success("Template created"); },
@@ -338,6 +347,7 @@ export default function AdminTemplates() {
       description: t.description ?? "",
       color: t.color,
       category: ((t as { category?: TemplateCategory }).category ?? "affiliate") as TemplateCategory,
+      appKey: ((t as { appKey?: string | null }).appKey ?? "") as string,
       endpointUrl: t.endpointUrl,
       method: (t.method ?? "POST") as "POST" | "GET",
       contentType: ct,
@@ -385,6 +395,7 @@ export default function AdminTemplates() {
 
   function handleSave() {
     if (!form.name.trim()) { toast.error("Name is required"); return; }
+    if (!form.appKey.trim()) { toast.error("App is required — pick which connection spec this template uses"); return; }
     if (!form.endpointUrl.trim()) { toast.error("Endpoint URL is required"); return; }
     const effectiveFields = getEffectiveBodyFields(form);
     if (isJsonMode(form.contentType)) {
@@ -398,6 +409,7 @@ export default function AdminTemplates() {
       description: form.description.trim() || undefined,
       color: form.color,
       category: form.category,
+      appKey: form.appKey,
       endpointUrl: form.endpointUrl.trim(),
       method: form.method,
       contentType: form.contentType,
@@ -570,6 +582,29 @@ export default function AdminTemplates() {
                   {CATEGORIES.find(c => c.value === form.category)?.hint}
                 </p>
               </div>
+            </div>
+
+            {/* App — connection spec the template requires */}
+            <div className="space-y-1.5">
+              <Label>
+                App <span className="text-destructive">*</span>
+              </Label>
+              <select
+                className="w-full h-9 rounded-md border bg-background px-3 text-sm"
+                value={form.appKey}
+                onChange={e => setField("appKey", e.target.value)}
+              >
+                <option value="">— pick an app —</option>
+                {appKeyOptions.map(o => (
+                  <option key={o.appKey} value={o.appKey}>
+                    {o.appKey}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-muted-foreground">
+                Every <code className="bg-muted px-1 rounded">{"{{SECRET:key}}"}</code> token is validated against this
+                app&apos;s declared credential fields.
+              </p>
             </div>
 
             {/* Endpoint */}

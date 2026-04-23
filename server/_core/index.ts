@@ -20,6 +20,7 @@ import { handleTelegramWebhook, registerTelegramWebhook } from "../webhooks/tele
 import { log } from "../services/appLogger";
 import { getLeadDispatchMode } from "../services/leadDispatch";
 import { getDb } from "../db";
+import { validateTemplatesAtBoot } from "../boot/validateTemplatesContract";
 import type { Request, Response, NextFunction } from "express";
 
 /**
@@ -101,6 +102,14 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Stage 1 — admin template contract check. Runs BEFORE express is
+  // constructed so that a drifting DB/code pair aborts the deploy
+  // instead of serving traffic with silently broken templates.
+  const contractResult = await validateTemplatesAtBoot();
+  console.log(
+    `[Server] Template contract OK — validated=${contractResult.validatedTemplates} apps=${contractResult.knownApps}`,
+  );
+
   const app = express();
   const server = createServer(app);
 
