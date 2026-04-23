@@ -22,6 +22,52 @@ export type AffiliateResult = {
   errorType?: DeliveryErrorType;
 };
 
+// ─── Typed delivery errors ──────────────────────────────────────────────────
+/**
+ * Thrown by `resolveTemplateValue` when a `{{SECRET:key}}` token expansion
+ * fails at the decrypt step — i.e. the ciphertext is stored in the secrets
+ * map but `decrypt()` throws (malformed payload, key drift, corruption, …).
+ *
+ * Crucially this is NOT thrown for a *missing* secret key; that remains a
+ * soft failure returning empty string, matching the existing
+ * `{{unknown_variable}} → ""` contract of `injectVariables`.
+ *
+ * The distinction matters: a missing key is a configuration oversight that
+ * the partner endpoint can still validate and reject; a decrypt failure on
+ * an existing ciphertext means we have actual data corruption or key drift
+ * and sending the request with an empty value would silently drop the lead.
+ */
+export class SecretDecryptError extends Error {
+  readonly code = "SECRET_DECRYPT_FAILED" as const;
+  readonly key: string;
+  constructor(key: string, cause?: unknown) {
+    super(`SECRET_DECRYPT_FAILED:${key}`);
+    this.name = "SecretDecryptError";
+    this.key = key;
+    if (cause !== undefined) (this as Error & { cause?: unknown }).cause = cause;
+  }
+}
+
+/**
+ * Thrown by the legacy-template delivery path (`buildCustomBody` /
+ * `buildHeaders`) when a `SecretDecryptError` bubbles up. It explicitly
+ * blocks the outbound HTTP request — no axios call is made — so the
+ * delivery is marked FAILED and the retry system can attempt again once
+ * the underlying secret is re-encrypted with the current key.
+ */
+export class DeliveryBlockedError extends Error {
+  readonly code = "DELIVERY_BLOCKED_SECRET_ERROR" as const;
+  readonly key: string;
+  readonly adapterContext: string;
+  constructor(key: string, adapterContext: string, cause?: unknown) {
+    super(`DELIVERY_BLOCKED_SECRET_ERROR:${key}@${adapterContext}`);
+    this.name = "DeliveryBlockedError";
+    this.key = key;
+    this.adapterContext = adapterContext;
+    if (cause !== undefined) (this as Error & { cause?: unknown }).cause = cause;
+  }
+}
+
 // ─── Template types ─────────────────────────────────────────────────────────
 export type TemplateType = "custom";
 
@@ -141,15 +187,23 @@ export function injectVariables(template: string, ctx: Record<string, string>): 
  * byte like `injectVariables`. Existing plain-text and
  * `{{variable}}`-only configs therefore see no behaviour change.
  *
- * Failure modes — all resolve to empty string, never throw:
- *   - `secrets` is undefined
- *   - Secret key not present in the map
- *   - Stored ciphertext is malformed or decrypt() throws
+ * Failure modes — split into SOFT and HARD:
+ *   SOFT (return empty string, mirrors `injectVariables`' unknown-variable
+ *   contract — a configuration oversight that the partner endpoint can
+ *   validate and reject on its own):
+ *     - `secrets` is undefined
+ *     - Secret key not present in the map
+ *     - Stored ciphertext is the empty string
  *
- * This mirrors the "unknown variable → empty string" contract of
- * `injectVariables`, so delivery can never be blocked by a missing or
- * corrupted secret — the partner endpoint will simply receive an empty
- * value and respond per its own validation.
+ *   HARD (throw `SecretDecryptError`):
+ *     - Ciphertext is present but `decrypt()` throws
+ *       (malformed payload, key drift, data corruption)
+ *
+ * The hard failure existed silently before Stage D v3 — `decrypt()`
+ * throwing was swallowed and an empty value was sent, so a key mismatch
+ * during an encryption migration silently dropped every lead with a
+ * "SENT" status. Throwing instead lets the calling layer block delivery
+ * explicitly (FAILED + retryable) rather than lose the lead.
  */
 export function resolveTemplateValue(
   template: string,
@@ -174,16 +228,58 @@ export function resolveTemplateValue(
     (_match, rawKey: string) => {
       const key = rawKey.trim();
       const encrypted = safeSecrets[key];
+      // SOFT miss — no ciphertext stored under this key. Same semantics as
+      // an unknown `{{variable}}`: return empty so plain-text configs and
+      // misconfigured-but-not-corrupted secrets behave identically.
       if (typeof encrypted !== "string" || encrypted.length === 0) return "";
       try {
         return decrypt(encrypted);
-      } catch {
-        return "";
+      } catch (cause) {
+        // HARD failure — signals key drift or corruption. Must stop
+        // delivery; empty value here would be silently wrong.
+        throw new SecretDecryptError(key, cause);
       }
     },
   );
 
   return injectVariables(withSecrets, ctx);
+}
+
+/**
+ * Thin safety wrapper over `resolveTemplateValue` for the legacy-template
+ * delivery path. Converts the raw `SecretDecryptError` into a
+ * `DeliveryBlockedError` so callers upstream can distinguish "the
+ * partner rejected our request" from "we refused to send the request".
+ *
+ * Structured log is emitted at the point of failure — before the error
+ * is rewrapped — so operators can correlate the exact `key` and
+ * `adapterContext` responsible without relying on the upstream
+ * error-type classifier (`inferDeliveryErrorType`) preserving metadata.
+ *
+ * Any non-SecretDecrypt error is rethrown untouched (defence in depth —
+ * we do not want to broaden the category of errors that translate into
+ * "DELIVERY_BLOCKED_SECRET_ERROR", which has specific operational
+ * meaning).
+ */
+function safeResolveForDelivery(
+  template: string,
+  ctx: Record<string, string>,
+  secrets: Record<string, string>,
+  adapterContext: string,
+): string {
+  try {
+    return resolveTemplateValue(template, ctx, secrets);
+  } catch (err) {
+    if (err instanceof SecretDecryptError) {
+      console.error("[affiliateService] SECRET_DECRYPT_FAILED", {
+        code: err.code,
+        key: err.key,
+        adapterContext,
+      });
+      throw new DeliveryBlockedError(err.key, adapterContext, err);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -277,7 +373,15 @@ export function buildCustomBody(
     if (bodyTemplate.trim()) {
       // Resolve SECRET tokens (if any) then inject variables. Without a
       // `{{SECRET:…}}` marker this is identical to `injectVariables`.
-      const injected = resolveTemplateValue(bodyTemplate, varCtx, secrets);
+      // `safeResolveForDelivery` escalates a SECRET decrypt failure into
+      // `DeliveryBlockedError` so the outbound request is aborted before
+      // any axios call is made.
+      const injected = safeResolveForDelivery(
+        bodyTemplate,
+        varCtx,
+        secrets,
+        "legacy-template/body/json",
+      );
       try {
         const parsed = JSON.parse(injected);
         return { body: parsed, contentTypeHeader: "application/json" };
@@ -314,7 +418,16 @@ export function buildCustomBody(
     const params = new URLSearchParams();
     if (bodyFields?.length) {
       for (const { key, value } of bodyFields) {
-        if (key) params.append(key, resolveTemplateValue(value, varCtx, secrets));
+        if (key)
+          params.append(
+            key,
+            safeResolveForDelivery(
+              value,
+              varCtx,
+              secrets,
+              "legacy-template/body/form-urlencoded",
+            ),
+          );
       }
     } else {
       // Legacy: fieldMap
@@ -337,7 +450,16 @@ export function buildCustomBody(
     const fd = new FormData();
     if (bodyFields?.length) {
       for (const { key, value } of bodyFields) {
-        if (key) fd.append(key, resolveTemplateValue(value, varCtx, secrets));
+        if (key)
+          fd.append(
+            key,
+            safeResolveForDelivery(
+              value,
+              varCtx,
+              secrets,
+              "legacy-template/body/multipart",
+            ),
+          );
       }
     } else {
       fd.append("name", varCtx.name);
@@ -422,7 +544,17 @@ export function buildHeaders(
   const secrets = (cfg.secrets as Record<string, string> | undefined) ?? {};
   const result: Record<string, string> = {};
   for (const [k, v] of Object.entries(rawHeaders)) {
-    result[k] = resolveTemplateValue(v, varCtx, secrets);
+    // A failing SECRET in headers (e.g. Authorization) would previously
+    // have been sent as empty, triggering silent 401/403 rejections and
+    // data loss. `safeResolveForDelivery` now throws `DeliveryBlockedError`
+    // before any axios call, so the upstream catch marks the delivery
+    // FAILED and the retry system can re-attempt.
+    result[k] = safeResolveForDelivery(
+      v,
+      varCtx,
+      secrets,
+      "legacy-template/headers",
+    );
   }
   // Set Content-Type unless overridden by user
   if (!result["Content-Type"] && !result["content-type"]) {

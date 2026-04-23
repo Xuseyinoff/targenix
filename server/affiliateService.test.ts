@@ -8,6 +8,8 @@ import {
   buildCustomBody,
   buildHeaders,
   BUILTIN_VARIABLES,
+  SecretDecryptError,
+  DeliveryBlockedError,
 } from "./services/affiliateService";
 import { encrypt } from "./encryption";
 
@@ -313,21 +315,59 @@ describe("resolveTemplateValue", () => {
     expect(resolveTemplateValue("{{SECRET:api_key}}", {}, undefined)).toBe("");
   });
 
-  it("(5c) returns empty string when ciphertext is malformed (no throw)", () => {
-    expect(
+  // ─── Stage D v3 — HARD-failure semantics ─────────────────────────────
+  // Decrypt-level failures USED to silently return empty string (Stage D
+  // v2 Step 1 behaviour). That was the root cause of the aborted v1
+  // migration — a production key mismatch silently sent empty api_keys
+  // and logged leads as SENT while the partner rejected them.
+  //
+  // From Stage D v3 onwards the resolver throws `SecretDecryptError`
+  // on any ACTUAL decrypt failure (ciphertext present but unreadable),
+  // while a MISSING ciphertext still resolves to empty (soft-miss, kept
+  // for configuration-oversight parity with `{{unknown_variable}}`).
+
+  it("(5c) throws SecretDecryptError when ciphertext is malformed", () => {
+    try {
       resolveTemplateValue("{{SECRET:api_key}}", {}, {
         api_key: "not-a-valid-ciphertext",
-      }),
-    ).toBe("");
+      });
+      throw new Error("expected SecretDecryptError to be thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(SecretDecryptError);
+      expect((err as SecretDecryptError).code).toBe("SECRET_DECRYPT_FAILED");
+      expect((err as SecretDecryptError).key).toBe("api_key");
+    }
   });
 
-  it("(5d) returns empty string when decrypt fails on well-formatted garbage", () => {
-    // Shape is iv:payload but the bytes won't decrypt.
-    expect(
+  it("(5d) throws SecretDecryptError on well-formatted but unreadable ciphertext", () => {
+    // iv:payload shape parses but AES-CBC rejects the bytes — exactly
+    // the shape that a production-key-vs-local-key mismatch produces.
+    try {
       resolveTemplateValue("{{SECRET:api_key}}", {}, {
         api_key: "aabbccddeeff00112233445566778899:ff",
-      }),
-    ).toBe("");
+      });
+      throw new Error("expected SecretDecryptError to be thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(SecretDecryptError);
+      expect((err as SecretDecryptError).code).toBe("SECRET_DECRYPT_FAILED");
+      expect((err as SecretDecryptError).key).toBe("api_key");
+    }
+  });
+
+  it("(5e) throw carries the original decrypt error as `cause`", () => {
+    // Surfacing the original error aids debugging without leaking
+    // ciphertext into higher layers — the message stays generic.
+    try {
+      resolveTemplateValue("{{SECRET:api_key}}", {}, {
+        api_key: "not-a-valid-ciphertext",
+      });
+      throw new Error("expected SecretDecryptError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(SecretDecryptError);
+      expect(
+        (err as SecretDecryptError & { cause?: unknown }).cause,
+      ).toBeInstanceOf(Error);
+    }
   });
 
   it("preserves static injectVariables behaviour when no SECRET token present", () => {
@@ -441,6 +481,72 @@ describe("buildCustomBody — SECRET support", () => {
     expect(params.get("api_key")).toBe("");
     expect(params.get("name")).toBe("Ali Valiyev");
   });
+
+  // ─── Stage D v3 — DeliveryBlockedError on broken SECRET ───────────────
+  // These exist expressly to prevent a repeat of the Stage D v1 failure:
+  // encrypted bytes that the CURRENT runtime cannot decrypt (key drift)
+  // MUST abort the outbound request — not send an empty api_key and log
+  // the lead as SENT.
+
+  const expectDeliveryBlocked = (fn: () => unknown, expectedKey: string) => {
+    try {
+      fn();
+      throw new Error("expected DeliveryBlockedError to be thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(DeliveryBlockedError);
+      expect((err as DeliveryBlockedError).code).toBe(
+        "DELIVERY_BLOCKED_SECRET_ERROR",
+      );
+      expect((err as DeliveryBlockedError).key).toBe(expectedKey);
+      expect((err as DeliveryBlockedError).adapterContext).toMatch(
+        /^legacy-template\//,
+      );
+    }
+  };
+
+  it("(D3-body-form) broken SECRET in form-urlencoded throws DeliveryBlockedError", () => {
+    const cfg = {
+      contentType: "form-urlencoded",
+      bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}" }],
+      secrets: { api_key: "not-a-valid-ciphertext" },
+    };
+    expectDeliveryBlocked(() => buildCustomBody(cfg, varCtx), "api_key");
+  });
+
+  it("(D3-body-multipart) broken SECRET in multipart throws DeliveryBlockedError", () => {
+    const cfg = {
+      contentType: "multipart",
+      bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}" }],
+      secrets: { api_key: "aabbccddeeff00112233445566778899:ff" },
+    };
+    expectDeliveryBlocked(() => buildCustomBody(cfg, varCtx), "api_key");
+  });
+
+  it("(D3-body-json) broken SECRET in JSON bodyTemplate throws DeliveryBlockedError", () => {
+    const cfg = {
+      contentType: "json",
+      bodyTemplate: '{"api_key":"{{SECRET:api_key}}"}',
+      secrets: { api_key: "not-a-valid-ciphertext" },
+    };
+    expectDeliveryBlocked(() => buildCustomBody(cfg, varCtx), "api_key");
+  });
+
+  it("(D3-body-form) DeliveryBlockedError adapterContext identifies the failing stage", () => {
+    const cfg = {
+      contentType: "form-urlencoded",
+      bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}" }],
+      secrets: { api_key: "not-a-valid-ciphertext" },
+    };
+    try {
+      buildCustomBody(cfg, varCtx);
+      throw new Error("expected throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(DeliveryBlockedError);
+      expect((err as DeliveryBlockedError).adapterContext).toBe(
+        "legacy-template/body/form-urlencoded",
+      );
+    }
+  });
 });
 
 // ─── buildHeaders — SECRET resolution ──────────────────────────────────────
@@ -490,5 +596,54 @@ describe("buildHeaders — SECRET support", () => {
     const headers = buildHeaders(cfg, varCtx, "application/json");
     expect(headers["content-type"]).toBe("application/xml");
     expect(headers["Content-Type"]).toBeUndefined();
+  });
+
+  // ─── Stage D v3 — DeliveryBlockedError on broken SECRET in headers ────
+  // An Authorization header with a decrypt-failing SECRET is the highest-
+  // risk silent-fail scenario: a blank bearer token will draw a 401/403
+  // from the partner but some adapters log it as SENT with error body.
+  // We must abort before axios runs.
+
+  it("(D3-headers) broken SECRET in Authorization throws DeliveryBlockedError", () => {
+    const cfg = {
+      headers: { Authorization: "Bearer {{SECRET:api_key}}" },
+      secrets: { api_key: "not-a-valid-ciphertext" },
+    };
+    try {
+      buildHeaders(cfg, varCtx, "application/json");
+      throw new Error("expected DeliveryBlockedError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(DeliveryBlockedError);
+      expect((err as DeliveryBlockedError).code).toBe(
+        "DELIVERY_BLOCKED_SECRET_ERROR",
+      );
+      expect((err as DeliveryBlockedError).key).toBe("api_key");
+      expect((err as DeliveryBlockedError).adapterContext).toBe(
+        "legacy-template/headers",
+      );
+    }
+  });
+
+  it("(D3-headers) multiple headers: any one broken SECRET blocks the whole request", () => {
+    // Mixed: one valid SECRET and one broken SECRET. Delivery must not
+    // partially proceed — the whole header build throws.
+    const validCipher = encrypt("valid-key");
+    const cfg = {
+      headers: {
+        "X-Api-Key": "{{SECRET:api_key}}",
+        Authorization: "Bearer {{SECRET:auth_token}}",
+      },
+      secrets: {
+        api_key: validCipher,
+        auth_token: "aabbccddeeff00112233445566778899:ff",
+      },
+    };
+    try {
+      buildHeaders(cfg, varCtx, "application/json");
+      throw new Error("expected DeliveryBlockedError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(DeliveryBlockedError);
+      expect((err as DeliveryBlockedError).key).toBe("auth_token");
+    }
   });
 });
