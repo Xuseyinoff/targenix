@@ -1,8 +1,12 @@
 import axios from "axios";
 import FormData from "form-data";
 import { decrypt } from "../encryption";
-import type { DestinationTemplate } from "../../drizzle/schema";
+import type { Connection, DestinationTemplate } from "../../drizzle/schema";
 import { inferDeliveryErrorType, type DeliveryErrorType } from "../lib/orderRetryPolicy";
+import {
+  getAppSpec,
+  specIsAuthless,
+} from "../integrations/connectionAppSpecs";
 
 // ─── Shared lead payload ────────────────────────────────────────────────────
 export interface LeadPayload {
@@ -65,6 +69,35 @@ export class DeliveryBlockedError extends Error {
     this.key = key;
     this.adapterContext = adapterContext;
     if (cause !== undefined) (this as Error & { cause?: unknown }).cause = cause;
+  }
+}
+
+/**
+ * Thrown by `resolveSecretsForDelivery` when a destination is explicitly
+ * linked to a `connections` row (Stage 2: connection is the source of
+ * truth) but that connection contains no secrets. This is a loud signal
+ * that a user either never populated credentials or the connection row
+ * is corrupted — in both cases we refuse to silently fall back to the
+ * legacy per-destination `templateConfig.secrets`, because that would
+ * restore the exact class of silent-data-loss bug Stage D v3 fixed.
+ *
+ * The accompanying error message intentionally avoids leaking any
+ * secret-key names; the structured log emitted at the throw site
+ * carries enough context (connectionId, templateId) for operators.
+ */
+export class ConnectionSecretMissingError extends Error {
+  readonly code = "CONNECTION_SECRET_MISSING" as const;
+  readonly connectionId: number;
+  readonly templateId: number | null;
+  constructor(connectionId: number, templateId: number | null) {
+    super(
+      `CONNECTION_SECRET_MISSING:connection=${connectionId}${
+        templateId != null ? ` template=${templateId}` : ""
+      }`,
+    );
+    this.name = "ConnectionSecretMissingError";
+    this.connectionId = connectionId;
+    this.templateId = templateId;
   }
 }
 
@@ -283,6 +316,97 @@ function safeResolveForDelivery(
 }
 
 /**
+ * Stage 2 — runtime connection-based secret resolution.
+ *
+ * Picks the authoritative map of {{SECRET:key}} → <encrypted ciphertext>
+ * for one outbound delivery, preferring the new `connections` store
+ * over the legacy per-destination `target_websites.templateConfig.secrets`.
+ *
+ * Decision order:
+ *   1. `connection` provided AND `status === 'active'` AND it carries a
+ *      non-empty `credentialsJson.secretsEncrypted` map →
+ *      return the connection's map (connection wins, instant rotation).
+ *
+ *   2. `connection` provided AND active BUT `secretsEncrypted` is
+ *      missing / empty →
+ *      THROW `ConnectionSecretMissingError`. The user explicitly linked
+ *      a connection; silently falling back to `templateConfig.secrets`
+ *      would mask a broken connection and ship stale credentials.
+ *
+ *   3. `connection` is `null` / `undefined` / not active →
+ *      fall back to `templateConfig.secrets ?? {}`. Identical to the
+ *      pre-Stage-2 path, so legacy destinations (no connectionId
+ *      populated, or connection revoked / expired / errored) keep
+ *      working byte-for-byte.
+ *
+ * The returned map ALWAYS contains encrypted values; downstream
+ * resolvers (`resolveTemplateValue`) handle decryption and strict
+ * error semantics.
+ *
+ * SECURITY: this helper does not itself decrypt anything — the
+ * encryption boundary stays inside `resolveTemplateValue` /
+ * `safeResolveForDelivery`.
+ */
+export function resolveSecretsForDelivery(opts: {
+  connection?: Connection | null;
+  templateConfig: Record<string, unknown> | null | undefined;
+  templateId?: number | null;
+  adapterContext: string;
+  /**
+   * Optional appKey of the template being delivered. When provided AND
+   * it resolves to an auth-less spec (authType='none' or no sensitive
+   * fields), this function short-circuits to `{}` — no connection
+   * lookup, no fallback read, no CONNECTION_SECRET_MISSING possible.
+   *
+   * This is the runtime counterpart to `AUTH_NONE_HAS_SECRETS` in the
+   * validator: together they make it impossible for an auth-less
+   * template to need, carry, or surface credentials.
+   */
+  appKey?: string | null;
+}): Record<string, string> {
+  const { connection, templateConfig, templateId, adapterContext, appKey } =
+    opts;
+  const cfg = (templateConfig ?? {}) as Record<string, unknown>;
+  const fallbackSecrets =
+    (cfg.secrets as Record<string, string> | undefined) ?? {};
+
+  if (appKey) {
+    const spec = getAppSpec(appKey);
+    if (spec && specIsAuthless(spec)) {
+      return {};
+    }
+  }
+
+  if (connection && connection.status === "active") {
+    const creds = (connection.credentialsJson ?? {}) as Record<string, unknown>;
+    const secretsFromConnection = creds.secretsEncrypted as
+      | Record<string, string>
+      | undefined;
+
+    const hasAnySecret =
+      !!secretsFromConnection &&
+      typeof secretsFromConnection === "object" &&
+      !Array.isArray(secretsFromConnection) &&
+      Object.keys(secretsFromConnection).length > 0;
+
+    if (hasAnySecret) {
+      return secretsFromConnection;
+    }
+
+    console.error("[affiliateService] CONNECTION_SECRET_MISSING", {
+      code: "CONNECTION_SECRET_MISSING",
+      connectionId: connection.id,
+      templateId: templateId ?? null,
+      adapterContext,
+    });
+    throw new ConnectionSecretMissingError(connection.id, templateId ?? null);
+  }
+
+  // No connection (or non-active) — legacy path. Zero behaviour change.
+  return fallbackSecrets;
+}
+
+/**
  * Extract all {{variable}} names from a template string.
  * Returns unique list of variable names.
  */
@@ -354,7 +478,15 @@ function evaluateSuccess(
  */
 export function buildCustomBody(
   cfg: Record<string, unknown>,
-  varCtx: Record<string, string>
+  varCtx: Record<string, string>,
+  /**
+   * Stage 2 — caller may pre-resolve the secrets map (e.g. from the
+   * linked `connections` row). When provided it takes priority over
+   * `cfg.secrets`; when omitted we fall back to the legacy
+   * `cfg.secrets` path, so existing callers (preview endpoints, older
+   * tests) keep working byte-for-byte.
+   */
+  secretsOverride?: Record<string, string>,
 ): {
   body: string | Record<string, unknown> | null;
   contentTypeHeader: string;
@@ -366,7 +498,9 @@ export function buildCustomBody(
   // missing / empty map exactly like `injectVariables` treated a missing
   // variable — returns empty string — so existing plain-text configs
   // behave byte-for-byte identically to before.
-  const secrets = (cfg.secrets as Record<string, string> | undefined) ?? {};
+  const secrets =
+    secretsOverride ??
+    ((cfg.secrets as Record<string, string> | undefined) ?? {});
 
   if (normalizedCt === "json") {
     const bodyTemplate = (cfg.bodyTemplate as string | undefined) ?? "";
@@ -481,11 +615,20 @@ export function buildBody(
   template: DestinationTemplate,
   targetWebsite: { templateConfig?: unknown },
   lead: LeadPayload,
-  variables: Record<string, string> = {}
+  variables: Record<string, string> = {},
+  /**
+   * Stage 2 — optional pre-resolved secrets map from the linked
+   * `connections` row. Takes priority over `templateConfig.secrets`
+   * when present. Omitted by preview callers (targetWebsitesRouter
+   * test endpoint) so those paths keep their legacy behaviour.
+   */
+  secretsOverride?: Record<string, string>,
 ): Record<string, string> {
   const body: Record<string, string> = {};
   const cfg = (targetWebsite.templateConfig ?? {}) as Record<string, unknown>;
-  const secrets = (cfg.secrets as Record<string, string> | undefined) ?? {};
+  const secrets =
+    secretsOverride ??
+    ((cfg.secrets as Record<string, string> | undefined) ?? {});
 
   for (const field of template.bodyFields as Array<{ key: string; value: string }>) {
     if (!field.key) continue;
@@ -538,10 +681,17 @@ export function buildBody(
 export function buildHeaders(
   cfg: Record<string, unknown>,
   varCtx: Record<string, string>,
-  contentTypeHeader: string
+  contentTypeHeader: string,
+  /**
+   * Stage 2 — optional pre-resolved secrets map from the linked
+   * `connections` row. Takes priority over `cfg.secrets` when present.
+   */
+  secretsOverride?: Record<string, string>,
 ): Record<string, string> {
   const rawHeaders = (cfg.headers as Record<string, string> | undefined) ?? {};
-  const secrets = (cfg.secrets as Record<string, string> | undefined) ?? {};
+  const secrets =
+    secretsOverride ??
+    ((cfg.secrets as Record<string, string> | undefined) ?? {});
   const result: Record<string, string> = {};
   for (const [k, v] of Object.entries(rawHeaders)) {
     // A failing SECRET in headers (e.g. Authorization) would previously
@@ -580,7 +730,14 @@ export async function sendAffiliateOrderByTemplate(
   lead: LeadPayload,
   variableFields: Record<string, string> = {},
   /** URL from the target_websites.url DB column (for custom templates) */
-  siteUrl?: string
+  siteUrl?: string,
+  /**
+   * Stage 2 — optional linked `connections` row. When provided and
+   * active, its `credentialsJson.secretsEncrypted` becomes the source
+   * of truth for all `{{SECRET:key}}` resolutions in body + headers.
+   * When absent we keep using `templateConfig.secrets` (legacy path).
+   */
+  connection?: Connection | null,
 ): Promise<AffiliateResult> {
   const cfg = (templateConfig ?? {}) as Record<string, unknown>;
 
@@ -602,11 +759,27 @@ export async function sendAffiliateOrderByTemplate(
     // Build variable context: built-ins + per-routing custom vars
     const varCtx = buildVariableContext(lead, variableFields);
 
+    // Stage 2 — pick the secrets source BEFORE building body/headers so
+    // both parts of the outbound request share a single authoritative
+    // map. If a connection is linked but its credentials are missing
+    // this throws `ConnectionSecretMissingError` and no axios call is
+    // made (caught by the outer try/catch → failed delivery result).
+    const secretsMap = resolveSecretsForDelivery({
+      connection: connection ?? null,
+      templateConfig: cfg,
+      templateId: null,
+      adapterContext: "legacy-template",
+    });
+
     // Build body
-    const { body, contentTypeHeader, formData } = buildCustomBody(cfg, varCtx);
+    const { body, contentTypeHeader, formData } = buildCustomBody(
+      cfg,
+      varCtx,
+      secretsMap,
+    );
 
     // Build headers (with variable injection)
-    const headers = buildHeaders(cfg, varCtx, contentTypeHeader);
+    const headers = buildHeaders(cfg, varCtx, contentTypeHeader, secretsMap);
 
     // Send request
     const response = await axios.request({
@@ -633,6 +806,20 @@ export async function sendAffiliateOrderByTemplate(
     }
     return { success: true, responseData: response.data };
   } catch (err: unknown) {
+    // Stage 2 — surface CONNECTION_SECRET_MISSING as a validation-class
+    // failure so the retry system treats it as a configuration problem
+    // (needs user action) rather than a transient network blip.
+    // NOTE: DeliveryBlockedError continues to flow through the generic
+    // branch below (unchanged from Stage D v3) so error-classification
+    // behaviour for existing tests / callers remains byte-for-byte the
+    // same.
+    if (err instanceof ConnectionSecretMissingError) {
+      return {
+        success: false,
+        error: err.message,
+        errorType: "validation",
+      };
+    }
     const e = err as { response?: { data?: unknown; status?: number }; message?: string };
     const error = e?.response?.data ?? e?.message ?? "Unknown error";
     const errStr = JSON.stringify(error);
@@ -663,7 +850,15 @@ export async function sendLeadViaTemplate(
   template: DestinationTemplate,
   templateConfig: unknown,
   lead: LeadPayload,
-  variableValues: Record<string, string> = {}
+  variableValues: Record<string, string> = {},
+  /**
+   * Stage 2 — optional linked `connections` row. Its
+   * `credentialsJson.secretsEncrypted` map is the authoritative source
+   * for `{{SECRET:key}}` substitutions when present and active.
+   * Legacy destinations with no connection keep reading
+   * `templateConfig.secrets` so existing deliveries are unaffected.
+   */
+  connection?: Connection | null,
 ): Promise<AffiliateResult> {
   const cfg = (templateConfig ?? {}) as Record<string, unknown>;
 
@@ -673,8 +868,25 @@ export async function sendLeadViaTemplate(
     // Build variable context from lead
     const varCtx = buildVariableContext(lead, variableValues);
 
+    // Stage 2 — resolve secrets BEFORE building the body so any
+    // CONNECTION_SECRET_MISSING failure short-circuits before we touch
+    // axios. Same map is reused by the raw-JSON branch below.
+    const secretsMap = resolveSecretsForDelivery({
+      connection: connection ?? null,
+      templateConfig: cfg,
+      templateId: template.id,
+      adapterContext: "dynamic-template",
+      appKey: template.appKey ?? null,
+    });
+
     // Build the request body from template bodyFields
-    const resolvedFields = buildBody(template, { templateConfig: cfg }, lead, variableValues);
+    const resolvedFields = buildBody(
+      template,
+      { templateConfig: cfg },
+      lead,
+      variableValues,
+      secretsMap,
+    );
 
     // Build request based on contentType
     const method = template.method ?? "POST";
@@ -688,11 +900,16 @@ export async function sendLeadViaTemplate(
     if (normalizedCt.includes("json")) {
       // Raw JSON template mode (stored as single __json_template__ entry)
       if (bodyFieldsArr.length === 1 && bodyFieldsArr[0].key === "__json_template__") {
-        const secrets = (cfg.secrets as Record<string, string> | undefined) ?? {};
+        // Stage 2 — the raw-JSON branch historically read
+        // `cfg.secrets` directly. Now it reuses the resolved
+        // `secretsMap` so connection-backed secrets flow through this
+        // branch too. SOFT-miss semantics (missing key → empty) are
+        // preserved; decrypt errors still silently return empty here
+        // (pre-Stage-0 behaviour for this branch — tightening it is
+        // out of Stage 2 scope per "do not touch encryption logic").
         let tpl = bodyFieldsArr[0].value;
-        // Resolve {{SECRET:key}} substitutions
         tpl = tpl.replace(/\{\{SECRET:([^}]+)\}\}/g, (_, key: string) => {
-          const encrypted = secrets[key.trim()];
+          const encrypted = secretsMap[key.trim()];
           if (!encrypted) return "";
           try { return decrypt(encrypted); } catch { return ""; }
         });
@@ -744,6 +961,19 @@ export async function sendLeadViaTemplate(
     }
     return { success: true, responseData: response.data };
   } catch (err: unknown) {
+    // Stage 2 — a CONNECTION_SECRET_MISSING short-circuit is a config
+    // error (the user linked a connection but never populated
+    // credentials), NOT a network issue. Surface it with
+    // `errorType: "validation"` so retry/backoff code treats it
+    // accordingly and the dashboard can flag the affected
+    // connection for re-entry.
+    if (err instanceof ConnectionSecretMissingError) {
+      return {
+        success: false,
+        error: err.message,
+        errorType: "validation",
+      };
+    }
     const e = err as { response?: { data?: unknown; status?: number }; message?: string };
     const error = e?.response?.data ?? e?.message ?? "Unknown error";
     const errStr = JSON.stringify(error);

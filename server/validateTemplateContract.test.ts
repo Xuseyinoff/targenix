@@ -174,6 +174,71 @@ describe("validateTemplateContract — pure contract checks", () => {
       ),
     ).toEqual(["a", "b", "a"]);
   });
+
+  // ── authType: 'none' ──────────────────────────────────────────────────────
+  // "Some Uzbek affiliates accept leads without an API key". The contract
+  // must make it impossible to wire a secret into a template whose app
+  // declares no credentials, so the runtime resolver can safely skip the
+  // connection step for those deliveries.
+
+  it("accepts an authless template with no secret fields (authType='none')", () => {
+    expect(() =>
+      validateTemplateContract({
+        appKey: "open_affiliate",
+        bodyFields: [
+          { key: "name",  value: "{{name}}",  isSecret: false },
+          { key: "phone", value: "{{phone}}", isSecret: false },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects a secret field on an authless template (AUTH_NONE_HAS_SECRETS)", () => {
+    try {
+      validateTemplateContract({
+        appKey: "open_affiliate",
+        bodyFields: [
+          { key: "name",    value: "{{name}}",           isSecret: false },
+          { key: "api_key", value: "{{SECRET:api_key}}", isSecret: true  },
+        ],
+      });
+      throw new Error("expected TemplateContractError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(TemplateContractError);
+      expect((err as TemplateContractError).code).toBe("AUTH_NONE_HAS_SECRETS");
+    }
+  });
+
+  it("rejects a {{SECRET:…}} token inside a non-secret field on an authless template", () => {
+    try {
+      validateTemplateContract({
+        appKey: "open_affiliate",
+        bodyFields: [
+          { key: "note", value: "lead from {{SECRET:api_key}}", isSecret: false },
+        ],
+      });
+      throw new Error("expected TemplateContractError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(TemplateContractError);
+      expect((err as TemplateContractError).code).toBe("AUTH_NONE_HAS_SECRETS");
+    }
+  });
+
+  it("rejects a {{SECRET:…}} token inside a header on an authless template", () => {
+    try {
+      validateTemplateContract({
+        appKey: "open_affiliate",
+        bodyFields: [
+          { key: "name", value: "{{name}}", isSecret: false },
+        ],
+        headers: { Authorization: "Bearer {{SECRET:api_key}}" },
+      });
+      throw new Error("expected TemplateContractError");
+    } catch (err) {
+      expect(err).toBeInstanceOf(TemplateContractError);
+      expect((err as TemplateContractError).code).toBe("AUTH_NONE_HAS_SECRETS");
+    }
+  });
 });
 
 // ─── validateTemplatesAtBoot (DB-stubbed) ────────────────────────────────────

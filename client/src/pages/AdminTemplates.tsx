@@ -595,15 +595,51 @@ export default function AdminTemplates() {
                 onChange={e => setField("appKey", e.target.value)}
               >
                 <option value="">— pick an app —</option>
-                {appKeyOptions.map(o => (
-                  <option key={o.appKey} value={o.appKey}>
-                    {o.appKey}
-                  </option>
-                ))}
+                {appKeyOptions.map(o => {
+                  const label = o.displayName
+                    ? `${o.displayName} (${o.appKey})`
+                    : o.appKey;
+                  const suffix = o.requiresCredentials === false
+                    ? " — no credentials"
+                    : o.authType === "api_key"
+                      ? " — API key"
+                      : o.authType
+                        ? ` — ${o.authType}`
+                        : "";
+                  return (
+                    <option key={o.appKey} value={o.appKey}>
+                      {label}{suffix}
+                    </option>
+                  );
+                })}
               </select>
               <p className="text-xs text-muted-foreground">
-                Every <code className="bg-muted px-1 rounded">{"{{SECRET:key}}"}</code> token is validated against this
-                app&apos;s declared credential fields.
+                {(() => {
+                  const picked = appKeyOptions.find(o => o.appKey === form.appKey);
+                  if (!picked) {
+                    return (
+                      <>
+                        Every <code className="bg-muted px-1 rounded">{"{{SECRET:key}}"}</code> token is validated
+                        against this app&apos;s declared credential fields.
+                      </>
+                    );
+                  }
+                  if (picked.requiresCredentials === false) {
+                    return (
+                      <>
+                        This app accepts leads without any credentials. Secret fields and{" "}
+                        <code className="bg-muted px-1 rounded">{"{{SECRET:…}}"}</code> tokens are rejected at save time.
+                      </>
+                    );
+                  }
+                  return (
+                    <>
+                      Users will provide credentials when they create a connection. Every{" "}
+                      <code className="bg-muted px-1 rounded">{"{{SECRET:key}}"}</code> token must reference a
+                      declared sensitive field.
+                    </>
+                  );
+                })()}
               </p>
             </div>
 

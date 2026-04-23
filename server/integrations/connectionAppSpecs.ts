@@ -25,7 +25,22 @@
  * structural checks.
  */
 
-export type ConnectionAuthType = "api_key" | "oauth2" | "bearer" | "basic";
+/**
+ * Connection authentication types.
+ *
+ * `none` is the auth-less mode used by some Uzbek affiliates whose lead
+ * endpoints accept unauthenticated POSTs. A spec with `authType: 'none'`
+ * MUST declare `fields: []` (no sensitive fields), and templates pinned
+ * to that appKey MUST NOT contain any `{{SECRET:…}}` tokens or
+ * `isSecret: true` body fields. Both invariants are enforced by
+ * `validateTemplateContract` and by the runtime secret resolver.
+ */
+export type ConnectionAuthType =
+  | "api_key"
+  | "oauth2"
+  | "bearer"
+  | "basic"
+  | "none";
 
 export interface ConnectionAppSpecField {
   /** Identifier used inside {{SECRET:key}} tokens and credentialsJson keys. */
@@ -105,6 +120,20 @@ export const CONNECTION_APP_SPECS: readonly ConnectionAppSpec[] = [
       { key: "api_key", label: "API Key", required: true, sensitive: true },
     ],
   },
+  {
+    // Open affiliate endpoint — any Uzbek affiliate that accepts leads
+    // over an unauthenticated POST. No API key, no OAuth, nothing to
+    // rotate. Admin templates pinned to this app:
+    //   • MUST NOT mark any body field as `isSecret: true`
+    //   • MUST NOT reference any `{{SECRET:…}}` token
+    //   • Skip the connection step in the integration wizard entirely
+    // Validator and runtime both short-circuit on this authType.
+    appKey: "open_affiliate",
+    displayName: "Open Affiliate (no credentials)",
+    authType: "none",
+    category: "affiliate",
+    fields: [],
+  },
 ] as const;
 
 const SPEC_BY_KEY = new Map<string, ConnectionAppSpec>(
@@ -150,6 +179,16 @@ export function getAppKeys(): readonly string[] {
     }
     seenAppKeys.add(spec.appKey);
 
+    // authType='none' specs are credential-less. Allowing any field would
+    // silently undermine the contract, since non-secret fields could still
+    // be misread as "credentials" by humans. Keep the invariant tight.
+    if (spec.authType === "none" && spec.fields.length > 0) {
+      throw new Error(
+        `[connectionAppSpecs] app '${spec.appKey}' uses authType='none' ` +
+          `but declares ${spec.fields.length} field(s); authType='none' MUST have fields: [].`,
+      );
+    }
+
     const seenFieldKeys = new Set<string>();
     for (const field of spec.fields) {
       if (!FIELD_KEY_RE.test(field.key)) {
@@ -167,3 +206,20 @@ export function getAppKeys(): readonly string[] {
     }
   }
 })();
+
+/**
+ * True when the app spec describes an endpoint that accepts leads without
+ * any credentials at all. Callers use this to skip connection lookup,
+ * suppress "API key required" UI affordances, and reject templates that
+ * try to smuggle a secret token.
+ */
+export function specIsAuthless(
+  spec: Pick<ConnectionAppSpec, "authType" | "fields"> | null | undefined,
+): boolean {
+  if (!spec) return false;
+  if (spec.authType === "none") return true;
+  // Defensive: any spec that happens to declare zero sensitive fields is
+  // also auth-less for runtime purposes, even if an admin forgot to pick
+  // authType='none'. Validator still enforces the explicit form.
+  return !spec.fields.some((f) => f.sensitive === true);
+}

@@ -16,8 +16,10 @@
 
 import "./register";
 
+import { eq } from "drizzle-orm";
 import type { DbClient } from "../db";
-import type { leads, targetWebsites } from "../../drizzle/schema";
+import type { Connection, leads, targetWebsites } from "../../drizzle/schema";
+import { connections as connectionsTable } from "../../drizzle/schema";
 import type { LeadPayload } from "../services/affiliateService";
 import type { DeliveryResult } from "./types";
 import { getAdapter } from "./registry";
@@ -46,6 +48,55 @@ export type DispatchOutcome = DeliveryResult & {
 };
 
 /**
+ * Stage 2 — just-in-time connection loader for the delivery hot path.
+ *
+ * Returns the `connections` row linked to a destination (via
+ * `target_websites.connectionId`) when one exists, or `null` when no
+ * connection is bound. Failure to load the row (not found, DB error)
+ * degrades gracefully: we log and return `null`, letting the caller
+ * fall through to `templateConfig.secrets` — the pre-Stage-2 path —
+ * so a transient DB hiccup never translates into a hard delivery
+ * failure for destinations that have legacy secrets populated too.
+ *
+ * Multi-tenant safety: the lookup goes strictly by primary key. The
+ * caller passes `userId` so we can assert the row belongs to the same
+ * tenant before handing it downstream (prevents a stray
+ * cross-tenant reference from silently sharing credentials).
+ */
+async function loadConnectionForDelivery(
+  db: DbClient,
+  connectionId: number,
+  userId: number,
+): Promise<Connection | null> {
+  try {
+    const [row] = await db
+      .select()
+      .from(connectionsTable)
+      .where(eq(connectionsTable.id, connectionId))
+      .limit(1);
+    if (!row) return null;
+    if (row.userId !== userId) {
+      // Must never happen in practice (FK + ownership checks at write
+      // time) but treating it as "no connection" is safer than throwing
+      // — the adapter will fall back to templateConfig.secrets and log
+      // an explicit ownership-mismatch warning.
+      console.warn(
+        "[dispatch] connection ownership mismatch — falling back to templateConfig.secrets",
+        { connectionId, tenantExpected: userId, tenantActual: row.userId },
+      );
+      return null;
+    }
+    return row;
+  } catch (err) {
+    console.error("[dispatch] failed to load connection row", {
+      connectionId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/**
  * Resolve + invoke the correct adapter for this integration + destination.
  * Never throws — any failure is converted to a DeliveryResult with success=false.
  */
@@ -69,6 +120,21 @@ export async function dispatchDelivery(
   const cfg = ctx.integrationConfig ?? {};
   const leadRow = ctx.leadRow ?? {};
 
+  // Stage 2 — eagerly load the linked connection row ONLY for adapters
+  // that actually consume secrets from it. Today that is `legacy-template`
+  // and `dynamic-template`; the `telegram` / `google-sheets` adapters
+  // already resolve their own credentials via `connectionId`, and
+  // `affiliate` / `plain-url` don't use the `connections` store at all,
+  // so we skip the DB round-trip for them. If `tw.connectionId` is not
+  // set the loader is never called → zero added cost for legacy
+  // destinations.
+  const needsConnection =
+    (adapterKey === "legacy-template" || adapterKey === "dynamic-template") &&
+    tw?.connectionId != null;
+  const connection: Connection | null = needsConnection
+    ? await loadConnectionForDelivery(ctx.db, tw!.connectionId!, ctx.userId)
+    : null;
+
   let adapterInput: unknown;
   let targetUrlUsed: string | undefined;
 
@@ -79,7 +145,12 @@ export async function dispatchDelivery(
     }
 
     case "dynamic-template": {
-      adapterInput = { db: ctx.db, targetWebsite: tw, variableFields };
+      adapterInput = {
+        db: ctx.db,
+        targetWebsite: tw,
+        variableFields,
+        connection,
+      };
       break;
     }
 
@@ -112,6 +183,7 @@ export async function dispatchDelivery(
         templateConfig: tw?.templateConfig,
         variableFields,
         url: tw?.url,
+        connection,
       };
       break;
     }

@@ -330,6 +330,13 @@
       "when": 1777161600000,
       "tag": "0046_connection_app_specs",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "5",
+      "when": 1777248000000,
+      "tag": "0047_connection_app_specs_auth_none",
+      "breakpoints": true
     }
   ]
 }

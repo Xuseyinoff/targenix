@@ -23,7 +23,7 @@ import {
   validateTemplateContract,
   TemplateContractError,
 } from "../integrations/validateTemplateContract";
-import { getAppKeys } from "../integrations/connectionAppSpecs";
+import { listAppSpecs } from "../integrations/connectionAppSpecs";
 
 // ─── Shared Zod schemas ───────────────────────────────────────────────────────
 
@@ -116,11 +116,22 @@ export const adminTemplatesRouter = router({
   }),
 
   /**
-   * List every known connection app spec (appKey + displayName).
-   * Consumed by the admin template editor to render the appKey picker.
+   * List every known connection app spec. Consumed by the admin template
+   * editor to render the appKey picker and surface whether the app needs
+   * credentials (so the admin knows to — or not to — add secret fields).
+   *
+   * `requiresCredentials` is a pre-computed convenience flag: true for
+   * api_key/oauth2/bearer/basic specs, false for authType='none' apps.
+   * The raw authType is kept for UIs that want to render differently per
+   * protocol (e.g. badge color, help text).
    */
   listAppKeys: adminProcedure.query(() => {
-    return getAppKeys().map((k) => ({ appKey: k }));
+    return listAppSpecs().map((s) => ({
+      appKey: s.appKey,
+      displayName: s.displayName,
+      authType: s.authType,
+      requiresCredentials: s.authType !== "none",
+    }));
   }),
 
   /** Create a new destination template. */

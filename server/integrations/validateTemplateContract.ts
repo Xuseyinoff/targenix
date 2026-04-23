@@ -21,7 +21,11 @@
  * sync, fast, and usable from boot diagnostics + unit tests.
  */
 
-import { getAppSpec, type ConnectionAppSpec } from "./connectionAppSpecs";
+import {
+  getAppSpec,
+  specIsAuthless,
+  type ConnectionAppSpec,
+} from "./connectionAppSpecs";
 
 /** Value form accepted for a secret field, e.g. `{{SECRET:api_key}}`. */
 export const SECRET_TOKEN_RE = /^\{\{\s*SECRET:([a-z][a-z0-9_]*)\s*\}\}$/;
@@ -58,7 +62,8 @@ export type TemplateContractErrorCode =
   | "APP_KEY_UNKNOWN"
   | "SECRET_FIELD_NOT_TOKEN"
   | "SECRET_KEY_UNDECLARED"
-  | "SECRET_TOKEN_MALFORMED";
+  | "SECRET_TOKEN_MALFORMED"
+  | "AUTH_NONE_HAS_SECRETS";
 
 /**
  * Domain error thrown by `validateTemplateContract`. Routers convert it
@@ -188,13 +193,46 @@ export function validateTemplateContract(
   input: ValidateTemplateInput,
 ): ConnectionAppSpec {
   const spec = resolveSpec(input.appKey);
+  const isAuthless = specIsAuthless(spec);
 
   input.bodyFields.forEach((field, index) => {
     const value = typeof field.value === "string" ? field.value : "";
+
+    if (isAuthless && field.isSecret === true) {
+      throw new TemplateContractError(
+        "AUTH_NONE_HAS_SECRETS",
+        `App '${spec.appKey}' uses authType='${spec.authType}' (no credentials). ` +
+          `bodyFields[${index}] key='${field.key}' is marked isSecret, which is not allowed.`,
+        {
+          appKey: spec.appKey,
+          authType: spec.authType,
+          bodyFieldIndex: index,
+          bodyFieldKey: field.key,
+        },
+      );
+    }
+
     if (field.isSecret === true) {
       validateSecretField(spec, field, index);
       return;
     }
+
+    if (isAuthless && value.includes("{{SECRET:")) {
+      // Auth-less spec cannot resolve any secret. Reject loudly instead
+      // of silently shipping a raw literal at delivery time.
+      throw new TemplateContractError(
+        "AUTH_NONE_HAS_SECRETS",
+        `App '${spec.appKey}' uses authType='${spec.authType}' (no credentials). ` +
+          `bodyFields[${index}] key='${field.key}' references a {{SECRET:…}} token, which is not allowed.`,
+        {
+          appKey: spec.appKey,
+          authType: spec.authType,
+          bodyFieldIndex: index,
+          bodyFieldKey: field.key,
+        },
+      );
+    }
+
     validateNonSecretSecretReferences(spec, value, {
       bodyFieldIndex: index,
       bodyFieldKey: field.key,
@@ -203,7 +241,20 @@ export function validateTemplateContract(
 
   if (input.headers) {
     for (const [name, value] of Object.entries(input.headers)) {
-      validateNonSecretSecretReferences(spec, value ?? "", {
+      const raw = value ?? "";
+      if (isAuthless && raw.includes("{{SECRET:")) {
+        throw new TemplateContractError(
+          "AUTH_NONE_HAS_SECRETS",
+          `App '${spec.appKey}' uses authType='${spec.authType}' (no credentials). ` +
+            `Header '${name}' references a {{SECRET:…}} token, which is not allowed.`,
+          {
+            appKey: spec.appKey,
+            authType: spec.authType,
+            headerName: name,
+          },
+        );
+      }
+      validateNonSecretSecretReferences(spec, raw, {
         headerName: name,
       });
     }
