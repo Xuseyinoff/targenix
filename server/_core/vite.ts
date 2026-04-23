@@ -1,3 +1,4 @@
+import compression from "compression";
 import express, { type Express } from "express";
 import fs from "fs";
 import { type Server } from "http";
@@ -63,10 +64,18 @@ export function serveStatic(app: Express) {
     );
   }
 
-  app.use(express.static(distPath));
+  app.use(compression());
+  app.use(
+    express.static(distPath, {
+      maxAge: "1y",
+      immutable: true,
+      index: false,
+    }),
+  );
 
   // fall through to index.html if the file doesn't exist
   app.use("*", (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }

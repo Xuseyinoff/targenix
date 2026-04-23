@@ -1,42 +1,54 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/NotFound";
 import { Route, Switch, useLocation } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { LocaleProvider } from "./contexts/LocaleContext";
-import LandingPage from "./pages/LandingPage";
-import Home from "./pages/Home";
-import Leads from "./pages/Leads";
-import WebhookHealth from "./pages/WebhookHealth";
-import Integrations from "./pages/Integrations";
-import Connections from "./pages/Connections";
-import TargetWebsites from "./pages/TargetWebsites";
-import Login from "./pages/Login";
-import Register from "./pages/Register";
-import ForgotPassword from "./pages/ForgotPassword";
-import ResetPassword from "./pages/ResetPassword";
-import LeadRoutingWizard from "./pages/LeadRoutingWizard";
-import IntegrationWizardV2 from "./pages/IntegrationWizardV2";
-import Privacy from "./pages/Privacy";
-import Terms from "./pages/Terms";
-import DataDeletion from "./pages/DataDeletion";
-import AdminLogs from "./pages/AdminLogs";
-import AdminBackfill from "./pages/AdminBackfill";
-import AdminTemplates from "./pages/AdminTemplates";
-import AdminLeads from "./pages/AdminLeads";
-import LeadDetail from "./pages/LeadDetail";
-import Settings from "./pages/Settings";
-import SettingsProfile from "./pages/SettingsProfile";
-import SettingsTelegram from "./pages/SettingsTelegram";
-import AdAccounts from "./pages/AdAccounts";
-import Analytics from "./pages/Analytics";
-import DestinationAnalytics from "./pages/DestinationAnalytics";
-import Campaigns from "./pages/Campaigns";
-import AdSets from "./pages/AdSets";
-import DevFormPreview from "./pages/DevFormPreview";
 import { useAuth } from "./_core/hooks/useAuth";
-import { useEffect, type ComponentType, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, type ComponentType, type ReactNode } from "react";
+
+// Eagerly loaded — shown before auth resolves or on the critical path
+import LandingPage from "./pages/LandingPage";
+import Login from "./pages/Login";
+import NotFound from "@/pages/NotFound";
+
+// Lazily loaded — only downloaded when the user navigates to these routes
+const Home = lazy(() => import("./pages/Home"));
+const Leads = lazy(() => import("./pages/Leads"));
+const WebhookHealth = lazy(() => import("./pages/WebhookHealth"));
+const Integrations = lazy(() => import("./pages/Integrations"));
+const Connections = lazy(() => import("./pages/Connections"));
+const TargetWebsites = lazy(() => import("./pages/TargetWebsites"));
+const Register = lazy(() => import("./pages/Register"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const LeadRoutingWizard = lazy(() => import("./pages/LeadRoutingWizard"));
+const IntegrationWizardV2 = lazy(() => import("./pages/IntegrationWizardV2"));
+const Privacy = lazy(() => import("./pages/Privacy"));
+const Terms = lazy(() => import("./pages/Terms"));
+const DataDeletion = lazy(() => import("./pages/DataDeletion"));
+const AdminLogs = lazy(() => import("./pages/AdminLogs"));
+const AdminBackfill = lazy(() => import("./pages/AdminBackfill"));
+const AdminTemplates = lazy(() => import("./pages/AdminTemplates"));
+const AdminLeads = lazy(() => import("./pages/AdminLeads"));
+const LeadDetail = lazy(() => import("./pages/LeadDetail"));
+const Settings = lazy(() => import("./pages/Settings"));
+const SettingsProfile = lazy(() => import("./pages/SettingsProfile"));
+const SettingsTelegram = lazy(() => import("./pages/SettingsTelegram"));
+const AdAccounts = lazy(() => import("./pages/AdAccounts"));
+const Analytics = lazy(() => import("./pages/Analytics"));
+const DestinationAnalytics = lazy(() => import("./pages/DestinationAnalytics"));
+const Campaigns = lazy(() => import("./pages/Campaigns"));
+const AdSets = lazy(() => import("./pages/AdSets"));
+const DevFormPreview = lazy(() => import("./pages/DevFormPreview"));
+
+function PageLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+    </div>
+  );
+}
 
 /** Business Tools: admin-only until productized (sidebar already hides for non-admins). */
 function AdminBusinessGate({ children }: { children: ReactNode }) {
@@ -118,6 +130,7 @@ function LegacyLogsRedirect() {
 
 function Router() {
   return (
+    <Suspense fallback={<PageLoader />}>
     <Switch>
       <Route path="/" component={RootRoute} />
       {/* Dashboard routes — /overview is the main dashboard */}
@@ -169,6 +182,7 @@ function Router() {
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
+    </Suspense>
   );
 }
 
