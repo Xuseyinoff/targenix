@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { notifyOwner } from "./notification";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "./trpc";
-import { isMultiDestinationsEnabled } from "../services/featureFlags";
+import {
+  isMultiDestinationsEnabled,
+  isConnectionSecretsOnlyEnabled,
+} from "../services/featureFlags";
 
 export const systemRouter = router({
   health: publicProcedure
@@ -38,6 +41,8 @@ export const systemRouter = router({
   featureFlags: protectedProcedure.query(({ ctx }) => {
     return {
       multiDestinations: isMultiDestinationsEnabled(ctx.user.id),
+      /** Stage 3: when true, destinations without a linked connection cannot fall back to templateConfig.secrets. */
+      connectionSecretsOnly: isConnectionSecretsOnlyEnabled(ctx.user.id),
     };
   }),
 });

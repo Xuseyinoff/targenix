@@ -34,6 +34,8 @@ import {
 } from "../services/affiliateService";
 
 import { assertSafeOutboundUrl } from "../lib/urlSafety";
+import { loadConnectionForDelivery } from "../integrations/dispatch";
+import type { Connection } from "../../drizzle/schema";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { sendTelegramRawMessage } from "../services/telegramService";
 import {
@@ -1091,11 +1093,22 @@ export const targetWebsitesRouter = router({
           varOverridesWithFallback[key] = varOverrides[key] ?? existingVariables[key] ?? `test_${key}`;
         }
 
+        let testConnection: Connection | null = null;
+        if (site.connectionId != null) {
+          testConnection = await loadConnectionForDelivery(
+            db,
+            site.connectionId,
+            ctx.user.id,
+          );
+        }
+
         const result = await sendLeadViaTemplate(
           dynTpl,
           site.templateConfig,
           sampleLead,
-          varOverridesWithFallback
+          varOverridesWithFallback,
+          testConnection,
+          ctx.user.id,
         );
         const durationMs = Date.now() - t0;
 
@@ -1202,12 +1215,22 @@ export const targetWebsitesRouter = router({
       }
 
       // ── Legacy custom template ─────────────────────────────────────────────────
+      let legacyConnection: Connection | null = null;
+      if (site.connectionId != null) {
+        legacyConnection = await loadConnectionForDelivery(
+          db,
+          site.connectionId,
+          ctx.user.id,
+        );
+      }
       const result = await sendAffiliateOrderByTemplate(
         site.templateType as TemplateType,
         site.templateConfig as TemplateConfig,
         sampleLead,
         varOverrides,
-        site.url ?? ""
+        site.url ?? "",
+        legacyConnection,
+        ctx.user.id,
       );
       const durationMs = Date.now() - t0;
 

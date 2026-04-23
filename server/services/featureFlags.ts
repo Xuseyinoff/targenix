@@ -22,6 +22,15 @@
 // ─── Known flags ───────────────────────────────────────────────────────────
 
 /**
+ * Compile-time default for the Stage 3 "connection-only secrets" model.
+ * Runtime behaviour is still driven by env vars — this constant exists so
+ * call sites and documentation can refer to a single name. Unset/empty
+ * env means the same as `false` (legacy `templateConfig.secrets` fallback
+ * still permitted). Phase 4 flips the envs to `true` per rollout plan.
+ */
+export const USE_CONNECTION_SECRETS_ONLY_DEFAULT = false as const;
+
+/**
  * Routes integration dispatch through the new `integration_destinations`
  * table instead of the legacy `integrations.targetWebsiteId` column. Also
  * gates the new Make.com-style `/integrations/new-v2` wizard on the client.

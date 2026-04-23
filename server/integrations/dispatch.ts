@@ -63,7 +63,12 @@ export type DispatchOutcome = DeliveryResult & {
  * tenant before handing it downstream (prevents a stray
  * cross-tenant reference from silently sharing credentials).
  */
-async function loadConnectionForDelivery(
+/**
+ * Load a `connections` row for delivery, with multi-tenant checks.
+ * Exported so `testIntegration` in targetWebsitesRouter can mirror the
+ * same connection wiring as `dispatchDelivery` (Stage 3 parity).
+ */
+export async function loadConnectionForDelivery(
   db: DbClient,
   connectionId: number,
   userId: number,
