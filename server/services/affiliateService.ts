@@ -7,6 +7,7 @@ import {
   getAppSpec,
   specIsAuthless,
 } from "../integrations/connectionAppSpecs";
+import { isConnectionSecretsOnlyEnabled } from "./featureFlags";
 
 // ─── Shared lead payload ────────────────────────────────────────────────────
 export interface LeadPayload {
@@ -98,6 +99,39 @@ export class ConnectionSecretMissingError extends Error {
     this.name = "ConnectionSecretMissingError";
     this.connectionId = connectionId;
     this.templateId = templateId;
+  }
+}
+
+/**
+ * Stage 3 — thrown by `resolveSecretsForDelivery` when the
+ * `USE_CONNECTION_SECRETS_ONLY` feature flag is ON for the caller and
+ * NO active connection is attached to the destination.
+ *
+ * Distinct from `ConnectionSecretMissingError` by intent:
+ *   - `CONNECTION_SECRET_MISSING` → "you linked a connection, but it has
+ *     no secrets" (user action: fix/populate the connection).
+ *   - `CONNECTION_REQUIRED`       → "this destination has no connection
+ *     at all" (user action: create a connection and link it, or
+ *     re-create the destination via the connection-first wizard).
+ *
+ * Never thrown while the flag is OFF — the resolver falls back to
+ * `templateConfig.secrets` and deliveries behave exactly as they did
+ * pre-Stage-3. Flipping the flag is reversible at any time; no data
+ * is deleted by this code path.
+ */
+export class ConnectionRequiredError extends Error {
+  readonly code = "CONNECTION_REQUIRED" as const;
+  readonly templateId: number | null;
+  readonly userId: number | null;
+  constructor(templateId: number | null, userId: number | null) {
+    super(
+      `CONNECTION_REQUIRED:${templateId != null ? `template=${templateId}` : "template=?"}${
+        userId != null ? ` user=${userId}` : ""
+      }`,
+    );
+    this.name = "ConnectionRequiredError";
+    this.templateId = templateId;
+    this.userId = userId;
   }
 }
 
@@ -363,9 +397,24 @@ export function resolveSecretsForDelivery(opts: {
    * template to need, carry, or surface credentials.
    */
   appKey?: string | null;
+  /**
+   * Stage 3 — tenant id, used strictly to evaluate the
+   * `USE_CONNECTION_SECRETS_ONLY` feature flag. When omitted the flag
+   * is treated as OFF for this call (conservative default: refusing
+   * delivery for a caller we cannot identify would be worse than
+   * letting the legacy path run). Tests use this to exercise the
+   * pre- and post-flip semantics independently.
+   */
+  userId?: number | null;
 }): Record<string, string> {
-  const { connection, templateConfig, templateId, adapterContext, appKey } =
-    opts;
+  const {
+    connection,
+    templateConfig,
+    templateId,
+    adapterContext,
+    appKey,
+    userId,
+  } = opts;
   const cfg = (templateConfig ?? {}) as Record<string, unknown>;
   const fallbackSecrets =
     (cfg.secrets as Record<string, string> | undefined) ?? {};
@@ -402,7 +451,31 @@ export function resolveSecretsForDelivery(opts: {
     throw new ConnectionSecretMissingError(connection.id, templateId ?? null);
   }
 
-  // No connection (or non-active) — legacy path. Zero behaviour change.
+  // Stage 3 — connection-only mode.
+  //
+  // No active connection bound to this destination. Under the new
+  // contract this must NEVER happen once the flag is on for the
+  // tenant: every delivery either carries an explicit connection or
+  // is rejected at resolve-time, long before we build an HTTP body.
+  //
+  // Important: this branch runs AFTER the authless short-circuit
+  // above, so auth-less templates stay untouched — those never need
+  // a connection in the first place and flipping the flag would
+  // otherwise be a surprise-break for them.
+  if (isConnectionSecretsOnlyEnabled(userId ?? null)) {
+    console.error("[affiliateService] CONNECTION_REQUIRED", {
+      code: "CONNECTION_REQUIRED",
+      templateId: templateId ?? null,
+      userId: userId ?? null,
+      adapterContext,
+    });
+    throw new ConnectionRequiredError(templateId ?? null, userId ?? null);
+  }
+
+  // Legacy path. Zero behaviour change when flag is off — this is the
+  // byte-for-byte pre-Stage-3 branch, kept alive so old destinations
+  // that still carry `templateConfig.secrets` continue to deliver
+  // until Phase 3 migration links a connection to each of them.
   return fallbackSecrets;
 }
 
@@ -738,6 +811,12 @@ export async function sendAffiliateOrderByTemplate(
    * When absent we keep using `templateConfig.secrets` (legacy path).
    */
   connection?: Connection | null,
+  /**
+   * Stage 3 — tenant id for the delivery, used solely to evaluate the
+   * `USE_CONNECTION_SECRETS_ONLY` feature flag. Optional so existing
+   * call sites (retry workers, tests) keep working without changes.
+   */
+  userId?: number | null,
 ): Promise<AffiliateResult> {
   const cfg = (templateConfig ?? {}) as Record<string, unknown>;
 
@@ -769,6 +848,7 @@ export async function sendAffiliateOrderByTemplate(
       templateConfig: cfg,
       templateId: null,
       adapterContext: "legacy-template",
+      userId: userId ?? null,
     });
 
     // Build body
@@ -813,7 +893,10 @@ export async function sendAffiliateOrderByTemplate(
     // branch below (unchanged from Stage D v3) so error-classification
     // behaviour for existing tests / callers remains byte-for-byte the
     // same.
-    if (err instanceof ConnectionSecretMissingError) {
+    if (
+      err instanceof ConnectionSecretMissingError ||
+      err instanceof ConnectionRequiredError
+    ) {
       return {
         success: false,
         error: err.message,
@@ -859,6 +942,12 @@ export async function sendLeadViaTemplate(
    * `templateConfig.secrets` so existing deliveries are unaffected.
    */
   connection?: Connection | null,
+  /**
+   * Stage 3 — tenant id for the delivery, used solely to evaluate the
+   * `USE_CONNECTION_SECRETS_ONLY` feature flag. Optional so existing
+   * callers (retry workers, tests) keep working byte-for-byte.
+   */
+  userId?: number | null,
 ): Promise<AffiliateResult> {
   const cfg = (templateConfig ?? {}) as Record<string, unknown>;
 
@@ -877,6 +966,7 @@ export async function sendLeadViaTemplate(
       templateId: template.id,
       adapterContext: "dynamic-template",
       appKey: template.appKey ?? null,
+      userId: userId ?? null,
     });
 
     // Build the request body from template bodyFields
@@ -967,7 +1057,10 @@ export async function sendLeadViaTemplate(
     // `errorType: "validation"` so retry/backoff code treats it
     // accordingly and the dashboard can flag the affected
     // connection for re-entry.
-    if (err instanceof ConnectionSecretMissingError) {
+    if (
+      err instanceof ConnectionSecretMissingError ||
+      err instanceof ConnectionRequiredError
+    ) {
       return {
         success: false,
         error: err.message,

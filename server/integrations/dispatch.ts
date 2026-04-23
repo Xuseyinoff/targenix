@@ -150,6 +150,7 @@ export async function dispatchDelivery(
         targetWebsite: tw,
         variableFields,
         connection,
+        userId: ctx.userId,
       };
       break;
     }
@@ -184,6 +185,7 @@ export async function dispatchDelivery(
         variableFields,
         url: tw?.url,
         connection,
+        userId: ctx.userId,
       };
       break;
     }

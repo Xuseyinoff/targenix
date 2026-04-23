@@ -21,12 +21,25 @@ interface LegacyTemplateConfig {
    * `templateConfig.secrets` exactly as before.
    */
   connection?: Connection | null;
+  /**
+   * Stage 3 — tenant id of the destination's owner. Threaded through
+   * to `resolveSecretsForDelivery` so the `USE_CONNECTION_SECRETS_ONLY`
+   * feature flag can be evaluated per-user. Optional so legacy
+   * unit tests that instantiate the adapter directly keep compiling.
+   */
+  userId?: number | null;
 }
 
 export const legacyTemplateAdapter: DeliveryAdapter = {
   async send(config: unknown, lead: LeadPayload): Promise<DeliveryResult> {
-    const { templateType, templateConfig, variableFields, url, connection } =
-      config as LegacyTemplateConfig;
+    const {
+      templateType,
+      templateConfig,
+      variableFields,
+      url,
+      connection,
+      userId,
+    } = config as LegacyTemplateConfig;
     return sendAffiliateOrderByTemplate(
       templateType,
       templateConfig,
@@ -34,6 +47,7 @@ export const legacyTemplateAdapter: DeliveryAdapter = {
       variableFields,
       url ?? "",
       connection ?? null,
+      userId ?? null,
     );
   },
 };

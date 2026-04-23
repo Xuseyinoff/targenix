@@ -967,6 +967,26 @@ export const targetWebsitesRouter = router({
       const autoChatId =
         me?.mode === "ALL" && me.defaultChatId ? String(me.defaultChatId) : null;
 
+      // Stage 3 Phase 2 — STOP COPYING SECRETS into
+      // `target_websites.templateConfig.secrets`. The linked
+      // `connectionId` below is the single source of truth from now on;
+      // `resolveSecretsForDelivery` at runtime reads
+      // `connections.credentialsJson.secretsEncrypted` on every
+      // delivery, so credential rotation on the connection propagates
+      // instantly to every destination that references it (no more
+      // stale copies to chase).
+      //
+      // What about old destinations? They still have
+      // `templateConfig.secrets` populated from their original create
+      // — untouched by this change. `resolveSecretsForDelivery` falls
+      // back to that map whenever no active connection is linked, so
+      // legacy rows keep delivering while Phase 3 migration links
+      // connections to them. Nothing gets deleted on this path.
+      //
+      // Explicitly referenced to keep the typed field wired for lint;
+      // silenced because the intentional omission is the whole point
+      // of Phase 2.
+      void secretsEncrypted;
       const [inserted] = await db.insert(targetWebsites).values({
         userId: ctx.user.id,
         name: finalName,
@@ -974,10 +994,8 @@ export const targetWebsitesRouter = router({
         templateType: "custom",
         templateId: template.id,
         color: template.color,
-        // The already-encrypted secret bytes are copied verbatim so the
-        // delivery path (buildBody) keeps working byte-for-byte unchanged.
         templateConfig: {
-          secrets: secretsEncrypted,
+          // Intentionally no `secrets`: see Stage 3 Phase 2 note above.
           variables: {},
         },
         connectionId: conn.id,

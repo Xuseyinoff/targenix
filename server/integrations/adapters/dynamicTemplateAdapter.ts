@@ -16,11 +16,17 @@ interface DynamicTemplateAdapterConfig {
    * it preserves legacy behaviour (reads `templateConfig.secrets`).
    */
   connection?: Connection | null;
+  /**
+   * Stage 3 — tenant id of the destination's owner, threaded so the
+   * `USE_CONNECTION_SECRETS_ONLY` feature flag can be evaluated
+   * per-user inside `resolveSecretsForDelivery`.
+   */
+  userId?: number | null;
 }
 
 export const dynamicTemplateAdapter = {
   async send(config: unknown, lead: LeadPayload): Promise<DeliveryResult> {
-    const { db, targetWebsite, variableFields, connection } =
+    const { db, targetWebsite, variableFields, connection, userId } =
       config as DynamicTemplateAdapterConfig;
 
     const [dynTpl] = await db
@@ -43,6 +49,7 @@ export const dynamicTemplateAdapter = {
       lead,
       variableFields,
       connection ?? null,
+      userId ?? null,
     );
   },
 };
