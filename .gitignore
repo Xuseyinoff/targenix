@@ -112,3 +112,7 @@ tooling/mysql/dumps/
 
 # Utility scripts (not part of the deployed application)
 scripts/
+
+# One-off rollback backups produced by tooling/mysql/* migrations
+# (contain plaintext secrets — must never be committed)
+backup_*.json
