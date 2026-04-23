@@ -14,7 +14,6 @@ import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
 import {
   ORDER_MAX_DELIVERY_ATTEMPTS,
   computeNextRetryAt,
-  inferDeliveryErrorType,
   type DeliveryErrorType,
 } from "../lib/orderRetryPolicy";
 
@@ -317,92 +316,6 @@ function extractWithMapping(
   }
 
   return { ...base, extra };
-}
-
-import { assertSafeOutboundUrl } from "../lib/urlSafety";
-
-async function assertSafeTargetUrl(url: string): Promise<void> {
-  await assertSafeOutboundUrl(url);
-}
-
-/**
- * Send lead to a LEAD_ROUTING target website.
- */
-async function sendLeadToTargetWebsite(
-  config: Record<string, unknown>,
-  payload: {
-    fullName: string | null;
-    phone: string | null;
-    email: string | null;
-    leadgenId: string;
-    pageId: string;
-    formId: string;
-    extraFields?: Record<string, string>;
-  }
-): Promise<{ success: boolean; responseData?: unknown; error?: string; errorType?: DeliveryErrorType }> {
-  const { targetUrl, targetHeaders, flow, offerId } = config as {
-    targetUrl?: string;
-    targetHeaders?: Record<string, string>;
-    flow?: string;
-    offerId?: string;
-  };
-
-  if (!targetUrl) {
-    return { success: false, error: "No targetUrl configured in LEAD_ROUTING integration", errorType: "validation" };
-  }
-
-  try {
-    await assertSafeTargetUrl(targetUrl);
-  } catch (err) {
-    return {
-      success: false,
-      error: `Invalid targetUrl: ${err instanceof Error ? err.message : String(err)}`,
-      errorType: "validation",
-    };
-  }
-
-  try {
-    const body = {
-      // Extra fields first so core fields always override them
-      ...(payload.extraFields ?? {}),
-      name: payload.fullName,
-      phone: payload.phone,
-      email: payload.email,
-      flow: flow ?? "",
-      offer_id: offerId ?? "",
-      leadgen_id: payload.leadgenId,
-      page_id: payload.pageId,
-      form_id: payload.formId,
-    };
-
-    const res = await fetch(targetUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(targetHeaders ?? {}),
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15000),
-    });
-
-    const text = await res.text();
-    let responseData: unknown;
-    try { responseData = JSON.parse(text); } catch { responseData = text; }
-
-    if (!res.ok) {
-      const errMsg = `HTTP ${res.status}`;
-      return {
-        success: false,
-        error: errMsg,
-        responseData,
-        errorType: inferDeliveryErrorType({ httpStatus: res.status, message: errMsg }),
-      };
-    }
-    return { success: true, responseData };
-  } catch (err) {
-    const msg = String(err);
-    return { success: false, error: msg, errorType: inferDeliveryErrorType({ message: msg }) ?? "network" };
-  }
 }
 
 /**

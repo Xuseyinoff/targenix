@@ -387,12 +387,15 @@ function extractTargetWebsiteId(cfg: Record<string, unknown> | null | undefined)
 }
 
 /**
- * Best-effort dual-write into integration_destinations. Part of Commit 4 of
- * Phase 4. Failures are swallowed with a warn-log so a transient glitch on
- * the new table cannot break integration CRUD — dispatch still consumes
- * the legacy `integrations.targetWebsiteId` column until Commit 5 flips the
- * feature flag. Drift (if any) is repaired by the idempotent backfill
- * script at tooling/mysql/backfill-integration-destinations.mjs.
+ * Best-effort dual-write into integration_destinations.
+ *
+ * Mirrors the single-destination integration shape into the N:1 join table
+ * so dispatch (which reads from the join table under
+ * `MULTI_DEST_ALL=true`) always has at least one mapping row to fan out
+ * to. Failures are swallowed with a warn-log so a transient DB glitch on
+ * the new table cannot block integration CRUD. If drift ever creeps in,
+ * `tooling/mysql/backfill-integration-destinations.mjs` reconciles it
+ * idempotently.
  */
 async function safeSyncLegacyDestination(
   db: DbClient,
@@ -417,10 +420,10 @@ export async function createIntegration(data: {
   config: unknown;
   telegramChatId?: string | null;
   /**
-   * Ordered destination IDs for fan-out (Commit 6c).
+   * Ordered destination IDs for multi-destination fan-out.
    * When provided, `integration_destinations` is populated with the full
-   * list (preserving order as `position`). Otherwise the single id from
-   * `config.targetWebsiteId` is used (legacy / single-destination path).
+   * list (preserving array order as `position`). Otherwise the single id
+   * from `config.targetWebsiteId` is used (single-destination path).
    */
   destinationIds?: number[];
 }): Promise<void> {
@@ -435,9 +438,9 @@ export async function createIntegration(data: {
   const formName = isLR ? (String(cfg?.formName ?? "") || null) : null;
   const rawFbId = isLR ? (cfg?.facebookAccountId ?? cfg?.accountId) : undefined;
   const facebookAccountId = typeof rawFbId === "number" && rawFbId > 0 ? rawFbId : null;
-  // Commit 4: previously this column was populated only by a later backfill.
-  // We now set it at creation time so the legacy dispatch path sees the id
-  // immediately and the dual-write mirror below has a canonical source.
+  // Extract the primary destination id from config at creation time so the
+  // legacy dispatch path and the dual-write mirror below share one source
+  // of truth.
   const targetWebsiteId = isLR ? extractTargetWebsiteId(cfg) : null;
 
   const [result] = await db.insert(integrations).values({
@@ -460,7 +463,7 @@ export async function createIntegration(data: {
   if (isLR && typeof insertedId === "number" && insertedId > 0) {
     const destIds = data.destinationIds;
     if (destIds && destIds.length > 0) {
-      // Multi-destination path (Commit 6c): write all ids in order.
+      // Multi-destination path: write all ids in order.
       // `setIntegrationDestinations` runs inside a transaction, so the
       // mapping is always consistent even if the process crashes mid-way.
       try {

@@ -1,26 +1,25 @@
 /**
- * Dual-write layer for the integration_destinations table (Commit 4).
+ * Integration → destination mapping layer (authoritative N:1 join).
  *
- * This module is the single choke-point that keeps the new N:1 join table
- * in sync with the legacy 1:1 `integrations.targetWebsiteId` column. Until
- * Commit 5 flips on dual-read, dispatch still reads the legacy column, so
- * drift here is non-fatal — but we treat it as invariant so the transition
- * later is trivial.
+ * Owns reads and writes of `integration_destinations`, the table that
+ * drives live fan-out dispatch. The legacy `integrations.targetWebsiteId`
+ * column is kept in parallel via dual-write for rollback safety and as a
+ * fallback read source for environments where the multi-destination flag
+ * is disabled.
  *
- * Who calls these helpers today:
- *   - server/db.ts          → createIntegration / updateIntegration
- *                             (the canonical CRUD surface used by the tRPC
- *                              router and internal code paths)
- *   - no other callers (yet). When the new Integration wizard lands in
- *     Commit 5 it will call setIntegrationDestinations() directly with a
- *     list of N destinations.
+ * Callers:
+ *   - `server/db.ts` (createIntegration / updateIntegration) — keeps the
+ *     join table in sync with the integration row on every CRUD op.
+ *   - `server/routers/integrationsRouter.ts` (testLead) — uses the
+ *     resolver to fan-out test leads across all destinations.
+ *   - `server/services/leadService.ts` (processLead) — uses the resolver
+ *     to fan-out live leads.
  *
  * Error policy:
- *   - Writes here are best-effort: any failure is logged but NOT rethrown,
- *     so a transient DB glitch on the new table cannot break integration
- *     creation/updates. The backfill script exists precisely to repair
- *     drift if it ever occurs, and dispatch still uses the legacy column.
- *   - This changes in Commit 6 when we make the new table authoritative.
+ *   - Writes are best-effort: failures are logged but NOT rethrown, so a
+ *     transient DB glitch cannot break integration CRUD. If drift does
+ *     creep in, `tooling/mysql/backfill-integration-destinations.mjs`
+ *     reconciles it idempotently.
  */
 
 import { and, eq } from "drizzle-orm";
@@ -145,9 +144,8 @@ export async function countIntegrationDestinations(
 }
 
 /**
- * Read the current destination set, in position order. Safe to call at any
- * time — even before Commit 5 wires dispatch to consume it — because this
- * returns an empty array for integrations not yet backfilled.
+ * Read the current destination set, in position order. Returns an empty
+ * array for integrations that have no mapping rows yet.
  */
 export async function listIntegrationDestinations(
   db: DbClient,
@@ -172,34 +170,29 @@ export async function listIntegrationDestinations(
   return rows.sort((a, b) => a.position - b.position || a.id - b.id);
 }
 
-// ─── read-path resolver (Commit 5a) ────────────────────────────────────────
+// ─── read-path resolver ─────────────────────────────────────────────────────
 
 /**
- * Resolve the list of destinations to deliver a lead to, given a parent
- * integration row. The result is a list of 0 or more `ResolvedDestination`
- * entries, already filtered by enabled flag and ownership, in dispatch
- * order.
+ * Resolve the list of destinations to deliver a lead to for a given
+ * integration row. Returns 0 or more `ResolvedDestination` entries,
+ * filtered by enabled flag and ownership, in dispatch order.
  *
- * Two backing paths depending on `isMultiDestinationsEnabled(userId)`:
+ * Two backing paths selected by `isMultiDestinationsEnabled(userId)`:
  *
- *   - FLAG OFF (default, today for all users):
- *       Reads the legacy `integrations.targetWebsiteId` column (or its
- *       JSON-config fallback). Returns 0 or 1 destinations. Matches the
- *       exact behaviour of the ad-hoc resolver previously inlined in
- *       leadService.ts — no user-visible change.
- *
- *   - FLAG ON (opt-in users):
+ *   - Flag ON (production default — `MULTI_DEST_ALL=true`):
  *       Reads from `integration_destinations` joined against
- *       `target_websites`. Today the table holds exactly one row per
- *       integration (after the Commit 4 backfill), so behaviour stays
- *       identical. Commit 5c will add the per-destination tracking
- *       required to safely support N > 1 without risking double-delivery
- *       on retry.
+ *       `target_websites`. Supports N destinations per integration with
+ *       per-mapping `position` ordering.
  *
- * Ownership is enforced: rows whose `target_websites.userId` doesn't
- * match the integration's owner are filtered out and logged — these
- * cannot be delivered to safely and used to raise "owner mismatch" in
- * the legacy code path.
+ *   - Flag OFF (rollback / emergency path):
+ *       Reads the legacy `integrations.targetWebsiteId` column (or its
+ *       JSON-config fallback). Returns 0 or 1 destinations. Kept in
+ *       place so the flag can be flipped back instantly without a code
+ *       change if the new path ever needs to be disabled.
+ *
+ * Ownership is enforced in both paths: rows whose `target_websites.userId`
+ * doesn't match the integration's owner are filtered out and logged —
+ * they cannot be delivered to safely.
  */
 export async function resolveIntegrationDestinations(
   db: DbClient,

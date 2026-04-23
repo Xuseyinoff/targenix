@@ -309,6 +309,20 @@
       "when": 1776870000000,
       "tag": "0043_connections",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "5",
+      "when": 1776880000000,
+      "tag": "0044_integration_destinations",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "5",
+      "when": 1776890000000,
+      "tag": "0045_orders_destination_id",
+      "breakpoints": true
     }
   ]
 }
