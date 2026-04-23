@@ -1,12 +1,15 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   buildVariableContext,
   injectVariables,
+  resolveTemplateValue,
   extractVariableNames,
   extractCustomVariableNames,
   buildCustomBody,
+  buildHeaders,
   BUILTIN_VARIABLES,
 } from "./services/affiliateService";
+import { encrypt } from "./encryption";
 
 const sampleLead = {
   leadgenId: "lead_123",
@@ -225,5 +228,267 @@ describe("buildCustomBody", () => {
       expect(typeof body).toBe("string");
       expect(body as string).toContain("Ali Valiyev");
     });
+  });
+});
+
+// ─── resolveTemplateValue (Stage D v2 Step 1) ──────────────────────────────
+//
+// Full coverage of the `{{SECRET:key}}` + `{{variable}}` resolver that is
+// now used by `buildCustomBody` and `buildHeaders`. The tests below are
+// the seven MANDATORY scenarios from the task brief:
+//   1. Plain text — behaves exactly like before.
+//   2. Variable only — still resolves via injectVariables.
+//   3. SECRET only — decrypts from secrets map.
+//   4. Mixed SECRET + variable — single-pass resolution.
+//   5. Missing secret — empty string, no throw.
+//   6. Headers.api_key SECRET — resolves through buildHeaders.
+//   7. All three content types (json / form-urlencoded / multipart) —
+//      legacy delivery path still works AND newly supports SECRET.
+//
+// `ENCRYPTION_KEY` is swapped around each block so `encrypt()` /
+// `decrypt()` produce deterministic ciphertexts without depending on
+// whatever key the surrounding dev environment happens to have set.
+
+describe("resolveTemplateValue", () => {
+  const originalKey = process.env.ENCRYPTION_KEY;
+  beforeAll(() => {
+    process.env.ENCRYPTION_KEY = "stage-d-unit-test-key-do-not-use-in-prod";
+  });
+  afterAll(() => {
+    if (originalKey !== undefined) process.env.ENCRYPTION_KEY = originalKey;
+    else delete process.env.ENCRYPTION_KEY;
+  });
+
+  it("(1) passes plain text through unchanged (no SECRET, no variable)", () => {
+    // Byte-for-byte identical to today: today this would go through
+    // injectVariables, which also leaves plain text untouched.
+    expect(resolveTemplateValue("ABC123", {}, {})).toBe("ABC123");
+    expect(resolveTemplateValue("Bearer xyz", {}, undefined)).toBe("Bearer xyz");
+  });
+
+  it("(2) resolves {{variable}} exactly like injectVariables", () => {
+    expect(resolveTemplateValue("{{name}}", { name: "Ali" })).toBe("Ali");
+    expect(
+      resolveTemplateValue("Hello {{name}}, phone {{phone}}", {
+        name: "Ali",
+        phone: "+998901234567",
+      }),
+    ).toBe("Hello Ali, phone +998901234567");
+    expect(resolveTemplateValue("{{unknown}}", { name: "Ali" })).toBe("");
+  });
+
+  it("(3) resolves {{SECRET:key}} by decrypting from secrets map", () => {
+    const ciphertext = encrypt("my-plain-api-key");
+    expect(
+      resolveTemplateValue("{{SECRET:api_key}}", {}, { api_key: ciphertext }),
+    ).toBe("my-plain-api-key");
+  });
+
+  it("(3b) honours whitespace inside SECRET braces", () => {
+    const ciphertext = encrypt("trimmed-value");
+    expect(
+      resolveTemplateValue("{{ SECRET:api_key }}", {}, { api_key: ciphertext }),
+    ).toBe("trimmed-value");
+  });
+
+  it("(4) resolves a mixed string (SECRET + variable) in one pass", () => {
+    const ciphertext = encrypt("secret-token-abc");
+    expect(
+      resolveTemplateValue(
+        "Bearer {{SECRET:api_key}} for {{name}}",
+        { name: "Ali" },
+        { api_key: ciphertext },
+      ),
+    ).toBe("Bearer secret-token-abc for Ali");
+  });
+
+  it("(5a) returns empty string when the secret key is missing", () => {
+    // Matches injectVariables' "unknown variable → empty" contract so
+    // the partner endpoint receives the same empty value it would for a
+    // bad {{variable}} — delivery is never blocked by a missing secret.
+    expect(resolveTemplateValue("{{SECRET:unknown}}", {}, {})).toBe("");
+  });
+
+  it("(5b) returns empty string when secrets param is undefined", () => {
+    expect(resolveTemplateValue("{{SECRET:api_key}}", {}, undefined)).toBe("");
+  });
+
+  it("(5c) returns empty string when ciphertext is malformed (no throw)", () => {
+    expect(
+      resolveTemplateValue("{{SECRET:api_key}}", {}, {
+        api_key: "not-a-valid-ciphertext",
+      }),
+    ).toBe("");
+  });
+
+  it("(5d) returns empty string when decrypt fails on well-formatted garbage", () => {
+    // Shape is iv:payload but the bytes won't decrypt.
+    expect(
+      resolveTemplateValue("{{SECRET:api_key}}", {}, {
+        api_key: "aabbccddeeff00112233445566778899:ff",
+      }),
+    ).toBe("");
+  });
+
+  it("preserves static injectVariables behaviour when no SECRET token present", () => {
+    // This is the hot-path check — 100% of today's production configs
+    // hit this branch, so any regression here would break delivery.
+    const input = "Hello {{name}}, your phone is {{phone}}";
+    const ctx = { name: "Ali", phone: "+998901234567" };
+    expect(resolveTemplateValue(input, ctx, undefined)).toBe(
+      injectVariables(input, ctx),
+    );
+    expect(resolveTemplateValue(input, ctx, {})).toBe(
+      injectVariables(input, ctx),
+    );
+  });
+});
+
+// ─── buildCustomBody — SECRET resolution across content types ──────────────
+describe("buildCustomBody — SECRET support", () => {
+  const originalKey = process.env.ENCRYPTION_KEY;
+  beforeAll(() => {
+    process.env.ENCRYPTION_KEY = "stage-d-unit-test-key-do-not-use-in-prod";
+  });
+  afterAll(() => {
+    if (originalKey !== undefined) process.env.ENCRYPTION_KEY = originalKey;
+    else delete process.env.ENCRYPTION_KEY;
+  });
+
+  const varCtx = buildVariableContext(sampleLead, { offer_id: "123" });
+
+  it("(7a) resolves SECRET in form-urlencoded bodyFields", () => {
+    const ciphertext = encrypt("plain-key-form");
+    const cfg = {
+      contentType: "form-urlencoded",
+      bodyFields: [
+        { key: "api_key", value: "{{SECRET:api_key}}" },
+        { key: "name", value: "{{name}}" },
+      ],
+      secrets: { api_key: ciphertext },
+    };
+    const { body } = buildCustomBody(cfg, varCtx);
+    const params = new URLSearchParams(body as string);
+    expect(params.get("api_key")).toBe("plain-key-form");
+    expect(params.get("name")).toBe("Ali Valiyev");
+  });
+
+  it("(7b) resolves SECRET in multipart bodyFields", () => {
+    const ciphertext = encrypt("plain-key-multipart");
+    const cfg = {
+      contentType: "multipart",
+      bodyFields: [
+        { key: "api_key", value: "{{SECRET:api_key}}" },
+        { key: "name", value: "{{name}}" },
+      ],
+      secrets: { api_key: ciphertext },
+    };
+    const { formData, contentTypeHeader } = buildCustomBody(cfg, varCtx);
+    expect(contentTypeHeader).toBe("multipart/form-data");
+    // form-data's internal buffer holds the resolved plaintext; we assert
+    // via getBuffer() because the library does not expose fields() for
+    // direct read.
+    const bufStr = formData!.getBuffer().toString("utf8");
+    expect(bufStr).toContain("plain-key-multipart");
+    expect(bufStr).toContain("Ali Valiyev");
+  });
+
+  it("(7c) resolves SECRET in JSON bodyTemplate", () => {
+    const ciphertext = encrypt("plain-key-json");
+    const cfg = {
+      contentType: "json",
+      bodyTemplate: '{"api_key":"{{SECRET:api_key}}","name":"{{name}}"}',
+      secrets: { api_key: ciphertext },
+    };
+    const { body, contentTypeHeader } = buildCustomBody(cfg, varCtx);
+    expect(contentTypeHeader).toBe("application/json");
+    expect(body).toEqual({ api_key: "plain-key-json", name: "Ali Valiyev" });
+  });
+
+  it("is a no-op for configs without any SECRET token (plain api_key preserved)", () => {
+    // This is the exact shape production currently holds for the 5
+    // legacy affiliate destinations — plain api_key string with no
+    // `secrets` map. After Stage D v2 Step 1 the output MUST be
+    // identical to before (the cfg still has `api_key` as plaintext
+    // inside bodyFields, no encryption involved).
+    const cfg = {
+      contentType: "form-urlencoded",
+      bodyFields: [
+        { key: "api_key", value: "PLAIN_KEY_ABC" },
+        { key: "name", value: "{{name}}" },
+      ],
+    };
+    const { body } = buildCustomBody(cfg, varCtx);
+    const params = new URLSearchParams(body as string);
+    expect(params.get("api_key")).toBe("PLAIN_KEY_ABC");
+    expect(params.get("name")).toBe("Ali Valiyev");
+  });
+
+  it("missing secrets map does not block delivery — empty string returned", () => {
+    // Defensive: if a config references a SECRET but the secrets map was
+    // not persisted (legacy/test/data-corruption), delivery must still
+    // proceed with an empty string in that slot (partner responds).
+    const cfg = {
+      contentType: "form-urlencoded",
+      bodyFields: [
+        { key: "api_key", value: "{{SECRET:api_key}}" },
+        { key: "name", value: "{{name}}" },
+      ],
+      // intentionally no `secrets` key
+    };
+    const { body } = buildCustomBody(cfg, varCtx);
+    const params = new URLSearchParams(body as string);
+    expect(params.get("api_key")).toBe("");
+    expect(params.get("name")).toBe("Ali Valiyev");
+  });
+});
+
+// ─── buildHeaders — SECRET resolution ──────────────────────────────────────
+describe("buildHeaders — SECRET support", () => {
+  const originalKey = process.env.ENCRYPTION_KEY;
+  beforeAll(() => {
+    process.env.ENCRYPTION_KEY = "stage-d-unit-test-key-do-not-use-in-prod";
+  });
+  afterAll(() => {
+    if (originalKey !== undefined) process.env.ENCRYPTION_KEY = originalKey;
+    else delete process.env.ENCRYPTION_KEY;
+  });
+
+  const varCtx = buildVariableContext(sampleLead);
+
+  it("(6) resolves {{SECRET:api_key}} in a header value", () => {
+    const ciphertext = encrypt("plain-header-key");
+    const cfg = {
+      headers: {
+        "X-Api-Key": "{{SECRET:api_key}}",
+        Authorization: "Bearer {{SECRET:api_key}}",
+      },
+      secrets: { api_key: ciphertext },
+    };
+    const headers = buildHeaders(cfg, varCtx, "application/json");
+    expect(headers["X-Api-Key"]).toBe("plain-header-key");
+    expect(headers["Authorization"]).toBe("Bearer plain-header-key");
+    expect(headers["Content-Type"]).toBe("application/json");
+  });
+
+  it("leaves plain-text headers byte-for-byte identical (no-op path)", () => {
+    const cfg = {
+      headers: {
+        "X-Api-Key": "PLAIN_STATIC_KEY",
+        "X-Trace-Id": "{{lead_id}}",
+      },
+    };
+    const headers = buildHeaders(cfg, varCtx, "application/json");
+    expect(headers["X-Api-Key"]).toBe("PLAIN_STATIC_KEY");
+    expect(headers["X-Trace-Id"]).toBe("lead_123");
+  });
+
+  it("honours user-provided Content-Type override", () => {
+    const cfg = {
+      headers: { "content-type": "application/xml" },
+    };
+    const headers = buildHeaders(cfg, varCtx, "application/json");
+    expect(headers["content-type"]).toBe("application/xml");
+    expect(headers["Content-Type"]).toBeUndefined();
   });
 });
