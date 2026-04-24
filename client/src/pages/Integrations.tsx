@@ -23,7 +23,6 @@ import {
   Pencil,
   Plus,
   Search,
-  Sparkles,
   Trash2,
   X,
   XCircle,
@@ -54,8 +53,6 @@ export default function Integrations() {
   const utils = trpc.useUtils();
   const t = useT();
   const { data: integrations, isLoading } = trpc.integrations.list.useQuery();
-  const { data: featureFlags } = trpc.system.featureFlags.useQuery();
-  const newWizardEnabled = featureFlags?.multiDestinations ?? false;
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
@@ -146,26 +143,20 @@ export default function Integrations() {
               {t("integrations.subtitle")}
             </p>
           </div>
-          <div className="flex shrink-0 gap-1.5">
-            {newWizardEnabled && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 px-2 border-primary/40 text-primary hover:bg-primary/5 hover:text-primary"
-                onClick={() => navigate("/integrations/new-v2")}
-                title="Try the new Make.com-style wizard (beta)"
-              >
-                <Sparkles className="h-4 w-4" />
-                <span className="ml-1.5 hidden sm:inline">New wizard</span>
-                <span className="ml-1 hidden sm:inline rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase">
-                  Beta
-                </span>
-              </Button>
-            )}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-8 px-2 text-muted-foreground hover:text-foreground"
+              onClick={() => navigate("/integrations/new-routing")}
+              title="Classic wizard"
+            >
+              <span className="hidden sm:inline text-xs">Classic</span>
+            </Button>
             <Button
               size="sm"
               className="h-8 px-2"
-              onClick={() => navigate("/integrations/new-routing")}
+              onClick={() => navigate("/integrations/new-v2")}
               title={t("integrations.newLeadRouting")}
             >
               <Plus className="h-4 w-4" />
@@ -227,7 +218,7 @@ export default function Integrations() {
         {!isLoading && routingIntegrations.length === 0 && (
           <Card
             className="max-w-md mx-auto border-dashed cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors"
-            onClick={() => navigate("/integrations/new-routing")}
+            onClick={() => navigate("/integrations/new-v2")}
           >
             <CardContent className="flex flex-col items-center text-center py-8 gap-3">
               <div className="h-12 w-12 rounded-xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">

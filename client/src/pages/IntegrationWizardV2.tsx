@@ -594,25 +594,20 @@ export default function IntegrationWizardV2() {
   // collapsed trigger and by "Add another destination" inside the chip view.
   const [actionPickerOpen, setActionPickerOpen] = useState(false);
 
-  // ─── Flag gate ─────────────────────────────────────────────────────────────
-  const { data: flags, isLoading: flagsLoading } =
-    trpc.system.featureFlags.useQuery();
-  const isAllowed = flags?.multiDestinations ?? false;
-
   // ─── tRPC data queries ─────────────────────────────────────────────────────
   const { data: accounts, isLoading: loadingAccounts } =
-    trpc.facebookAccounts.list.useQuery(undefined, { enabled: isAllowed });
+    trpc.facebookAccounts.list.useQuery(undefined);
 
   const { data: pages, isLoading: loadingPages } =
     trpc.facebookAccounts.listPages.useQuery(
       { accountId: state.accountId ?? 0 },
-      { enabled: isAllowed && !!state.accountId },
+      { enabled: !!state.accountId },
     );
 
   const { data: forms, isLoading: loadingForms } =
     trpc.facebookAccounts.listForms.useQuery(
       { accountId: state.accountId ?? 0, pageId: state.pageId },
-      { enabled: isAllowed && !!state.accountId && !!state.pageId },
+      { enabled: !!state.accountId && !!state.pageId },
     );
 
   const { data: formFields, isLoading: loadingFields } =
@@ -622,14 +617,13 @@ export default function IntegrationWizardV2() {
         pageId: state.pageId,
         formId: state.formId,
       },
-      { enabled: isAllowed && !!state.accountId && !!state.pageId && !!state.formId },
+      { enabled: !!state.accountId && !!state.pageId && !!state.formId },
     );
 
   const { data: targetWebsites, isLoading: loadingTargets } =
-    trpc.targetWebsites.list.useQuery(undefined, { enabled: isAllowed });
+    trpc.targetWebsites.list.useQuery(undefined);
 
   const { data: appManifests = [] } = trpc.apps.list.useQuery(undefined, {
-    enabled: isAllowed,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -643,10 +637,7 @@ export default function IntegrationWizardV2() {
     trpc.targetWebsites.getCustomVariables.useQuery(
       { id: primaryDestId ?? 0 },
       {
-        enabled:
-          isAllowed &&
-          !!primaryDestId &&
-          primaryDestType === "custom",
+        enabled: !!primaryDestId && primaryDestType === "custom",
       },
     );
 
@@ -1068,43 +1059,6 @@ export default function IntegrationWizardV2() {
 
   const isSaving = subscribeMutation.isPending || createMutation.isPending;
 
-  // ─── Flag gate fallback ────────────────────────────────────────────────────
-  if (flagsLoading) {
-    return (
-      <DashboardLayout>
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      </DashboardLayout>
-    );
-  }
-  if (!isAllowed) {
-    return (
-      <DashboardLayout>
-        <div className="max-w-xl mx-auto py-12 text-center space-y-4">
-          <Sparkles className="h-10 w-10 mx-auto text-muted-foreground" />
-          <h1 className="text-xl font-semibold">New wizard (beta)</h1>
-          <p className="text-sm text-muted-foreground">
-            This redesigned integration wizard is currently rolling out to
-            selected accounts. You can continue using the existing wizard
-            without any changes.
-          </p>
-          <div className="flex gap-2 justify-center">
-            <Button
-              variant="outline"
-              onClick={() => navigate("/integrations")}
-            >
-              Back to integrations
-            </Button>
-            <Button onClick={() => navigate("/integrations/new-routing")}>
-              Open classic wizard
-            </Button>
-          </div>
-        </div>
-      </DashboardLayout>
-    );
-  }
-
   // ─── Derived: primary destination's DB record ──────────────────────────────
   const primaryDestRecord = useMemo(
     () => targetWebsites?.find((t) => t.id === primaryDestId) ?? null,
@@ -1173,10 +1127,6 @@ export default function IntegrationWizardV2() {
           </Button>
           <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
           <span className="text-sm text-muted-foreground">New integration</span>
-          <span className="ml-auto inline-flex items-center gap-1 rounded-full border bg-primary/10 text-primary px-2 py-0.5 text-[10px] font-medium">
-            <Sparkles className="h-2.5 w-2.5" />
-            Beta
-          </span>
         </div>
 
         <h1 className="text-xl font-bold tracking-tight mb-8">
