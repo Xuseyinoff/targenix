@@ -59,6 +59,16 @@ describe("resolveAdapterKey — Stage 2 appKey", () => {
     ).toBe("legacy-template");
   });
 
+  it("NOT NULL backfill: appKey unknown → same routing as missing (legacy path by templateType)", () => {
+    expect(
+      resolveAdapterKey("LEAD_ROUTING", {
+        templateId: null,
+        templateType: "sotuvchi",
+        appKey: "unknown",
+      }),
+    ).toBe("legacy-template");
+  });
+
   it("LEAD LEGACY: no appKey, templateType telegram", () => {
     expect(
       resolveAdapterKey("LEAD_ROUTING", { templateId: null, templateType: "telegram", appKey: null }),

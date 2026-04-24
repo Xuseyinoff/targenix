@@ -446,11 +446,11 @@ export const targetWebsites = mysqlTable("target_websites", {
   templateId: int("templateId"),
   /**
    * Denormalized from `destination_templates.appKey` when `templateId` is set
-   * (Stage 2 migration 0049). Migration 0050 backfills `telegram` / `google-sheets`
-   * from `templateType` when null. Delivery also resolves adapter from
-   * `templateType` when `appKey` is missing (dual-mode).
+   * (Stage 2 migration 0049). Backfill 0051 + NOT NULL 0052; sentinel `unknown`
+   * means "use legacy `templateType` / `templateId` for routing" (see
+   * `resolveAdapterKey`).
    */
-  appKey: varchar("appKey", { length: 64 }),
+  appKey: varchar("appKey", { length: 64 }).notNull(),
   /**
    * FK-in-spirit → `app_actions.id` for the action row mirroring this template
    * (match via `app_actions.actionKey = CONCAT('t', destination_templates.id)`).

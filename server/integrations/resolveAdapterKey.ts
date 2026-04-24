@@ -9,7 +9,8 @@
  *
  * First-party `appKey` values (`telegram`, `google-sheets`, …) are also seeded
  * in `apps` / `app_actions` (see migration 0050) for DB catalogue; routing here
- * stays TS-defined for determinism.
+ * stays TS-defined for determinism. After migrations 0051/0052, `appKey` is NOT
+ * NULL; `unknown` is a backfill sentinel treated like missing for routing.
  *
  * Logging: set `STAGE2_ADAPTER_LOG=1` only when debugging. Leave unset in
  * production to avoid per-delivery `console.log` volume. For resolved adapter
@@ -30,20 +31,29 @@ export function resolveAdapterKey(
   const appKeyRaw = tw.appKey;
   const appKeyNorm =
     appKeyRaw != null && String(appKeyRaw).trim() !== "" ? String(appKeyRaw).trim() : null;
+  // DB backfill sentinel (0051/0052): treat like missing appKey so templateType / templateId
+  // still drive delivery — same dual-mode as pre–NOT NULL rows.
+  const effectiveKey = appKeyNorm === "unknown" ? null : appKeyNorm;
 
-  if (appKeyNorm) {
+  if (effectiveKey) {
     if (process.env.STAGE2_ADAPTER_LOG === "1" || process.env.STAGE2_ADAPTER_LOG === "true") {
       console.log({
         stage: "adapter_resolution",
         path: "NEW" as const,
-        appKey: appKeyNorm,
+        appKey: effectiveKey,
         templateType: tw.templateType,
         templateId: tw.templateId,
       });
     }
-    if (appKeyNorm === "telegram") return "telegram";
-    if (appKeyNorm === "google-sheets" || appKeyNorm === "google_sheets") return "google-sheets";
-    // Affiliate / admin app keys (sotuvchi, 100k, inbaza, mgoods, …) → same adapter as `dynamic-template` rows
+    if (effectiveKey === "telegram") return "telegram";
+    if (effectiveKey === "google-sheets" || effectiveKey === "google_sheets") return "google-sheets";
+    // Sentinel written by the NOT NULL backfill for destinations that had no templateType.
+    if (effectiveKey === "plain-url") return "plain-url";
+    // No templateId → appKey was copied from legacy templateType column during the NOT NULL
+    // backfill (sotuvchi, 100k, albato, custom, …). Route to legacy-template so the
+    // legacyTemplateAdapter continues to use tw.templateType for delivery, exactly as before.
+    if (!tw.templateId) return "legacy-template";
+    // Has both appKey and templateId → a proper DB-catalogue affiliate destination.
     return "dynamic-template";
   }
 
