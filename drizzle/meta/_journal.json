@@ -337,6 +337,20 @@
       "when": 1777248000000,
       "tag": "0047_connection_app_specs_auth_none",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "5",
+      "when": 1777334400000,
+      "tag": "0048_stage1_apps_app_actions",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "5",
+      "when": 1777401600000,
+      "tag": "0049_target_websites_appkey_actionid",
+      "breakpoints": true
     }
   ]
 }

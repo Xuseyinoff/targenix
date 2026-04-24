@@ -283,6 +283,54 @@ export const connectionAppSpecs = mysqlTable("connection_app_specs", {
 export type ConnectionAppSpecRow = typeof connectionAppSpecs.$inferSelect;
 export type InsertConnectionAppSpecRow = typeof connectionAppSpecs.$inferInsert;
 
+// ─── Apps (Stage 1 mirror of connection_app_specs — future DB-driven cutover) ─
+// Populated by migration 0048; runtime still uses connection_app_specs until
+// a later commit switches readers.
+export const apps = mysqlTable("apps", {
+  id: int("id").autoincrement().primaryKey(),
+  appKey: varchar("appKey", { length: 64 }).notNull().unique(),
+  displayName: varchar("displayName", { length: 128 }).notNull(),
+  category: varchar("category", { length: 32 }).notNull(),
+  authType: varchar("authType", { length: 32 }).notNull(),
+  fields: json("fields").notNull(),
+  oauthConfig: json("oauthConfig"),
+  iconUrl: varchar("iconUrl", { length: 512 }),
+  docsUrl: varchar("docsUrl", { length: 512 }),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type AppRow = typeof apps.$inferSelect;
+export type InsertAppRow = typeof apps.$inferInsert;
+
+// ─── App actions (Stage 1 mirror of destination_templates per app) ───────────
+export const appActions = mysqlTable(
+  "app_actions",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    appKey: varchar("appKey", { length: 64 }).notNull(),
+    actionKey: varchar("actionKey", { length: 64 }).notNull().default("default"),
+    name: varchar("name", { length: 255 }).notNull(),
+    endpointUrl: varchar("endpointUrl", { length: 500 }).notNull(),
+    method: varchar("method", { length: 10 }).default("POST").notNull(),
+    contentType: varchar("contentType", { length: 100 }),
+    bodyFields: json("bodyFields").notNull(),
+    userFields: json("userFields").notNull(),
+    variableFields: json("variableFields").notNull(),
+    autoMappedFields: json("autoMappedFields").notNull(),
+    isDefault: boolean("isDefault").default(true).notNull(),
+    isActive: boolean("isActive").default(true).notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (t) => ({
+    uniqAppAction: uniqueIndex("uniq_app_action").on(t.appKey, t.actionKey),
+    idxAppKey: index("idx_app_actions_appKey").on(t.appKey),
+  }),
+);
+
+export type AppActionRow = typeof appActions.$inferSelect;
+export type InsertAppActionRow = typeof appActions.$inferInsert;
+
 // ─── Destination Templates (Admin-managed) ─────────────────────────────────────
 // Admin-defined affiliate endpoint templates.
 // Users pick a template when creating a destination — no code changes needed for new affiliates.
@@ -396,6 +444,18 @@ export const targetWebsites = mysqlTable("target_websites", {
   templateType: varchar("templateType", { length: 32 }).default("custom").notNull(),
   /** FK to destinationTemplates — set when created from admin-managed template */
   templateId: int("templateId"),
+  /**
+   * Denormalized from `destination_templates.appKey` when `templateId` is set
+   * (Stage 2 migration 0049). NULL for legacy destinations (e.g. Telegram, Sheets
+   * without a template) — delivery still uses `templateId` + `templateConfig`.
+   */
+  appKey: varchar("appKey", { length: 64 }),
+  /**
+   * FK-in-spirit → `app_actions.id` for the action row mirroring this template
+   * (match via `app_actions.actionKey = CONCAT('t', destination_templates.id)`).
+   * NULL when no template or no `app_actions` row.
+   */
+  actionId: int("actionId"),
   /** Template-specific config (api keys, field mappings, success conditions) */
   templateConfig: json("templateConfig"),
   /** Delivery chatId for Telegram lead notifications (delivery chat only) */

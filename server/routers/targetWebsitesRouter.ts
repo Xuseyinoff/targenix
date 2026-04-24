@@ -18,7 +18,7 @@ import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { targetWebsites, destinationTemplates, users, integrations, orders, connections } from "../../drizzle/schema";
-import { eq, desc, and, sql, gte, lt, inArray } from "drizzle-orm";
+import { eq, desc, and, sql, gte, lt } from "drizzle-orm";
 import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
 import { encrypt, decrypt } from "../encryption";
 import {
@@ -35,6 +35,14 @@ import {
 
 import { assertSafeOutboundUrl } from "../lib/urlSafety";
 import { loadConnectionForDelivery } from "../integrations/dispatch";
+import {
+  fetchDestinationTemplatesWithOverlayByIds,
+  findAppActionIdForTemplate,
+  getEndpointUrlByTemplateAppKey,
+  listActiveDestinationTemplatesForPicker,
+  loadDynamicExecutionTemplate,
+  preferAppActionEndpointUrl,
+} from "../integrations/dynamicTemplateSource";
 import type { Connection } from "../../drizzle/schema";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { sendTelegramRawMessage } from "../services/telegramService";
@@ -218,18 +226,10 @@ export const targetWebsitesRouter = router({
     }
     const tplMetaById = new Map<number, TplMeta>();
     if (templateIds.length > 0) {
-      const tplRows = await db
-        .select({
-          id: destinationTemplates.id,
-          name: destinationTemplates.name,
-          category: destinationTemplates.category,
-          autoMappedFields: destinationTemplates.autoMappedFields,
-          variableFields: destinationTemplates.variableFields,
-          userVisibleFields: destinationTemplates.userVisibleFields,
-        })
-        .from(destinationTemplates)
-        .where(inArray(destinationTemplates.id, templateIds));
-      for (const t of tplRows) {
+      const tplById = await fetchDestinationTemplatesWithOverlayByIds(db, templateIds);
+      for (const id of templateIds) {
+        const t = tplById.get(id);
+        if (!t) continue;
         tplMetaById.set(t.id, {
           name: t.name,
           category: t.category,
@@ -426,13 +426,9 @@ export const targetWebsitesRouter = router({
       // Build URL — resolve from destination_templates by appKey for known affiliate types
       let url = "";
       if (input.templateType === "sotuvchi" || input.templateType === "100k") {
-        const [tpl] = await db
-          .select({ endpointUrl: destinationTemplates.endpointUrl })
-          .from(destinationTemplates)
-          .where(eq(destinationTemplates.appKey, input.templateType))
-          .limit(1);
-        if (!tpl?.endpointUrl) throw new Error(`Destination template not found for type: ${input.templateType}`);
-        url = tpl.endpointUrl;
+        const ep = await getEndpointUrlByTemplateAppKey(db, input.templateType);
+        if (!ep) throw new Error(`Destination template not found for type: ${input.templateType}`);
+        url = ep;
       } else {
         url = input.url ?? "";
       }
@@ -612,13 +608,9 @@ export const targetWebsitesRouter = router({
         if (input.templateType) {
           updates.templateType = input.templateType;
           if (input.templateType === "sotuvchi" || input.templateType === "100k") {
-            const [tpl] = await db
-              .select({ endpointUrl: destinationTemplates.endpointUrl })
-              .from(destinationTemplates)
-              .where(eq(destinationTemplates.appKey, input.templateType))
-              .limit(1);
-            if (!tpl?.endpointUrl) throw new Error(`Destination template not found for type: ${input.templateType}`);
-            updates.url = tpl.endpointUrl;
+            const ep = await getEndpointUrlByTemplateAppKey(db, input.templateType);
+            if (!ep) throw new Error(`Destination template not found for type: ${input.templateType}`);
+            updates.url = ep;
           } else if (input.templateType === "telegram") { /* no url needed */ }
           else if (input.templateType === "google-sheets") {
             updates.url = null;
@@ -836,11 +828,7 @@ export const targetWebsitesRouter = router({
   getTemplates: protectedProcedure.query(async () => {
     const db = await getDb();
     if (!db) return [];
-    return db
-      .select()
-      .from(destinationTemplates)
-      .where(eq(destinationTemplates.isActive, true))
-      .orderBy(destinationTemplates.name);
+    return listActiveDestinationTemplatesForPicker(db);
   }),
 
   /**
@@ -878,6 +866,11 @@ export const targetWebsitesRouter = router({
         .limit(1);
       if (!template) throw new Error("Template not found");
 
+      const actionId =
+        (await findAppActionIdForTemplate(db, template.id, template.appKey)) ?? null;
+
+      const initialUrl = await preferAppActionEndpointUrl(db, template.endpointUrl, actionId);
+
       // Encrypt each secret field provided by the user
       const encryptedSecrets: Record<string, string> = {};
       for (const [key, value] of Object.entries(input.secrets)) {
@@ -900,9 +893,11 @@ export const targetWebsitesRouter = router({
       await db.insert(targetWebsites).values({
         userId: ctx.user.id,
         name: input.name,
-        url: template.endpointUrl,
+        url: initialUrl,
         templateType: "custom",   // backwards-compat fallback
         templateId: template.id,
+        appKey: template.appKey ?? null,
+        actionId,
         color: template.color,
         connectionId,
         templateConfig: {
@@ -1075,12 +1070,19 @@ export const targetWebsitesRouter = router({
       // silenced because the intentional omission is the whole point
       // of Phase 2.
       void secretsEncrypted;
+
+      const actionId =
+        (await findAppActionIdForTemplate(db, template.id, template.appKey)) ?? null;
+      const initialUrl = await preferAppActionEndpointUrl(db, template.endpointUrl, actionId);
+
       const [inserted] = await db.insert(targetWebsites).values({
         userId: ctx.user.id,
         name: finalName,
-        url: template.endpointUrl,
+        url: initialUrl,
         templateType: "custom",
         templateId: template.id,
+        appKey: template.appKey ?? null,
+        actionId,
         color: template.color,
         templateConfig: {
           // Intentionally no `secrets`: see Stage 3 Phase 2 note above.
@@ -1165,12 +1167,9 @@ export const targetWebsitesRouter = router({
 
       // ── Dynamic admin-managed template ────────────────────────────────────────
       if (site.templateId) {
-        const [dynTpl] = await db
-          .select()
-          .from(destinationTemplates)
-          .where(eq(destinationTemplates.id, site.templateId))
-          .limit(1);
-        if (!dynTpl) throw new Error("Destination template not found");
+        const loaded = await loadDynamicExecutionTemplate(db, site);
+        if (!loaded) throw new Error("Destination template not found");
+        const dynTpl = loaded.template;
 
         const varFields = (dynTpl.variableFields as string[]) ?? [];
         const existingVariables = ((site.templateConfig as Record<string, unknown>)?.variables as Record<string, string>) ?? {};

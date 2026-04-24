@@ -21,10 +21,7 @@ import "./register";
 import { eq } from "drizzle-orm";
 import type { DbClient } from "../db";
 import type { Connection, leads, targetWebsites } from "../../drizzle/schema";
-import {
-  connections as connectionsTable,
-  destinationTemplates,
-} from "../../drizzle/schema";
+import { connections as connectionsTable, appActions, destinationTemplates } from "../../drizzle/schema";
 import type { LeadPayload } from "../services/affiliateService";
 import type { DeliveryResult } from "./types";
 import { getAdapter } from "./registry";
@@ -169,12 +166,39 @@ export async function dispatchDelivery(
           targetUrlUsed = denorm;
         } else if (tw?.templateId != null) {
           try {
-            const [tplRow] = await ctx.db
-              .select({ endpointUrl: destinationTemplates.endpointUrl })
-              .from(destinationTemplates)
-              .where(eq(destinationTemplates.id, tw.templateId))
-              .limit(1);
-            const ep = tplRow?.endpointUrl;
+            let ep: string | null | undefined;
+            let urlLogSource: "app_actions" | "destination_templates" = "destination_templates";
+            if (tw.actionId != null) {
+              const [a] = await ctx.db
+                .select({ endpointUrl: appActions.endpointUrl })
+                .from(appActions)
+                .where(eq(appActions.id, tw.actionId))
+                .limit(1);
+              const fromA = a?.endpointUrl;
+              if (fromA != null && typeof fromA === "string" && fromA.trim() !== "") {
+                ep = fromA;
+                urlLogSource = "app_actions";
+              }
+            }
+            if (ep == null || (typeof ep === "string" && ep.trim() === "")) {
+              const [tplRow] = await ctx.db
+                .select({ endpointUrl: destinationTemplates.endpointUrl })
+                .from(destinationTemplates)
+                .where(eq(destinationTemplates.id, tw.templateId))
+                .limit(1);
+              ep = tplRow?.endpointUrl;
+              urlLogSource = "destination_templates";
+            }
+            if (
+              process.env.STAGE2_DYNAMIC_TEMPLATE_LOG === "1" ||
+              process.env.STAGE2_DYNAMIC_TEMPLATE_LOG === "true"
+            ) {
+              console.log("[stage2:dynamicTemplate] order log targetUrl source=", urlLogSource, {
+                targetId: tw.id,
+                templateId: tw.templateId,
+                actionId: tw.actionId,
+              });
+            }
             targetUrlUsed =
               ep != null && typeof ep === "string" && ep.trim().length > 0
                 ? ep.trim()

@@ -1,13 +1,16 @@
-import { eq } from "drizzle-orm";
-import { destinationTemplates } from "../../../drizzle/schema";
-import type { Connection } from "../../../drizzle/schema";
+import type { Connection, targetWebsites } from "../../../drizzle/schema";
 import { sendLeadViaTemplate, type LeadPayload } from "../../services/affiliateService";
 import type { DbClient } from "../../db";
 import type { DeliveryResult } from "../types";
+import { loadDynamicExecutionTemplate } from "../dynamicTemplateSource";
 
 interface DynamicTemplateAdapterConfig {
   db: DbClient;
-  targetWebsite: { templateId: number; templateConfig: unknown };
+  /** Full row preferred — needs `actionId` for Stage 2 `app_actions` path. */
+  targetWebsite: Pick<
+    typeof targetWebsites.$inferSelect,
+    "id" | "templateId" | "templateConfig" | "actionId" | "appKey"
+  >;
   variableFields: Record<string, string>;
   /**
    * Stage 2 — linked connection row (if any). When active and
@@ -29,13 +32,11 @@ export const dynamicTemplateAdapter = {
     const { db, targetWebsite, variableFields, connection, userId } =
       config as DynamicTemplateAdapterConfig;
 
-    const [dynTpl] = await db
-      .select()
-      .from(destinationTemplates)
-      .where(eq(destinationTemplates.id, targetWebsite.templateId))
-      .limit(1);
-
-    if (!dynTpl) {
+    const loaded = await loadDynamicExecutionTemplate(
+      db,
+      targetWebsite as typeof targetWebsites.$inferSelect,
+    );
+    if (!loaded) {
       return {
         success: false,
         error: `Template ${targetWebsite.templateId} not found`,
@@ -44,7 +45,7 @@ export const dynamicTemplateAdapter = {
     }
 
     return sendLeadViaTemplate(
-      dynTpl,
+      loaded.template,
       targetWebsite.templateConfig,
       lead,
       variableFields,

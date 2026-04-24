@@ -18,7 +18,8 @@ import { TRPCError } from "@trpc/server";
 import { adminProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { destinationTemplates } from "../../drizzle/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq } from "drizzle-orm";
+import { listDestinationTemplatesWithMirrorOverlay } from "../integrations/dynamicTemplateSource";
 import {
   validateTemplateContract,
   TemplateContractError,
@@ -109,10 +110,9 @@ export const adminTemplatesRouter = router({
   list: adminProcedure.query(async () => {
     const db = await getDb();
     if (!db) return [];
-    return db
-      .select()
-      .from(destinationTemplates)
-      .orderBy(desc(destinationTemplates.createdAt));
+    // Stage 2 — `destination_templates` is still authoritative for id / writes;
+    // mirror rows from `app_actions` overlay name/url/body when 0048 pair exists.
+    return listDestinationTemplatesWithMirrorOverlay(db);
   }),
 
   /**
