@@ -146,15 +146,6 @@ export default function Integrations() {
           <div className="flex shrink-0 items-center gap-1.5">
             <Button
               size="sm"
-              variant="ghost"
-              className="h-8 px-2 text-muted-foreground hover:text-foreground"
-              onClick={() => navigate("/integrations/new-routing")}
-              title="Classic wizard"
-            >
-              <span className="hidden sm:inline text-xs">Classic</span>
-            </Button>
-            <Button
-              size="sm"
               className="h-8 px-2"
               onClick={() => navigate("/integrations/new-v2")}
               title={t("integrations.newLeadRouting")}

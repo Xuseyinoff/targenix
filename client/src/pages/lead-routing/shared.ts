@@ -1,12 +1,7 @@
 /**
- * Shared helpers for Lead-Routing wizards.
- *
- * Both the legacy `LeadRoutingWizard` (stepped) and the new Make.com-style
- * `IntegrationWizardV2` (stacked cards) persist the SAME integration config
- * shape — so their field-mapping logic must behave identically. Pulling the
- * constants and pure helpers into this module guarantees they can never
- * drift and keeps either wizard free to iterate on UX without touching
- * serialisation semantics.
+ * Shared helpers for the Lead Routing integration wizard (IntegrationWizardV2)
+ * and related server queries. Constants and pure helpers live here so mapping
+ * semantics stay consistent with `integrations.create` / `update` payloads.
  *
  * Nothing here depends on React or the router; everything is plain data
  * and pure functions so unit-testable in isolation.
@@ -230,10 +225,10 @@ export interface AppManifestService {
 }
 
 /**
- * Legacy TEMPLATE_VARIABLE_FIELDS kept for the old LeadRoutingWizard (edit
- * routes) and the server's `targetWebsitesRouter.getVariableFields` query.
- * New wizards resolve this data via the admin `destination_templates` rows
- * (see `resolveDestManifest` in IntegrationWizardV2.tsx).
+ * Static variable-field presets per legacy template type key; used by the
+ * server's `targetWebsitesRouter.getVariableFields` query. Admin templates
+ * supply richer metadata via `destination_templates` (see
+ * `resolveDestManifest` in IntegrationWizardV2.tsx).
  */
 export const TEMPLATE_VARIABLE_FIELDS: Record<
   string,

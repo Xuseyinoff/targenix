@@ -2,14 +2,11 @@
  * IntegrationWizardV2 — Make.com-style stacked-card wizard for creating a
  * LEAD_ROUTING integration.
  *
- * Mounted at /integrations/new-v2 and gated behind the multi_destinations
- * feature flag (see server/services/featureFlags.ts). Users who aren't opted
- * in go through the legacy stepped wizard at /integrations/new-routing — we
- * keep both paths alive through Commit 5 so the new UI can iterate without
- * blocking anyone.
+ * Mounted at /integrations/new-v2 and /integrations/edit-v2/:id.
+ * Old URLs `/integrations/new-routing` and `/integrations/edit-routing/:id`
+ * redirect here (see App.tsx).
  *
- * The wizard persists the EXACT same integration.config shape as the legacy
- * wizard, so existing leads/orders/retries logic keeps working unchanged:
+ * The wizard persists the integration.config shape expected by lead delivery:
  *   { facebookAccountId, pageId, pageName, formId, formName, nameField,
  *     phoneField, extraFields, targetWebsiteId, targetWebsiteName,
  *     targetTemplateType, variableFields }

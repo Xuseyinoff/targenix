@@ -532,7 +532,7 @@ pnpm exec vitest run
 1. Set `FACEBOOK_APP_SECRET` and `FACEBOOK_VERIFY_TOKEN` in `.env`
 2. Configure Meta's webhook to `https://<your-host>/api/webhooks/facebook`
 3. Connect a Facebook Page in the dashboard (`/connections`)
-4. Create a LEAD_ROUTING integration (`/integrations/new-routing`) pointing to a Telegram chat or HTTP destination
+4. Create a LEAD_ROUTING integration (`/integrations/new-v2`) pointing to a Telegram chat or HTTP destination
 5. Use Meta's **"Send Test Lead"** button in the Lead Ads form setup, or run `integrations.testLead` from the Integrations UI
 6. Verify rows appear in `leads` and `orders` tables and the destination receives the payload
 

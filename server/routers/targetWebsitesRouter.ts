@@ -254,9 +254,9 @@ export const targetWebsitesRouter = router({
         category,
         /**
          * FROM_LEAD fields defined by the admin template.
-         * Wizard uses these to build the "Field mapping" section.
-         * Empty for legacy non-template destinations → wizard falls back to
-         * the server manifest's default name+phone schema via
+         * Client wizard uses these to build the "Field mapping" section.
+         * Empty for legacy non-template destinations → UI falls back to the
+         * default name+phone schema via
          * `resolveDestManifest` (client/src/pages/IntegrationWizardV2.tsx).
          */
         autoMappedFields: tplMeta?.autoMappedFields ?? [],
@@ -649,7 +649,7 @@ export const targetWebsitesRouter = router({
    *  1. Explicit variableFields list saved by the user in the template config
    *  2. Auto-detected {{var}} placeholders in bodyTemplate / bodyFields / headers
    *     (filtered to exclude built-in variables like name, phone, email, etc.)
-   * Used by LeadRoutingWizard Step 5 to show which fields the user must fill per routing.
+   * Used by the lead-routing wizard (IntegrationWizardV2) for custom destinations.
    */
   getCustomVariables: protectedProcedure
     .input(z.object({ id: z.number() }))

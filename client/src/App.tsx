@@ -1,6 +1,6 @@
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { Route, Switch, useLocation } from "wouter";
+import { Route, Switch, useLocation, type RouteComponentProps } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { LocaleProvider } from "./contexts/LocaleContext";
@@ -22,7 +22,6 @@ const TargetWebsites = lazy(() => import("./pages/TargetWebsites"));
 const Register = lazy(() => import("./pages/Register"));
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
-const LeadRoutingWizard = lazy(() => import("./pages/LeadRoutingWizard"));
 const IntegrationWizardV2 = lazy(() => import("./pages/IntegrationWizardV2"));
 const Privacy = lazy(() => import("./pages/Privacy"));
 const Terms = lazy(() => import("./pages/Terms"));
@@ -128,6 +127,35 @@ function LegacyLogsRedirect() {
   );
 }
 
+/** Old stepped lead-routing wizard URLs → IntegrationWizardV2 (bookmarks). */
+function LegacyLeadRoutingNewRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    setLocation("/integrations/new-v2");
+  }, [setLocation]);
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+    </div>
+  );
+}
+
+function LegacyLeadRoutingEditRedirect({
+  params,
+}: RouteComponentProps<{ id: string }>) {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    const id = params?.id;
+    if (id) setLocation(`/integrations/edit-v2/${encodeURIComponent(id)}`);
+    else setLocation("/integrations");
+  }, [setLocation, params?.id]);
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+    </div>
+  );
+}
+
 function Router() {
   return (
     <Suspense fallback={<PageLoader />}>
@@ -138,8 +166,8 @@ function Router() {
       <Route path="/leads" component={Leads} />
       <Route path="/webhook" component={WebhookHealth} />
       <Route path="/integrations" component={Integrations} />
-      <Route path="/integrations/new-routing" component={LeadRoutingWizard} />
-      <Route path="/integrations/edit-routing/:id" component={LeadRoutingWizard} />
+      <Route path="/integrations/new-routing" component={LegacyLeadRoutingNewRedirect} />
+      <Route path="/integrations/edit-routing/:id" component={LegacyLeadRoutingEditRedirect} />
       <Route path="/integrations/new-v2" component={IntegrationWizardV2} />
       <Route path="/integrations/edit-v2/:id" component={IntegrationWizardV2} />
       <Route path="/connections" component={Connections} />
