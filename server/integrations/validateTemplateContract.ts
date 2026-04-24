@@ -45,7 +45,7 @@ export type TemplateBodyField = {
 };
 
 export type ValidateTemplateInput = {
-  /** Must resolve to an entry in CONNECTION_APP_SPECS. */
+  /** Must resolve to an entry in CONNECTION_APP_SPECS or `specOverride`. */
   appKey: string | null | undefined;
   /** The template's bodyFields array. */
   bodyFields: ReadonlyArray<TemplateBodyField>;
@@ -55,6 +55,13 @@ export type ValidateTemplateInput = {
    * must resolve to a spec field with `sensitive: true`.
    */
   headers?: Readonly<Record<string, string>> | null;
+  /**
+   * Pre-resolved spec — bypasses the TS-constant lookup when the caller
+   * already resolved the spec from the `apps` DB table (for apps added
+   * via the admin UI after the last deploy that are not yet in the
+   * CONNECTION_APP_SPECS constant). Contract checks still run in full.
+   */
+  specOverride?: ConnectionAppSpec | null;
 };
 
 export type TemplateContractErrorCode =
@@ -89,6 +96,7 @@ export class TemplateContractError extends Error {
 
 function resolveSpec(
   appKey: string | null | undefined,
+  override?: ConnectionAppSpec | null,
 ): ConnectionAppSpec {
   if (typeof appKey !== "string" || appKey.length === 0) {
     throw new TemplateContractError(
@@ -97,11 +105,12 @@ function resolveSpec(
       {},
     );
   }
+  if (override) return override;
   const spec = getAppSpec(appKey);
   if (!spec) {
     throw new TemplateContractError(
       "APP_KEY_UNKNOWN",
-      `App '${appKey}' is not declared in CONNECTION_APP_SPECS.`,
+      `App '${appKey}' is not registered. Add it to CONNECTION_APP_SPECS or insert a row into the 'apps' table.`,
       { appKey },
     );
   }
@@ -192,7 +201,7 @@ function validateNonSecretSecretReferences(
 export function validateTemplateContract(
   input: ValidateTemplateInput,
 ): ConnectionAppSpec {
-  const spec = resolveSpec(input.appKey);
+  const spec = resolveSpec(input.appKey, input.specOverride);
   const isAuthless = specIsAuthless(spec);
 
   input.bodyFields.forEach((field, index) => {

@@ -24,7 +24,10 @@ import {
   validateTemplateContract,
   TemplateContractError,
 } from "../integrations/validateTemplateContract";
-import { listAppSpecs } from "../integrations/connectionAppSpecs";
+import {
+  listAppKeyOptionsForPicker,
+  resolveSpecForValidation,
+} from "../integrations/listAppsSafe";
 
 // ─── Shared Zod schemas ───────────────────────────────────────────────────────
 
@@ -125,13 +128,9 @@ export const adminTemplatesRouter = router({
    * The raw authType is kept for UIs that want to render differently per
    * protocol (e.g. badge color, help text).
    */
-  listAppKeys: adminProcedure.query(() => {
-    return listAppSpecs().map((s) => ({
-      appKey: s.appKey,
-      displayName: s.displayName,
-      authType: s.authType,
-      requiresCredentials: s.authType !== "none",
-    }));
+  listAppKeys: adminProcedure.query(async () => {
+    const db = await getDb();
+    return listAppKeyOptionsForPicker(db);
   }),
 
   /** Create a new destination template. */
@@ -141,10 +140,12 @@ export const adminTemplatesRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
 
+      const spec = await resolveSpecForValidation(db, input.appKey);
       try {
         validateTemplateContract({
           appKey: input.appKey,
           bodyFields: input.bodyFields,
+          specOverride: spec,
         });
       } catch (err) {
         throw toTrpcError(err);
@@ -202,10 +203,12 @@ export const adminTemplatesRouter = router({
             | undefined) ??
           (existing.bodyFields as Array<{ key: string; value: string; isSecret?: boolean }>);
 
+        const spec = await resolveSpecForValidation(db, mergedAppKey ?? null);
         try {
           validateTemplateContract({
             appKey: mergedAppKey,
             bodyFields: mergedBodyFields,
+            specOverride: spec,
           });
         } catch (err) {
           throw toTrpcError(err);

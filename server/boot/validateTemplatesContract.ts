@@ -36,7 +36,7 @@ import {
   TemplateContractError,
   type TemplateBodyField,
 } from "../integrations/validateTemplateContract";
-import { listAppSpecs } from "../integrations/connectionAppSpecs";
+import { buildAppSpecMap } from "../integrations/listAppsSafe";
 
 type BootTemplateRow = {
   id: number;
@@ -96,10 +96,14 @@ export async function validateTemplatesAtBoot(): Promise<{
 }> {
   const db = await getDb();
   if (!db) {
-    // No DB means we are running without persistence (e.g. unit tests
-    // bootstrapping the router in isolation). Nothing to validate.
-    return { ok: true, validatedTemplates: 0, knownApps: listAppSpecs().length };
+    // No DB — unit tests bootstrapping the router in isolation. Nothing to validate.
+    return { ok: true, validatedTemplates: 0, knownApps: 0 };
   }
+
+  // Single round-trip: load all known app specs (TS constant + apps table merged).
+  // Avoids N per-row DB queries and ensures templates pinned to DB-only apps
+  // (added via admin UI after the last deploy) pass boot validation.
+  const specMap = await buildAppSpecMap(db);
 
   const rows: BootTemplateRow[] = await db
     .select({
@@ -115,10 +119,12 @@ export async function validateTemplatesAtBoot(): Promise<{
 
   for (const row of rows) {
     const bodyFields = normalizeBodyFields(row.bodyFields);
+    const specOverride = row.appKey ? specMap.get(row.appKey) : undefined;
     try {
       validateTemplateContract({
         appKey: row.appKey,
         bodyFields,
+        specOverride,
       });
     } catch (err) {
       if (err instanceof TemplateContractError) {
@@ -159,6 +165,6 @@ export async function validateTemplatesAtBoot(): Promise<{
   return {
     ok: true,
     validatedTemplates: rows.length,
-    knownApps: listAppSpecs().length,
+    knownApps: specMap.size,
   };
 }
