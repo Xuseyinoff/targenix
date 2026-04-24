@@ -446,8 +446,9 @@ export const targetWebsites = mysqlTable("target_websites", {
   templateId: int("templateId"),
   /**
    * Denormalized from `destination_templates.appKey` when `templateId` is set
-   * (Stage 2 migration 0049). NULL for legacy destinations (e.g. Telegram, Sheets
-   * without a template) — delivery still uses `templateId` + `templateConfig`.
+   * (Stage 2 migration 0049). Migration 0050 backfills `telegram` / `google-sheets`
+   * from `templateType` when null. Delivery also resolves adapter from
+   * `templateType` when `appKey` is missing (dual-mode).
    */
   appKey: varchar("appKey", { length: 64 }),
   /**

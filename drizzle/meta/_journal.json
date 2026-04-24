@@ -351,6 +351,13 @@
       "when": 1777401600000,
       "tag": "0049_target_websites_appkey_actionid",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "5",
+      "when": 1777488000000,
+      "tag": "0050_telegram_google_sheets_apps",
+      "breakpoints": true
     }
   ]
 }

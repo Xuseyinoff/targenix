@@ -41,6 +41,12 @@ describe("resolveAdapterKey — Stage 2 appKey", () => {
     ).toBe("google-sheets");
   });
 
+  it("LEAD NEW: appKey google_sheets alias → same adapter as google-sheets", () => {
+    expect(
+      resolveAdapterKey("LEAD_ROUTING", { templateId: 1, templateType: "custom", appKey: "google_sheets" }),
+    ).toBe("google-sheets");
+  });
+
   it("LEAD LEGACY: no appKey, templateId set -> dynamic-template", () => {
     expect(
       resolveAdapterKey("LEAD_ROUTING", { templateId: 7, templateType: "custom", appKey: null }),

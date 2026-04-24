@@ -107,11 +107,25 @@ export async function loadConnectionForDelivery(
  * Resolve + invoke the correct adapter for this integration + destination.
  * Never throws — any failure is converted to a DeliveryResult with success=false.
  */
+const APP_ROUTING_LOG =
+  process.env.STAGE2_APP_ROUTING_LOG === "1" || process.env.STAGE2_APP_ROUTING_LOG === "true";
+
 export async function dispatchDelivery(
   ctx: DispatchContext,
   leadPayload: LeadPayload,
 ): Promise<DispatchOutcome> {
-  const adapterKey = resolveAdapterKey(ctx.integrationType, ctx.targetWebsite);
+  const tw = ctx.targetWebsite;
+  const adapterKey = resolveAdapterKey(ctx.integrationType, tw);
+  if (APP_ROUTING_LOG) {
+    const raw = tw?.appKey;
+    const appKey = raw != null && String(raw).trim() !== "" ? String(raw).trim() : null;
+    console.log({
+      stage: "app_routing" as const,
+      appKey,
+      templateType: tw?.templateType ?? null,
+      adapterUsed: adapterKey,
+    });
+  }
   const adapter = getAdapter(adapterKey);
   if (!adapter) {
     return {
@@ -121,8 +135,6 @@ export async function dispatchDelivery(
       adapterKey,
     };
   }
-
-  const tw = ctx.targetWebsite;
   const variableFields = ctx.variableFields ?? {};
   const cfg = ctx.integrationConfig ?? {};
   const leadRow = ctx.leadRow ?? {};

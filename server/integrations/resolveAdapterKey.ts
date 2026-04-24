@@ -7,8 +7,13 @@
  * Rollback: delete the `if (appKeyNorm)` block and restore the prior chain
  * (templateId first, then templateType).
  *
+ * First-party `appKey` values (`telegram`, `google-sheets`, …) are also seeded
+ * in `apps` / `app_actions` (see migration 0050) for DB catalogue; routing here
+ * stays TS-defined for determinism.
+ *
  * Logging: set `STAGE2_ADAPTER_LOG=1` only when debugging. Leave unset in
- * production to avoid per-delivery `console.log` volume.
+ * production to avoid per-delivery `console.log` volume. For resolved adapter
+ * + appKey, see `STAGE2_APP_ROUTING_LOG=1` in `dispatchDelivery`.
  */
 export function resolveAdapterKey(
   integrationType: string,

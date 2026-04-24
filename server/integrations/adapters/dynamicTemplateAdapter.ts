@@ -27,6 +27,12 @@ interface DynamicTemplateAdapterConfig {
   userId?: number | null;
 }
 
+/**
+ * Lead delivery for admin/affiliate HTTP templates only.
+ * Telegram / Google Sheets are routed in `resolveAdapterKey` to their dedicated
+ * adapters (see `dispatchDelivery`) — this module is never used when `appKey`
+ * (or legacy `templateType`) is `telegram` / `google-sheets`.
+ */
 export const dynamicTemplateAdapter = {
   async send(config: unknown, lead: LeadPayload): Promise<DeliveryResult> {
     const { db, targetWebsite, variableFields, connection, userId } =
