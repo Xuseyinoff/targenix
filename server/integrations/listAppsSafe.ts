@@ -17,7 +17,9 @@ import {
 const APPS_LOG =
   process.env.STAGE2_APPS_LOG === "1" || process.env.STAGE2_APPS_LOG === "true";
 
-const SPEC_LOG = process.env.STAGE2_SPEC_LOG === "1" || process.env.STAGE2_SPEC_LOG === "true";
+function isStage2SpecLog(): boolean {
+  return process.env.STAGE2_SPEC_LOG === "1" || process.env.STAGE2_SPEC_LOG === "true";
+}
 
 function narrowAuthType(raw: string): ConnectionAuthType {
   switch (raw) {
@@ -109,9 +111,16 @@ function mapToListKeyOption(s: ConnectionAppSpec): ListAppKeyOption {
   };
 }
 
+type SpecResolutionSource = "DB" | "TS" | "NONE";
+
+function logSpecSource(source: SpecResolutionSource, appKey: string): void {
+  if (!isStage2SpecLog()) return;
+  console.log({ stage: "spec_resolution" as const, source, appKey });
+}
+
 /**
- * Resolve a spec for a single appKey: TS constant first (fast, deterministic),
- * then `apps` DB table (for apps added via admin UI after the last deploy).
+ * Resolve a spec for a single appKey: `apps` table first (active row),
+ * then TS constant fallback (same shape as before DB-first cutover).
  * Returns null if neither source has the key — never throws.
  */
 export async function resolveSpecSafe(
@@ -119,41 +128,36 @@ export async function resolveSpecSafe(
   appKey: string | null | undefined,
 ): Promise<ConnectionAppSpec | null> {
   if (!appKey) return null;
+
+  if (db) {
+    try {
+      const [row] = await db
+        .select()
+        .from(apps)
+        .where(and(eq(apps.appKey, appKey), eq(apps.isActive, true)))
+        .limit(1);
+      if (row) {
+        logSpecSource("DB", appKey);
+        return appRowToConnectionAppSpec(row);
+      }
+    } catch (err) {
+      console.warn("[resolveSpecSafe] DB spec lookup failed:", appKey, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   const tsSpec = getAppSpec(appKey);
   if (tsSpec) {
-    if (SPEC_LOG) {
-      console.log({ stage: "spec_resolution" as const, source: "TS" as const, appKey });
-    }
+    logSpecSource("TS", appKey);
     return tsSpec;
   }
-  if (!db) {
-    if (SPEC_LOG) {
-      console.log({ stage: "spec_resolution" as const, source: "NONE" as const, appKey });
-    }
-    return null;
-  }
-  try {
-    const [row] = await db
-      .select()
-      .from(apps)
-      .where(and(eq(apps.appKey, appKey), eq(apps.isActive, true)))
-      .limit(1);
-    if (row) {
-      if (SPEC_LOG) {
-        console.log({ stage: "spec_resolution" as const, source: "DB" as const, appKey });
-      }
-      return appRowToConnectionAppSpec(row);
-    }
-  } catch {
-    // no throw — same as before
-  }
-  if (SPEC_LOG) {
-    console.log({ stage: "spec_resolution" as const, source: "NONE" as const, appKey });
-  }
+
+  logSpecSource("NONE", appKey);
   return null;
 }
 
-/** @alias resolveSpecSafe — same contract (TS first, then DB, null if unknown). */
+/** @alias resolveSpecSafe — same contract (DB first, TS fallback, null if unknown). */
 export const resolveSpecForValidation = resolveSpecSafe;
 
 /**
