@@ -735,15 +735,21 @@ export const targetWebsitesRouter = router({
       if (input.name !== undefined) updates.name = input.name;
       if (input.isActive !== undefined) updates.isActive = input.isActive;
 
+      /** Keys the user submitted with a non-empty plaintext → new ciphertext (same bytes for tw + connection). */
+      let encryptedPatch: Record<string, string> | null = null;
+
       // Re-encrypt only the secrets that were actually changed (non-empty)
       if (input.secrets && Object.keys(input.secrets).length > 0) {
         const existingConfig = (site.templateConfig ?? {}) as Record<string, unknown>;
         const existingSecrets = (existingConfig.secrets ?? {}) as Record<string, string>;
         const updatedSecrets = { ...existingSecrets };
+        encryptedPatch = {};
 
         for (const [key, value] of Object.entries(input.secrets)) {
           if (value.trim()) {
-            updatedSecrets[key] = encrypt(value);
+            const enc = encrypt(value);
+            updatedSecrets[key] = enc;
+            encryptedPatch[key] = enc;
           }
           // Empty string → keep existing encrypted value (user left field blank = no change)
         }
@@ -751,7 +757,61 @@ export const targetWebsitesRouter = router({
         updates.templateConfig = { ...existingConfig, secrets: updatedSecrets };
       }
 
-      await db.update(targetWebsites).set(updates).where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)));
+      const hasSecretWrites =
+        encryptedPatch != null && Object.keys(encryptedPatch).length > 0;
+      const shouldSyncConnection =
+        hasSecretWrites &&
+        site.connectionId != null &&
+        typeof site.connectionId === "number";
+
+      if (shouldSyncConnection) {
+        await db.transaction(async (tx) => {
+          const [conn] = await tx
+            .select()
+            .from(connections)
+            .where(
+              and(
+                eq(connections.id, site.connectionId!),
+                eq(connections.userId, ctx.user.id),
+              ),
+            )
+            .limit(1);
+
+          if (!conn) {
+            throw new Error("Linked connection not found or access denied");
+          }
+
+          if (conn.type === "api_key") {
+            const creds = (conn.credentialsJson ?? {}) as Record<string, unknown>;
+            const prevEnc =
+              (creds.secretsEncrypted as Record<string, string> | undefined) ?? {};
+            const nextEnc = { ...prevEnc, ...encryptedPatch! };
+            await tx
+              .update(connections)
+              .set({
+                credentialsJson: {
+                  ...creds,
+                  secretsEncrypted: nextEnc,
+                },
+                updatedAt: new Date(),
+              })
+              .where(eq(connections.id, conn.id));
+          }
+
+          await tx
+            .update(targetWebsites)
+            .set(updates)
+            .where(
+              and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)),
+            );
+        });
+      } else {
+        await db
+          .update(targetWebsites)
+          .set(updates)
+          .where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)));
+      }
+
       return { success: true };
     }),
 
