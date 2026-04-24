@@ -872,9 +872,10 @@ export const targetWebsitesRouter = router({
         }
       }
 
-      // Create a connection row so secrets live in the connections table
-      // from day one. Mirrors the dual-write in createFromConnection:
-      // templateConfig.secrets is also populated for fallback compatibility.
+      // Create a connection row so secrets live only in `connections` (same
+      // contract as `createFromConnection`). Runtime delivery resolves secrets
+      // via `resolveSecretsForDelivery` → active connection wins; legacy rows
+      // without a link still carry `templateConfig.secrets` — never stripped here.
       const connectionId = await insertApiKeyConnection(db, {
         userId: ctx.user.id,
         templateId: template.id,
@@ -891,7 +892,6 @@ export const targetWebsitesRouter = router({
         color: template.color,
         connectionId,
         templateConfig: {
-          secrets: encryptedSecrets,
           variables: {},
         },
         ...(autoChatId ? { telegramChatId: autoChatId } : {}),
