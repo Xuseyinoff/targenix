@@ -24,6 +24,7 @@ import {
   targetWebsites,
 } from "../../drizzle/schema";
 import type { DbClient } from "../db";
+import { validateConnectionType } from "../utils/validateConnectionType";
 
 export type ConnectionType = "google_sheets" | "telegram_bot" | "api_key";
 export type ConnectionStatus = "active" | "expired" | "revoked" | "error";
@@ -64,7 +65,7 @@ export async function upsertGoogleConnection(
     .where(
       and(
         eq(connections.userId, userId),
-        eq(connections.type, "google_sheets"),
+        eq(connections.type, validateConnectionType("google_sheets")),
         eq(connections.googleAccountId, googleAccountId),
       ),
     )
@@ -120,7 +121,7 @@ export async function insertTelegramConnection(
 
   const [inserted] = await db.insert(connections).values({
     userId: input.userId,
-    type: "telegram_bot",
+    type: validateConnectionType("telegram_bot"),
     displayName,
     status: "active",
     credentialsJson: {
@@ -163,7 +164,7 @@ export async function insertApiKeyConnection(
   const displayName = input.displayName.trim() || "API key";
   const [inserted] = await db.insert(connections).values({
     userId: input.userId,
-    type: "api_key",
+    type: validateConnectionType("api_key"),
     displayName,
     status: "active",
     credentialsJson: {

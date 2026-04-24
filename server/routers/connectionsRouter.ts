@@ -40,6 +40,7 @@ import {
 import { sendTelegramRawMessage } from "../services/telegramService";
 import { log } from "../services/appLogger";
 import { listAppKeyOptionsForPicker } from "../integrations/listAppsSafe";
+import { validateConnectionType } from "../utils/validateConnectionType";
 
 // ─── Types returned to the client ────────────────────────────────────────────
 
@@ -433,6 +434,8 @@ export const connectionsRouter = router({
         });
       }
 
+      validateConnectionType("telegram_bot");
+
       const id = await insertTelegramConnection(db, {
         userId: ctx.user.id,
         displayName: input.displayName,
@@ -519,6 +522,8 @@ export const connectionsRouter = router({
       for (const key of expectedKeys) {
         secretsEncrypted[key] = encrypt(input.secrets[key]);
       }
+
+      validateConnectionType("api_key");
 
       const id = await insertApiKeyConnection(db, {
         userId,
