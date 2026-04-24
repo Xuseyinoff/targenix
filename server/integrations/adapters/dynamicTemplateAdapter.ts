@@ -51,6 +51,7 @@ export const dynamicTemplateAdapter = {
       variableFields,
       connection ?? null,
       userId ?? null,
+      db,
     );
   },
 };

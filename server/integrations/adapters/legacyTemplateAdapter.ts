@@ -6,8 +6,11 @@ import {
 } from "../../services/affiliateService";
 import type { Connection } from "../../../drizzle/schema";
 import type { DeliveryAdapter, DeliveryResult } from "../types";
+import type { DbClient } from "../../db";
 
 interface LegacyTemplateConfig {
+  /** Optional; when set, may resolve spec metadata from `apps` if needed. */
+  db?: DbClient | null;
   templateType: TemplateType;
   templateConfig: TemplateConfig;
   variableFields: Record<string, string>;
@@ -33,6 +36,7 @@ interface LegacyTemplateConfig {
 export const legacyTemplateAdapter: DeliveryAdapter = {
   async send(config: unknown, lead: LeadPayload): Promise<DeliveryResult> {
     const {
+      db,
       templateType,
       templateConfig,
       variableFields,
@@ -48,6 +52,7 @@ export const legacyTemplateAdapter: DeliveryAdapter = {
       url ?? "",
       connection ?? null,
       userId ?? null,
+      db ?? null,
     );
   },
 };

@@ -243,6 +243,7 @@ export async function dispatchDelivery(
     case "legacy-template": {
       targetUrlUsed = (tw?.url as string | null | undefined) ?? undefined;
       adapterInput = {
+        db: ctx.db,
         templateType: tw?.templateType,
         templateConfig: tw?.templateConfig,
         variableFields,

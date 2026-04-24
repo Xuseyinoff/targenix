@@ -85,10 +85,10 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
   });
 
   // ── Test 1 — Old destination (no connection) → fallback ─────────────────
-  it("(1) no connection → returns templateConfig.secrets verbatim", () => {
+  it("(1) no connection → returns templateConfig.secrets verbatim", async () => {
     const cipher = encrypt("legacy-plain");
     const cfg = { secrets: { api_key: cipher, offer_id: "static_value" } };
-    const out = resolveSecretsForDelivery({
+    const out = await resolveSecretsForDelivery({
       connection: null,
       templateConfig: cfg,
       adapterContext: "legacy-template",
@@ -96,8 +96,8 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
     expect(out).toEqual({ api_key: cipher, offer_id: "static_value" });
   });
 
-  it("(1b) no connection AND no templateConfig.secrets → empty map", () => {
-    const out = resolveSecretsForDelivery({
+  it("(1b) no connection AND no templateConfig.secrets → empty map", async () => {
+    const out = await resolveSecretsForDelivery({
       connection: null,
       templateConfig: {},
       adapterContext: "legacy-template",
@@ -105,9 +105,9 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
     expect(out).toEqual({});
   });
 
-  it("(1c) connection=undefined (not just null) still falls back", () => {
+  it("(1c) connection=undefined (not just null) still falls back", async () => {
     const cipher = encrypt("legacy-plain-2");
-    const out = resolveSecretsForDelivery({
+    const out = await resolveSecretsForDelivery({
       templateConfig: { secrets: { api_key: cipher } },
       adapterContext: "legacy-template",
     });
@@ -115,10 +115,10 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
   });
 
   // ── Test 2 — New destination with connection → connection wins ──────────
-  it("(2) active connection with secrets → returns connection's map", () => {
+  it("(2) active connection with secrets → returns connection's map", async () => {
     const cipherConn = encrypt("from-connection");
     const cipherLegacy = encrypt("from-legacy");
-    const out = resolveSecretsForDelivery({
+    const out = await resolveSecretsForDelivery({
       connection: makeConnection({
         credentialsJson: { secretsEncrypted: { api_key: cipherConn } },
       }),
@@ -130,14 +130,14 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
   });
 
   // ── Test 3 — Key rotation flows through on every call ───────────────────
-  it("(3) mutating the connection's secrets is reflected immediately", () => {
+  it("(3) mutating the connection's secrets is reflected immediately", async () => {
     const old = encrypt("old-key");
     const next = encrypt("rotated-key");
     const conn = makeConnection({
       credentialsJson: { secretsEncrypted: { api_key: old } },
     });
     expect(
-      resolveSecretsForDelivery({
+      await resolveSecretsForDelivery({
         connection: conn,
         templateConfig: {},
         adapterContext: "legacy-template",
@@ -148,7 +148,7 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
       .secretsEncrypted.api_key = next;
 
     expect(
-      resolveSecretsForDelivery({
+      await resolveSecretsForDelivery({
         connection: conn,
         templateConfig: {},
         adapterContext: "legacy-template",
@@ -157,55 +157,56 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
   });
 
   // ── Test 4 — Missing secrets on an active connection → loud throw ───────
-  it("(4a) active connection with empty secretsEncrypted → throws CONNECTION_SECRET_MISSING", () => {
+  it("(4a) active connection with empty secretsEncrypted → throws CONNECTION_SECRET_MISSING", async () => {
     const conn = makeConnection({
       credentialsJson: { secretsEncrypted: {} },
     });
+    let err: unknown;
     try {
-      resolveSecretsForDelivery({
+      await resolveSecretsForDelivery({
         connection: conn,
         templateConfig: { secrets: { api_key: encrypt("legacy") } },
         templateId: 42,
         adapterContext: "dynamic-template",
       });
-      throw new Error("expected ConnectionSecretMissingError to be thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(ConnectionSecretMissingError);
-      const e = err as ConnectionSecretMissingError;
-      expect(e.code).toBe("CONNECTION_SECRET_MISSING");
-      expect(e.connectionId).toBe(777);
-      expect(e.templateId).toBe(42);
+    } catch (e) {
+      err = e;
     }
+    expect(err).toBeInstanceOf(ConnectionSecretMissingError);
+    const e = err as ConnectionSecretMissingError;
+    expect(e.code).toBe("CONNECTION_SECRET_MISSING");
+    expect(e.connectionId).toBe(777);
+    expect(e.templateId).toBe(42);
   });
 
-  it("(4b) active connection with NO credentialsJson at all → throws", () => {
+  it("(4b) active connection with NO credentialsJson at all → throws", async () => {
     const conn = makeConnection({ credentialsJson: null });
-    expect(() =>
+    await expect(
       resolveSecretsForDelivery({
         connection: conn,
         templateConfig: {},
         adapterContext: "legacy-template",
       }),
-    ).toThrow(ConnectionSecretMissingError);
+    ).rejects.toThrow(ConnectionSecretMissingError);
   });
 
-  it("(4c) active connection MUST NOT silently fall back to templateConfig.secrets", () => {
+  it("(4c) active connection MUST NOT silently fall back to templateConfig.secrets", async () => {
     // If the user has a legacy destination with plain-text secrets
     // AND they later add a broken connection, the connection takes
     // precedence and we refuse to silently use the stale copy.
     const conn = makeConnection({ credentialsJson: {} });
     const legacyCipher = encrypt("stale-credential");
-    expect(() =>
+    await expect(
       resolveSecretsForDelivery({
         connection: conn,
         templateConfig: { secrets: { api_key: legacyCipher } },
         adapterContext: "dynamic-template",
       }),
-    ).toThrow(/CONNECTION_SECRET_MISSING/);
+    ).rejects.toThrow(/CONNECTION_SECRET_MISSING/);
   });
 
   // ── Test 5 — Non-active connection is treated as "no connection" ────────
-  it("(5a) connection status=expired → soft fallback to templateConfig", () => {
+  it("(5a) connection status=expired → soft fallback to templateConfig", async () => {
     // An expired OAuth token or revoked api_key should NOT hard-fail
     // existing deliveries that still have legacy secrets available.
     // This is how we keep backward compatibility while users re-auth.
@@ -214,7 +215,7 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
       credentialsJson: { secretsEncrypted: {} },
     });
     const cipher = encrypt("legacy-fallback");
-    const out = resolveSecretsForDelivery({
+    const out = await resolveSecretsForDelivery({
       connection: conn,
       templateConfig: { secrets: { api_key: cipher } },
       adapterContext: "legacy-template",
@@ -222,9 +223,9 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
     expect(out).toEqual({ api_key: cipher });
   });
 
-  it("(5b) connection status=revoked → soft fallback, not a hard throw", () => {
+  it("(5b) connection status=revoked → soft fallback, not a hard throw", async () => {
     const conn = makeConnection({ status: "revoked" });
-    const out = resolveSecretsForDelivery({
+    const out = await resolveSecretsForDelivery({
       connection: conn,
       templateConfig: { secrets: { api_key: encrypt("ok") } },
       adapterContext: "legacy-template",
@@ -237,8 +238,8 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
   // templates the runtime must skip the connection-vs-config decision
   // entirely: no secrets, no throw, no fallback read.
 
-  it("(6a) authless appKey → short-circuits to {} with no connection", () => {
-    const out = resolveSecretsForDelivery({
+  it("(6a) appKey=open_affiliate (TS) short-circuits to {} with no connection", async () => {
+    const out = await resolveSecretsForDelivery({
       connection: null,
       templateConfig: null,
       adapterContext: "dynamic-template",
@@ -247,12 +248,12 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
     expect(out).toEqual({});
   });
 
-  it("(6b) authless appKey → ignores connection entirely (no CONNECTION_SECRET_MISSING)", () => {
+  it("(6b) authless appKey → ignores connection entirely (no CONNECTION_SECRET_MISSING)", async () => {
     // Even if someone mistakenly linked an empty connection to an
     // authless template, the resolver must NOT throw. The validator has
     // already guaranteed no {{SECRET:…}} tokens reach this point.
     const conn = makeConnection({ credentialsJson: {} });
-    const out = resolveSecretsForDelivery({
+    const out = await resolveSecretsForDelivery({
       connection: conn,
       templateConfig: null,
       adapterContext: "dynamic-template",
@@ -261,11 +262,11 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
     expect(out).toEqual({});
   });
 
-  it("(6c) authless appKey → does not leak templateConfig.secrets either", () => {
+  it("(6c) authless appKey → does not leak templateConfig.secrets either", async () => {
     // Defence in depth: if a stray `templateConfig.secrets` map survives
     // from a past misconfiguration, an authless resolve must still
     // return an empty object instead of shipping stale ciphertext.
-    const out = resolveSecretsForDelivery({
+    const out = await resolveSecretsForDelivery({
       connection: null,
       templateConfig: { secrets: { api_key: encrypt("leftover") } },
       adapterContext: "dynamic-template",
@@ -274,11 +275,11 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
     expect(out).toEqual({});
   });
 
-  it("(6d) unknown appKey → no short-circuit, behaves like appKey=null", () => {
+  it("(6d) unknown appKey → no short-circuit, behaves like appKey=null", async () => {
     // An unknown appKey is a configuration error the validator catches
     // at save-time. The resolver treats it as if no appKey was provided
     // so existing fallback semantics still apply.
-    const out = resolveSecretsForDelivery({
+    const out = await resolveSecretsForDelivery({
       connection: null,
       templateConfig: { secrets: { api_key: encrypt("ok") } },
       adapterContext: "legacy-template",

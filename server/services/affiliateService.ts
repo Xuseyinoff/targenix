@@ -3,10 +3,9 @@ import FormData from "form-data";
 import { decrypt } from "../encryption";
 import type { Connection, DestinationTemplate } from "../../drizzle/schema";
 import { inferDeliveryErrorType, type DeliveryErrorType } from "../lib/orderRetryPolicy";
-import {
-  getAppSpec,
-  specIsAuthless,
-} from "../integrations/connectionAppSpecs";
+import { specIsAuthless } from "../integrations/connectionAppSpecs";
+import { resolveSpecSafe } from "../integrations/listAppsSafe";
+import type { DbClient } from "../db";
 import { isConnectionSecretsOnlyEnabled } from "./featureFlags";
 
 // ─── Shared lead payload ────────────────────────────────────────────────────
@@ -381,7 +380,7 @@ function safeResolveForDelivery(
  * encryption boundary stays inside `resolveTemplateValue` /
  * `safeResolveForDelivery`.
  */
-export function resolveSecretsForDelivery(opts: {
+export async function resolveSecretsForDelivery(opts: {
   connection?: Connection | null;
   templateConfig: Record<string, unknown> | null | undefined;
   templateId?: number | null;
@@ -398,6 +397,11 @@ export function resolveSecretsForDelivery(opts: {
    */
   appKey?: string | null;
   /**
+   * When set, `appKey` can resolve from the `apps` table (DB-only keys).
+   * Omitted or null → TS `getAppSpec` only (same as pre–Stage-2 delivery).
+   */
+  db?: DbClient | null;
+  /**
    * Stage 3 — tenant id, used strictly to evaluate the
    * `USE_CONNECTION_SECRETS_ONLY` feature flag. When omitted the flag
    * is treated as OFF for this call (conservative default: refusing
@@ -406,13 +410,14 @@ export function resolveSecretsForDelivery(opts: {
    * pre- and post-flip semantics independently.
    */
   userId?: number | null;
-}): Record<string, string> {
+}): Promise<Record<string, string>> {
   const {
     connection,
     templateConfig,
     templateId,
     adapterContext,
     appKey,
+    db,
     userId,
   } = opts;
   const cfg = (templateConfig ?? {}) as Record<string, unknown>;
@@ -420,7 +425,7 @@ export function resolveSecretsForDelivery(opts: {
     (cfg.secrets as Record<string, string> | undefined) ?? {};
 
   if (appKey) {
-    const spec = getAppSpec(appKey);
+    const spec = await resolveSpecSafe(db ?? null, appKey);
     if (spec && specIsAuthless(spec)) {
       return {};
     }
@@ -820,6 +825,11 @@ export async function sendAffiliateOrderByTemplate(
    * call sites (retry workers, tests) keep working without changes.
    */
   userId?: number | null,
+  /**
+   * Threaded to `resolveSecretsForDelivery` for future spec resolution.
+   * Legacy `custom` templates do not pass `appKey` there; dynamic templates do.
+   */
+  db?: DbClient | null,
 ): Promise<AffiliateResult> {
   const cfg = (templateConfig ?? {}) as Record<string, unknown>;
 
@@ -846,12 +856,13 @@ export async function sendAffiliateOrderByTemplate(
     // map. If a connection is linked but its credentials are missing
     // this throws `ConnectionSecretMissingError` and no axios call is
     // made (caught by the outer try/catch → failed delivery result).
-    const secretsMap = resolveSecretsForDelivery({
+    const secretsMap = await resolveSecretsForDelivery({
       connection: connection ?? null,
       templateConfig: cfg,
       templateId: null,
       adapterContext: "legacy-template",
       userId: userId ?? null,
+      db: db ?? null,
     });
 
     // Build body
@@ -951,6 +962,10 @@ export async function sendLeadViaTemplate(
    * callers (retry workers, tests) keep working byte-for-byte.
    */
   userId?: number | null,
+  /**
+   * Resolves `appKey` → spec for auth-less short-circuit (TS + `apps` table).
+   */
+  db?: DbClient | null,
 ): Promise<AffiliateResult> {
   const cfg = (templateConfig ?? {}) as Record<string, unknown>;
 
@@ -963,13 +978,14 @@ export async function sendLeadViaTemplate(
     // Stage 2 — resolve secrets BEFORE building the body so any
     // CONNECTION_SECRET_MISSING failure short-circuits before we touch
     // axios. Same map is reused by the raw-JSON branch below.
-    const secretsMap = resolveSecretsForDelivery({
+    const secretsMap = await resolveSecretsForDelivery({
       connection: connection ?? null,
       templateConfig: cfg,
       templateId: template.id,
       adapterContext: "dynamic-template",
       appKey: template.appKey ?? null,
       userId: userId ?? null,
+      db: db ?? null,
     });
 
     // Build the request body from template bodyFields

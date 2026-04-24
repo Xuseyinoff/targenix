@@ -38,6 +38,7 @@ import {
 } from "../services/connectionService";
 import { sendTelegramRawMessage } from "../services/telegramService";
 import { log } from "../services/appLogger";
+import { listAppKeyOptionsForPicker } from "../integrations/listAppsSafe";
 
 // ─── Types returned to the client ────────────────────────────────────────────
 
@@ -236,6 +237,15 @@ export const connectionsRouter = router({
         };
       });
     }),
+
+  /**
+   * Connection-app catalogue (appKey, authType, …) — same DTO as
+   * `adminTemplates.listAppKeys`, read from `apps` with legacy fallback.
+   */
+  listAppKeys: protectedProcedure.query(async () => {
+    const db = await getDb();
+    return listAppKeyOptionsForPicker(db);
+  }),
 
   /** Single connection detail; used when the UI needs a fresh snapshot. */
   get: protectedProcedure

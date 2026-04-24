@@ -1194,6 +1194,7 @@ export const targetWebsitesRouter = router({
           varOverridesWithFallback,
           testConnection,
           ctx.user.id,
+          db,
         );
         const durationMs = Date.now() - t0;
 
@@ -1316,6 +1317,7 @@ export const targetWebsitesRouter = router({
         site.url ?? "",
         legacyConnection,
         ctx.user.id,
+        db,
       );
       const durationMs = Date.now() - t0;
 
