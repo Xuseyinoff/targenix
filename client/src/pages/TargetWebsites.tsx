@@ -1,8 +1,9 @@
 /**
  * TargetWebsites — manage affiliate site configurations.
  *
- * Each Target Website is a reusable config: set up once, used in many Lead Routings.
- * Template types: sotuvchi | 100k | custom
+ * New destinations from admin templates: `getTemplates` + `createFromTemplate`.
+ * Legacy rows (sotuvchi / 100k / custom without templateId) remain editable via
+ * the same payloads as before — URLs come from saved `url` / `templateConfig`, not client presets.
  *
  * Custom template: universal POST API builder with:
  *  - Content-Type: JSON / form-urlencoded / multipart
@@ -72,92 +73,8 @@ import {
   Table2,
 } from "lucide-react";
 
-// ─── Template definitions (client-side display only) ─────────────────────────
 type TemplateType = "sotuvchi" | "100k" | "custom" | "telegram" | "google-sheets";
 type ContentType = "json" | "form-urlencoded" | "multipart";
-
-interface TemplateInfo {
-  id: TemplateType;
-  label: string;
-  description: string;
-  color: string;
-  endpoint?: string;
-  infoText: string;
-  savedFields: Array<{ key: string; label: string; placeholder: string; secret?: boolean }>;
-  variableFields: Array<{ key: string; label: string; placeholder: string }>;
-  autoMapped: Record<string, string>;
-}
-
-const TEMPLATES: TemplateInfo[] = [
-  {
-    id: "sotuvchi",
-    label: "sotuvchi.com",
-    description: "O'zbekistondagi yetakchi affiliate platforma",
-    color: "bg-blue-500",
-    endpoint: "https://sotuvchi.com/api/v2/order",
-    infoText: "Leads will be sent as: name, phone, api_key, offer_id, stream",
-    savedFields: [
-      { key: "apiKey", label: "API Key", placeholder: "Your sotuvchi.com API key", secret: true },
-    ],
-    variableFields: [
-      { key: "offer_id", label: "Offer ID", placeholder: "e.g. 123" },
-      { key: "stream", label: "Stream", placeholder: "e.g. main" },
-    ],
-    autoMapped: { name: "Full Name", phone: "Phone" },
-  },
-  {
-    id: "100k",
-    label: "100k.uz",
-    description: "100k.uz affiliate tizimi",
-    color: "bg-green-500",
-    endpoint: "https://api.100k.uz/api/shop/v1/orders/target",
-    infoText: "Leads will be sent as: client_full_name, customer_phone, api_key, stream_id",
-    savedFields: [
-      { key: "apiKey", label: "API Key", placeholder: "Your 100k.uz API key", secret: true },
-    ],
-    variableFields: [
-      { key: "stream_id", label: "Stream ID", placeholder: "e.g. 456" },
-    ],
-    autoMapped: {
-      client_full_name: "Full Name",
-      customer_phone: "Phone",
-      facebook_lead_id: "Lead ID",
-      facebook_form_id: "Form ID",
-    },
-  },
-  {
-    id: "custom",
-    label: "Custom",
-    description: "Istalgan sayt uchun universal POST API builder",
-    color: "bg-purple-500",
-    infoText: "Configure endpoint URL, content type, body template, headers, and success condition",
-    savedFields: [],
-    variableFields: [],
-    autoMapped: {},
-  },
-  {
-    id: "telegram",
-    label: "Telegram Bot",
-    description: "O'z Telegram botingizga leadlarni yuboring",
-    color: "bg-sky-500",
-    infoText: "Leads will be sent as formatted messages via your Telegram bot",
-    savedFields: [],
-    variableFields: [],
-    autoMapped: { full_name: "Full Name", phone_number: "Phone", email: "Email" },
-  },
-];
-
-/** Display-only template row for Google Sheets (not in TEMPLATES picker list). */
-const GOOGLE_SHEETS_TEMPLATE_INFO: TemplateInfo = {
-  id: "google-sheets",
-  label: "Google Sheets",
-  description: "",
-  color: "bg-emerald-600",
-  infoText: "",
-  savedFields: [],
-  variableFields: [],
-  autoMapped: {},
-};
 
 // ─── Built-in variables reference ────────────────────────────────────────────
 const BUILTIN_VARS = [
@@ -236,7 +153,7 @@ interface FormState {
 
 const defaultForm = (): FormState => ({
   name: "",
-  templateType: "sotuvchi",
+  templateType: "custom",
   fields: {},
   showSecret: {},
   url: "",
@@ -271,9 +188,75 @@ function templateBadgeVariant(type: string | null): "default" | "secondary" | "o
   return "outline";
 }
 
-function templateLabel(type: string | null): string {
-  if (type === "google-sheets") return GOOGLE_SHEETS_TEMPLATE_INFO.label;
-  return TEMPLATES.find((t) => t.id === type)?.label ?? (type === "telegram" ? "Telegram Bot" : "Custom");
+type TranslateFn = (key: string, values?: Record<string, string>) => string;
+
+/** Card / badge label: DB template name when `templateId` is set; otherwise short type label (no preset URLs). */
+function destinationRowTypeLabel(
+  site: { templateType: string | null; templateId?: number | null; templateName?: string | null },
+  dynList: Array<{ id: number; name: string }>,
+  tr: TranslateFn,
+): string {
+  const tid = site.templateId;
+  if (tid) {
+    const n = dynList.find((x) => x.id === tid)?.name;
+    return n ?? site.templateName ?? tr("destinations.filterTemplate");
+  }
+  const tt = String(site.templateType || "");
+  if (tt === "google-sheets") return tr("destinations.sheets.title");
+  if (tt === "telegram") return "Telegram";
+  if (tt === "sotuvchi") return "Sotuvchi";
+  if (tt === "100k") return "100k";
+  if (tt === "custom") return tr("destinations.filterCustom");
+  return tt || tr("destinations.filterCustom");
+}
+
+function legacyAffiliateBarClass(tt: string): string {
+  if (tt === "sotuvchi") return "bg-blue-500";
+  if (tt === "100k") return "bg-green-500";
+  return "bg-muted-foreground/60";
+}
+
+/** Configure-step header for legacy sotuvchi/100k (not custom / telegram / sheets). */
+function configurePanelMeta(
+  form: FormState,
+  tr: TranslateFn,
+): { label: string; barClass: string; endpointLine?: string } {
+  if (form.templateType === "google-sheets") {
+    return { label: tr("destinations.sheets.title"), barClass: "bg-emerald-600" };
+  }
+  if (form.templateType === "telegram") {
+    return { label: "Telegram", barClass: "bg-sky-500" };
+  }
+  if (form.templateType === "custom") {
+    return {
+      label: tr("destinations.custom.title"),
+      barClass: "bg-violet-500",
+      endpointLine: form.url.trim() || undefined,
+    };
+  }
+  const label =
+    form.templateType === "sotuvchi"
+      ? "Sotuvchi"
+      : form.templateType === "100k"
+        ? "100k"
+        : String(form.templateType);
+  return {
+    label,
+    barClass: legacyAffiliateBarClass(form.templateType),
+    endpointLine: form.url.trim() || undefined,
+  };
+}
+
+const LEGACY_AFFILIATE_API_KEY_FIELD = {
+  key: "apiKey",
+  label: "API Key",
+  placeholder: "Enter API key",
+  secret: true as const,
+};
+
+function legacyAffiliateSecretFields(tt: TemplateType) {
+  if (tt === "sotuvchi" || tt === "100k") return [LEGACY_AFFILIATE_API_KEY_FIELD];
+  return [];
 }
 
 // ─── Test Result Panel ────────────────────────────────────────────────────────
@@ -531,10 +514,7 @@ export default function TargetWebsites() {
     onError: (e) => toast.error(e.message),
   });
 
-  const selectedTemplate =
-    form.templateType === "google-sheets"
-      ? GOOGLE_SHEETS_TEMPLATE_INFO
-      : (TEMPLATES.find((t) => t.id === form.templateType) ?? TEMPLATES[2]);
+  const panelMeta = useMemo(() => configurePanelMeta(form, t), [form.templateType, form.url, t]);
   const isCustom = form.templateType === "custom";
   const isTelegram = form.templateType === "telegram";
   const isGoogleSheets = form.templateType === "google-sheets";
@@ -718,8 +698,8 @@ export default function TargetWebsites() {
       return;
     }
 
-    // Legacy template (sotuvchi / 100k / custom) → full form
-    const tpl = TEMPLATES.find((t) => t.id === site.templateType) ?? TEMPLATES[2];
+    // Legacy template (sotuvchi / 100k / custom) → full form (URLs from saved row only)
+    const legacyType = (site.templateType as TemplateType) || "custom";
     const config = (site.templateConfig ?? {}) as Record<string, unknown>;
 
     const bodyFields: BodyField[] = Array.isArray(config.bodyFields)
@@ -729,7 +709,7 @@ export default function TargetWebsites() {
     setForm({
       ...defaultForm(),
       name: site.name,
-      templateType: tpl.id,
+      templateType: legacyType,
       fields: {},
       url: (config.url as string) ?? site.url ?? "",
       method: "POST",
@@ -843,9 +823,9 @@ export default function TargetWebsites() {
 
     if (isCustom && !form.url.trim()) { toast.error(t("destinations.validation.endpointRequired")); return; }
 
-    // Validate apiKey for non-custom templates (required on create, optional on edit)
+    // Validate apiKey for legacy sotuvchi / 100k (required on create, optional on edit)
     if (!isCustom) {
-      for (const sf of selectedTemplate.savedFields) {
+      for (const sf of legacyAffiliateSecretFields(form.templateType)) {
         if (sf.key === "apiKey" && editId) continue;
         if (!form.fields[sf.key]?.trim()) {
           toast.error(t("destinations.validation.fieldRequired", { field: sf.label }));
@@ -1001,7 +981,6 @@ export default function TargetWebsites() {
           <div className="grid gap-3">
             {filteredSites.map((site) => {
               const config = (site.templateConfig ?? {}) as Record<string, unknown>;
-              const tpl = TEMPLATES.find((t) => t.id === site.templateType);
               const isDynamic = !!(site as { templateId?: number | null }).templateId;
               const dynName = (site as { templateName?: string | null }).templateName;
               return (
@@ -1012,7 +991,7 @@ export default function TargetWebsites() {
                       <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                         <span className="font-semibold text-sm">{site.name}</span>
                         <Badge variant={isDynamic ? "secondary" : templateBadgeVariant(site.templateType)} className="text-xs shrink-0">
-                          {isDynamic ? (dynName ?? t("destinations.filterTemplate")) : templateLabel(site.templateType)}
+                          {isDynamic ? (dynName ?? t("destinations.filterTemplate")) : destinationRowTypeLabel(site, dynTemplates, t)}
                         </Badge>
                         {!site.isActive && (
                           <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">
@@ -1025,7 +1004,7 @@ export default function TargetWebsites() {
                           ? `Chat: ${(config.chatId as string) || "—"}`
                           : site.templateType === "google-sheets"
                             ? `Sheet: ${(config.spreadsheetId as string) || "—"} · ${(config.sheetName as string) || "—"}`
-                            : site.url || (config.url as string) || tpl?.endpoint || "—"}
+                            : site.url || (config.url as string) || "—"}
                       </p>
                       {Boolean(config.apiKeyMasked) && (
                         <p className="text-xs text-muted-foreground mt-0.5">{t("destinations.labels.apiKeyConfigured")}</p>
@@ -1108,7 +1087,7 @@ export default function TargetWebsites() {
                 ? t("destinations.dialog.editTitle", { name: dynName || "Website" })
                 : editId
                   ? t("destinations.dialog.editTitle", { name: form.name || "Website" })
-                  : t("destinations.dialog.newTitle", { name: selectedTemplate?.label ?? "Website" })
+                  : t("destinations.dialog.newTitle", { name: panelMeta.label })
         }
         headerDescription={
           mode === "select-template"
@@ -1361,12 +1340,12 @@ export default function TargetWebsites() {
                 </div>
               ) : (
                 <div className="flex items-center gap-2.5 rounded-xl border bg-muted/25 px-3 py-2">
-                  <div className={`h-8 w-1 shrink-0 rounded-full ${selectedTemplate.color}`} />
+                  <div className={`h-8 w-1 shrink-0 rounded-full ${panelMeta.barClass}`} />
                   <div className="min-w-0">
-                    <span className="text-sm font-medium">{selectedTemplate.label}</span>
-                    {selectedTemplate.endpoint && (
-                      <p className="truncate font-mono text-[11px] text-muted-foreground">{selectedTemplate.endpoint}</p>
-                    )}
+                    <span className="text-sm font-medium">{panelMeta.label}</span>
+                    {panelMeta.endpointLine ? (
+                      <p className="truncate font-mono text-[11px] text-muted-foreground">{panelMeta.endpointLine}</p>
+                    ) : null}
                   </div>
                 </div>
               )}
@@ -1377,14 +1356,14 @@ export default function TargetWebsites() {
                 </Label>
                 <Input
                   className="h-10 rounded-lg shadow-xs"
-                  placeholder={t("destinations.form.namePlaceholder", { label: selectedTemplate.label })}
+                  placeholder={t("destinations.form.namePlaceholder", { label: panelMeta.label })}
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                 />
               </div>
 
               {/* Non-custom, non-telegram, non-sheets: saved fields (apiKey) */}
-              {!isCustom && !isTelegram && !isGoogleSheets && selectedTemplate.savedFields.map((sf) => (
+              {!isCustom && !isTelegram && !isGoogleSheets && legacyAffiliateSecretFields(form.templateType).map((sf) => (
                 <div key={sf.key} className="space-y-1.5">
                   <Label>
                     {sf.label}
@@ -1416,20 +1395,6 @@ export default function TargetWebsites() {
                   </div>
                 </div>
               ))}
-
-              {/* Non-custom: auto-mapped info */}
-              {!isCustom && !isTelegram && !isGoogleSheets && Object.keys(selectedTemplate.autoMapped).length > 0 && (
-                <div className="rounded-lg bg-muted/40 border p-3 space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                    <Info className="w-3 h-3" /> {t("destinations.legacy.autoMappedFields")}
-                  </p>
-                  {Object.entries(selectedTemplate.autoMapped).map(([k, v]) => (
-                    <p key={k} className="text-xs text-muted-foreground">
-                      <code className="bg-background px-1 rounded">{k}</code> ← {v}
-                    </p>
-                  ))}
-                </div>
-              )}
 
               {/* Telegram specific fields */}
               {isTelegram && (
