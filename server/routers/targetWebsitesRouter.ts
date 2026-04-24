@@ -423,11 +423,19 @@ export const targetWebsitesRouter = router({
         return { success: true, id, name: input.name, templateType: "google-sheets" as const };
       }
 
-      // Build URL (pre-filled for known templates)
+      // Build URL — resolve from destination_templates by appKey for known affiliate types
       let url = "";
-      if (input.templateType === "sotuvchi") url = "https://sotuvchi.com/api/v2/order";
-      else if (input.templateType === "100k") url = "https://api.100k.uz/api/shop/v1/orders/target";
-      else url = input.url ?? "";
+      if (input.templateType === "sotuvchi" || input.templateType === "100k") {
+        const [tpl] = await db
+          .select({ endpointUrl: destinationTemplates.endpointUrl })
+          .from(destinationTemplates)
+          .where(eq(destinationTemplates.appKey, input.templateType))
+          .limit(1);
+        if (!tpl?.endpointUrl) throw new Error(`Destination template not found for type: ${input.templateType}`);
+        url = tpl.endpointUrl;
+      } else {
+        url = input.url ?? "";
+      }
 
       // For custom templates the user provides the URL — validate it before storing
       if (input.templateType === "custom" && url) {
@@ -603,9 +611,15 @@ export const targetWebsitesRouter = router({
 
         if (input.templateType) {
           updates.templateType = input.templateType;
-          if (input.templateType === "sotuvchi") updates.url = "https://sotuvchi.com/api/v2/order";
-          else if (input.templateType === "100k") updates.url = "https://api.100k.uz/api/shop/v1/orders/target";
-          else if (input.templateType === "telegram") { /* no url needed */ }
+          if (input.templateType === "sotuvchi" || input.templateType === "100k") {
+            const [tpl] = await db
+              .select({ endpointUrl: destinationTemplates.endpointUrl })
+              .from(destinationTemplates)
+              .where(eq(destinationTemplates.appKey, input.templateType))
+              .limit(1);
+            if (!tpl?.endpointUrl) throw new Error(`Destination template not found for type: ${input.templateType}`);
+            updates.url = tpl.endpointUrl;
+          } else if (input.templateType === "telegram") { /* no url needed */ }
           else if (input.templateType === "google-sheets") {
             updates.url = null;
           }
