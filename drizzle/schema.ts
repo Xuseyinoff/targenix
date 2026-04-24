@@ -392,7 +392,8 @@ export type InsertDestinationTemplate = typeof destinationTemplates.$inferInsert
 export const connections = mysqlTable("connections", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
-  type: mysqlEnum("type", ["google_sheets", "telegram_bot", "api_key"]).notNull(),
+  /** DB: VARCHAR(32) since migration 0053 — was ENUM; app still restricts to known types in routers. */
+  type: varchar("type", { length: 32 }).notNull(),
   /**
    * FK-in-spirit → connection_app_specs.appKey. Identifies which app this
    * connection is for (e.g. 'sotuvchi', 'mgoods', 'telegram'). Nullable

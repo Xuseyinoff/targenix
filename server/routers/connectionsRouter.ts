@@ -30,6 +30,7 @@ import {
 } from "../../drizzle/schema";
 import { encrypt } from "../encryption";
 import {
+  type ConnectionType,
   countDestinationsUsingConnection,
   findConnectionForUser,
   insertApiKeyConnection,
@@ -44,7 +45,8 @@ import { listAppKeyOptionsForPicker } from "../integrations/listAppsSafe";
 
 interface ListedConnection {
   id: number;
-  type: "google_sheets" | "telegram_bot" | "api_key";
+  /** VARCHAR in DB; narrowed at runtime to known adapters. */
+  type: ConnectionType;
   displayName: string;
   status: "active" | "expired" | "revoked" | "error";
   createdAt: Date;
@@ -225,7 +227,7 @@ export const connectionsRouter = router({
 
         return {
           id: r.id,
-          type: r.type,
+          type: r.type as ConnectionType,
           displayName: r.displayName,
           status: r.status,
           createdAt: r.createdAt,

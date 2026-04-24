@@ -372,6 +372,13 @@
       "when": 1777660800000,
       "tag": "0052_target_websites_appkey_not_null",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "5",
+      "when": 1777747200000,
+      "tag": "0053_connections_type_varchar",
+      "breakpoints": true
     }
   ]
 }
