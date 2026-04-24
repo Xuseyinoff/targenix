@@ -57,9 +57,12 @@ export function resolveAdapterKey(
     });
   }
 
-  if (tw.templateId) return "dynamic-template";
+  // telegram / google-sheets must be identified by templateType BEFORE
+  // checking templateId — a destination can have both fields set (e.g. data
+  // migration artefact) and templateId must NOT silently override intent.
   if (tw.templateType === "telegram") return "telegram";
   if (tw.templateType === "google-sheets") return "google-sheets";
+  if (tw.templateId) return "dynamic-template";
   if (tw.templateType) return "legacy-template";
   return "plain-url";
 }

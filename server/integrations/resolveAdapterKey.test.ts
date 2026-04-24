@@ -65,6 +65,20 @@ describe("resolveAdapterKey — Stage 2 appKey", () => {
     ).toBe("telegram");
   });
 
+  // Regression guard: telegram/sheets with BOTH templateType AND templateId set must NOT go to dynamic-template.
+  // Before the fix the templateId check fired first, silently misrouting messaging destinations.
+  it("REGRESSION: telegram + templateId set → still telegram (not dynamic-template)", () => {
+    expect(
+      resolveAdapterKey("LEAD_ROUTING", { templateId: 99, templateType: "telegram", appKey: null }),
+    ).toBe("telegram");
+  });
+
+  it("REGRESSION: google-sheets + templateId set → still google-sheets (not dynamic-template)", () => {
+    expect(
+      resolveAdapterKey("LEAD_ROUTING", { templateId: 99, templateType: "google-sheets", appKey: null }),
+    ).toBe("google-sheets");
+  });
+
   it("STAGE2_ADAPTER_LOG logs when set", () => {
     process.env.STAGE2_ADAPTER_LOG = "1";
     const spy = vi.spyOn(console, "log").mockImplementation(() => {});

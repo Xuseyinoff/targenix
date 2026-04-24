@@ -164,6 +164,26 @@ export async function dispatchDelivery(
     }
 
     case "dynamic-template": {
+      // Hard guard — telegram / google-sheets must NEVER reach this adapter.
+      // resolveAdapterKey blocks them via appKey (NEW) and templateType (LEGACY),
+      // but a data-corruption or future migration could slip past both checks.
+      // This is the last line of defence: bail out without touching any adapter.
+      {
+        const ak = (tw?.appKey ?? "").toLowerCase();
+        if (ak === "telegram" || ak === "google-sheets" || ak === "google_sheets") {
+          console.warn("[dispatch] MISROUTED_ADAPTER_GUARD blocked dynamic-template for messaging app", {
+            appKey: ak,
+            targetId: tw?.id,
+            templateType: tw?.templateType,
+          });
+          return {
+            success: false,
+            error: "MISROUTED_ADAPTER_GUARD",
+            errorType: "validation",
+            adapterKey,
+          };
+        }
+      }
       // ORDER logs read `targetUrlUsed` from dispatch (leadService.ts). Legacy
       // paths set it from tw.url / integration.config.targetUrl; dynamic-template
       // historically left it unset → `targetUrl: undefined` despite success.
