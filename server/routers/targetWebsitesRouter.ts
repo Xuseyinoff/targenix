@@ -43,6 +43,7 @@ import {
   buildGoogleSheetsAppendRow,
   getGoogleSheetHeaders,
 } from "../services/googleSheetsService";
+import { insertApiKeyConnection } from "../services/connectionService";
 
 async function validateTargetUrl(url: string): Promise<void> {
   await assertSafeOutboundUrl(url);
@@ -811,6 +812,16 @@ export const targetWebsitesRouter = router({
         }
       }
 
+      // Create a connection row so secrets live in the connections table
+      // from day one. Mirrors the dual-write in createFromConnection:
+      // templateConfig.secrets is also populated for fallback compatibility.
+      const connectionId = await insertApiKeyConnection(db, {
+        userId: ctx.user.id,
+        templateId: template.id,
+        displayName: input.name,
+        secretsEncrypted: encryptedSecrets,
+      });
+
       await db.insert(targetWebsites).values({
         userId: ctx.user.id,
         name: input.name,
@@ -818,6 +829,7 @@ export const targetWebsitesRouter = router({
         templateType: "custom",   // backwards-compat fallback
         templateId: template.id,
         color: template.color,
+        connectionId,
         templateConfig: {
           secrets: encryptedSecrets,
           variables: {},
