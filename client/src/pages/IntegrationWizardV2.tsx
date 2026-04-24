@@ -63,7 +63,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { useLocation } from "wouter";
+import { useLocation, useParams } from "wouter";
 import {
   FB_METADATA_FIELDS,
   FB_METADATA_LABELS,
@@ -570,8 +570,14 @@ function ZapperStep({
 
 export default function IntegrationWizardV2() {
   const [, navigate] = useLocation();
+  const params = useParams<{ id?: string }>();
+  const editId = params?.id ? parseInt(params.id, 10) : null;
+  const isEditMode = !!editId && !isNaN(editId);
+
   const utils = trpc.useUtils();
   const [state, setState] = useState<WizardState>(INITIAL_STATE);
+  // Prevents re-initializing state on every render in edit mode.
+  const [stateInitialized, setStateInitialized] = useState(!isEditMode);
 
   // Zapier-style: which step is currently "focused" (highlighted header + open).
   // Step 1 = Trigger, Step 2 = Action.
@@ -593,6 +599,14 @@ export default function IntegrationWizardV2() {
   // Zapier-style app picker — opened by the "+ Add action" button below the
   // collapsed trigger and by "Add another destination" inside the chip view.
   const [actionPickerOpen, setActionPickerOpen] = useState(false);
+
+  // ─── Edit mode: load existing integration ─────────────────────────────────
+  const { data: integrationsList } = trpc.integrations.list.useQuery(undefined, {
+    enabled: isEditMode,
+  });
+  const editIntegration = isEditMode
+    ? integrationsList?.find((i) => i.id === editId)
+    : undefined;
 
   // ─── tRPC data queries ─────────────────────────────────────────────────────
   const { data: accounts, isLoading: loadingAccounts } =
@@ -651,6 +665,80 @@ export default function IntegrationWizardV2() {
     },
     onError: (err) => toast.error(err.message),
   });
+  const updateMutation = trpc.integrations.update.useMutation({
+    onSuccess: () => {
+      toast.success("Integration updated!");
+      utils.integrations.list.invalidate();
+      navigate("/integrations");
+    },
+    onError: (err) => toast.error(err.message),
+  });
+
+  // ─── Edit mode: populate wizard state from saved integration ──────────────
+  useEffect(() => {
+    if (!isEditMode || stateInitialized) return;
+    if (!editIntegration || !targetWebsites) return;
+
+    const cfg = editIntegration.config as Record<string, unknown>;
+    const savedDestIds = (editIntegration as unknown as { destinationIds?: number[] }).destinationIds;
+    const destIds: number[] =
+      savedDestIds && savedDestIds.length > 0
+        ? savedDestIds
+        : cfg.targetWebsiteId
+          ? [Number(cfg.targetWebsiteId)]
+          : [];
+
+    const primaryTw = targetWebsites.find((t) => t.id === destIds[0]);
+    const primaryType = primaryTw?.templateType ?? (cfg.targetTemplateType as string) ?? "custom";
+    const hasTemplate = (primaryTw?.templateId ?? null) !== null;
+    const isCustomDest = primaryType === "custom" && !hasTemplate;
+
+    const savedFieldMappings = (cfg.fieldMappings as FieldMapping[] | undefined) ?? [];
+    const leadFields: Record<string, string> = {};
+    const primaryCustomMappings: FieldMapping[] = [];
+
+    if (isCustomDest) {
+      for (const fm of savedFieldMappings) {
+        primaryCustomMappings.push({
+          from: fm.from ?? null,
+          to: fm.to,
+          staticValue: fm.staticValue ?? "",
+        });
+      }
+    } else {
+      for (const fm of savedFieldMappings) {
+        if (fm.from) leadFields[fm.to] = fm.from;
+      }
+    }
+
+    const savedStaticValues = (cfg.variableFields as Record<string, string>) ?? {};
+
+    const destinations: DestinationEntry[] = destIds.map((id, idx) => {
+      const tw = targetWebsites.find((t) => t.id === id);
+      return {
+        id,
+        name: tw?.name ?? (idx === 0 ? (cfg.targetWebsiteName as string) ?? "" : ""),
+        templateType: tw?.templateType ?? (idx === 0 ? primaryType : "custom"),
+        leadFields: idx === 0 ? leadFields : {},
+        staticValues: idx === 0 ? savedStaticValues : {},
+        customMappings: idx === 0 ? primaryCustomMappings : [],
+      };
+    });
+
+    setState({
+      accountId: cfg.facebookAccountId ? Number(cfg.facebookAccountId) : null,
+      accountName: "",
+      pageId: (cfg.pageId as string) ?? "",
+      pageName: (cfg.pageName as string) ?? "",
+      formId: (cfg.formId as string) ?? "",
+      formName: (cfg.formName as string) ?? "",
+      destinations,
+      integrationName: editIntegration.name,
+      integrationNameTouched: true,
+    });
+    setActiveStep(2);
+    setStateInitialized(true);
+  }, [isEditMode, editIntegration, targetWebsites, stateInitialized]);
 
   // ─── Auto-populate per-destination leadFields when form fields load ─────────
   // Runs after the FB form fields arrive (or the destination list updates with
@@ -1039,25 +1127,34 @@ export default function IntegrationWizardV2() {
     };
     const destinationIds = state.destinations.map((d) => d.id);
     try {
-      if (state.accountId && state.pageId) {
-        await subscribeMutation.mutateAsync({
-          accountId: state.accountId,
-          pageId: state.pageId,
+      if (isEditMode) {
+        await updateMutation.mutateAsync({
+          id: editId!,
+          name: state.integrationName.trim(),
+          config,
+          destinationIds,
+        });
+      } else {
+        if (state.accountId && state.pageId) {
+          await subscribeMutation.mutateAsync({
+            accountId: state.accountId,
+            pageId: state.pageId,
+          });
+        }
+        await createMutation.mutateAsync({
+          type: "LEAD_ROUTING",
+          name: state.integrationName.trim(),
+          config,
+          destinationIds,
         });
       }
-      await createMutation.mutateAsync({
-        type: "LEAD_ROUTING",
-        name: state.integrationName.trim(),
-        config,
-        destinationIds,
-      });
     } catch (err) {
-      // toasts are already surfaced by the mutation's onError callback.
       console.error("[IntegrationWizardV2] save failed", err);
     }
   };
 
-  const isSaving = subscribeMutation.isPending || createMutation.isPending;
+  const isSaving =
+    subscribeMutation.isPending || createMutation.isPending || updateMutation.isPending;
 
   // ─── Derived: primary destination's DB record ──────────────────────────────
   const primaryDestRecord = useMemo(
@@ -1126,12 +1223,22 @@ export default function IntegrationWizardV2() {
             Integrations
           </Button>
           <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
-          <span className="text-sm text-muted-foreground">New integration</span>
+          <span className="text-sm text-muted-foreground">
+            {isEditMode ? "Edit integration" : "New integration"}
+          </span>
         </div>
 
         <h1 className="text-xl font-bold tracking-tight mb-8">
-          New Zap
+          {isEditMode ? (editIntegration?.name ?? "Edit integration") : "New Zap"}
         </h1>
+
+        {/* Loading state in edit mode while data is being fetched */}
+        {isEditMode && !stateInitialized && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-8">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading integration…
+          </div>
+        )}
 
         {/* ── Zapier-style vertical flow ── */}
         <div>
@@ -1325,12 +1432,14 @@ export default function IntegrationWizardV2() {
                       )}
                     </div>
 
-                    {/* Publish row */}
+                    {/* Publish / Save row */}
                     <div className="flex items-center justify-between pt-1">
                       <p className="text-xs text-muted-foreground">
                         {canSave
-                          ? "Ready to publish — activates immediately."
-                          : "Fill in Name and Phone fields to publish."}
+                          ? isEditMode
+                            ? "Ready to save changes."
+                            : "Ready to publish — activates immediately."
+                          : "Fill in Name and Phone fields to continue."}
                       </p>
                       <div className="flex items-center gap-2 ml-4 shrink-0">
                         <Button
@@ -1351,7 +1460,7 @@ export default function IntegrationWizardV2() {
                           ) : (
                             <Zap className="h-4 w-4 mr-1.5" />
                           )}
-                          Publish
+                          {isEditMode ? "Save changes" : "Publish"}
                         </Button>
                       </div>
                     </div>

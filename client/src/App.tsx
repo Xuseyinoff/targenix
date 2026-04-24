@@ -141,6 +141,7 @@ function Router() {
       <Route path="/integrations/new-routing" component={LeadRoutingWizard} />
       <Route path="/integrations/edit-routing/:id" component={LeadRoutingWizard} />
       <Route path="/integrations/new-v2" component={IntegrationWizardV2} />
+      <Route path="/integrations/edit-v2/:id" component={IntegrationWizardV2} />
       <Route path="/connections" component={Connections} />
       {/* Legacy redirects kept for any bookmarks */}
       <Route path="/facebook" component={Connections} />

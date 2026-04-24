@@ -7,12 +7,12 @@ import {
   deleteIntegration,
   getDb,
 } from "../db";
-import { inArray } from "drizzle-orm";
+import { inArray, asc } from "drizzle-orm";
 import { injectVariables } from "../services/affiliateService";
 import { sendLeadTelegramNotification } from "../services/leadService";
 import { sendTelegramRawMessage } from "../services/telegramService";
 import { decrypt } from "../encryption";
-import { targetWebsites, type TargetWebsite } from "../../drizzle/schema";
+import { targetWebsites, integrationDestinations, type TargetWebsite } from "../../drizzle/schema";
 import { eq, and } from "drizzle-orm";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getAdapter } from "../integrations";
@@ -36,7 +36,21 @@ export const integrationsRouter = router({
           .from(targetWebsites)
           .where(and(eq(targetWebsites.id, twId), eq(targetWebsites.userId, ctx.user.id)))
           .limit(1);
-        return { ...integration, targetWebsiteName: tw?.name ?? (cfg?.targetWebsiteName as string | undefined) ?? null };
+        // Also enrich with ordered destinationIds from integration_destinations
+        const destRows = await db
+          .select({ targetWebsiteId: integrationDestinations.targetWebsiteId })
+          .from(integrationDestinations)
+          .where(and(
+            eq(integrationDestinations.integrationId, integration.id),
+            eq(integrationDestinations.enabled, true),
+          ))
+          .orderBy(asc(integrationDestinations.position), asc(integrationDestinations.id));
+        const destinationIds = destRows.map((r) => r.targetWebsiteId);
+        return {
+          ...integration,
+          targetWebsiteName: tw?.name ?? (cfg?.targetWebsiteName as string | undefined) ?? null,
+          destinationIds,
+        };
       })
     );
   }),

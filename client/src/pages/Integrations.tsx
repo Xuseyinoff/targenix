@@ -363,7 +363,7 @@ export default function Integrations() {
                             size="icon"
                             className="text-muted-foreground hover:text-foreground h-8 w-8"
                             title={t("integrations.editRouting")}
-                            onClick={() => navigate(`/integrations/edit-routing/${integration.id}`)}
+                            onClick={() => navigate(`/integrations/edit-v2/${integration.id}`)}
                           >
                             <Pencil className="h-3.5 w-3.5" />
                           </Button>
@@ -453,7 +453,7 @@ export default function Integrations() {
                                 size="sm"
                                 className="h-8 text-xs"
                                 title={t("integrations.editRouting")}
-                                onClick={() => navigate(`/integrations/edit-routing/${integration.id}`)}
+                                onClick={() => navigate(`/integrations/edit-v2/${integration.id}`)}
                               >
                                 <Pencil className="mr-1.5 h-3.5 w-3.5" />
                                 {t("integrations.edit")}
