@@ -11,7 +11,9 @@
  * selection and adapter arguments as the legacy inline dispatcher, so behaviour
  * is byte-for-byte identical for every currently supported destination type
  * (affiliate, dynamic-template, telegram, google-sheets, legacy-template,
- * plain-url). It introduces zero new side effects and zero new network calls.
+ * plain-url). For `dynamic-template` only, a single optional SELECT on
+ * `destination_templates` may run when `target_websites.url` is empty — used
+ * solely to populate `targetUrlUsed` for ORDER logs; delivery path unchanged.
  */
 
 import "./register";
@@ -19,7 +21,10 @@ import "./register";
 import { eq } from "drizzle-orm";
 import type { DbClient } from "../db";
 import type { Connection, leads, targetWebsites } from "../../drizzle/schema";
-import { connections as connectionsTable } from "../../drizzle/schema";
+import {
+  connections as connectionsTable,
+  destinationTemplates,
+} from "../../drizzle/schema";
 import type { LeadPayload } from "../services/affiliateService";
 import type { DeliveryResult } from "./types";
 import { getAdapter } from "./registry";
@@ -150,6 +155,35 @@ export async function dispatchDelivery(
     }
 
     case "dynamic-template": {
+      // ORDER logs read `targetUrlUsed` from dispatch (leadService.ts). Legacy
+      // paths set it from tw.url / integration.config.targetUrl; dynamic-template
+      // historically left it unset → `targetUrl: undefined` despite success.
+      // Source: denormalized target_websites.url (written from template.endpointUrl
+      // at create), else one lightweight lookup of destination_templates.endpointUrl.
+      {
+        const denorm =
+          tw?.url != null && typeof tw.url === "string" && tw.url.trim().length > 0
+            ? tw.url.trim()
+            : undefined;
+        if (denorm) {
+          targetUrlUsed = denorm;
+        } else if (tw?.templateId != null) {
+          try {
+            const [tplRow] = await ctx.db
+              .select({ endpointUrl: destinationTemplates.endpointUrl })
+              .from(destinationTemplates)
+              .where(eq(destinationTemplates.id, tw.templateId))
+              .limit(1);
+            const ep = tplRow?.endpointUrl;
+            targetUrlUsed =
+              ep != null && typeof ep === "string" && ep.trim().length > 0
+                ? ep.trim()
+                : undefined;
+          } catch {
+            targetUrlUsed = undefined;
+          }
+        }
+      }
       adapterInput = {
         db: ctx.db,
         targetWebsite: tw,
