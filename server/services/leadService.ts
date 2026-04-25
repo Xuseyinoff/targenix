@@ -16,6 +16,7 @@ import {
   computeNextRetryAt,
   type DeliveryErrorType,
 } from "../lib/orderRetryPolicy";
+import { incFailedOrders } from "../monitoring/metrics";
 
 // ─── Field extraction helpers ─────────────────────────────────────────────────
 
@@ -514,6 +515,9 @@ async function persistOrderDeliveryAttemptResult(
       : typeof (raw as { affectedRows?: number })?.affectedRows === "number"
         ? (raw as { affectedRows: number }).affectedRows
         : 0;
+  if (n === 1 && !result.success) {
+    incFailedOrders(1);
+  }
   return n === 1;
 }
 

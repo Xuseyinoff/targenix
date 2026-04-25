@@ -7,6 +7,7 @@ import { specIsAuthless } from "../integrations/connectionAppSpecs";
 import { resolveSpecSafe } from "../integrations/listAppsSafe";
 import type { DbClient } from "../db";
 import { isConnectionSecretsOnlyEnabled } from "./featureFlags";
+import { resolveMapping } from "../utils/resolveMapping";
 
 // ─── Shared lead payload ────────────────────────────────────────────────────
 export interface LeadPayload {
@@ -997,6 +998,11 @@ export async function sendLeadViaTemplate(
       secretsMap,
     );
 
+    // D5 — optional mapping overlay for UI mapper. If present, it overrides/extends
+    // resolvedFields without changing existing templates.
+    const mapping = cfg.payloadMapping as Record<string, unknown> | undefined;
+    const mapped = resolveMapping(mapping, lead);
+
     // Build request based on contentType
     const method = template.method ?? "POST";
     let body: string | Record<string, unknown> | null = null;
@@ -1024,23 +1030,23 @@ export async function sendLeadViaTemplate(
         tpl = injectVariables(tpl, varCtx);
         body = tpl; // raw JSON string — axios sends as-is
       } else {
-        body = resolvedFields; // flat object → axios JSON.stringifies
+        body = { ...resolvedFields, ...mapped }; // flat object → axios JSON.stringifies
       }
       contentTypeHeader = "application/json";
     } else if (normalizedCt.includes("form-urlencoded") || normalizedCt.includes("urlencoded")) {
       const params = new URLSearchParams();
-      for (const [k, v] of Object.entries(resolvedFields)) params.append(k, v);
+      for (const [k, v] of Object.entries({ ...resolvedFields, ...mapped })) params.append(k, String(v));
       body = params.toString();
       contentTypeHeader = "application/x-www-form-urlencoded";
     } else if (normalizedCt.includes("multipart")) {
       const fd = new FormData();
-      for (const [k, v] of Object.entries(resolvedFields)) fd.append(k, v);
+      for (const [k, v] of Object.entries({ ...resolvedFields, ...mapped })) fd.append(k, String(v));
       formData = fd;
       contentTypeHeader = "multipart/form-data";
     } else {
       // Default: form-urlencoded
       const params = new URLSearchParams();
-      for (const [k, v] of Object.entries(resolvedFields)) params.append(k, v);
+      for (const [k, v] of Object.entries({ ...resolvedFields, ...mapped })) params.append(k, String(v));
       body = params.toString();
       contentTypeHeader = "application/x-www-form-urlencoded";
     }

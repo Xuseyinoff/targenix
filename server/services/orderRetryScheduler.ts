@@ -9,10 +9,17 @@ import { orders } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { ORDER_MAX_DELIVERY_ATTEMPTS } from "../lib/orderRetryPolicy";
 import { retryFailedOrderDelivery } from "./leadService";
+import { getRetryQueueSize, logMetricsSnapshot } from "../monitoring/metrics";
 
-const DEFAULT_BATCH = 200;
-const DEFAULT_CONCURRENCY = 5;
-const DEFAULT_RATE_PER_SEC = 5;
+function envInt(key: string, fallback: number): number {
+  const raw = process.env[key];
+  const n = raw != null ? parseInt(String(raw).trim(), 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+const DEFAULT_BATCH = envInt("RETRY_BATCH_SIZE", 500);
+const DEFAULT_CONCURRENCY = envInt("RETRY_CONCURRENCY", 10);
+const DEFAULT_RATE_PER_SEC = envInt("RETRY_RATE_PER_SEC", 20);
 
 function createRateLimitedRunner(options: {
   concurrency: number;
@@ -110,10 +117,29 @@ export async function retryDueFailedOrders(options?: {
     return { retried: 0 };
   }
 
-  const limit = options?.limit ?? DEFAULT_BATCH;
-  const concurrency = options?.concurrency ?? DEFAULT_CONCURRENCY;
-  const ratePerSecond = options?.ratePerSecond ?? DEFAULT_RATE_PER_SEC;
+  let limit = options?.limit ?? DEFAULT_BATCH;
+  let concurrency = options?.concurrency ?? DEFAULT_CONCURRENCY;
+  let ratePerSecond = options?.ratePerSecond ?? DEFAULT_RATE_PER_SEC;
   const now = new Date();
+
+  const queueSize = await getRetryQueueSize(db);
+  if (queueSize > 1000) {
+    // Temporary boost under backlog.
+    limit = Math.min(limit * 2, 2000);
+    ratePerSecond = Math.min(ratePerSecond * 2, 200);
+    concurrency = Math.min(concurrency + 5, 50);
+  }
+
+  console.log({
+    stage: "retry_scheduler",
+    queueSize,
+    batchSize: limit,
+    rate: ratePerSecond,
+    concurrency,
+  });
+  if (process.env.METRICS_LOG === "1") {
+    await logMetricsSnapshot(db);
+  }
 
   const due = await db
     .select({ id: orders.id })

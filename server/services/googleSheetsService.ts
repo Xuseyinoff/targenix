@@ -15,6 +15,7 @@ import {
 import { inferDeliveryErrorType, type DeliveryErrorType } from "../lib/orderRetryPolicy";
 import { markGoogleSheetsConnectionsExpiredForOauthToken } from "./connectionService";
 import { withRetry } from "../utils/retry";
+import { incOAuthErrors } from "../monitoring/metrics";
 
 /** Re-export for callers that import from service. */
 export { GOOGLE_SHEETS_MAPPABLE_FIELDS, type GoogleSheetsMappableField };
@@ -512,6 +513,7 @@ export async function appendLeadToGoogleSheet(params: {
         });
       }
       if (r.status === 401 || r.status === 403) {
+        incOAuthErrors(1);
         await markGoogleSheetsConnectionsExpiredForOauthToken(db, userId, googleAccountId);
       }
       if (r.status === 429 || r.status >= 500) {

@@ -117,6 +117,20 @@ export async function markGoogleSheetsConnectionsExpiredForOauthToken(
   }
 }
 
+/**
+ * Best-effort status bump for any oauth-backed connection (future providers).
+ * Today most oauth-backed connections are `google_sheets` and use oauthTokenId.
+ */
+export async function markOAuthConnectionsExpired(
+  db: DbClient,
+  userId: number,
+  oauthTokenId: number,
+): Promise<void> {
+  // Alias to the Google Sheets helper for now; keep a separate name so callers
+  // don't hardcode "google" semantics.
+  await markGoogleSheetsConnectionsExpiredForOauthToken(db, userId, oauthTokenId);
+}
+
 // ─── Generic OAuth2 connection ───────────────────────────────────────────────
 
 interface UpsertOAuthConnectionInput {
