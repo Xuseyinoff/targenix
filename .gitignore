@@ -106,6 +106,8 @@ temp/
 *.sqlite
 *.sqlite3
 tooling/mysql/dumps/
+tooling/mysql/backups/
+tooling/mysql/stage4-apply-report.json
 
 # Manus platform runtime files (DB query cache, screenshots, etc.)
 .manus/
