@@ -25,6 +25,7 @@ export type LogCategory =
   | "TELEGRAM"
   | "AFFILIATE"
   | "GOOGLE"
+  | "OAUTH"
   | "CONNECTIONS";
 
 export type LogType = "USER" | "SYSTEM";

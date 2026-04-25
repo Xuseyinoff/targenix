@@ -12,6 +12,8 @@ export interface OAuthConfig {
   redirectUri: string;
   /** Optional — Google userinfo; other providers may differ. */
   userInfoUrl?: string;
+  /** Extra query params appended to the authorize URL (e.g. access_type, prompt, audience). */
+  extraParams?: Record<string, string>;
 }
 
 export interface OAuthToken {

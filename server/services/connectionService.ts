@@ -117,6 +117,73 @@ export async function markGoogleSheetsConnectionsExpiredForOauthToken(
   }
 }
 
+// ─── Generic OAuth2 connection ───────────────────────────────────────────────
+
+interface UpsertOAuthConnectionInput {
+  userId: number;
+  appKey: string;
+  oauthTokenId: number;
+  displayName: string;
+}
+
+/**
+ * Ensure a `connections` row exists for a generic OAuth2 integration token.
+ * Keyed by (userId, oauthTokenId) — same pattern as upsertGoogleConnection.
+ * Uses type="oauth2" so the connection picker can filter by auth method.
+ *
+ * Returns the connection id.
+ */
+export async function upsertOAuthConnection(
+  db: DbClient,
+  input: UpsertOAuthConnectionInput,
+): Promise<number> {
+  const { userId, appKey, oauthTokenId } = input;
+  const displayName = input.displayName.trim() || appKey;
+
+  const [existing] = await db
+    .select({ id: connections.id })
+    .from(connections)
+    .where(and(eq(connections.userId, userId), eq(connections.oauthTokenId, oauthTokenId)))
+    .limit(1);
+
+  if (existing) {
+    await db
+      .update(connections)
+      .set({ displayName, status: "active", lastVerifiedAt: new Date() })
+      .where(eq(connections.id, existing.id));
+    return existing.id;
+  }
+
+  const [inserted] = await db.insert(connections).values({
+    userId,
+    type: validateConnectionType("oauth2"),
+    appKey,
+    displayName,
+    status: "active",
+    oauthTokenId,
+    lastVerifiedAt: new Date(),
+  });
+  return (inserted as unknown as { insertId: number }).insertId;
+}
+
+/**
+ * Mark connections linked to this oauthTokenId as expired (e.g. invalid_grant on refresh).
+ * Best-effort; does not throw.
+ */
+export async function markOAuthConnectionExpired(
+  db: DbClient,
+  oauthTokenId: number,
+): Promise<void> {
+  try {
+    await db
+      .update(connections)
+      .set({ status: "expired" })
+      .where(eq(connections.oauthTokenId, oauthTokenId));
+  } catch {
+    // ignore
+  }
+}
+
 // ─── Telegram bot connection ─────────────────────────────────────────────────
 
 interface UpsertTelegramConnectionInput {
