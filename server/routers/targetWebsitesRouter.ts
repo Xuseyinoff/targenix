@@ -763,6 +763,14 @@ export const targetWebsitesRouter = router({
           // Empty string → keep existing encrypted value (user left field blank = no change)
         }
 
+        // NOTE: We used to always write the updated encrypted secrets back into
+        // target_websites.templateConfig as well as the linked connection (two DB writes).
+        //
+        // For zero-downtime + backward compatibility, we now prefer a single
+        // source of truth when a connection is linked: the connection row.
+        //
+        // We only write templateConfig.secrets when there is NO linked connection
+        // to sync to (legacy/template-only destinations).
         updates.templateConfig = { ...existingConfig, secrets: updatedSecrets };
       }
 
@@ -807,14 +815,26 @@ export const targetWebsitesRouter = router({
               .where(eq(connections.id, conn.id));
           }
 
-          await tx
-            .update(targetWebsites)
-            .set(updates)
-            .where(
-              and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)),
-            );
+          // Double-write fix:
+          // - If this Save only changed secrets, we already persisted them into
+          //   the linked connection. Avoid a second write to target_websites.
+          // - If the Save also changed name/isActive, we still need that write.
+          const nonSecretUpdates: Record<string, unknown> = {};
+          if (input.name !== undefined) nonSecretUpdates.name = input.name;
+          if (input.isActive !== undefined) nonSecretUpdates.isActive = input.isActive;
+
+          const hasNonSecretUpdates = Object.keys(nonSecretUpdates).length > 0;
+          if (hasNonSecretUpdates) {
+            await tx
+              .update(targetWebsites)
+              .set(nonSecretUpdates)
+              .where(
+                and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)),
+              );
+          }
         });
       } else {
+        // Legacy path: no linked connection, so we store secrets in templateConfig.
         await db
           .update(targetWebsites)
           .set(updates)
@@ -1202,7 +1222,12 @@ export const targetWebsitesRouter = router({
         const durationMs = Date.now() - t0;
 
         // Build preview using the same body builder and mask any secret fields.
-        const previewFields = buildBody(dynTpl, site, sampleLead, varOverridesWithFallback);
+        const previewFields = buildBody(
+          dynTpl,
+          { templateConfig: site.templateConfig },
+          sampleLead,
+          varOverridesWithFallback,
+        );
         for (const field of (dynTpl.bodyFields as Array<{ key: string; value: string; isSecret: boolean }>) ?? []) {
           if (field.value.startsWith("{{SECRET:") && field.value.endsWith("}}")) {
             previewFields[field.key] = "••••••••";
