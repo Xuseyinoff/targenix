@@ -115,29 +115,6 @@ export function buildGoogleAuthUrl(state: string, type: "login" | "integration")
   return url.toString();
 }
 
-// ─── Token Exchange ───────────────────────────────────────────────────────────
-
-/**
- * Exchange an authorization code (from callback ?code=...) for access + refresh tokens.
- */
-export async function exchangeCodeForGoogleTokens(code: string): Promise<GoogleTokenResponse> {
-  await log.info("GOOGLE", "→ exchangeCodeForTokens");
-
-  const response = await axios.post<GoogleTokenResponse>(
-    GOOGLE_TOKEN_URL,
-    new URLSearchParams({
-      code,
-      client_id:     getGoogleClientId(),
-      client_secret: getGoogleClientSecret(),
-      redirect_uri:  getGoogleCallbackUrl(),
-      grant_type:    "authorization_code",
-    }).toString(),
-    { headers: { "Content-Type": "application/x-www-form-urlencoded" }, timeout: 10_000 }
-  );
-
-  return response.data;
-}
-
 // ─── User Profile ─────────────────────────────────────────────────────────────
 
 /**
