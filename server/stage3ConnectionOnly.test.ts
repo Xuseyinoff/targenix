@@ -1,177 +1,105 @@
 /**
- * Stage 3 — Connection-only secret model.
+ * Connection-only secret model — permanent contract tests.
  *
- * These tests pin the runtime contract of the
- * `USE_CONNECTION_SECRETS_ONLY` feature flag at the boundary that
- * production actually hits: `resolveSecretsForDelivery`. The flag is
- * driven by env vars so each scenario explicitly flips them and
- * resets the feature-flag cache, matching how a Railway operator
- * would roll it out.
+ * `resolveSecretsForDelivery` always requires an active connection.
+ * These tests verify the four invariants that must hold unconditionally
+ * in production:
  *
- * Scenario coverage (all four Stage 3 mandates):
- *   • Flag OFF — legacy destinations with `templateConfig.secrets` but
- *     no connection keep delivering (byte-for-byte pre-Stage-3 path).
- *   • Flag ON  — same destination fails loudly with
- *     `ConnectionRequiredError` before any HTTP work happens.
- *   • Active connection present — flag is irrelevant, the connection's
- *     secrets win and rotation is instant.
- *   • Authless spec — flag is irrelevant, resolver short-circuits to
- *     `{}` regardless of connection / legacy secrets / flag state.
- *
- * Plus two regression guards:
- *   • Flag ON + unknown userId (no tenant context available) must still
- *     fall back to legacy — the flag's conservative default for callers
- *     the resolver cannot identify.
- *   • `ConnectionSecretMissingError` (Stage 2) takes precedence over
- *     `ConnectionRequiredError` when a connection IS linked but empty,
- *     so the user sees the more actionable error.
+ *   1. No connection → throws ConnectionRequiredError (never falls back
+ *      to templateConfig.secrets, regardless of whether secrets are present).
+ *   2. Active connection with secrets → returns those secrets.
+ *   3. Active connection with NO secrets → throws ConnectionSecretMissingError
+ *      (distinct from ConnectionRequiredError so the UI can show the right action).
+ *   4. Auth-less appKey → short-circuits to {} with no error, no connection needed.
  */
 
-import { describe, it, expect, beforeEach, afterAll, beforeAll, vi } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   ConnectionRequiredError,
   ConnectionSecretMissingError,
   resolveSecretsForDelivery,
 } from "./services/affiliateService";
-import { __resetFeatureFlagsCache } from "./services/featureFlags";
 import { encrypt } from "./encryption";
 import type { Connection } from "../drizzle/schema";
 import type { DbClient } from "./db";
 
-/**
- * Build a minimal Drizzle-ish DbClient that returns a single authless `apps`
- * row for the given appKey. Used by authless tests to supply the spec that
- * `resolveSpecSafe` needs now that the TS constant was removed (Step C).
- */
 function makeAuthlessDb(appKey: string): DbClient {
   const row = {
     id: 1,
     appKey,
     displayName: appKey,
     authType: "none",
-    category: "affiliate",
-    fields: [],
-    oauthConfig: null,
-    iconUrl: null,
-    docsUrl: null,
     isActive: true,
-    createdAt: new Date(),
+    oauthConfig: null,
+    credentialFields: null,
+    userVisibleFields: null,
   };
-  return {
-    select: vi.fn(() => ({
-      from: vi.fn(() => ({
-        where: vi.fn(() => ({
-          limit: vi.fn(async () => [row]),
-        })),
-      })),
-    })),
-  } as unknown as DbClient;
+  const db = {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          limit: () => Promise.resolve([row]),
+          then: (resolve: (v: unknown[]) => void) => resolve([row]),
+        }),
+      }),
+    }),
+  };
+  return db as unknown as DbClient;
 }
 
 function makeConnection(overrides: Partial<Connection> = {}): Connection {
   const base: Connection = {
-    id: 7001,
+    id: 1,
     userId: 1,
     type: "api_key",
-    appKey: "alijahon",
-    displayName: "Alijahon.uz",
+    appKey: null,
+    displayName: "Test",
     status: "active",
-    googleAccountId: null,
-    credentialsJson: { secretsEncrypted: {} },
-    lastVerifiedAt: null,
+    oauthTokenId: null,
+    credentialsJson: { secretsEncrypted: { api_key: encrypt("conn-secret") } },
+    lastVerifiedAt: new Date(),
     createdAt: new Date(),
     updatedAt: new Date(),
   };
   return { ...base, ...overrides };
 }
 
-/** Snapshot + restore the flag-related env vars so tests are order-independent. */
-const ENV_KEYS = [
-  "USE_CONNECTION_SECRETS_ONLY",
-  "USE_CONNECTION_SECRETS_ONLY_ALL",
-  "USE_CONNECTION_SECRETS_ONLY_USER_IDS",
-  "ENCRYPTION_KEY",
-] as const;
+const originalKey = process.env.ENCRYPTION_KEY;
 
-describe("Stage 3 — resolveSecretsForDelivery under USE_CONNECTION_SECRETS_ONLY", () => {
-  const saved: Record<string, string | undefined> = {};
+beforeAll(() => {
+  process.env.ENCRYPTION_KEY = "connection-only-test-key-do-not-use";
+});
+afterAll(() => {
+  if (originalKey !== undefined) process.env.ENCRYPTION_KEY = originalKey;
+  else delete process.env.ENCRYPTION_KEY;
+});
 
-  beforeAll(() => {
-    for (const k of ENV_KEYS) saved[k] = process.env[k];
-    process.env.ENCRYPTION_KEY = "stage-3-unit-test-key-do-not-use-in-prod";
-  });
+describe("resolveSecretsForDelivery — connection-only contract", () => {
 
-  afterAll(() => {
-    for (const k of ENV_KEYS) {
-      if (saved[k] === undefined) delete process.env[k];
-      else process.env[k] = saved[k];
-    }
-    __resetFeatureFlagsCache();
-  });
-
-  beforeEach(() => {
-    delete process.env.USE_CONNECTION_SECRETS_ONLY;
-    delete process.env.USE_CONNECTION_SECRETS_ONLY_ALL;
-    delete process.env.USE_CONNECTION_SECRETS_ONLY_USER_IDS;
-    __resetFeatureFlagsCache();
-  });
-
-  // ── Flag OFF (default) ───────────────────────────────────────────────────
-  it("flag OFF: no connection + legacy secrets → returns legacy secrets", async () => {
-    const cipher = encrypt("legacy-key");
-    const out = await resolveSecretsForDelivery({
-      connection: null,
-      templateConfig: { secrets: { api_key: cipher } },
-      adapterContext: "legacy-template",
-      userId: 1,
-    });
-    expect(out).toEqual({ api_key: cipher });
-  });
-
-  it("flag OFF: no connection + no legacy secrets → empty map (pre-Stage-3 behaviour)", async () => {
-    const out = await resolveSecretsForDelivery({
-      connection: null,
-      templateConfig: {},
-      adapterContext: "legacy-template",
-      userId: 1,
-    });
-    expect(out).toEqual({});
-  });
-
-  // ── Flag ON globally (Phase 4 switch) ────────────────────────────────────
-  it("flag ON (ALL=true): no connection → throws CONNECTION_REQUIRED", async () => {
-    process.env.USE_CONNECTION_SECRETS_ONLY_ALL = "true";
-    __resetFeatureFlagsCache();
-
+  // ── 1. No connection → always throws ────────────────────────────────────
+  it("no connection → throws ConnectionRequiredError", async () => {
     await expect(
       resolveSecretsForDelivery({
         connection: null,
         templateConfig: { secrets: { api_key: encrypt("legacy") } },
-        templateId: 42,
         adapterContext: "legacy-template",
         userId: 1,
       }),
     ).rejects.toThrow(ConnectionRequiredError);
   });
 
-  it("flag ON via bare USE_CONNECTION_SECRETS_ONLY alias also works", async () => {
-    process.env.USE_CONNECTION_SECRETS_ONLY = "true";
-    __resetFeatureFlagsCache();
-
+  it("no connection, no legacy secrets → still throws ConnectionRequiredError", async () => {
     await expect(
       resolveSecretsForDelivery({
         connection: null,
-        templateConfig: { secrets: { api_key: encrypt("x") } },
+        templateConfig: {},
         adapterContext: "legacy-template",
         userId: 1,
       }),
     ).rejects.toThrow(ConnectionRequiredError);
   });
 
-  it("flag ON: error carries templateId + userId for operator triage", async () => {
-    process.env.USE_CONNECTION_SECRETS_ONLY_ALL = "true";
-    __resetFeatureFlagsCache();
-
+  it("error carries templateId + userId for operator triage", async () => {
     let err: unknown;
     try {
       await resolveSecretsForDelivery({
@@ -179,7 +107,7 @@ describe("Stage 3 — resolveSecretsForDelivery under USE_CONNECTION_SECRETS_ONL
         templateConfig: {},
         templateId: 99,
         adapterContext: "dynamic-template",
-        userId: 1,
+        userId: 42,
       });
     } catch (e) {
       err = e;
@@ -188,40 +116,22 @@ describe("Stage 3 — resolveSecretsForDelivery under USE_CONNECTION_SECRETS_ONL
     const e = err as ConnectionRequiredError;
     expect(e.code).toBe("CONNECTION_REQUIRED");
     expect(e.templateId).toBe(99);
-    expect(e.userId).toBe(1);
+    expect(e.userId).toBe(42);
   });
 
-  // ── Per-user allowlist (staged rollout) ──────────────────────────────────
-  it("flag ON for user 1 only: user 2 still gets legacy fallback", async () => {
-    process.env.USE_CONNECTION_SECRETS_ONLY_USER_IDS = "1";
-    __resetFeatureFlagsCache();
-
-    // User 1 is on the allowlist → strict.
+  it("no connection, missing userId → still throws (upstream bug, not a pass)", async () => {
     await expect(
       resolveSecretsForDelivery({
         connection: null,
-        templateConfig: { secrets: { api_key: encrypt("k1") } },
+        templateConfig: { secrets: { api_key: encrypt("ignored") } },
         adapterContext: "legacy-template",
-        userId: 1,
+        // userId deliberately omitted
       }),
     ).rejects.toThrow(ConnectionRequiredError);
-
-    // User 2 is NOT → legacy path still works.
-    const cipher = encrypt("k2");
-    const out = await resolveSecretsForDelivery({
-      connection: null,
-      templateConfig: { secrets: { api_key: cipher } },
-      adapterContext: "legacy-template",
-      userId: 2,
-    });
-    expect(out).toEqual({ api_key: cipher });
   });
 
-  // ── Active connection wins regardless of flag ────────────────────────────
-  it("flag ON but active connection linked → uses connection, no throw", async () => {
-    process.env.USE_CONNECTION_SECRETS_ONLY_ALL = "true";
-    __resetFeatureFlagsCache();
-
+  // ── 2. Active connection → wins ──────────────────────────────────────────
+  it("active connection with secrets → returns connection's map", async () => {
     const fromConn = encrypt("from-connection");
     const out = await resolveSecretsForDelivery({
       connection: makeConnection({
@@ -234,10 +144,7 @@ describe("Stage 3 — resolveSecretsForDelivery under USE_CONNECTION_SECRETS_ONL
     expect(out).toEqual({ api_key: fromConn });
   });
 
-  it("flag ON: credential rotation on the connection propagates immediately", async () => {
-    process.env.USE_CONNECTION_SECRETS_ONLY_ALL = "true";
-    __resetFeatureFlagsCache();
-
+  it("credential rotation on the connection propagates immediately", async () => {
     const old = encrypt("old-key");
     const conn = makeConnection({
       credentialsJson: { secretsEncrypted: { api_key: old } },
@@ -264,27 +171,8 @@ describe("Stage 3 — resolveSecretsForDelivery under USE_CONNECTION_SECRETS_ONL
     expect(second.api_key).toBe(next);
   });
 
-  // ── Authless spec immune to the flag ─────────────────────────────────────
-  it("flag ON + authless appKey → still short-circuits to {} (no throw)", async () => {
-    process.env.USE_CONNECTION_SECRETS_ONLY_ALL = "true";
-    __resetFeatureFlagsCache();
-
-    const out = await resolveSecretsForDelivery({
-      connection: null,
-      templateConfig: { secrets: { api_key: encrypt("ignored") } },
-      adapterContext: "dynamic-template",
-      appKey: "open_affiliate",
-      db: makeAuthlessDb("open_affiliate"),
-      userId: 1,
-    });
-    expect(out).toEqual({});
-  });
-
-  // ── Precedence: CONN_MISSING still preferred over CONN_REQUIRED ──────────
-  it("flag ON + linked-but-empty connection → throws CONNECTION_SECRET_MISSING (not CONNECTION_REQUIRED)", async () => {
-    process.env.USE_CONNECTION_SECRETS_ONLY_ALL = "true";
-    __resetFeatureFlagsCache();
-
+  // ── 3. Connection present but empty → ConnectionSecretMissingError ───────
+  it("linked-but-empty connection → throws CONNECTION_SECRET_MISSING, not CONNECTION_REQUIRED", async () => {
     const conn = makeConnection({ credentialsJson: { secretsEncrypted: {} } });
     let err: unknown;
     try {
@@ -302,45 +190,27 @@ describe("Stage 3 — resolveSecretsForDelivery under USE_CONNECTION_SECRETS_ONL
     expect(err).not.toBeInstanceOf(ConnectionRequiredError);
   });
 
-  // ── Conservative default for unknown tenants ─────────────────────────────
-  it("flag ON but userId missing → falls back (conservative, never mass-break)", async () => {
-    process.env.USE_CONNECTION_SECRETS_ONLY_ALL = "true";
-    __resetFeatureFlagsCache();
-
-    const cipher = encrypt("fallback");
+  // ── 4. Auth-less spec → short-circuits to {} regardless ─────────────────
+  it("authless appKey → short-circuits to {} without requiring a connection", async () => {
     const out = await resolveSecretsForDelivery({
       connection: null,
-      templateConfig: { secrets: { api_key: cipher } },
-      adapterContext: "legacy-template",
-      // userId omitted on purpose.
-    });
-    expect(out).toEqual({ api_key: cipher });
-  });
-
-  // ── Rollback behaviour ───────────────────────────────────────────────────
-  it("flipping flag OFF instantly restores legacy path (rollback safety)", async () => {
-    process.env.USE_CONNECTION_SECRETS_ONLY_ALL = "true";
-    __resetFeatureFlagsCache();
-
-    await expect(
-      resolveSecretsForDelivery({
-        connection: null,
-        templateConfig: { secrets: { api_key: encrypt("leg") } },
-        adapterContext: "legacy-template",
-        userId: 1,
-      }),
-    ).rejects.toThrow(ConnectionRequiredError);
-
-    delete process.env.USE_CONNECTION_SECRETS_ONLY_ALL;
-    __resetFeatureFlagsCache();
-
-    const cipher = encrypt("leg2");
-    const out = await resolveSecretsForDelivery({
-      connection: null,
-      templateConfig: { secrets: { api_key: cipher } },
-      adapterContext: "legacy-template",
+      templateConfig: { secrets: { api_key: encrypt("ignored") } },
+      adapterContext: "dynamic-template",
+      appKey: "open_affiliate",
+      db: makeAuthlessDb("open_affiliate"),
       userId: 1,
     });
-    expect(out).toEqual({ api_key: cipher });
+    expect(out).toEqual({});
+  });
+
+  it("authless appKey + no userId → still short-circuits to {}", async () => {
+    const out = await resolveSecretsForDelivery({
+      connection: null,
+      templateConfig: {},
+      adapterContext: "dynamic-template",
+      appKey: "no_auth_app",
+      db: makeAuthlessDb("no_auth_app"),
+    });
+    expect(out).toEqual({});
   });
 });

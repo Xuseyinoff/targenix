@@ -6,7 +6,6 @@ import { inferDeliveryErrorType, type DeliveryErrorType } from "../lib/orderRetr
 import { specIsAuthless } from "../integrations/connectionAppSpecs";
 import { resolveSpecSafe } from "../integrations/listAppsSafe";
 import type { DbClient } from "../db";
-import { isConnectionSecretsOnlyEnabled } from "./featureFlags";
 import { resolveMapping } from "../utils/resolveMapping";
 
 // ─── Shared lead payload ────────────────────────────────────────────────────
@@ -402,14 +401,7 @@ export async function resolveSecretsForDelivery(opts: {
    * Omitted or null → spec lookup skips DB (DB-only apps will not resolve).
    */
   db?: DbClient | null;
-  /**
-   * Stage 3 — tenant id, used strictly to evaluate the
-   * `USE_CONNECTION_SECRETS_ONLY` feature flag. When omitted the flag
-   * is treated as OFF for this call (conservative default: refusing
-   * delivery for a caller we cannot identify would be worse than
-   * letting the legacy path run). Tests use this to exercise the
-   * pre- and post-flip semantics independently.
-   */
+  /** Tenant id — threaded to `ConnectionRequiredError` for operator diagnostics. */
   userId?: number | null;
 }): Promise<Record<string, string>> {
   const {
@@ -421,10 +413,6 @@ export async function resolveSecretsForDelivery(opts: {
     db,
     userId,
   } = opts;
-  const cfg = (templateConfig ?? {}) as Record<string, unknown>;
-  const fallbackSecrets =
-    (cfg.secrets as Record<string, string> | undefined) ?? {};
-
   if (appKey) {
     const spec = await resolveSpecSafe(db ?? null, appKey);
     if (spec && specIsAuthless(spec)) {
@@ -457,32 +445,14 @@ export async function resolveSecretsForDelivery(opts: {
     throw new ConnectionSecretMissingError(connection.id, templateId ?? null);
   }
 
-  // Stage 3 — connection-only mode.
-  //
-  // No active connection bound to this destination. Under the new
-  // contract this must NEVER happen once the flag is on for the
-  // tenant: every delivery either carries an explicit connection or
-  // is rejected at resolve-time, long before we build an HTTP body.
-  //
-  // Important: this branch runs AFTER the authless short-circuit
-  // above, so auth-less templates stay untouched — those never need
-  // a connection in the first place and flipping the flag would
-  // otherwise be a surprise-break for them.
-  if (isConnectionSecretsOnlyEnabled(userId ?? null)) {
-    console.error("[affiliateService] CONNECTION_REQUIRED", {
-      code: "CONNECTION_REQUIRED",
-      templateId: templateId ?? null,
-      userId: userId ?? null,
-      adapterContext,
-    });
-    throw new ConnectionRequiredError(templateId ?? null, userId ?? null);
-  }
-
-  // Legacy path. Zero behaviour change when flag is off — this is the
-  // byte-for-byte pre-Stage-3 branch, kept alive so old destinations
-  // that still carry `templateConfig.secrets` continue to deliver
-  // until Phase 3 migration links a connection to each of them.
-  return fallbackSecrets;
+  // No active connection — every delivery must be backed by a connection.
+  console.error("[affiliateService] CONNECTION_REQUIRED", {
+    code: "CONNECTION_REQUIRED",
+    templateId: templateId ?? null,
+    userId: userId ?? null,
+    adapterContext,
+  });
+  throw new ConnectionRequiredError(templateId ?? null, userId ?? null);
 }
 
 /**

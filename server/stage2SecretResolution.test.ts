@@ -1,29 +1,17 @@
 /**
- * Stage 2 — Runtime connection-based secret resolution.
+ * Secret resolution — `resolveSecretsForDelivery` contract tests.
  *
- * These tests cover the exact 5 scenarios mandated by the Stage 2
- * task brief, plus supporting checks for the public helper
- * `resolveSecretsForDelivery`:
+ * Covers the scenarios for connection-backed secret resolution:
  *
- *   1. Old destination (no connection) → `templateConfig.secrets`
- *      still flows through and the request is built normally.
- *   2. New destination with an active connection → the
- *      `connections.credentialsJson.secretsEncrypted` map becomes
- *      the authoritative source.
+ *   1. No connection → throws ConnectionRequiredError (connection required).
+ *   2. Active connection with secrets → connection's map is the source of truth.
  *   3. Connection rotation → mutating the connection's secrets map
  *      is reflected on the next resolve call (no stale copy).
  *   4. Missing secret → a connection that was explicitly linked but
- *      contains no secrets throws `ConnectionSecretMissingError` and
- *      no outbound request is built.
- *   5. No empty-string fallback when the connection is broken —
- *      delivery MUST fail loud.
- *
- * We exercise these at two layers:
- *   - The pure `resolveSecretsForDelivery` function (picking the right
- *     secrets source + strict error).
- *   - The thin `buildCustomBody` / `buildHeaders` integration path,
- *     which receives the map via the Stage 2 `secretsOverride`
- *     parameter so that connection-driven secrets reach the wire.
+ *      contains no secrets throws `ConnectionSecretMissingError`.
+ *   5. Non-active connection (expired/revoked) → treated as no connection
+ *      → throws ConnectionRequiredError.
+ *   6. Auth-less appKey → short-circuits to {} regardless of connection state.
  *
  * No axios call is ever made — these are byte-level assertions on the
  * body / headers produced by the delivery builder, so they run in
@@ -32,6 +20,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
+  ConnectionRequiredError,
   ConnectionSecretMissingError,
   buildCustomBody,
   buildHeaders,
@@ -116,34 +105,37 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
     else delete process.env.ENCRYPTION_KEY;
   });
 
-  // ── Test 1 — Old destination (no connection) → fallback ─────────────────
-  it("(1) no connection → returns templateConfig.secrets verbatim", async () => {
-    const cipher = encrypt("legacy-plain");
-    const cfg = { secrets: { api_key: cipher, offer_id: "static_value" } };
-    const out = await resolveSecretsForDelivery({
-      connection: null,
-      templateConfig: cfg,
-      adapterContext: "legacy-template",
-    });
-    expect(out).toEqual({ api_key: cipher, offer_id: "static_value" });
+  // ── Test 1 — No connection → ConnectionRequiredError ────────────────────
+  it("(1) no connection → throws ConnectionRequiredError", async () => {
+    await expect(
+      resolveSecretsForDelivery({
+        connection: null,
+        templateConfig: { secrets: { api_key: encrypt("legacy") } },
+        adapterContext: "legacy-template",
+        userId: 1,
+      }),
+    ).rejects.toThrow(ConnectionRequiredError);
   });
 
-  it("(1b) no connection AND no templateConfig.secrets → empty map", async () => {
-    const out = await resolveSecretsForDelivery({
-      connection: null,
-      templateConfig: {},
-      adapterContext: "legacy-template",
-    });
-    expect(out).toEqual({});
+  it("(1b) no connection AND no templateConfig.secrets → still throws ConnectionRequiredError", async () => {
+    await expect(
+      resolveSecretsForDelivery({
+        connection: null,
+        templateConfig: {},
+        adapterContext: "legacy-template",
+        userId: 1,
+      }),
+    ).rejects.toThrow(ConnectionRequiredError);
   });
 
-  it("(1c) connection=undefined (not just null) still falls back", async () => {
-    const cipher = encrypt("legacy-plain-2");
-    const out = await resolveSecretsForDelivery({
-      templateConfig: { secrets: { api_key: cipher } },
-      adapterContext: "legacy-template",
-    });
-    expect(out).toEqual({ api_key: cipher });
+  it("(1c) connection=undefined → throws ConnectionRequiredError", async () => {
+    await expect(
+      resolveSecretsForDelivery({
+        templateConfig: { secrets: { api_key: encrypt("legacy") } },
+        adapterContext: "legacy-template",
+        userId: 1,
+      }),
+    ).rejects.toThrow(ConnectionRequiredError);
   });
 
   // ── Test 2 — New destination with connection → connection wins ──────────
@@ -237,32 +229,32 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
     ).rejects.toThrow(/CONNECTION_SECRET_MISSING/);
   });
 
-  // ── Test 5 — Non-active connection is treated as "no connection" ────────
-  it("(5a) connection status=expired → soft fallback to templateConfig", async () => {
-    // An expired OAuth token or revoked api_key should NOT hard-fail
-    // existing deliveries that still have legacy secrets available.
-    // This is how we keep backward compatibility while users re-auth.
+  // ── Test 5 — Non-active connection treated as "no connection" → hard throw
+  it("(5a) connection status=expired → throws ConnectionRequiredError (must reconnect)", async () => {
     const conn = makeConnection({
       status: "expired",
       credentialsJson: { secretsEncrypted: {} },
     });
-    const cipher = encrypt("legacy-fallback");
-    const out = await resolveSecretsForDelivery({
-      connection: conn,
-      templateConfig: { secrets: { api_key: cipher } },
-      adapterContext: "legacy-template",
-    });
-    expect(out).toEqual({ api_key: cipher });
+    await expect(
+      resolveSecretsForDelivery({
+        connection: conn,
+        templateConfig: { secrets: { api_key: encrypt("ignored") } },
+        adapterContext: "legacy-template",
+        userId: 1,
+      }),
+    ).rejects.toThrow(ConnectionRequiredError);
   });
 
-  it("(5b) connection status=revoked → soft fallback, not a hard throw", async () => {
+  it("(5b) connection status=revoked → throws ConnectionRequiredError", async () => {
     const conn = makeConnection({ status: "revoked" });
-    const out = await resolveSecretsForDelivery({
-      connection: conn,
-      templateConfig: { secrets: { api_key: encrypt("ok") } },
-      adapterContext: "legacy-template",
-    });
-    expect(out.api_key).toBeDefined();
+    await expect(
+      resolveSecretsForDelivery({
+        connection: conn,
+        templateConfig: { secrets: { api_key: encrypt("ignored") } },
+        adapterContext: "legacy-template",
+        userId: 1,
+      }),
+    ).rejects.toThrow(ConnectionRequiredError);
   });
 
   // ── authType: 'none' — auth-less affiliate short-circuit ──────────────────
@@ -310,17 +302,19 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
     expect(out).toEqual({});
   });
 
-  it("(6d) unknown appKey → no short-circuit, behaves like appKey=null", async () => {
+  it("(6d) unknown appKey → no short-circuit, no connection → throws ConnectionRequiredError", async () => {
     // An unknown appKey is a configuration error the validator catches
-    // at save-time. The resolver treats it as if no appKey was provided
-    // so existing fallback semantics still apply.
-    const out = await resolveSecretsForDelivery({
-      connection: null,
-      templateConfig: { secrets: { api_key: encrypt("ok") } },
-      adapterContext: "legacy-template",
-      appKey: "this-app-does-not-exist",
-    });
-    expect(out.api_key).toBeDefined();
+    // at save-time. The resolver treats it as if no appKey was provided —
+    // and with no active connection, connection is required.
+    await expect(
+      resolveSecretsForDelivery({
+        connection: null,
+        templateConfig: { secrets: { api_key: encrypt("ignored") } },
+        adapterContext: "legacy-template",
+        appKey: "this-app-does-not-exist",
+        userId: 1,
+      }),
+    ).rejects.toThrow(ConnectionRequiredError);
   });
 });
 

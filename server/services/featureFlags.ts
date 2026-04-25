@@ -22,15 +22,6 @@
 // ─── Known flags ───────────────────────────────────────────────────────────
 
 /**
- * Compile-time default for the Stage 3 "connection-only secrets" model.
- * Runtime behaviour is still driven by env vars — this constant exists so
- * call sites and documentation can refer to a single name. Unset/empty
- * env means the same as `false` (legacy `templateConfig.secrets` fallback
- * still permitted). Phase 4 flips the envs to `true` per rollout plan.
- */
-export const USE_CONNECTION_SECRETS_ONLY_DEFAULT = false as const;
-
-/**
  * Routes integration dispatch through the new `integration_destinations`
  * table instead of the legacy `integrations.targetWebsiteId` column. Also
  * gates the new Make.com-style `/integrations/new-v2` wizard on the client.
@@ -53,45 +44,7 @@ export const USE_CONNECTION_SECRETS_ONLY_DEFAULT = false as const;
  */
 export const FLAG_MULTI_DESTINATIONS = "multi_destinations" as const;
 
-/**
- * Stage 3 — CONNECTION-ONLY SECRET MODEL.
- *
- * When ON, `resolveSecretsForDelivery` refuses to fall back to the legacy
- * `target_websites.templateConfig.secrets` store when no active
- * connection exists. The delivery short-circuits with a loud
- * `ConnectionRequiredError` instead of silently emitting an empty
- * credential — the same fail-loud shape as
- * `ConnectionSecretMissingError`, differentiated by code so the UI can
- * point the operator at "create a connection" instead of "re-enter
- * credentials in the existing connection".
- *
- * OFF by default. Rollout:
- *   1. Deploy Phase 1 (this file + resolver change) with flag OFF —
- *      behaviour stays byte-for-byte identical, we only gain the new
- *      error type in the library.
- *   2. Ship Phase 2 (createFromConnection stops copying secrets) so
- *      new destinations are connection-only from day one.
- *   3. Run Phase 3 migration script to backfill `connectionId` on old
- *      destinations whose template matches an existing connection.
- *   4. Flip to USE_CONNECTION_SECRETS_ONLY=true. From this moment
- *      every delivery without a connection fails loudly.
- *
- * ROLLBACK is always safe: set back to false, deliveries resume reading
- * `templateConfig.secrets`. No data is ever deleted along this path.
- *
- * Envs (per-user allowlist first, then global kill-switch):
- *   USE_CONNECTION_SECRETS_ONLY_USER_IDS=1,42   // comma-separated
- *   USE_CONNECTION_SECRETS_ONLY_ALL=true        // global override
- *
- * We also honour a bare USE_CONNECTION_SECRETS_ONLY env (no suffix) as
- * an alias for the _ALL variant so the variable name from the Stage 3
- * spec stays recognisable in Railway's UI.
- */
-export const FLAG_CONNECTION_SECRETS_ONLY = "connection_secrets_only" as const;
-
-type KnownFlag =
-  | typeof FLAG_MULTI_DESTINATIONS
-  | typeof FLAG_CONNECTION_SECRETS_ONLY;
+type KnownFlag = typeof FLAG_MULTI_DESTINATIONS;
 
 // ─── Internal cache ────────────────────────────────────────────────────────
 
@@ -133,14 +86,6 @@ function buildCache(): Record<KnownFlag, FlagConfig> {
       globalOn: parseBool(process.env.MULTI_DEST_ALL),
       allowedUserIds: parseUserIds(process.env.MULTI_DEST_USER_IDS),
     },
-    [FLAG_CONNECTION_SECRETS_ONLY]: {
-      // Either the dedicated _ALL variant or the bare
-      // USE_CONNECTION_SECRETS_ONLY env flips the global kill-switch.
-      globalOn:
-        parseBool(process.env.USE_CONNECTION_SECRETS_ONLY_ALL) ||
-        parseBool(process.env.USE_CONNECTION_SECRETS_ONLY),
-      allowedUserIds: parseUserIds(process.env.USE_CONNECTION_SECRETS_ONLY_USER_IDS),
-    },
   };
 }
 
@@ -177,52 +122,6 @@ export function describeMultiDestinationFlag(): {
   allowedUserIds: number[];
 } {
   const cfg = getConfig(FLAG_MULTI_DESTINATIONS);
-  return {
-    globalOn: cfg.globalOn,
-    allowedUserIds: Array.from(cfg.allowedUserIds).sort((a, b) => a - b),
-  };
-}
-
-/**
- * Stage 3 — runtime predicate consumed by `resolveSecretsForDelivery`.
- *
- * Returns true when the given tenant should be denied the legacy
- * `templateConfig.secrets` fallback (i.e. connections are the ONLY
- * source of truth for secrets). See FLAG_CONNECTION_SECRETS_ONLY
- * for the rollout contract.
- *
- * Decision precedence mirrors `isMultiDestinationsEnabled`:
- *   1. Global override (USE_CONNECTION_SECRETS_ONLY_ALL or
- *      USE_CONNECTION_SECRETS_ONLY) — wins always.
- *   2. Per-user allowlist (USE_CONNECTION_SECRETS_ONLY_USER_IDS).
- *   3. Otherwise off (legacy fallback still permitted).
- *
- * Conservative default: callers that cannot supply a valid userId
- * (`null`, `undefined`, NaN, ≤0) see `false`. Refusing to emit empty
- * credentials from an unknown caller is the job of the upstream
- * validation layer — the resolver must never harden delivery for a
- * tenant it cannot identify, or a bug elsewhere in the pipeline could
- * mass-break production once the global kill-switch flips.
- */
-export function isConnectionSecretsOnlyEnabled(
-  userId: number | null | undefined,
-): boolean {
-  if (userId == null || !Number.isFinite(userId) || userId <= 0) return false;
-  const cfg = getConfig(FLAG_CONNECTION_SECRETS_ONLY);
-  if (cfg.globalOn) return true;
-  return cfg.allowedUserIds.has(userId);
-}
-
-/**
- * Diagnostic sibling to `describeMultiDestinationFlag`. Intentionally
- * symmetric: the admin "feature flags" UI should be able to render
- * both with the same React component.
- */
-export function describeConnectionSecretsOnlyFlag(): {
-  globalOn: boolean;
-  allowedUserIds: number[];
-} {
-  const cfg = getConfig(FLAG_CONNECTION_SECRETS_ONLY);
   return {
     globalOn: cfg.globalOn,
     allowedUserIds: Array.from(cfg.allowedUserIds).sort((a, b) => a - b),
