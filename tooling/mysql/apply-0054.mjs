@@ -36,18 +36,29 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../..");
 
 const SQL_FILE = path.join(ROOT, "drizzle/0054_drop_connection_app_specs.sql");
-const EXPECTED_HASH = "e021c43f9e8435b0";
-const MIGRATION_NAME = "0054_drop_connection_app_specs";
+const EXPECTED_HASH = "e021c43f9e8435b080cbd7f32f7ffd26a8dd547ac8f03270ef05584511641f4e";
 const CREATED_AT = 1777488003000;
 
 function hashFile(p) {
   const content = fs.readFileSync(p, "utf8");
-  return crypto.createHash("sha256").update(content).digest("hex").slice(0, 16);
+  return crypto.createHash("sha256").update(content).digest("hex");
+}
+
+function pickMysqlUrl() {
+  for (const raw of [
+    process.env.MYSQL_PUBLIC_URL,
+    process.env.MYSQL_URL,
+    process.env.DATABASE_URL,
+  ]) {
+    const u = raw?.trim().replace(/^=+/, "");
+    if (u?.startsWith("mysql://")) return u;
+  }
+  return null;
 }
 
 function getConn() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error("DATABASE_URL not set");
+  const url = pickMysqlUrl();
+  if (!url) throw new Error("No mysql:// URL in env (MYSQL_PUBLIC_URL/MYSQL_URL/DATABASE_URL)");
   return mysql.createConnection(url);
 }
 
@@ -64,10 +75,10 @@ async function audit() {
   const conn = await getConn();
   try {
     const [rows] = await conn.execute(
-      "SELECT hash_value FROM __drizzle_migrations WHERE migration_name = ?",
-      [MIGRATION_NAME],
+      "SELECT id, LEFT(hash, 16) AS hash16, created_at FROM __drizzle_migrations WHERE hash = ? LIMIT 1",
+      [hash],
     );
-    if (rows.length > 0) {
+    if (Array.isArray(rows) && rows.length > 0) {
       console.log("0054 already applied — nothing to do.");
     } else {
       console.log("0054 NOT yet applied — ready to apply.");
@@ -101,10 +112,10 @@ async function apply() {
   const conn = await getConn();
   try {
     const [existing] = await conn.execute(
-      "SELECT hash_value FROM __drizzle_migrations WHERE migration_name = ?",
-      [MIGRATION_NAME],
+      "SELECT id FROM __drizzle_migrations WHERE hash = ? LIMIT 1",
+      [hash],
     );
-    if (existing.length > 0) {
+    if (Array.isArray(existing) && existing.length > 0) {
       console.log("0054 already applied. Skipping.");
       return;
     }
@@ -114,8 +125,8 @@ async function apply() {
     console.log("Done.");
 
     await conn.execute(
-      "INSERT INTO __drizzle_migrations (hash_value, migration_name, created_at) VALUES (?, ?, ?)",
-      [hash, MIGRATION_NAME, CREATED_AT],
+      "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
+      [hash, CREATED_AT],
     );
     console.log("Migration recorded in __drizzle_migrations.");
     console.log("0054 applied successfully.");
@@ -138,10 +149,10 @@ async function verify() {
     console.log("OK: connection_app_specs does not exist.");
 
     const [migRow] = await conn.execute(
-      "SELECT hash_value FROM __drizzle_migrations WHERE migration_name = ?",
-      [MIGRATION_NAME],
+      "SELECT id FROM __drizzle_migrations WHERE hash = ? LIMIT 1",
+      [EXPECTED_HASH],
     );
-    if (migRow.length === 0) {
+    if (!Array.isArray(migRow) || migRow.length === 0) {
       console.error("FAIL: migration not recorded in __drizzle_migrations.");
       process.exit(1);
     }
@@ -173,8 +184,8 @@ async function rollback() {
     console.log("NOTE: Rows not restored — insert from backup_connection_app_specs.json if needed.");
 
     await conn.execute(
-      "DELETE FROM __drizzle_migrations WHERE migration_name = ?",
-      [MIGRATION_NAME],
+      "DELETE FROM __drizzle_migrations WHERE hash = ?",
+      [EXPECTED_HASH],
     );
     console.log("Migration entry removed from __drizzle_migrations.");
     console.log("ROLLBACK COMPLETE.");

@@ -32,10 +32,22 @@ const REQUIRED_APP_KEYS = [
   "open_affiliate",
 ];
 
+function pickMysqlUrl() {
+  for (const raw of [
+    process.env.MYSQL_PUBLIC_URL,
+    process.env.MYSQL_URL,
+    process.env.DATABASE_URL,
+  ]) {
+    const u = raw?.trim().replace(/^=+/, "");
+    if (u?.startsWith("mysql://")) return u;
+  }
+  return null;
+}
+
 async function run() {
-  const url = process.env.DATABASE_URL;
+  const url = pickMysqlUrl();
   if (!url) {
-    console.error("ABORT: DATABASE_URL not set");
+    console.error("ABORT: no mysql:// URL in env (MYSQL_PUBLIC_URL/MYSQL_URL/DATABASE_URL)");
     process.exit(1);
   }
 
