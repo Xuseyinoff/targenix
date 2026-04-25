@@ -1,6 +1,7 @@
 /**
  * Generic access token for an `oauth_tokens` row: decrypt if still valid,
- * otherwise refresh via `getProviderByAppKey` and persist.
+ * otherwise refresh via `resolveProvider` (static registry first, then DB)
+ * and persist. Works for Google and any generic OAuth2 provider.
  */
 import { and, eq } from "drizzle-orm";
 import { oauthTokens } from "../../drizzle/schema";
@@ -8,9 +9,9 @@ import type { DbClient } from "../db";
 import { encrypt, decrypt } from "../encryption";
 import { computeExpiryDate, isTokenExpired } from "../services/googleService";
 import { log } from "../services/appLogger";
-import { getProviderByAppKey } from "./registry";
+import { resolveProvider } from "./resolveProvider";
 import { incOAuthErrors } from "../monitoring/metrics";
-import { markGoogleSheetsConnectionsExpiredForOauthToken } from "../services/connectionService";
+import { markOAuthConnectionExpired } from "../services/connectionService";
 
 const refreshLocks = new Map<string, Promise<string>>();
 
@@ -69,7 +70,9 @@ export async function getValidAccessToken(
     return decrypt(row.accessToken);
   }
 
-  const provider = getProviderByAppKey(appKey);
+  // Two-tier provider lookup: static registry first (Google, zero DB hit),
+  // then DB lookup for any app with authType='oauth2' and oauthConfig set.
+  const provider = await resolveProvider(appKey, db);
   if (!provider || !provider.refreshAccessToken) {
     throw new Error("PROVIDER_NOT_FOUND");
   }
@@ -95,7 +98,7 @@ export async function getValidAccessToken(
         })
         .where(eq(oauthTokens.id, oauthTokenId));
 
-      await log.info("GOOGLE", "oauth access token refreshed (getValidAccessToken)", {
+      await log.info("OAUTH", "oauth access token refreshed (getValidAccessToken)", {
         oauthTokenId,
         appKey,
       });
@@ -103,8 +106,9 @@ export async function getValidAccessToken(
     } catch (err) {
       incOAuthErrors(1);
       if (isRevokedLikeError(err)) {
-        // Best-effort: today only google_sheets connections are wired to oauthTokenId.
-        await markGoogleSheetsConnectionsExpiredForOauthToken(db, userId, oauthTokenId);
+        // Mark ALL connections backed by this oauth_tokens row as expired —
+        // covers google_sheets, oauth2, and any future provider types.
+        await markOAuthConnectionExpired(db, oauthTokenId);
         console.log({
           stage: "oauth_revoked",
           appKey,
