@@ -60,21 +60,21 @@ for (const row of destRows) {
 }
 
 const [accts] = await conn.execute(
-  `SELECT id, userId, email, type, createdAt
-     FROM google_accounts WHERE userId = 2 ORDER BY id DESC LIMIT 10`
+  `SELECT id, userId, email, appKey, createdAt
+     FROM oauth_tokens WHERE userId = 2 AND appKey = 'google-sheets' ORDER BY id DESC LIMIT 10`
 );
-console.log(`\nGoogle accounts for userId=2: ${accts.length}`);
+console.log(`\nGoogle oauth_tokens for userId=2: ${accts.length}`);
 for (const a of accts) {
-  console.log(`   google_accounts.id=${a.id}  email=${a.email}  type=${a.type}`);
+  console.log(`   oauth_tokens.id=${a.id}  email=${a.email}  appKey=${a.appKey}`);
 }
 
 const [connRows] = await conn.execute(
-  `SELECT id, userId, type, googleAccountId, displayName, status, createdAt
+  `SELECT id, userId, type, oauthTokenId, displayName, status, createdAt
      FROM connections WHERE userId = 2 ORDER BY id DESC LIMIT 10`
 );
 console.log(`\nconnections rows for userId=2: ${connRows.length}`);
 for (const c of connRows) {
-  console.log(`   connections.id=${c.id}  type=${c.type}  googleAccountId=${c.googleAccountId ?? "null"}  display="${c.displayName}"  status=${c.status}`);
+  console.log(`   connections.id=${c.id}  type=${c.type}  oauthTokenId=${c.oauthTokenId ?? "null"}  display="${c.displayName}"  status=${c.status}`);
 }
 
 await conn.end();

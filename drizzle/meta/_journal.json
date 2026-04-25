@@ -407,6 +407,13 @@
       "when": 1778092800000,
       "tag": "0061_connections_unique_oauth_token",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "5",
+      "when": 1778096400000,
+      "tag": "0062_drop_google_accounts",
+      "breakpoints": true
     }
   ]
 }

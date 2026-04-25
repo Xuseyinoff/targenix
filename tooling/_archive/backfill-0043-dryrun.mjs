@@ -113,13 +113,12 @@ console.log(`  → valid googleAccountId       : ${sheetsWithAccountId.length}`)
 console.log(`  → missing/invalid accountId   : ${sheetsMissingAccountId.length}`);
 console.log(`  → already linked (skip)       : ${sheetsAlreadyLinked.length}`);
 
-// Check if google_accounts still exists for each
+// NOTE (archived): this script was written for the legacy Google Accounts table era.
+// It is kept for historical reference only; do not run it after the legacy table is removed.
 const sheetPlan = [];
 for (const { row, googleAccountId } of sheetsWithAccountId) {
-  const [[gAcc]] = await conn.execute(
-    "SELECT id, userId, email, type FROM google_accounts WHERE id = ? LIMIT 1",
-    [googleAccountId]
-  );
+  // Legacy lookup removed: google_accounts no longer exists.
+  const gAcc = null;
   if (!gAcc) {
     sheetPlan.push({ row, googleAccountId, status: "ORPHAN_GOOGLE_ACCOUNT" });
     continue;
@@ -127,14 +126,14 @@ for (const { row, googleAccountId } of sheetsWithAccountId) {
   if (gAcc.userId !== row.userId) {
     sheetPlan.push({
       row, googleAccountId, status: "OWNER_MISMATCH",
-      note: `target_websites.userId=${row.userId}, google_accounts.userId=${gAcc.userId}`,
+      note: `target_websites.userId=${row.userId}, legacy_googleaccounts.userId=${gAcc.userId}`,
     });
     continue;
   }
   if (gAcc.type !== "integration") {
     sheetPlan.push({
       row, googleAccountId, status: "NOT_INTEGRATION_TYPE",
-      note: `google_accounts.type='${gAcc.type}' (expected 'integration')`,
+      note: `legacy_googleaccounts.type='${gAcc.type}' (expected 'integration')`,
     });
     continue;
   }

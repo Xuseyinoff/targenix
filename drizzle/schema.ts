@@ -180,46 +180,6 @@ export const facebookForms = mysqlTable("facebook_forms", {
 export type FacebookForm = typeof facebookForms.$inferSelect;
 export type InsertFacebookForm = typeof facebookForms.$inferInsert;
 
-// ─── Google Accounts ──────────────────────────────────────────────────────────
-// One row per connected Google account per platform user.
-// One user can connect multiple Google accounts (multiple Google emails).
-export const googleAccounts = mysqlTable("google_accounts", {
-  id: int("id").autoincrement().primaryKey(),
-  userId: int("userId").notNull(),
-  /** Google account email address */
-  email: varchar("email", { length: 320 }).notNull(),
-  /** Display name from Google profile */
-  name: varchar("name", { length: 255 }),
-  /** Google profile picture URL */
-  picture: varchar("picture", { length: 512 }),
-  /** OAuth access token — stored AES-256-CBC encrypted */
-  accessToken: text("accessToken").notNull(),
-  /** OAuth refresh token — stored AES-256-CBC encrypted. Null if not returned (already connected). */
-  refreshToken: text("refreshToken"),
-  /** Absolute timestamp when the access token expires */
-  expiryDate: timestamp("expiryDate"),
-  /**
-   * "login"       — created during Google Login / Register (openid, email, profile scopes only).
-   *                 NEVER used for API access (Sheets, Drive, etc.).
-   * "integration" — created when user connects Google for API access (full scopes).
-   *                 Used exclusively for Sheets/Drive/etc. calls.
-   */
-  type: mysqlEnum("type", ["login", "integration"]).default("login").notNull(),
-  /** Space-separated list of OAuth scopes that were granted for this token. */
-  scopes: text("scopes"),
-  connectedAt: timestamp("connectedAt").defaultNow().notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-}, (t) => ({
-  // One row per (user, email, type) — same Google email can appear as both login + integration
-  uqUserEmailType: uniqueIndex("uq_google_accounts_user_email_type").on(t.userId, t.email, t.type),
-  idxUserId: index("idx_google_accounts_user_id").on(t.userId),
-  idxType: index("idx_google_accounts_type").on(t.userId, t.type),
-}));
-
-export type GoogleAccount = typeof googleAccounts.$inferSelect;
-export type InsertGoogleAccount = typeof googleAccounts.$inferInsert;
-
 // ─── Google OAuth States (CSRF protection) ────────────────────────────────────
 // Short-lived tokens stored during the OAuth authorization_code flow.
 // Verified on callback to prevent CSRF attacks; deleted immediately after use.

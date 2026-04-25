@@ -5,14 +5,14 @@
  *
  *   railway run node tooling/check-gsheet-tabs.mjs
  *
- * Pulls the integration OAuth token from google_accounts.id=3, refreshes
+ * Pulls the integration OAuth token from oauth_tokens.id=3 (appKey=google-sheets), refreshes
  * it if expired, then GETs /v4/spreadsheets/{id}?fields=sheets.properties.title.
  */
 import mysql from "mysql2/promise";
 import crypto from "node:crypto";
 
 const SPREADSHEET_ID = "1BI1UMnV6fUSkDLVSLU8m-CYm1o7TgCU3Dzr3hgmqWeY";
-const GOOGLE_ACCOUNT_ID = 3;
+const OAUTH_TOKEN_ID = 3;
 
 function pickMysqlUrl() {
   const env = process.env;
@@ -44,18 +44,18 @@ if (!encKey) { console.error("No ENCRYPTION_KEY in env"); process.exit(1); }
 
 const conn = await mysql.createConnection(url);
 const [rows] = await conn.execute(
-  `SELECT id, email, accessToken, refreshToken, expiryDate
-     FROM google_accounts WHERE id = ? AND type = 'integration' LIMIT 1`,
-  [GOOGLE_ACCOUNT_ID],
+  `SELECT id, email, accessTokenEncrypted, refreshTokenEncrypted, expiresAt
+     FROM oauth_tokens WHERE id = ? AND appKey = 'google-sheets' LIMIT 1`,
+  [OAUTH_TOKEN_ID],
 );
 await conn.end();
-if (rows.length === 0) { console.error("google_accounts row not found"); process.exit(1); }
+if (rows.length === 0) { console.error("oauth_tokens row not found"); process.exit(1); }
 const acct = rows[0];
 
-console.log(`Using google_accounts.id=${acct.id} email=${acct.email}`);
-let accessToken = decrypt(acct.accessToken, encKey);
-const refreshToken = acct.refreshToken ? decrypt(acct.refreshToken, encKey) : null;
-const expiresAt = acct.expiryDate ? new Date(acct.expiryDate) : null;
+console.log(`Using oauth_tokens.id=${acct.id} email=${acct.email}`);
+let accessToken = decrypt(acct.accessTokenEncrypted, encKey);
+const refreshToken = acct.refreshTokenEncrypted ? decrypt(acct.refreshTokenEncrypted, encKey) : null;
+const expiresAt = acct.expiresAt ? new Date(Number(acct.expiresAt)) : null;
 const expired = expiresAt ? expiresAt.getTime() - Date.now() < 60_000 : false;
 
 if (expired) {

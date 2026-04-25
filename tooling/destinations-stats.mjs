@@ -65,13 +65,14 @@ if (recent.length) {
   console.table(recent);
 }
 
-// 6. Google accounts & Telegram details
-const gAcc = await q(`
+// 6. Google OAuth tokens (universal OAuth)
+const gTok = await q(`
   SELECT COUNT(*) AS total,
-         SUM(CASE WHEN refreshToken IS NOT NULL THEN 1 ELSE 0 END) AS with_refresh
-  FROM google_accounts
+         SUM(CASE WHEN refreshTokenEncrypted IS NOT NULL THEN 1 ELSE 0 END) AS with_refresh
+  FROM oauth_tokens
+  WHERE appKey = 'google-sheets'
 `);
-console.log(`\n6. Google accounts: ${gAcc[0].total} total, ${gAcc[0].with_refresh} with refresh token`);
+console.log(`\n6. Google OAuth tokens: ${gTok[0].total} total, ${gTok[0].with_refresh} with refresh token`);
 
 // 7. Users using each destination type (concurrent)
 const users = await q(`
