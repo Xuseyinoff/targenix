@@ -1,6 +1,7 @@
 /**
- * Read layer: prefer `apps` (migration 0048) when rows exist, else `listAppSpecs()` TS.
- * Does not modify `connection_app_specs` or the constant — reversible by reverting call sites.
+ * Read layer: prefer `apps` (migration 0048) as the sole source of truth.
+ * The legacy `connection_app_specs` table and TS constant have been removed
+ * (migration 0054 / Step C). All spec data now lives in the `apps` DB table.
  */
 import { asc, and, eq } from "drizzle-orm";
 import { apps } from "../../drizzle/schema";
@@ -10,8 +11,6 @@ import {
   type ConnectionAppSpec,
   type ConnectionAppSpecField,
   type ConnectionAuthType,
-  getAppSpec,
-  listAppSpecs,
 } from "./connectionAppSpecs";
 
 const APPS_LOG =
@@ -65,7 +64,9 @@ function appRowToConnectionAppSpec(row: AppRow): ConnectionAppSpec {
 }
 
 /**
- * @returns same shape as `listAppSpecs()` in-memory list — for validation/list UIs.
+ * List all active app specs from the `apps` DB table.
+ * Returns an empty array on DB error — callers should treat empty as
+ * "no apps configured" and surface an appropriate message.
  */
 export async function listAppsSafe(db: DbClient): Promise<ConnectionAppSpec[]> {
   try {
@@ -75,24 +76,18 @@ export async function listAppsSafe(db: DbClient): Promise<ConnectionAppSpec[]> {
       .where(eq(apps.isActive, true))
       .orderBy(asc(apps.appKey));
 
-    if (rows.length > 0) {
-      if (APPS_LOG) {
-        console.log({ stage: "apps_source", source: "NEW" as const, count: rows.length });
-      }
-      return rows.map(appRowToConnectionAppSpec);
+    if (APPS_LOG) {
+      console.log({ stage: "apps_source", source: "DB" as const, count: rows.length });
     }
+    return rows.map(appRowToConnectionAppSpec);
   } catch (err) {
     if (APPS_LOG) {
-      console.warn("[listAppsSafe] DB read failed, falling back to listAppSpecs", {
+      console.warn("[listAppsSafe] DB read failed, returning empty list", {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+    return [];
   }
-
-  if (APPS_LOG) {
-    console.log({ stage: "apps_source", source: "LEGACY" as const, count: listAppSpecs().length });
-  }
-  return [...listAppSpecs()];
 }
 
 export type ListAppKeyOption = {
@@ -111,7 +106,7 @@ function mapToListKeyOption(s: ConnectionAppSpec): ListAppKeyOption {
   };
 }
 
-type SpecResolutionSource = "DB" | "TS" | "NONE";
+type SpecResolutionSource = "DB" | "NONE";
 
 function logSpecSource(source: SpecResolutionSource, appKey: string): void {
   if (!isStage2SpecLog()) return;
@@ -119,9 +114,8 @@ function logSpecSource(source: SpecResolutionSource, appKey: string): void {
 }
 
 /**
- * Resolve a spec for a single appKey: `apps` table first (active row),
- * then TS constant fallback (same shape as before DB-first cutover).
- * Returns null if neither source has the key — never throws.
+ * Resolve a spec for a single appKey from the `apps` DB table.
+ * Returns null when db is null or no active row is found — never throws.
  */
 export async function resolveSpecSafe(
   db: DbClient | null,
@@ -147,23 +141,16 @@ export async function resolveSpecSafe(
     }
   }
 
-  const tsSpec = getAppSpec(appKey);
-  if (tsSpec) {
-    logSpecSource("TS", appKey);
-    return tsSpec;
-  }
-
   logSpecSource("NONE", appKey);
   return null;
 }
 
-/** @alias resolveSpecSafe — same contract (DB first, TS fallback, null if unknown). */
+/** @alias resolveSpecSafe — same contract (DB only, null if unknown). */
 export const resolveSpecForValidation = resolveSpecSafe;
 
 /**
  * Load all active specs into a Map — used by the boot validator to do a
  * single DB round-trip instead of one per template row.
- * Merges TS constant + DB rows; DB wins on conflict (newer data).
  */
 export async function buildAppSpecMap(db: DbClient): Promise<Map<string, ConnectionAppSpec>> {
   const specs = await listAppsSafe(db);
@@ -171,15 +158,10 @@ export async function buildAppSpecMap(db: DbClient): Promise<Map<string, Connect
 }
 
 /**
- * Picker DTO for admin + connections UIs — same as former `listAppSpecs().map(...)`.
+ * Picker DTO for admin + connections UIs.
  */
 export async function listAppKeyOptionsForPicker(db: DbClient | null): Promise<ListAppKeyOption[]> {
-  if (!db) {
-    if (APPS_LOG) {
-      console.log({ stage: "apps_source", source: "LEGACY" as const, reason: "no_db" });
-    }
-    return listAppSpecs().map(mapToListKeyOption);
-  }
+  if (!db) return [];
   const specs = await listAppsSafe(db);
   return specs.map(mapToListKeyOption);
 }

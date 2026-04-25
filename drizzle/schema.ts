@@ -245,47 +245,9 @@ export const googleOauthStates = mysqlTable("google_oauth_states", {
 export type GoogleOauthState = typeof googleOauthStates.$inferSelect;
 export type InsertGoogleOauthState = typeof googleOauthStates.$inferInsert;
 
-// ─── Connection App Specs (Admin-managed — Stage 1 contract) ──────────────────
-// The authoritative catalogue of apps that users can connect to (affiliate
-// networks, messaging platforms, OAuth providers). Each row defines the shape
-// of credentials an app requires: `authType` + `fields[]`.
-//
-// Source of truth:
-//   server/integrations/connectionAppSpecs.ts — a typed TS constant. This
-//   table is a DB mirror of that constant used for admin UI queries and
-//   backfill. Runtime validation consumes the TS constant, NOT this table,
-//   so the validator stays deterministic and doesn't need a DB roundtrip.
-//
-// Contract: every `{{SECRET:key}}` token in `destination_templates.bodyFields`
-// MUST name a field declared in the matching spec's `fields[]` with
-// `sensitive: true`. Enforced at admin save AND at server boot.
-//
-// fields JSON shape: Array<{
-//   key: string;          // matches the token: {{SECRET:<key>}}
-//   label: string;
-//   required: boolean;
-//   sensitive: boolean;   // if true, the value is encrypted at rest
-//   validationRegex?: string;
-//   helpText?: string;
-// }>
-export const connectionAppSpecs = mysqlTable("connection_app_specs", {
-  id: int("id").autoincrement().primaryKey(),
-  appKey: varchar("appKey", { length: 64 }).notNull().unique(),
-  displayName: varchar("displayName", { length: 128 }).notNull(),
-  authType: mysqlEnum("authType", ["api_key", "oauth2", "bearer", "basic"]).notNull(),
-  category: varchar("category", { length: 32 }).default("affiliate").notNull(),
-  /** Array of ConnectionAppSpecField — see shape in the block comment above. */
-  fields: json("fields").notNull(),
-  iconUrl: varchar("iconUrl", { length: 512 }),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
-
-export type ConnectionAppSpecRow = typeof connectionAppSpecs.$inferSelect;
-export type InsertConnectionAppSpecRow = typeof connectionAppSpecs.$inferInsert;
-
-// ─── Apps (Stage 1 mirror of connection_app_specs — future DB-driven cutover) ─
-// Populated by migration 0048; runtime still uses connection_app_specs until
-// a later commit switches readers.
+// ─── Apps (authoritative app catalogue — migration 0048) ─────────────────────
+// Each row defines the shape of credentials an app requires: `authType` + `fields[]`.
+// The legacy `connection_app_specs` table was dropped in migration 0054.
 export const apps = mysqlTable("apps", {
   id: int("id").autoincrement().primaryKey(),
   appKey: varchar("appKey", { length: 64 }).notNull().unique(),

@@ -63,14 +63,12 @@ describe("resolveSpecSafe", () => {
     expect(db.select).toHaveBeenCalled();
   });
 
-  it("falls back to TS when DB has no row", async () => {
+  it("returns null when DB has no row for the appKey", async () => {
     const db = makeDbForResolveSpec([]);
 
     const spec = await resolveSpecSafe(db, "sotuvchi");
 
-    expect(spec).not.toBeNull();
-    expect(spec?.appKey).toBe("sotuvchi");
-    expect(spec?.displayName).toBe("Sotuvchi.com");
+    expect(spec).toBeNull();
   });
 
   it("returns null when key is missing in DB and TS", async () => {
@@ -81,22 +79,20 @@ describe("resolveSpecSafe", () => {
     expect(spec).toBeNull();
   });
 
-  it("falls back to TS when DB query throws", async () => {
+  it("returns null when DB query throws", async () => {
     const db = makeDbForResolveSpec(() => Promise.reject(new Error("connection reset")));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const spec = await resolveSpecSafe(db, "sotuvchi");
 
-    expect(spec).not.toBeNull();
-    expect(spec?.appKey).toBe("sotuvchi");
+    expect(spec).toBeNull();
     expect(warn).toHaveBeenCalled();
   });
 
-  it("uses TS only when db is null", async () => {
+  it("returns null when db is null", async () => {
     const spec = await resolveSpecSafe(null, "mgoods");
 
-    expect(spec).not.toBeNull();
-    expect(spec?.appKey).toBe("mgoods");
+    expect(spec).toBeNull();
   });
 
   it("logs spec source when STAGE2_SPEC_LOG=1", async () => {

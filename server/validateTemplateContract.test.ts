@@ -22,10 +22,35 @@ import {
   extractSecretKeys,
 } from "./integrations/validateTemplateContract";
 
-// ─── validateTemplateContract (Step B — async, DB-first) ─────────────────────
+// ─── validateTemplateContract (Step C — DB-only) ─────────────────────────────
 
 import type { AppRow } from "../drizzle/schema";
 import type { DbClient } from "./db";
+import type { ConnectionAppSpec } from "./integrations/connectionAppSpecs";
+
+const SOTUVCHI_SPEC: ConnectionAppSpec = {
+  appKey: "sotuvchi",
+  displayName: "Sotuvchi.com",
+  authType: "api_key",
+  category: "affiliate",
+  fields: [{ key: "api_key", label: "API Key", required: true, sensitive: true }],
+};
+
+const OPEN_AFFILIATE_SPEC: ConnectionAppSpec = {
+  appKey: "open_affiliate",
+  displayName: "Open Affiliate (no credentials)",
+  authType: "none",
+  category: "affiliate",
+  fields: [],
+};
+
+const SPEC_100K: ConnectionAppSpec = {
+  appKey: "100k",
+  displayName: "100k.uz",
+  authType: "api_key",
+  category: "affiliate",
+  fields: [{ key: "api_key", label: "API Key", required: true, sensitive: true }],
+};
 
 /** Build a mock DbClient that returns `rows` for any select chain. */
 function makeDb(rows: Partial<AppRow>[]): DbClient {
@@ -58,6 +83,7 @@ describe("validateTemplateContract — pure contract checks", () => {
     await expect(
       validateTemplateContract({
         appKey: "sotuvchi",
+        specOverride: SOTUVCHI_SPEC,
         bodyFields: [
           { key: "api_key", value: "{{SECRET:api_key}}", isSecret: true },
           { key: "name",    value: "{{name}}",           isSecret: false },
@@ -71,6 +97,7 @@ describe("validateTemplateContract — pure contract checks", () => {
     await expect(
       validateTemplateContract({
         appKey: "sotuvchi",
+        specOverride: SOTUVCHI_SPEC,
         bodyFields: [{ key: "api_key", value: "{{SECRET:wrong_key}}", isSecret: true }],
       }),
     ).rejects.toMatchObject({ code: "SECRET_KEY_UNDECLARED", details: { appKey: "sotuvchi", secretKey: "wrong_key" } });
@@ -80,6 +107,7 @@ describe("validateTemplateContract — pure contract checks", () => {
     await expect(
       validateTemplateContract({
         appKey: "sotuvchi",
+        specOverride: SOTUVCHI_SPEC,
         bodyFields: [{ key: "api_key", value: "sk_live_abc123", isSecret: true }],
       }),
     ).rejects.toMatchObject({ code: "SECRET_FIELD_NOT_TOKEN" });
@@ -107,6 +135,7 @@ describe("validateTemplateContract — pure contract checks", () => {
     await expect(
       validateTemplateContract({
         appKey: "sotuvchi",
+        specOverride: SOTUVCHI_SPEC,
         bodyFields: [{ key: "stream", value: "prefix {{SECRET:mystery}}", isSecret: false }],
       }),
     ).rejects.toMatchObject({ code: "SECRET_KEY_UNDECLARED" });
@@ -116,6 +145,7 @@ describe("validateTemplateContract — pure contract checks", () => {
     await expect(
       validateTemplateContract({
         appKey: "sotuvchi",
+        specOverride: SOTUVCHI_SPEC,
         bodyFields: [{ key: "x", value: "{{SECRET:API_KEY}}", isSecret: false }],
       }),
     ).rejects.toMatchObject({ code: "SECRET_TOKEN_MALFORMED" });
@@ -125,6 +155,7 @@ describe("validateTemplateContract — pure contract checks", () => {
     await expect(
       validateTemplateContract({
         appKey: "100k",
+        specOverride: SPEC_100K,
         bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}", isSecret: true }],
         headers: { Authorization: "Bearer {{SECRET:api_key}}" },
       }),
@@ -133,6 +164,7 @@ describe("validateTemplateContract — pure contract checks", () => {
     await expect(
       validateTemplateContract({
         appKey: "100k",
+        specOverride: SPEC_100K,
         bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}", isSecret: true }],
         headers: { Authorization: "Bearer {{SECRET:undeclared}}" },
       }),
@@ -158,6 +190,7 @@ describe("validateTemplateContract — pure contract checks", () => {
     await expect(
       validateTemplateContract({
         appKey: "open_affiliate",
+        specOverride: OPEN_AFFILIATE_SPEC,
         bodyFields: [
           { key: "name",  value: "{{name}}",  isSecret: false },
           { key: "phone", value: "{{phone}}", isSecret: false },
@@ -170,6 +203,7 @@ describe("validateTemplateContract — pure contract checks", () => {
     await expect(
       validateTemplateContract({
         appKey: "open_affiliate",
+        specOverride: OPEN_AFFILIATE_SPEC,
         bodyFields: [
           { key: "name",    value: "{{name}}",           isSecret: false },
           { key: "api_key", value: "{{SECRET:api_key}}", isSecret: true  },
@@ -182,6 +216,7 @@ describe("validateTemplateContract — pure contract checks", () => {
     await expect(
       validateTemplateContract({
         appKey: "open_affiliate",
+        specOverride: OPEN_AFFILIATE_SPEC,
         bodyFields: [{ key: "note", value: "lead from {{SECRET:api_key}}", isSecret: false }],
       }),
     ).rejects.toMatchObject({ code: "AUTH_NONE_HAS_SECRETS" });
@@ -191,6 +226,7 @@ describe("validateTemplateContract — pure contract checks", () => {
     await expect(
       validateTemplateContract({
         appKey: "open_affiliate",
+        specOverride: OPEN_AFFILIATE_SPEC,
         bodyFields: [{ key: "name", value: "{{name}}", isSecret: false }],
         headers: { Authorization: "Bearer {{SECRET:api_key}}" },
       }),
@@ -238,14 +274,15 @@ describe("validateTemplateContract — pure contract checks", () => {
     expect(spec.displayName).toBe("Override");
   });
 
-  it("falls back to TS constant when db returns no row", async () => {
+  it("throws APP_KEY_UNKNOWN when db returns no row (no TS fallback since Step C)", async () => {
     const db = makeDb([]); // empty DB
-    const spec = await validateTemplateContract({
-      appKey: "sotuvchi",
-      bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}", isSecret: true }],
-      db,
-    });
-    expect(spec.appKey).toBe("sotuvchi");
+    await expect(
+      validateTemplateContract({
+        appKey: "sotuvchi",
+        bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}", isSecret: true }],
+        db,
+      }),
+    ).rejects.toMatchObject({ code: "APP_KEY_UNKNOWN" });
   });
 });
 
@@ -263,19 +300,35 @@ describe("validateTemplatesAtBoot — aborts on broken templates (case 6)", () =
     vi.resetModules();
   });
 
-  async function withFakeDb(rows: Array<{
-    id: number;
-    name: string;
-    appKey: string | null;
-    bodyFields: unknown;
-  }>) {
-    // Build a minimal Drizzle-ish chain: select(...).from(...).where(...) → rows
-    const chain = {
-      from: () => chain,
-      where: async () => rows,
+  type BootTemplateRow = { id: number; name: string; appKey: string | null; bodyFields: unknown };
+
+  function makeAppRowForBoot(appKey: string) {
+    const isAuthless = appKey === "open_affiliate";
+    return {
+      id: 1, appKey, displayName: appKey,
+      category: "affiliate", authType: isAuthless ? "none" : "api_key",
+      fields: isAuthless ? [] : [{ key: "api_key", label: "API Key", required: true, sensitive: true }],
+      oauthConfig: null, iconUrl: null, docsUrl: null, isActive: true,
+      createdAt: new Date("2025-01-01"),
     };
+  }
+
+  async function withFakeDb(rows: BootTemplateRow[]) {
+    // Build app rows for every unique non-null appKey in the template rows so that
+    // buildAppSpecMap (which calls listAppsSafe) can populate the spec map without
+    // a TS constant fallback (removed in Step C).
+    const uniqueAppKeys = [...new Set(rows.map(r => r.appKey).filter((k): k is string => k !== null))];
+    const appRows = uniqueAppKeys.map(makeAppRowForBoot);
+
     const fakeDb = {
-      select: () => chain,
+      select: (fields?: unknown) => {
+        if (fields !== undefined) {
+          // Template query: select({ id, name, appKey, bodyFields })
+          return { from: () => ({ where: async () => rows }) };
+        }
+        // listAppsSafe query: select() with no args → .where().orderBy()
+        return { from: () => ({ where: () => ({ orderBy: async () => appRows }) }) };
+      },
     };
 
     vi.doMock("./db", () => ({

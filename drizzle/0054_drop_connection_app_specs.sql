@@ -1,0 +1,34 @@
+-- Migration 0054 — Drop legacy `connection_app_specs` table.
+--
+-- PURPOSE
+--   `connection_app_specs` was the original DB mirror of the TS constant
+--   CONNECTION_APP_SPECS (migration 0046). It was superseded by the `apps`
+--   table (migration 0048) which adds isActive, oauthConfig, docsUrl, and
+--   supports unlimited app addition without code deploy.
+--
+--   Runtime (resolveSpecSafe) has read from `apps` DB-first since Step B.
+--   All eight required appKeys (alijahon, mgoods, sotuvchi, inbaza, 100k,
+--   open_affiliate, telegram, google-sheets) must be confirmed present in
+--   `apps` via audit-connection-app-specs-drop.mjs before applying.
+--
+-- PREREQ (run before applying):
+--   railway run --service targenix.uz node tooling/mysql/audit-connection-app-specs-drop.mjs
+--   Expect: { "coverageOk": true, "requiredMissing": [] }
+--   STOP if coverageOk !== true.
+--
+-- ROLLBACK (recreate from backup):
+--   CREATE TABLE `connection_app_specs` (
+--     `id` INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+--     `appKey` VARCHAR(64) NOT NULL,
+--     `displayName` VARCHAR(128) NOT NULL,
+--     `authType` ENUM('api_key','oauth2','bearer','basic','none') NOT NULL,
+--     `category` VARCHAR(32) NOT NULL DEFAULT 'affiliate',
+--     `fields` JSON NOT NULL,
+--     `iconUrl` VARCHAR(512) DEFAULT NULL,
+--     `createdAt` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+--     UNIQUE KEY `uq_connection_app_specs_appKey` (`appKey`)
+--   );
+--   -- Then INSERT rows from backup_connection_app_specs.json
+
+--> statement-breakpoint
+DROP TABLE IF EXISTS `connection_app_specs`;

@@ -15,10 +15,9 @@
  * Non-secret body fields can still contain `{{variable}}` tokens; this
  * validator only looks at the SECRET side of the contract.
  *
- * Spec resolution order (Step B):
+ * Spec resolution order:
  *   1. `specOverride` — pre-loaded by caller (boot efficiency path)
  *   2. `apps` DB table via `resolveSpecSafe` — when `db` is provided
- *   3. TS constant `CONNECTION_APP_SPECS` — temporary fallback until Step C
  *
  * Passing `db` is enough for callers that validate a single template
  * (adminTemplatesRouter). The boot validator passes `specOverride` from a
@@ -27,7 +26,6 @@
  */
 
 import {
-  getAppSpec,
   specIsAuthless,
   type ConnectionAppSpec,
 } from "./connectionAppSpecs";
@@ -52,7 +50,7 @@ export type TemplateBodyField = {
 };
 
 export type ValidateTemplateInput = {
-  /** Must resolve to an entry in `apps` table, CONNECTION_APP_SPECS, or `specOverride`. */
+  /** Must resolve to an active row in the `apps` DB table, or be supplied via `specOverride`. */
   appKey: string | null | undefined;
   /** The template's bodyFields array. */
   bodyFields: ReadonlyArray<TemplateBodyField>;
@@ -123,21 +121,16 @@ async function resolveSpec(
   }
   // Pre-loaded spec wins — caller already did the DB round-trip (boot efficiency path).
   if (override) return override;
-  // DB-first: resolveSpecSafe hits `apps` table, falls back to TS constant internally.
+  // DB-first: resolveSpecSafe hits `apps` table only (no TS fallback since Step C).
   if (db) {
     const spec = await resolveSpecSafe(db, appKey);
     if (spec) return spec;
   }
-  // TS constant fallback — used when db is not provided (e.g. unit tests without a DB).
-  const spec = getAppSpec(appKey);
-  if (!spec) {
-    throw new TemplateContractError(
-      "APP_KEY_UNKNOWN",
-      `App '${appKey}' is not registered. Insert a row into the 'apps' table or pass a \`db\` client.`,
-      { appKey },
-    );
-  }
-  return spec;
+  throw new TemplateContractError(
+    "APP_KEY_UNKNOWN",
+    `App '${appKey}' is not registered. Insert a row into the 'apps' table or pass a \`specOverride\`.`,
+    { appKey },
+  );
 }
 
 function assertSecretKeyDeclared(

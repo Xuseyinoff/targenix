@@ -398,7 +398,7 @@ export async function resolveSecretsForDelivery(opts: {
   appKey?: string | null;
   /**
    * When set, `appKey` can resolve from the `apps` table (DB-only keys).
-   * Omitted or null → TS `getAppSpec` only (same as pre–Stage-2 delivery).
+   * Omitted or null → spec lookup skips DB (DB-only apps will not resolve).
    */
   db?: DbClient | null;
   /**

@@ -83,9 +83,9 @@ function normalizeBodyFields(raw: unknown): TemplateBodyField[] {
 }
 
 /**
- * Validate every active admin template against the in-process
- * `CONNECTION_APP_SPECS` constant. Throws `TemplatesContractBootError`
- * listing every failure; throws nothing when all templates are clean.
+ * Validate every active admin template against specs from the `apps` DB
+ * table. Throws `TemplatesContractBootError` listing every failure; throws
+ * nothing when all templates are clean.
  *
  * Returns a short summary for the caller to log on success.
  */
