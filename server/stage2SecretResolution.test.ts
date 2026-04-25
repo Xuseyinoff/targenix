@@ -30,7 +30,7 @@
  * milliseconds and need no DB or network stubs.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import {
   ConnectionSecretMissingError,
   buildCustomBody,
@@ -40,6 +40,7 @@ import {
 } from "./services/affiliateService";
 import { encrypt } from "./encryption";
 import type { Connection } from "../drizzle/schema";
+import type { DbClient } from "./db";
 
 // ─── Test fixtures ──────────────────────────────────────────────────────────
 const sampleLead = {
@@ -72,6 +73,37 @@ function makeConnection(overrides: Partial<Connection> = {}): Connection {
     updatedAt: new Date(),
   };
   return { ...base, ...overrides };
+}
+
+/**
+ * Build a minimal Drizzle-ish DbClient that returns a single `apps` row
+ * for the given appKey when `resolveSpecSafe` queries it. Used by authless
+ * tests so the spec is resolved from a DB mock rather than a TS constant
+ * (which was removed in Step C).
+ */
+function makeAuthlessDb(appKey: string): DbClient {
+  const row = {
+    id: 1,
+    appKey,
+    displayName: appKey,
+    authType: "none",
+    category: "affiliate",
+    fields: [],
+    oauthConfig: null,
+    iconUrl: null,
+    docsUrl: null,
+    isActive: true,
+    createdAt: new Date(),
+  };
+  return {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(async () => [row]),
+        })),
+      })),
+    })),
+  } as unknown as DbClient;
 }
 
 describe("Stage 2 — resolveSecretsForDelivery", () => {
@@ -238,12 +270,13 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
   // templates the runtime must skip the connection-vs-config decision
   // entirely: no secrets, no throw, no fallback read.
 
-  it("(6a) appKey=open_affiliate (TS) short-circuits to {} with no connection", async () => {
+  it("(6a) authless appKey short-circuits to {} with no connection", async () => {
     const out = await resolveSecretsForDelivery({
       connection: null,
       templateConfig: null,
       adapterContext: "dynamic-template",
       appKey: "open_affiliate",
+      db: makeAuthlessDb("open_affiliate"),
     });
     expect(out).toEqual({});
   });
@@ -258,6 +291,7 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
       templateConfig: null,
       adapterContext: "dynamic-template",
       appKey: "open_affiliate",
+      db: makeAuthlessDb("open_affiliate"),
     });
     expect(out).toEqual({});
   });
@@ -271,6 +305,7 @@ describe("Stage 2 — resolveSecretsForDelivery", () => {
       templateConfig: { secrets: { api_key: encrypt("leftover") } },
       adapterContext: "dynamic-template",
       appKey: "open_affiliate",
+      db: makeAuthlessDb("open_affiliate"),
     });
     expect(out).toEqual({});
   });

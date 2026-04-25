@@ -27,7 +27,7 @@
  *     so the user sees the more actionable error.
  */
 
-import { describe, it, expect, beforeEach, afterAll, beforeAll } from "vitest";
+import { describe, it, expect, beforeEach, afterAll, beforeAll, vi } from "vitest";
 import {
   ConnectionRequiredError,
   ConnectionSecretMissingError,
@@ -36,6 +36,37 @@ import {
 import { __resetFeatureFlagsCache } from "./services/featureFlags";
 import { encrypt } from "./encryption";
 import type { Connection } from "../drizzle/schema";
+import type { DbClient } from "./db";
+
+/**
+ * Build a minimal Drizzle-ish DbClient that returns a single authless `apps`
+ * row for the given appKey. Used by authless tests to supply the spec that
+ * `resolveSpecSafe` needs now that the TS constant was removed (Step C).
+ */
+function makeAuthlessDb(appKey: string): DbClient {
+  const row = {
+    id: 1,
+    appKey,
+    displayName: appKey,
+    authType: "none",
+    category: "affiliate",
+    fields: [],
+    oauthConfig: null,
+    iconUrl: null,
+    docsUrl: null,
+    isActive: true,
+    createdAt: new Date(),
+  };
+  return {
+    select: vi.fn(() => ({
+      from: vi.fn(() => ({
+        where: vi.fn(() => ({
+          limit: vi.fn(async () => [row]),
+        })),
+      })),
+    })),
+  } as unknown as DbClient;
+}
 
 function makeConnection(overrides: Partial<Connection> = {}): Connection {
   const base: Connection = {
@@ -243,6 +274,7 @@ describe("Stage 3 — resolveSecretsForDelivery under USE_CONNECTION_SECRETS_ONL
       templateConfig: { secrets: { api_key: encrypt("ignored") } },
       adapterContext: "dynamic-template",
       appKey: "open_affiliate",
+      db: makeAuthlessDb("open_affiliate"),
       userId: 1,
     });
     expect(out).toEqual({});
