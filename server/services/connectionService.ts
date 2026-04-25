@@ -75,7 +75,6 @@ export async function upsertGoogleConnection(
         status: "active",
         lastVerifiedAt: new Date(),
         oauthTokenId,
-        googleAccountId: null,
       })
       .where(eq(connections.id, existing.id));
     return existing.id;

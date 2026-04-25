@@ -393,6 +393,20 @@
       "when": 1777920000000,
       "tag": "0056_app_actions_semantic_action_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "5",
+      "when": 1778006400000,
+      "tag": "0058_drop_connections_google_account_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "5",
+      "when": 1778006410000,
+      "tag": "0060_drop_connections_google_account_id_final",
+      "breakpoints": true
     }
   ]
 }

@@ -411,8 +411,6 @@ export const connections = mysqlTable("connections", {
   displayName: varchar("displayName", { length: 255 }).notNull(),
   /** Lifecycle status; adapters treat non-'active' as "fall back to templateConfig". */
   status: mysqlEnum("status", ["active", "expired", "revoked", "error"]).default("active").notNull(),
-  /** @deprecated use oauthTokenId — legacy google_accounts.id (integration). */
-  googleAccountId: int("googleAccountId"),
   /** OAuth token row for google_sheets (migration 0055). */
   oauthTokenId: int("oauthTokenId"),
   /** Encrypted credentials for telegram_bot / api_key types. NULL for google_sheets. */

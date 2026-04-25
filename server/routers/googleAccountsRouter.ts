@@ -163,7 +163,7 @@ export const googleAccountsRouter = router({
 
       await db
         .update(connections)
-        .set({ oauthTokenId: null, googleAccountId: null })
+        .set({ oauthTokenId: null })
         .where(
           and(
             eq(connections.userId, userId),
