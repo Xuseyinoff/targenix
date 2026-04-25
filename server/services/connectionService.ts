@@ -17,7 +17,7 @@
  *      templateConfig (see telegramAdapter / googleSheetsAdapter).
  */
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { connections, oauthTokens, targetWebsites } from "../../drizzle/schema";
 import type { DbClient } from "../db";
 import { validateConnectionType } from "../utils/validateConnectionType";
@@ -55,40 +55,26 @@ export async function upsertGoogleConnection(
   const { userId, oauthTokenId, email } = input;
   const displayName = input.displayName?.trim() || email || "Google account";
 
-  const [existing] = await db
-    .select({ id: connections.id })
-    .from(connections)
-    .where(
-      and(
-        eq(connections.userId, userId),
-        eq(connections.type, validateConnectionType("google_sheets")),
-        eq(connections.oauthTokenId, oauthTokenId),
-      ),
-    )
-    .limit(1);
-
-  if (existing) {
-    await db
-      .update(connections)
-      .set({
+  const [result] = await db
+    .insert(connections)
+    .values({
+      userId,
+      type: "google_sheets",
+      displayName,
+      status: "active",
+      oauthTokenId,
+      lastVerifiedAt: new Date(),
+    })
+    .onDuplicateKeyUpdate({
+      set: {
+        id: sql`LAST_INSERT_ID(id)`,
         displayName,
         status: "active",
         lastVerifiedAt: new Date(),
         oauthTokenId,
-      })
-      .where(eq(connections.id, existing.id));
-    return existing.id;
-  }
-
-  const [inserted] = await db.insert(connections).values({
-    userId,
-    type: "google_sheets",
-    displayName,
-    status: "active",
-    oauthTokenId,
-    lastVerifiedAt: new Date(),
-  });
-  return (inserted as unknown as { insertId: number }).insertId;
+      },
+    });
+  return (result as unknown as { insertId: number }).insertId;
 }
 
 /**
@@ -153,30 +139,27 @@ export async function upsertOAuthConnection(
   const { userId, appKey, oauthTokenId } = input;
   const displayName = input.displayName.trim() || appKey;
 
-  const [existing] = await db
-    .select({ id: connections.id })
-    .from(connections)
-    .where(and(eq(connections.userId, userId), eq(connections.oauthTokenId, oauthTokenId)))
-    .limit(1);
-
-  if (existing) {
-    await db
-      .update(connections)
-      .set({ displayName, status: "active", lastVerifiedAt: new Date() })
-      .where(eq(connections.id, existing.id));
-    return existing.id;
-  }
-
-  const [inserted] = await db.insert(connections).values({
-    userId,
-    type: validateConnectionType("oauth2"),
-    appKey,
-    displayName,
-    status: "active",
-    oauthTokenId,
-    lastVerifiedAt: new Date(),
-  });
-  return (inserted as unknown as { insertId: number }).insertId;
+  const [result] = await db
+    .insert(connections)
+    .values({
+      userId,
+      type: validateConnectionType("oauth2"),
+      appKey,
+      displayName,
+      status: "active",
+      oauthTokenId,
+      lastVerifiedAt: new Date(),
+    })
+    .onDuplicateKeyUpdate({
+      set: {
+        id: sql`LAST_INSERT_ID(id)`,
+        displayName,
+        status: "active",
+        lastVerifiedAt: new Date(),
+        oauthTokenId,
+      },
+    });
+  return (result as unknown as { insertId: number }).insertId;
 }
 
 /**

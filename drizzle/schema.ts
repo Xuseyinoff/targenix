@@ -426,6 +426,9 @@ export const connections = mysqlTable("connections", {
   uniqUserAppLabel: uniqueIndex("uniq_user_app_label").on(
     t.userId, t.appKey, t.displayName,
   ),
+  uniqUserOauthToken: uniqueIndex("uniq_connections_user_oauth_token").on(
+    t.userId, t.oauthTokenId,
+  ),
 }));
 
 export type Connection = typeof connections.$inferSelect;

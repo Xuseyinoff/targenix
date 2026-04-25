@@ -16,8 +16,11 @@ import type { DbClient } from "../db";
 
 // ─── Minimal chainable DB mock ──────────────────────────────────────────────
 // The service only uses a handful of Drizzle's builder methods. We recreate
-// the exact chain shape (`.select().from().where().limit()` etc.) with a
-// configurable return value per call.
+// the exact chain shape with configurable return values.
+//
+// insert().values() returns a "fluent promise" — thenable AND has
+// onDuplicateKeyUpdate() — so it works for both direct-await callers
+// (insertTelegramConnection) and upsert callers (upsertGoogleConnection).
 
 type QueueEntry = unknown | { insertId: number };
 
@@ -47,8 +50,15 @@ function makeDb(opts: {
     select: vi.fn(selectChain),
     insert: vi.fn(() => ({
       values: vi.fn(() => {
-        const result = insertQueue.shift();
-        return Promise.resolve([result]);
+        const result = insertQueue.shift() ?? null;
+        const resultArray = [result];
+        return {
+          // thenable — for `const [r] = await db.insert(...).values(...)`
+          then: (resolve: (v: unknown[]) => unknown, reject?: (e: unknown) => unknown) =>
+            Promise.resolve(resultArray).then(resolve, reject),
+          // chained — for `const [r] = await db.insert(...).values(...).onDuplicateKeyUpdate(...)`
+          onDuplicateKeyUpdate: vi.fn(() => Promise.resolve(resultArray)),
+        };
       }),
     })),
     update: vi.fn(() => ({
@@ -64,11 +74,8 @@ function makeDb(opts: {
 }
 
 describe("connectionService.upsertGoogleConnection", () => {
-  it("inserts a new row when no existing connection matches", async () => {
-    const db = makeDb({
-      selectResults: [[]],
-      insertResults: [{ insertId: 42 }],
-    });
+  it("inserts a new connection and returns the new id", async () => {
+    const db = makeDb({ insertResults: [{ insertId: 42 }] });
 
     const id = await upsertGoogleConnection(db, {
       userId: 1,
@@ -77,12 +84,14 @@ describe("connectionService.upsertGoogleConnection", () => {
     });
 
     expect(id).toBe(42);
+    // atomic upsert — no prior SELECT round-trip
+    expect(db.select).not.toHaveBeenCalled();
   });
 
-  it("reuses the existing row instead of inserting a duplicate", async () => {
-    const db = makeDb({
-      selectResults: [[{ id: 77 }]],
-    });
+  it("returns the existing id on duplicate key (update path)", async () => {
+    // On DUPLICATE KEY UPDATE … LAST_INSERT_ID(id), MySQL returns the existing
+    // row's id as insertId. The mock simulates that here.
+    const db = makeDb({ insertResults: [{ insertId: 77 }] });
 
     const id = await upsertGoogleConnection(db, {
       userId: 1,
@@ -91,13 +100,11 @@ describe("connectionService.upsertGoogleConnection", () => {
     });
 
     expect(id).toBe(77);
+    expect(db.select).not.toHaveBeenCalled();
   });
 
   it("falls back to the email when displayName is empty", async () => {
-    const db = makeDb({
-      selectResults: [[]],
-      insertResults: [{ insertId: 5 }],
-    });
+    const db = makeDb({ insertResults: [{ insertId: 5 }] });
 
     const id = await upsertGoogleConnection(db, {
       userId: 1,
