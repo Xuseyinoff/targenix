@@ -405,9 +405,8 @@ describe("buildCustomBody — SECRET support", () => {
         { key: "api_key", value: "{{SECRET:api_key}}" },
         { key: "name", value: "{{name}}" },
       ],
-      secrets: { api_key: ciphertext },
     };
-    const { body } = buildCustomBody(cfg, varCtx);
+    const { body } = buildCustomBody(cfg, varCtx, { api_key: ciphertext });
     const params = new URLSearchParams(body as string);
     expect(params.get("api_key")).toBe("plain-key-form");
     expect(params.get("name")).toBe("Ali Valiyev");
@@ -421,9 +420,8 @@ describe("buildCustomBody — SECRET support", () => {
         { key: "api_key", value: "{{SECRET:api_key}}" },
         { key: "name", value: "{{name}}" },
       ],
-      secrets: { api_key: ciphertext },
     };
-    const { formData, contentTypeHeader } = buildCustomBody(cfg, varCtx);
+    const { formData, contentTypeHeader } = buildCustomBody(cfg, varCtx, { api_key: ciphertext });
     expect(contentTypeHeader).toBe("multipart/form-data");
     // form-data's internal buffer holds the resolved plaintext; we assert
     // via getBuffer() because the library does not expose fields() for
@@ -438,9 +436,8 @@ describe("buildCustomBody — SECRET support", () => {
     const cfg = {
       contentType: "json",
       bodyTemplate: '{"api_key":"{{SECRET:api_key}}","name":"{{name}}"}',
-      secrets: { api_key: ciphertext },
     };
-    const { body, contentTypeHeader } = buildCustomBody(cfg, varCtx);
+    const { body, contentTypeHeader } = buildCustomBody(cfg, varCtx, { api_key: ciphertext });
     expect(contentTypeHeader).toBe("application/json");
     expect(body).toEqual({ api_key: "plain-key-json", name: "Ali Valiyev" });
   });
@@ -508,37 +505,42 @@ describe("buildCustomBody — SECRET support", () => {
     const cfg = {
       contentType: "form-urlencoded",
       bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}" }],
-      secrets: { api_key: "not-a-valid-ciphertext" },
     };
-    expectDeliveryBlocked(() => buildCustomBody(cfg, varCtx), "api_key");
+    expectDeliveryBlocked(
+      () => buildCustomBody(cfg, varCtx, { api_key: "not-a-valid-ciphertext" }),
+      "api_key",
+    );
   });
 
   it("(D3-body-multipart) broken SECRET in multipart throws DeliveryBlockedError", () => {
     const cfg = {
       contentType: "multipart",
       bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}" }],
-      secrets: { api_key: "aabbccddeeff00112233445566778899:ff" },
     };
-    expectDeliveryBlocked(() => buildCustomBody(cfg, varCtx), "api_key");
+    expectDeliveryBlocked(
+      () => buildCustomBody(cfg, varCtx, { api_key: "aabbccddeeff00112233445566778899:ff" }),
+      "api_key",
+    );
   });
 
   it("(D3-body-json) broken SECRET in JSON bodyTemplate throws DeliveryBlockedError", () => {
     const cfg = {
       contentType: "json",
       bodyTemplate: '{"api_key":"{{SECRET:api_key}}"}',
-      secrets: { api_key: "not-a-valid-ciphertext" },
     };
-    expectDeliveryBlocked(() => buildCustomBody(cfg, varCtx), "api_key");
+    expectDeliveryBlocked(
+      () => buildCustomBody(cfg, varCtx, { api_key: "not-a-valid-ciphertext" }),
+      "api_key",
+    );
   });
 
   it("(D3-body-form) DeliveryBlockedError adapterContext identifies the failing stage", () => {
     const cfg = {
       contentType: "form-urlencoded",
       bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}" }],
-      secrets: { api_key: "not-a-valid-ciphertext" },
     };
     try {
-      buildCustomBody(cfg, varCtx);
+      buildCustomBody(cfg, varCtx, { api_key: "not-a-valid-ciphertext" });
       throw new Error("expected throw");
     } catch (err) {
       expect(err).toBeInstanceOf(DeliveryBlockedError);
@@ -569,9 +571,8 @@ describe("buildHeaders — SECRET support", () => {
         "X-Api-Key": "{{SECRET:api_key}}",
         Authorization: "Bearer {{SECRET:api_key}}",
       },
-      secrets: { api_key: ciphertext },
     };
-    const headers = buildHeaders(cfg, varCtx, "application/json");
+    const headers = buildHeaders(cfg, varCtx, "application/json", { api_key: ciphertext });
     expect(headers["X-Api-Key"]).toBe("plain-header-key");
     expect(headers["Authorization"]).toBe("Bearer plain-header-key");
     expect(headers["Content-Type"]).toBe("application/json");
@@ -607,10 +608,9 @@ describe("buildHeaders — SECRET support", () => {
   it("(D3-headers) broken SECRET in Authorization throws DeliveryBlockedError", () => {
     const cfg = {
       headers: { Authorization: "Bearer {{SECRET:api_key}}" },
-      secrets: { api_key: "not-a-valid-ciphertext" },
     };
     try {
-      buildHeaders(cfg, varCtx, "application/json");
+      buildHeaders(cfg, varCtx, "application/json", { api_key: "not-a-valid-ciphertext" });
       throw new Error("expected DeliveryBlockedError");
     } catch (err) {
       expect(err).toBeInstanceOf(DeliveryBlockedError);
@@ -633,13 +633,12 @@ describe("buildHeaders — SECRET support", () => {
         "X-Api-Key": "{{SECRET:api_key}}",
         Authorization: "Bearer {{SECRET:auth_token}}",
       },
-      secrets: {
-        api_key: validCipher,
-        auth_token: "aabbccddeeff00112233445566778899:ff",
-      },
     };
     try {
-      buildHeaders(cfg, varCtx, "application/json");
+      buildHeaders(cfg, varCtx, "application/json", {
+        api_key: validCipher,
+        auth_token: "aabbccddeeff00112233445566778899:ff",
+      });
       throw new Error("expected DeliveryBlockedError");
     } catch (err) {
       expect(err).toBeInstanceOf(DeliveryBlockedError);

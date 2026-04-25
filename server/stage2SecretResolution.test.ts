@@ -331,31 +331,28 @@ describe("Stage 2 — buildCustomBody / buildHeaders secretsOverride", () => {
 
   const varCtx = buildVariableContext(sampleLead, { offer_id: "42" });
 
-  // ── Test 1 — no override, cfg.secrets still works (legacy-compat) ───────
-  it("(body/legacy) secretsOverride omitted → falls back to cfg.secrets", () => {
-    const cipher = encrypt("legacy-api-key");
+  // ── Test 1 — no override → secrets are empty, SECRET soft-misses ────────
+  it("(body/no-override) secretsOverride omitted → SECRET field is empty string", () => {
     const cfg = {
       contentType: "form-urlencoded",
       bodyFields: [
         { key: "api_key", value: "{{SECRET:api_key}}" },
         { key: "offer_id", value: "{{offer_id}}" },
       ],
-      secrets: { api_key: cipher },
     };
     const { body } = buildCustomBody(cfg, varCtx);
     const params = new URLSearchParams(body as string);
-    expect(params.get("api_key")).toBe("legacy-api-key");
+    // No override → secrets are {} → SECRET soft-misses to empty string
+    expect(params.get("api_key")).toBe("");
     expect(params.get("offer_id")).toBe("42");
   });
 
-  // ── Test 2 — override wins over cfg.secrets ─────────────────────────────
-  it("(body/override) secretsOverride present → takes precedence over cfg.secrets", () => {
-    const cipherLegacy = encrypt("legacy-will-be-ignored");
+  // ── Test 2 — override drives resolution ──────────────────────────────────
+  it("(body/override) secretsOverride provided → resolved from connection secrets", () => {
     const cipherFromConn = encrypt("from-connection");
     const cfg = {
       contentType: "form-urlencoded",
       bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}" }],
-      secrets: { api_key: cipherLegacy },
     };
     const { body } = buildCustomBody(cfg, varCtx, {
       api_key: cipherFromConn,

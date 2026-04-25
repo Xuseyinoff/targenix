@@ -1222,12 +1222,7 @@ export const targetWebsitesRouter = router({
         const durationMs = Date.now() - t0;
 
         // Build preview using the same body builder and mask any secret fields.
-        const previewFields = buildBody(
-          dynTpl,
-          { templateConfig: site.templateConfig },
-          sampleLead,
-          varOverridesWithFallback,
-        );
+        const previewFields = buildBody(dynTpl, sampleLead, varOverridesWithFallback);
         for (const field of (dynTpl.bodyFields as Array<{ key: string; value: string; isSecret: boolean }>) ?? []) {
           if (field.value.startsWith("{{SECRET:") && field.value.endsWith("}}")) {
             previewFields[field.key] = "••••••••";
