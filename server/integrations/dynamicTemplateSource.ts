@@ -13,8 +13,35 @@ const log =
     ? (...a: unknown[]) => console.log("[stage2:dynamicTemplate]", ...a)
     : () => {};
 
-function actionKeyForTemplateId(tid: number) {
-  return `t${tid}`;
+/**
+ * Legacy mirror keys were `t${templateId}`. For the first few built-in affiliate
+ * templates we migrated to semantic keys in `app_actions.actionKey`, but we must
+ * stay backward compatible with existing DB contents.
+ */
+const LEGACY_TO_SEMANTIC: Record<string, string> = {
+  t1: "send_lead",
+  t2: "append_row",
+  t3: "send_message",
+  t4: "create_contact",
+  t5: "update_deal",
+};
+
+function actionKeysForTemplateId(tid: number): string[] {
+  const legacy = `t${tid}`;
+  const semantic = LEGACY_TO_SEMANTIC[legacy];
+  return semantic ? [semantic, legacy] : [legacy];
+}
+
+function resolveOverlayAction(
+  byKey: Map<string, AppActionRow>,
+  appKey: string,
+  templateId: number,
+): AppActionRow | null {
+  for (const k of actionKeysForTemplateId(templateId)) {
+    const a = byKey.get(`${appKey}::${k}`);
+    if (a) return a;
+  }
+  return null;
 }
 
 /**
@@ -85,11 +112,11 @@ export async function findAppActionIdForTemplate(
   appKey: string | null | undefined,
 ): Promise<number | null> {
   if (appKey == null || String(appKey).trim() === "") return null;
-  const ak = actionKeyForTemplateId(templateId);
+  const aks = actionKeysForTemplateId(templateId);
   const [r] = await db
     .select({ id: appActions.id })
     .from(appActions)
-    .where(and(eq(appActions.appKey, appKey), eq(appActions.actionKey, ak)))
+    .where(and(eq(appActions.appKey, appKey), inArray(appActions.actionKey, aks)))
     .limit(1);
   return r?.id ?? null;
 }
@@ -108,9 +135,10 @@ export async function listDestinationTemplatesWithMirrorOverlay(db: DbClient): P
   const withKeys = dtRows.filter((d) => d.appKey && String(d.appKey).trim() !== "");
   if (withKeys.length === 0) return dtRows;
 
-  const pairConds = withKeys.map((d) =>
-    and(eq(appActions.appKey, d.appKey!), eq(appActions.actionKey, actionKeyForTemplateId(d.id))),
-  );
+  const pairConds = withKeys.map((d) => {
+    const aks = actionKeysForTemplateId(d.id);
+    return and(eq(appActions.appKey, d.appKey!), inArray(appActions.actionKey, aks));
+  });
   const orPred = pairConds.length === 1 ? pairConds[0]! : or(...pairConds);
 
   const aaRows = await db
@@ -125,7 +153,7 @@ export async function listDestinationTemplatesWithMirrorOverlay(db: DbClient): P
 
   return dtRows.map((dt) => {
     if (!dt.appKey) return dt;
-    const a = byKey.get(`${dt.appKey}::${actionKeyForTemplateId(dt.id)}`);
+    const a = resolveOverlayAction(byKey, dt.appKey, dt.id);
     if (!a) {
       log("list overlay miss — legacy only", { templateId: dt.id });
       return dt;
@@ -178,9 +206,10 @@ export async function fetchDestinationTemplatesWithOverlayByIds(
   const withKeys = dtRows.filter((d) => d.appKey && String(d.appKey).trim() !== "");
   if (withKeys.length === 0) return out;
 
-  const pairConds = withKeys.map((d) =>
-    and(eq(appActions.appKey, d.appKey!), eq(appActions.actionKey, actionKeyForTemplateId(d.id))),
-  );
+  const pairConds = withKeys.map((d) => {
+    const aks = actionKeysForTemplateId(d.id);
+    return and(eq(appActions.appKey, d.appKey!), inArray(appActions.actionKey, aks));
+  });
   const orPred = pairConds.length === 1 ? pairConds[0]! : or(...pairConds);
   const aaRows = await db
     .select()
@@ -193,7 +222,7 @@ export async function fetchDestinationTemplatesWithOverlayByIds(
   }
 
   for (const dt of withKeys) {
-    const a = byKey.get(`${dt.appKey!}::${actionKeyForTemplateId(dt.id)}`);
+    const a = resolveOverlayAction(byKey, dt.appKey!, dt.id);
     if (!a) continue;
     out.set(dt.id, {
       ...dt,

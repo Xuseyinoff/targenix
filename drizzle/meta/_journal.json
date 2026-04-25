@@ -386,6 +386,13 @@
       "when": 1777833600000,
       "tag": "0055_oauth_tokens_universal",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "5",
+      "when": 1777920000000,
+      "tag": "0056_app_actions_semantic_action_keys",
+      "breakpoints": true
     }
   ]
 }
