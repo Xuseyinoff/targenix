@@ -9,6 +9,7 @@ import { logsRouter } from "./routers/logsRouter";
 import { telegramRouter } from "./routers/telegramRouter";
 import { adminBackfillRouter } from "./routers/adminBackfillRouter";
 import { adminTemplatesRouter } from "./routers/adminTemplatesRouter";
+import { adminAppsRouter } from "./routers/adminAppsRouter";
 import { adminLeadsRouter } from "./routers/adminLeadsRouter";
 import { adAnalyticsRouter } from "./routers/adAnalyticsRouter";
 import { systemRouter } from "./_core/systemRouter";
@@ -33,6 +34,7 @@ export const appRouter = router({
   telegram: telegramRouter,
   adminBackfill: adminBackfillRouter,
   adminTemplates: adminTemplatesRouter,
+  adminApps: adminAppsRouter,
   adminLeads: adminLeadsRouter,
   adAnalytics: adAnalyticsRouter,
 });
