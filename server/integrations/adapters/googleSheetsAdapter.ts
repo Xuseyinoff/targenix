@@ -23,8 +23,9 @@ interface GoogleSheetsAdapterConfig {
 
 /**
  * Try the unified connections table first. On any failure (missing row, owner
- * mismatch, wrong type, inactive status, missing googleAccountId, DB error)
- * return null so the caller can fall back to templateConfig.googleAccountId.
+ * mismatch, wrong type, inactive status, missing oauthTokenId, DB error)
+ * return null so the caller can fall back to templateConfig.googleAccountId
+ * (which stores the integration `oauth_tokens.id`).
  *
  * Never throws — delivery must remain robust while Step 3 rolls out.
  */
@@ -62,7 +63,7 @@ async function tryResolveGoogleAccountIdFromConnection(
       return null;
     }
 
-    const gid = row.googleAccountId;
+    const gid = row.oauthTokenId;
     if (typeof gid !== "number" || !Number.isFinite(gid) || gid < 1) return null;
     return gid;
   } catch (err) {

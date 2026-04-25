@@ -1,6 +1,6 @@
 /**
  * connectionService — unit tests for the helpers exercised by the
- * connectionsRouter and googleOAuth callback. We stub the Drizzle DbClient
+ * connectionsRouter and OAuth callback. We stub the Drizzle DbClient
  * shape so the service never talks to a real database during CI.
  */
 
@@ -72,7 +72,7 @@ describe("connectionService.upsertGoogleConnection", () => {
 
     const id = await upsertGoogleConnection(db, {
       userId: 1,
-      googleAccountId: 99,
+      oauthTokenId: 99,
       email: "ali@example.com",
     });
 
@@ -86,7 +86,7 @@ describe("connectionService.upsertGoogleConnection", () => {
 
     const id = await upsertGoogleConnection(db, {
       userId: 1,
-      googleAccountId: 99,
+      oauthTokenId: 99,
       email: "ali@example.com",
     });
 
@@ -101,7 +101,7 @@ describe("connectionService.upsertGoogleConnection", () => {
 
     const id = await upsertGoogleConnection(db, {
       userId: 1,
-      googleAccountId: 2,
+      oauthTokenId: 2,
       email: "fallback@example.com",
       displayName: "   ",
     });
@@ -167,24 +167,24 @@ describe("connectionService.mapConnectionUsage", () => {
 describe("connectionService.resolveGoogleAccountForConnection", () => {
   it("returns null when the connection is not a google_sheets type", async () => {
     const db = makeDb({
-      selectResults: [[{ googleAccountId: 1, type: "telegram_bot" }]],
+      selectResults: [[{ oauthTokenId: 1, type: "telegram_bot" }]],
     });
     const acc = await resolveGoogleAccountForConnection(db, 1);
     expect(acc).toBeNull();
   });
 
-  it("returns null when googleAccountId is missing", async () => {
+  it("returns null when oauthTokenId is missing", async () => {
     const db = makeDb({
-      selectResults: [[{ googleAccountId: null, type: "google_sheets" }]],
+      selectResults: [[{ oauthTokenId: null, type: "google_sheets" }]],
     });
     const acc = await resolveGoogleAccountForConnection(db, 1);
     expect(acc).toBeNull();
   });
 
-  it("returns the linked google_accounts row when present", async () => {
+  it("returns the linked oauth_tokens row when present", async () => {
     const db = makeDb({
       selectResults: [
-        [{ googleAccountId: 99, type: "google_sheets" }],
+        [{ oauthTokenId: 99, type: "google_sheets" }],
         [
           {
             id: 99,

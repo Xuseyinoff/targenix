@@ -24,9 +24,8 @@ import * as React from "react";
 const GOOGLE_OAUTH_CHANNEL = "targenix_google_oauth";
 
 /**
- * Shape of messages posted by /auth/google/callback to this window. Kept in
- * lockstep with server/routes/googleOAuth.ts — if you extend it, extend the
- * server and the type union below together.
+ * Shape of messages from GET /api/oauth/google/callback (integration flow):
+ * `server/routes/oauthRouter.ts` (popup HTML + BroadcastChannel).
  */
 export type GoogleOAuthMessage =
   | { type: "google_oauth_success"; accountId: number; email?: string }
@@ -130,7 +129,7 @@ export function useGoogleOAuthPopup(
     completedRef.current = false;
 
     try {
-      const res = await fetch("/api/auth/google/initiate", {
+      const res = await fetch("/api/oauth/google/initiate?mode=integration", {
         credentials: "include",
       });
       const data = (await res.json()) as { oauthUrl?: string; error?: string };

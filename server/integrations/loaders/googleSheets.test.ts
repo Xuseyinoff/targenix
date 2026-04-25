@@ -71,7 +71,7 @@ describe("resolveGoogleAccountId", () => {
           userId: 1,
           type: "telegram_bot",
           status: "active",
-          googleAccountId: 5,
+          oauthTokenId: null,
         },
       ]),
     });
@@ -89,14 +89,14 @@ describe("resolveGoogleAccountId", () => {
           userId: 1,
           type: "google_sheets",
           status: "expired",
-          googleAccountId: 5,
+          oauthTokenId: 5,
         },
       ]),
     });
     await expect(resolveGoogleAccountId(ctx)).rejects.toThrow(/Reconnect/);
   });
 
-  it("throws when googleAccountId is missing", async () => {
+  it("throws when oauthTokenId is missing", async () => {
     const ctx = makeCtx({
       connectionId: 1,
       db: makeDb([
@@ -105,16 +105,16 @@ describe("resolveGoogleAccountId", () => {
           userId: 1,
           type: "google_sheets",
           status: "active",
-          googleAccountId: null,
+          oauthTokenId: null,
         },
       ]),
     });
     await expect(resolveGoogleAccountId(ctx)).rejects.toThrow(
-      /missing a Google account link/,
+      /missing a Google OAuth link/,
     );
   });
 
-  it("returns the googleAccountId on a healthy connection", async () => {
+  it("returns oauthTokenId for the service on a healthy connection", async () => {
     const ctx = makeCtx({
       connectionId: 7,
       db: makeDb([
@@ -123,7 +123,7 @@ describe("resolveGoogleAccountId", () => {
           userId: 1,
           type: "google_sheets",
           status: "active",
-          googleAccountId: 99,
+          oauthTokenId: 99,
         },
       ]),
     });
@@ -137,7 +137,7 @@ describe("listSpreadsheets loader", () => {
     userId: 1,
     type: "google_sheets",
     status: "active",
-    googleAccountId: 99,
+    oauthTokenId: 99,
   };
 
   it("returns mapped spreadsheet options on success", async () => {
@@ -190,7 +190,7 @@ describe("listSheetTabs loader", () => {
     userId: 1,
     type: "google_sheets",
     status: "active",
-    googleAccountId: 99,
+    oauthTokenId: 99,
   };
 
   it("requires spreadsheetId in params", async () => {
@@ -222,7 +222,7 @@ describe("getSheetHeaders loader", () => {
     userId: 1,
     type: "google_sheets",
     status: "active",
-    googleAccountId: 99,
+    oauthTokenId: 99,
   };
 
   it("requires both spreadsheetId and sheetName", async () => {

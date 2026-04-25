@@ -379,6 +379,13 @@
       "when": 1777747200000,
       "tag": "0053_connections_type_varchar",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "5",
+      "when": 1777833600000,
+      "tag": "0055_oauth_tokens_universal",
+      "breakpoints": true
     }
   ]
 }

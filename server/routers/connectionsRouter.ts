@@ -13,8 +13,8 @@
  *                          bot has the chat before storing.
  *
  * Google connections are NOT created here — they flow through
- * /api/auth/google/callback (see googleOAuth.ts) which already encrypts
- * and stores tokens and then calls upsertGoogleConnection().
+ * GET /api/oauth/google/callback, which stores tokens in `oauth_tokens` and
+ * then calls `upsertGoogleConnection()`.
  */
 
 import { and, desc, eq, inArray } from "drizzle-orm";
@@ -25,7 +25,7 @@ import { getDb } from "../db";
 import {
   connections,
   destinationTemplates,
-  googleAccounts,
+  oauthTokens,
   targetWebsites,
 } from "../../drizzle/schema";
 import { encrypt } from "../encryption";
@@ -53,7 +53,7 @@ interface ListedConnection {
   createdAt: Date;
   lastVerifiedAt: Date | null;
   usageCount: number;
-  /** google_sheets only — preview of linked google_accounts row */
+  /** google_sheets only — `oauth_tokens.id` (client still uses `accountId`) */
   google?: {
     accountId: number;
     email: string;
@@ -114,7 +114,7 @@ export const connectionsRouter = router({
           type: connections.type,
           displayName: connections.displayName,
           status: connections.status,
-          googleAccountId: connections.googleAccountId,
+          oauthTokenId: connections.oauthTokenId,
           credentialsJson: connections.credentialsJson,
           createdAt: connections.createdAt,
           lastVerifiedAt: connections.lastVerifiedAt,
@@ -127,9 +127,9 @@ export const connectionsRouter = router({
 
       const usage = await mapConnectionUsage(db, userId, rows.map((r) => r.id));
 
-      // Fetch google_accounts in one round-trip for google_sheets rows
-      const googleIds = rows
-        .map((r) => r.googleAccountId)
+      // Fetch oauth_tokens in one round-trip for google_sheets rows
+      const tokenIds = rows
+        .map((r) => r.oauthTokenId)
         .filter((x): x is number => typeof x === "number");
       const googleById = new Map<
         number,
@@ -141,17 +141,17 @@ export const connectionsRouter = router({
           expiryDate: Date | null;
         }
       >();
-      if (googleIds.length > 0) {
+      if (tokenIds.length > 0) {
         const accounts = await db
           .select({
-            id: googleAccounts.id,
-            email: googleAccounts.email,
-            name: googleAccounts.name,
-            picture: googleAccounts.picture,
-            expiryDate: googleAccounts.expiryDate,
+            id: oauthTokens.id,
+            email: oauthTokens.email,
+            name: oauthTokens.name,
+            picture: oauthTokens.picture,
+            expiryDate: oauthTokens.expiryDate,
           })
-          .from(googleAccounts)
-          .where(inArray(googleAccounts.id, googleIds));
+          .from(oauthTokens)
+          .where(inArray(oauthTokens.id, tokenIds));
         for (const a of accounts) googleById.set(a.id, a);
       }
 
@@ -186,8 +186,8 @@ export const connectionsRouter = router({
 
       return rows.map((r): ListedConnection => {
         let google: ListedConnection["google"] = null;
-        if (r.type === "google_sheets" && r.googleAccountId) {
-          const acc = googleById.get(r.googleAccountId);
+        if (r.type === "google_sheets" && r.oauthTokenId) {
+          const acc = googleById.get(r.oauthTokenId);
           if (acc) {
             google = {
               accountId: acc.id,

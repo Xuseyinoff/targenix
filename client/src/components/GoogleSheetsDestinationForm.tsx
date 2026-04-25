@@ -22,8 +22,8 @@ import { GOOGLE_SHEETS_MAPPABLE_FIELDS } from "@shared/googleSheets";
 import { trpc } from "@/lib/trpc";
 
 /**
- * Channel + message types sent by GET /api/auth/google/callback (integration flow).
- * See server/routes/googleOAuth.ts → popupHtml().
+ * Channel + message types: GET /api/oauth/google/callback (integration). See
+ * `server/routes/oauthRouter.ts`.
  */
 const GOOGLE_OAUTH_CHANNEL = "targenix_google_oauth";
 type GoogleOAuthMessage =
@@ -323,7 +323,9 @@ export function GoogleSheetsDestinationForm({
     if (connectBusy) return;
     setConnectBusy(true);
     try {
-      const res = await fetch("/api/auth/google/initiate", { credentials: "include" });
+      const res = await fetch("/api/oauth/google/initiate?mode=integration", {
+        credentials: "include",
+      });
       const data = (await res.json()) as { oauthUrl?: string; error?: string };
       if (!res.ok || !data.oauthUrl) {
         throw new Error(data.error || t("destinations.sheets.connectFailed"));

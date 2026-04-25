@@ -329,7 +329,7 @@ export const targetWebsitesRouter = router({
             id: connections.id,
             userId: connections.userId,
             type: connections.type,
-            googleAccountId: connections.googleAccountId,
+            oauthTokenId: connections.oauthTokenId,
           })
           .from(connections)
           .where(eq(connections.id, input.connectionId))
@@ -345,15 +345,15 @@ export const targetWebsitesRouter = router({
         }
         validatedConnectionId = cx.id;
 
-        // For google-sheets, derive googleAccountId from the connection when
-        // the form did not send it explicitly — keeps templateConfig coherent
-        // as a fallback for the hybrid adapter resolution.
+        // For google-sheets, derive `googleAccountId` in templateConfig from
+        // `oauth_tokens.id` (stored in connections.oauthTokenId) when the form
+        // did not send it explicitly.
         if (
           input.templateType === "google-sheets" &&
           !input.googleAccountId &&
-          cx.googleAccountId
+          cx.oauthTokenId
         ) {
-          input = { ...input, googleAccountId: cx.googleAccountId };
+          input = { ...input, googleAccountId: cx.oauthTokenId };
         }
       }
 
@@ -536,7 +536,7 @@ export const targetWebsitesRouter = router({
             id: connections.id,
             userId: connections.userId,
             type: connections.type,
-            googleAccountId: connections.googleAccountId,
+            oauthTokenId: connections.oauthTokenId,
           })
           .from(connections)
           .where(eq(connections.id, input.connectionId))
@@ -556,9 +556,9 @@ export const targetWebsitesRouter = router({
         if (
           effectiveType === "google-sheets" &&
           input.googleAccountId === undefined &&
-          cx.googleAccountId
+          cx.oauthTokenId
         ) {
-          input = { ...input, googleAccountId: cx.googleAccountId };
+          input = { ...input, googleAccountId: cx.oauthTokenId };
         }
       }
 

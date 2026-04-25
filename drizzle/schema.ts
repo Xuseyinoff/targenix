@@ -245,6 +245,54 @@ export const googleOauthStates = mysqlTable("google_oauth_states", {
 export type GoogleOauthState = typeof googleOauthStates.$inferSelect;
 export type InsertGoogleOauthState = typeof googleOauthStates.$inferInsert;
 
+// ─── Universal OAuth (migration 0055) ─────────────────────────────────────────
+export const oauthStates = mysqlTable(
+  "oauth_states",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    state: varchar("state", { length: 128 }).notNull(),
+    userId: int("userId").notNull(),
+    provider: varchar("provider", { length: 32 }).notNull(),
+    mode: varchar("mode", { length: 32 }).notNull(),
+    appKey: varchar("appKey", { length: 64 }),
+    expiresAt: timestamp("expiresAt").notNull(),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+  },
+  (t) => ({
+    uqState: uniqueIndex("uq_oauth_states_state").on(t.state),
+    idxUser: index("idx_oauth_states_user").on(t.userId),
+  }),
+);
+
+export const oauthTokens = mysqlTable(
+  "oauth_tokens",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("userId").notNull(),
+    appKey: varchar("appKey", { length: 64 }).notNull(),
+    email: varchar("email", { length: 320 }).notNull(),
+    name: varchar("name", { length: 255 }),
+    picture: varchar("picture", { length: 512 }),
+    accessToken: text("accessToken").notNull(),
+    refreshToken: text("refreshToken"),
+    expiryDate: timestamp("expiryDate"),
+    scopes: text("scopes"),
+    createdAt: timestamp("createdAt").defaultNow().notNull(),
+    updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  },
+  (t) => ({
+    uqUserAppEmail: uniqueIndex("uq_oauth_tokens_user_app_email").on(
+      t.userId,
+      t.appKey,
+      t.email,
+    ),
+    idxUserApp: index("idx_oauth_tokens_user_app").on(t.userId, t.appKey),
+  }),
+);
+
+export type OauthTokenRow = typeof oauthTokens.$inferSelect;
+export type InsertOauthTokenRow = typeof oauthTokens.$inferInsert;
+
 // ─── Apps (authoritative app catalogue — migration 0048) ─────────────────────
 // Each row defines the shape of credentials an app requires: `authType` + `fields[]`.
 // The legacy `connection_app_specs` table was dropped in migration 0054.
@@ -344,13 +392,9 @@ export type InsertDestinationTemplate = typeof destinationTemplates.$inferInsert
 // code still reads from templateConfig until adapters migrate to connectionId.
 //
 // Credentials storage by type:
-//   google_sheets → googleAccountId references googleAccounts.id
+//   google_sheets → oauthTokenId → oauth_tokens (universal OAuth); googleAccountId legacy
 //   telegram_bot  → credentialsJson = { botTokenEncrypted, chatId }
 //   api_key       → credentialsJson = { apiKeyEncrypted, ... }
-//
-// FK enforcement (googleAccountId → google_accounts.id ON DELETE SET NULL)
-// is declared in migration 0043_connections.sql, not here. This matches the
-// convention used by other tables in this file.
 export const connections = mysqlTable("connections", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
@@ -367,8 +411,10 @@ export const connections = mysqlTable("connections", {
   displayName: varchar("displayName", { length: 255 }).notNull(),
   /** Lifecycle status; adapters treat non-'active' as "fall back to templateConfig". */
   status: mysqlEnum("status", ["active", "expired", "revoked", "error"]).default("active").notNull(),
-  /** FK → google_accounts.id (ON DELETE SET NULL at DB level). Populated only when type = 'google_sheets'. */
+  /** @deprecated use oauthTokenId — legacy google_accounts.id (integration). */
   googleAccountId: int("googleAccountId"),
+  /** OAuth token row for google_sheets (migration 0055). */
+  oauthTokenId: int("oauthTokenId"),
   /** Encrypted credentials for telegram_bot / api_key types. NULL for google_sheets. */
   credentialsJson: json("credentialsJson"),
   /** Last successful verification timestamp; used by health checks. */
@@ -378,6 +424,7 @@ export const connections = mysqlTable("connections", {
 }, (t) => ({
   idxUserId: index("idx_connections_user_id").on(t.userId),
   idxUserType: index("idx_connections_user_type").on(t.userId, t.type),
+  idxOauthToken: index("idx_connections_oauth_token_id").on(t.oauthTokenId),
   uniqUserAppLabel: uniqueIndex("uniq_user_app_label").on(
     t.userId, t.appKey, t.displayName,
   ),

@@ -4,12 +4,12 @@ vi.mock("../db", () => ({
   getDb: vi.fn(),
 }));
 
-vi.mock("../routes/googleOAuth", () => ({
+vi.mock("../oauth/tokenService", () => ({
   getValidGoogleAccessToken: vi.fn(),
 }));
 
 import { getDb } from "../db";
-import { getValidGoogleAccessToken } from "../routes/googleOAuth";
+import { getValidGoogleAccessToken } from "../oauth/tokenService";
 import { appendLeadToGoogleSheet, buildGoogleSheetsAppendRow } from "./googleSheetsService";
 
 describe("appendLeadToGoogleSheet", () => {

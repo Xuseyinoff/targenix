@@ -1,12 +1,13 @@
 /**
- * Append one row to a Google Sheet using an integration OAuth account.
- * Uses Sheets v4 values.append (RAW) — same token path as future Drive/Sheets features.
+ * Append one row to a Google Sheet using a Google Sheets integration
+ * `oauth_tokens` row. Uses Sheets v4 values.append (RAW).
  */
 
 import { and, eq } from "drizzle-orm";
-import { googleAccounts } from "../../drizzle/schema";
+import { oauthTokens } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { getValidGoogleAccessToken } from "../routes/googleOAuth";
+import { getValidGoogleAccessToken } from "../oauth/tokenService";
+import { GOOGLE_SHEETS_APP_KEY } from "../oauth/getOAuthConfig";
 import {
   GOOGLE_SHEETS_MAPPABLE_FIELDS,
   type GoogleSheetsMappableField,
@@ -125,31 +126,35 @@ function browseCacheSet<T>(m: Map<string, { at: number; data: T }>, key: string,
   m.set(key, { at: Date.now(), data });
 }
 
+/**
+ * @param googleAccountId — `oauth_tokens.id` for the Google Sheets integration
+ *   (kept for compatibility with `templateConfig.googleAccountId`).
+ */
 async function resolveIntegrationGoogleAccessToken(
   userId: number,
   googleAccountId: number,
 ): Promise<{ ok: true; accessToken: string } | { ok: false; error: string }> {
   if (!Number.isFinite(googleAccountId) || googleAccountId < 1) {
-    return { ok: false, error: "Missing or invalid googleAccountId" };
+    return { ok: false, error: "Missing or invalid Google integration id" };
   }
 
   const db = await getDb();
   if (!db) return { ok: false, error: "Database not available" };
 
   const [row] = await db
-    .select({ id: googleAccounts.id })
-    .from(googleAccounts)
+    .select({ id: oauthTokens.id })
+    .from(oauthTokens)
     .where(
       and(
-        eq(googleAccounts.id, googleAccountId),
-        eq(googleAccounts.userId, userId),
-        eq(googleAccounts.type, "integration"),
+        eq(oauthTokens.id, googleAccountId),
+        eq(oauthTokens.userId, userId),
+        eq(oauthTokens.appKey, GOOGLE_SHEETS_APP_KEY),
       ),
     )
     .limit(1);
 
   if (!row) {
-    return { ok: false, error: "Google integration account not found" };
+    return { ok: false, error: "Google integration token not found" };
   }
 
   try {
@@ -423,8 +428,8 @@ export function buildGoogleSheetsAppendRow(params: {
 }
 
 export async function appendLeadToGoogleSheet(params: {
-  /** Owner of the destination — must match google_accounts.userId */
   userId: number;
+  /** `oauth_tokens.id` (see templateConfig `googleAccountId`) */
   googleAccountId: number;
   spreadsheetId: string;
   sheetName: string;
@@ -452,19 +457,19 @@ export async function appendLeadToGoogleSheet(params: {
   }
 
   const [acct] = await db
-    .select({ id: googleAccounts.id })
-    .from(googleAccounts)
+    .select({ id: oauthTokens.id })
+    .from(oauthTokens)
     .where(
       and(
-        eq(googleAccounts.id, googleAccountId),
-        eq(googleAccounts.userId, userId),
-        eq(googleAccounts.type, "integration"),
+        eq(oauthTokens.id, googleAccountId),
+        eq(oauthTokens.userId, userId),
+        eq(oauthTokens.appKey, GOOGLE_SHEETS_APP_KEY),
       ),
     )
     .limit(1);
 
   if (!acct) {
-    return { success: false, error: "Google integration account not found", errorType: "validation" };
+    return { success: false, error: "Google integration token not found", errorType: "validation" };
   }
 
   let accessToken: string;

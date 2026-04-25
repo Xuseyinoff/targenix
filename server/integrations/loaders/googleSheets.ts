@@ -10,7 +10,7 @@
  * Connection resolution:
  *   All three loaders receive `connectionId` from the form state. We look up
  *   the connections row, verify ownership + type + active status, and pull
- *   out the googleAccountId to reuse the existing googleSheetsService
+ *   out `oauthTokenId` (as googleAccountId in the service) for googleSheetsService
  *   helpers. Any failure is surfaced as a LoaderValidationError so the client
  *   can prompt the user to fix their connection.
  */
@@ -60,10 +60,10 @@ async function resolveGoogleAccountId(ctx: LoadOptionsContext): Promise<number> 
       `Connection is '${row.status}'. Reconnect it before continuing.`,
     );
   }
-  const gid = row.googleAccountId;
+  const gid = row.oauthTokenId;
   if (typeof gid !== "number" || !Number.isFinite(gid) || gid < 1) {
     throw new LoaderValidationError(
-      "Connection is missing a Google account link — reconnect it.",
+      "Connection is missing a Google OAuth link — reconnect it.",
     );
   }
   return gid;

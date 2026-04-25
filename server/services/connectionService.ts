@@ -2,7 +2,7 @@
  * connectionService — Phase 3 of the Make.com-style refactor.
  *
  * Thin wrapper around the `connections` table used by:
- *   • googleOAuth callback     — auto-creates/updates a google_sheets connection
+ *   • universal OAuth callback — auto-creates/updates a google_sheets connection
  *                                when a user connects their Google account
  *   • connectionsRouter        — CRUD entry point for the frontend
  *   • destination save path    — normalises connectionId before writing
@@ -18,11 +18,7 @@
  */
 
 import { and, eq } from "drizzle-orm";
-import {
-  connections,
-  googleAccounts,
-  targetWebsites,
-} from "../../drizzle/schema";
+import { connections, oauthTokens, targetWebsites } from "../../drizzle/schema";
 import type { DbClient } from "../db";
 import { validateConnectionType } from "../utils/validateConnectionType";
 
@@ -33,7 +29,7 @@ export type ConnectionStatus = "active" | "expired" | "revoked" | "error";
 
 interface UpsertGoogleConnectionInput {
   userId: number;
-  googleAccountId: number;
+  oauthTokenId: number;
   /** Human-readable email from the Google profile. */
   email: string;
   /** Optional display name override — defaults to the email when omitted. */
@@ -41,12 +37,12 @@ interface UpsertGoogleConnectionInput {
 }
 
 /**
- * Ensure there is a `connections` row for a given google_accounts.id.
- * Called from the OAuth callback so that every time a user connects their
- * Google account, a matching connection row appears in the /connections page.
+ * Ensure there is a `connections` row for a given `oauth_tokens` (Google Sheets) row.
+ * Called from the universal OAuth callback so a matching connection row appears
+ * in /connections and pickers.
  *
  * Behaviour:
- *   • If a connection with the same `googleAccountId` exists → update
+ *   • If a connection with the same `oauthTokenId` exists → update
  *     displayName + status + lastVerifiedAt.
  *   • Otherwise insert a fresh row.
  *
@@ -56,7 +52,7 @@ export async function upsertGoogleConnection(
   db: DbClient,
   input: UpsertGoogleConnectionInput,
 ): Promise<number> {
-  const { userId, googleAccountId, email } = input;
+  const { userId, oauthTokenId, email } = input;
   const displayName = input.displayName?.trim() || email || "Google account";
 
   const [existing] = await db
@@ -66,7 +62,7 @@ export async function upsertGoogleConnection(
       and(
         eq(connections.userId, userId),
         eq(connections.type, validateConnectionType("google_sheets")),
-        eq(connections.googleAccountId, googleAccountId),
+        eq(connections.oauthTokenId, oauthTokenId),
       ),
     )
     .limit(1);
@@ -78,6 +74,8 @@ export async function upsertGoogleConnection(
         displayName,
         status: "active",
         lastVerifiedAt: new Date(),
+        oauthTokenId,
+        googleAccountId: null,
       })
       .where(eq(connections.id, existing.id));
     return existing.id;
@@ -88,7 +86,7 @@ export async function upsertGoogleConnection(
     type: "google_sheets",
     displayName,
     status: "active",
-    googleAccountId,
+    oauthTokenId,
     lastVerifiedAt: new Date(),
   });
   return (inserted as unknown as { insertId: number }).insertId;
@@ -247,9 +245,9 @@ export async function mapConnectionUsage(
 }
 
 /**
- * Returns the {id, email, picture} tuple for a Google-backed connection's
- * linked account. Null when the connection is not google_sheets-typed or
- * the google_accounts row has been removed (ON DELETE SET NULL).
+ * Returns the {id, email, picture, …} tuple for a Google Sheets connection's
+ * `oauth_tokens` row. Null when the connection is not google_sheets or the
+ * token row is missing.
  */
 export async function resolveGoogleAccountForConnection(
   db: DbClient,
@@ -257,25 +255,25 @@ export async function resolveGoogleAccountForConnection(
 ) {
   const [row] = await db
     .select({
-      googleAccountId: connections.googleAccountId,
+      oauthTokenId: connections.oauthTokenId,
       type: connections.type,
     })
     .from(connections)
     .where(eq(connections.id, connectionId))
     .limit(1);
 
-  if (!row || row.type !== "google_sheets" || !row.googleAccountId) return null;
+  if (!row || row.type !== "google_sheets" || !row.oauthTokenId) return null;
 
   const [account] = await db
     .select({
-      id: googleAccounts.id,
-      email: googleAccounts.email,
-      name: googleAccounts.name,
-      picture: googleAccounts.picture,
-      expiryDate: googleAccounts.expiryDate,
+      id: oauthTokens.id,
+      email: oauthTokens.email,
+      name: oauthTokens.name,
+      picture: oauthTokens.picture,
+      expiryDate: oauthTokens.expiryDate,
     })
-    .from(googleAccounts)
-    .where(eq(googleAccounts.id, row.googleAccountId))
+    .from(oauthTokens)
+    .where(eq(oauthTokens.id, row.oauthTokenId))
     .limit(1);
 
   return account ?? null;

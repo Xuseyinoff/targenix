@@ -54,7 +54,9 @@ export default function Register() {
   const handleGoogleLogin = useCallback(async () => {
     setGoogleLoading(true);
     try {
-      const res = await fetch("/api/auth/google/login", { credentials: "include" });
+      const res = await fetch("/api/oauth/google/initiate?mode=login", {
+        credentials: "include",
+      });
       const data = await res.json();
       if (!data.oauthUrl) { setGoogleLoading(false); toast.error("Failed to start Google login."); return; }
 
