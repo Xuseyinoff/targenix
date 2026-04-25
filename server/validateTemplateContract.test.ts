@@ -22,11 +22,40 @@ import {
   extractSecretKeys,
 } from "./integrations/validateTemplateContract";
 
-// ─── validateTemplateContract (pure) ─────────────────────────────────────────
+// ─── validateTemplateContract (Step B — async, DB-first) ─────────────────────
+
+import type { AppRow } from "../drizzle/schema";
+import type { DbClient } from "./db";
+
+/** Build a mock DbClient that returns `rows` for any select chain. */
+function makeDb(rows: Partial<AppRow>[]): DbClient {
+  const chain = {
+    from: () => chain,
+    where: vi.fn(() => ({ limit: vi.fn(async () => rows) })),
+  };
+  return { select: vi.fn(() => chain) } as unknown as DbClient;
+}
+
+/** Full AppRow from a minimal partial (fields default to api_key spec). */
+function appRow(partial: Partial<AppRow> & Pick<AppRow, "appKey" | "displayName">): AppRow {
+  return {
+    id: 1,
+    appKey: partial.appKey,
+    displayName: partial.displayName,
+    category: partial.category ?? "affiliate",
+    authType: partial.authType ?? "api_key",
+    fields: partial.fields ?? [{ key: "api_key", label: "API Key", required: true, sensitive: true }],
+    oauthConfig: null,
+    iconUrl: null,
+    docsUrl: null,
+    isActive: true,
+    createdAt: new Date("2025-01-01"),
+  };
+}
 
 describe("validateTemplateContract — pure contract checks", () => {
-  it("accepts a well-formed template with {{SECRET:api_key}} (case 1)", () => {
-    expect(() =>
+  it("accepts a well-formed template with {{SECRET:api_key}} (case 1)", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "sotuvchi",
         bodyFields: [
@@ -35,127 +64,79 @@ describe("validateTemplateContract — pure contract checks", () => {
           { key: "phone",   value: "{{phone}}",          isSecret: false },
         ],
       }),
-    ).not.toThrow();
+    ).resolves.toBeDefined();
   });
 
-  it("rejects a secret field pointing at an undeclared key (case 2)", () => {
-    try {
+  it("rejects a secret field pointing at an undeclared key (case 2)", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "sotuvchi",
-        bodyFields: [
-          { key: "api_key", value: "{{SECRET:wrong_key}}", isSecret: true },
-        ],
-      });
-      throw new Error("expected TemplateContractError");
-    } catch (err) {
-      expect(err).toBeInstanceOf(TemplateContractError);
-      expect((err as TemplateContractError).code).toBe("SECRET_KEY_UNDECLARED");
-      expect((err as TemplateContractError).details).toMatchObject({
-        appKey: "sotuvchi",
-        secretKey: "wrong_key",
-      });
-    }
+        bodyFields: [{ key: "api_key", value: "{{SECRET:wrong_key}}", isSecret: true }],
+      }),
+    ).rejects.toMatchObject({ code: "SECRET_KEY_UNDECLARED", details: { appKey: "sotuvchi", secretKey: "wrong_key" } });
   });
 
-  it("rejects a literal value in a secret field (case 3)", () => {
-    try {
+  it("rejects a literal value in a secret field (case 3)", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "sotuvchi",
-        bodyFields: [
-          { key: "api_key", value: "sk_live_abc123", isSecret: true },
-        ],
-      });
-      throw new Error("expected TemplateContractError");
-    } catch (err) {
-      expect(err).toBeInstanceOf(TemplateContractError);
-      expect((err as TemplateContractError).code).toBe("SECRET_FIELD_NOT_TOKEN");
-    }
+        bodyFields: [{ key: "api_key", value: "sk_live_abc123", isSecret: true }],
+      }),
+    ).rejects.toMatchObject({ code: "SECRET_FIELD_NOT_TOKEN" });
   });
 
-  it("rejects a template with no appKey (case 4)", () => {
-    try {
+  it("rejects a template with no appKey (case 4)", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "",
-        bodyFields: [
-          { key: "api_key", value: "{{SECRET:api_key}}", isSecret: true },
-        ],
-      });
-      throw new Error("expected TemplateContractError");
-    } catch (err) {
-      expect(err).toBeInstanceOf(TemplateContractError);
-      expect((err as TemplateContractError).code).toBe("APP_KEY_MISSING");
-    }
+        bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}", isSecret: true }],
+      }),
+    ).rejects.toMatchObject({ code: "APP_KEY_MISSING" });
   });
 
-  it("rejects a template whose appKey is not declared in specs (case 5)", () => {
-    try {
+  it("rejects a template whose appKey is not declared in specs (case 5)", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "nonexistent-app",
-        bodyFields: [
-          { key: "api_key", value: "{{SECRET:api_key}}", isSecret: true },
-        ],
-      });
-      throw new Error("expected TemplateContractError");
-    } catch (err) {
-      expect(err).toBeInstanceOf(TemplateContractError);
-      expect((err as TemplateContractError).code).toBe("APP_KEY_UNKNOWN");
-    }
+        bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}", isSecret: true }],
+      }),
+    ).rejects.toMatchObject({ code: "APP_KEY_UNKNOWN" });
   });
 
-  it("rejects a non-secret field that smuggles a SECRET token to an undeclared key", () => {
-    try {
+  it("rejects a non-secret field that smuggles a SECRET token to an undeclared key", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "sotuvchi",
-        bodyFields: [
-          { key: "stream", value: "prefix {{SECRET:mystery}}", isSecret: false },
-        ],
-      });
-      throw new Error("expected TemplateContractError");
-    } catch (err) {
-      expect(err).toBeInstanceOf(TemplateContractError);
-      expect((err as TemplateContractError).code).toBe("SECRET_KEY_UNDECLARED");
-    }
+        bodyFields: [{ key: "stream", value: "prefix {{SECRET:mystery}}", isSecret: false }],
+      }),
+    ).rejects.toMatchObject({ code: "SECRET_KEY_UNDECLARED" });
   });
 
-  it("rejects a malformed SECRET token (wrong casing)", () => {
-    try {
+  it("rejects a malformed SECRET token (wrong casing)", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "sotuvchi",
-        bodyFields: [
-          { key: "x", value: "{{SECRET:API_KEY}}", isSecret: false },
-        ],
-      });
-      throw new Error("expected TemplateContractError");
-    } catch (err) {
-      expect(err).toBeInstanceOf(TemplateContractError);
-      expect((err as TemplateContractError).code).toBe("SECRET_TOKEN_MALFORMED");
-    }
+        bodyFields: [{ key: "x", value: "{{SECRET:API_KEY}}", isSecret: false }],
+      }),
+    ).rejects.toMatchObject({ code: "SECRET_TOKEN_MALFORMED" });
   });
 
-  it("validates headers with the same rules", () => {
-    expect(() =>
+  it("validates headers with the same rules", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "100k",
-        bodyFields: [
-          { key: "api_key", value: "{{SECRET:api_key}}", isSecret: true },
-        ],
+        bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}", isSecret: true }],
         headers: { Authorization: "Bearer {{SECRET:api_key}}" },
       }),
-    ).not.toThrow();
+    ).resolves.toBeDefined();
 
-    try {
+    await expect(
       validateTemplateContract({
         appKey: "100k",
-        bodyFields: [
-          { key: "api_key", value: "{{SECRET:api_key}}", isSecret: true },
-        ],
+        bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}", isSecret: true }],
         headers: { Authorization: "Bearer {{SECRET:undeclared}}" },
-      });
-      throw new Error("expected TemplateContractError");
-    } catch (err) {
-      expect(err).toBeInstanceOf(TemplateContractError);
-      expect((err as TemplateContractError).code).toBe("SECRET_KEY_UNDECLARED");
-    }
+      }),
+    ).rejects.toMatchObject({ code: "SECRET_KEY_UNDECLARED" });
   });
 
   it("SECRET_TOKEN_RE is anchored and case-sensitive", () => {
@@ -168,21 +149,13 @@ describe("validateTemplateContract — pure contract checks", () => {
   });
 
   it("extractSecretKeys returns every token in order", () => {
-    expect(
-      extractSecretKeys(
-        "x={{SECRET:a}} y={{SECRET:b}} z={{SECRET:a}}",
-      ),
-    ).toEqual(["a", "b", "a"]);
+    expect(extractSecretKeys("x={{SECRET:a}} y={{SECRET:b}} z={{SECRET:a}}")).toEqual(["a", "b", "a"]);
   });
 
-  // ── authType: 'none' ──────────────────────────────────────────────────────
-  // "Some Uzbek affiliates accept leads without an API key". The contract
-  // must make it impossible to wire a secret into a template whose app
-  // declares no credentials, so the runtime resolver can safely skip the
-  // connection step for those deliveries.
+  // ── authType: 'none' ─────────────────────────────────────────────────────
 
-  it("accepts an authless template with no secret fields (authType='none')", () => {
-    expect(() =>
+  it("accepts an authless template with no secret fields (authType='none')", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "open_affiliate",
         bodyFields: [
@@ -190,54 +163,89 @@ describe("validateTemplateContract — pure contract checks", () => {
           { key: "phone", value: "{{phone}}", isSecret: false },
         ],
       }),
-    ).not.toThrow();
+    ).resolves.toBeDefined();
   });
 
-  it("rejects a secret field on an authless template (AUTH_NONE_HAS_SECRETS)", () => {
-    try {
+  it("rejects a secret field on an authless template (AUTH_NONE_HAS_SECRETS)", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "open_affiliate",
         bodyFields: [
           { key: "name",    value: "{{name}}",           isSecret: false },
           { key: "api_key", value: "{{SECRET:api_key}}", isSecret: true  },
         ],
-      });
-      throw new Error("expected TemplateContractError");
-    } catch (err) {
-      expect(err).toBeInstanceOf(TemplateContractError);
-      expect((err as TemplateContractError).code).toBe("AUTH_NONE_HAS_SECRETS");
-    }
+      }),
+    ).rejects.toMatchObject({ code: "AUTH_NONE_HAS_SECRETS" });
   });
 
-  it("rejects a {{SECRET:…}} token inside a non-secret field on an authless template", () => {
-    try {
+  it("rejects a {{SECRET:…}} token inside a non-secret field on an authless template", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "open_affiliate",
-        bodyFields: [
-          { key: "note", value: "lead from {{SECRET:api_key}}", isSecret: false },
-        ],
-      });
-      throw new Error("expected TemplateContractError");
-    } catch (err) {
-      expect(err).toBeInstanceOf(TemplateContractError);
-      expect((err as TemplateContractError).code).toBe("AUTH_NONE_HAS_SECRETS");
-    }
+        bodyFields: [{ key: "note", value: "lead from {{SECRET:api_key}}", isSecret: false }],
+      }),
+    ).rejects.toMatchObject({ code: "AUTH_NONE_HAS_SECRETS" });
   });
 
-  it("rejects a {{SECRET:…}} token inside a header on an authless template", () => {
-    try {
+  it("rejects a {{SECRET:…}} token inside a header on an authless template", async () => {
+    await expect(
       validateTemplateContract({
         appKey: "open_affiliate",
-        bodyFields: [
-          { key: "name", value: "{{name}}", isSecret: false },
-        ],
+        bodyFields: [{ key: "name", value: "{{name}}", isSecret: false }],
         headers: { Authorization: "Bearer {{SECRET:api_key}}" },
-      });
-      throw new Error("expected TemplateContractError");
-    } catch (err) {
-      expect(err).toBeInstanceOf(TemplateContractError);
-      expect((err as TemplateContractError).code).toBe("AUTH_NONE_HAS_SECRETS");
-    }
+      }),
+    ).rejects.toMatchObject({ code: "AUTH_NONE_HAS_SECRETS" });
+  });
+
+  // ── Step B: DB-first spec resolution ────────────────────────────────────
+
+  it("resolves from DB when appKey exists only in apps table (not in TS constant)", async () => {
+    const db = makeDb([
+      appRow({
+        appKey: "__db_only_app__",
+        displayName: "DB-Only App",
+        fields: [{ key: "token", label: "Token", required: true, sensitive: true }],
+      }),
+    ]);
+    const spec = await validateTemplateContract({
+      appKey: "__db_only_app__",
+      bodyFields: [{ key: "token", value: "{{SECRET:token}}", isSecret: true }],
+      db,
+    });
+    expect(spec.appKey).toBe("__db_only_app__");
+    expect(spec.displayName).toBe("DB-Only App");
+  });
+
+  it("fails APP_KEY_UNKNOWN for DB-only app when db is not provided", async () => {
+    await expect(
+      validateTemplateContract({
+        appKey: "__db_only_app__",
+        bodyFields: [{ key: "token", value: "{{SECRET:token}}", isSecret: true }],
+      }),
+    ).rejects.toMatchObject({ code: "APP_KEY_UNKNOWN" });
+  });
+
+  it("specOverride takes priority over db lookup (boot efficiency path)", async () => {
+    // DB would return nothing for this key, but specOverride supplies the spec
+    const db = makeDb([]);
+    const override = { appKey: "fake", displayName: "Override", authType: "api_key" as const, category: "affiliate" as const, fields: [] };
+    const spec = await validateTemplateContract({
+      appKey: "fake",
+      bodyFields: [],
+      db,
+      specOverride: override,
+    });
+    expect(spec.displayName).toBe("Override");
+  });
+
+  it("falls back to TS constant when db returns no row", async () => {
+    const db = makeDb([]); // empty DB
+    const spec = await validateTemplateContract({
+      appKey: "sotuvchi",
+      bodyFields: [{ key: "api_key", value: "{{SECRET:api_key}}", isSecret: true }],
+      db,
+    });
+    expect(spec.appKey).toBe("sotuvchi");
   });
 });
 

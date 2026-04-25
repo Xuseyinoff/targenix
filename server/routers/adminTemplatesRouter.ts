@@ -24,10 +24,7 @@ import {
   validateTemplateContract,
   TemplateContractError,
 } from "../integrations/validateTemplateContract";
-import {
-  listAppKeyOptionsForPicker,
-  resolveSpecForValidation,
-} from "../integrations/listAppsSafe";
+import { listAppKeyOptionsForPicker } from "../integrations/listAppsSafe";
 
 // ─── Shared Zod schemas ───────────────────────────────────────────────────────
 
@@ -140,12 +137,11 @@ export const adminTemplatesRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
 
-      const spec = await resolveSpecForValidation(db, input.appKey);
       try {
-        validateTemplateContract({
+        await validateTemplateContract({
           appKey: input.appKey,
           bodyFields: input.bodyFields,
-          specOverride: spec,
+          db,
         });
       } catch (err) {
         throw toTrpcError(err);
@@ -203,12 +199,11 @@ export const adminTemplatesRouter = router({
             | undefined) ??
           (existing.bodyFields as Array<{ key: string; value: string; isSecret?: boolean }>);
 
-        const spec = await resolveSpecForValidation(db, mergedAppKey ?? null);
         try {
-          validateTemplateContract({
+          await validateTemplateContract({
             appKey: mergedAppKey,
             bodyFields: mergedBodyFields,
-            specOverride: spec,
+            db,
           });
         } catch (err) {
           throw toTrpcError(err);

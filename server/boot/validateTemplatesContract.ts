@@ -121,10 +121,10 @@ export async function validateTemplatesAtBoot(): Promise<{
     const bodyFields = normalizeBodyFields(row.bodyFields);
     const specOverride = row.appKey ? specMap.get(row.appKey) : undefined;
     try {
-      validateTemplateContract({
+      await validateTemplateContract({
         appKey: row.appKey,
         bodyFields,
-        specOverride,
+        specOverride,   // pre-loaded via buildAppSpecMap — 1 DB query for N templates
       });
     } catch (err) {
       if (err instanceof TemplateContractError) {

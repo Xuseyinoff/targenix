@@ -15,10 +15,15 @@
  * Non-secret body fields can still contain `{{variable}}` tokens; this
  * validator only looks at the SECRET side of the contract.
  *
- * The validator does NOT talk to the DB. The caller provides the
- * template fields and the appKey; spec lookup goes through the
- * `connectionAppSpecs` TS constant. This keeps the validator pure,
- * sync, fast, and usable from boot diagnostics + unit tests.
+ * Spec resolution order (Step B):
+ *   1. `specOverride` — pre-loaded by caller (boot efficiency path)
+ *   2. `apps` DB table via `resolveSpecSafe` — when `db` is provided
+ *   3. TS constant `CONNECTION_APP_SPECS` — temporary fallback until Step C
+ *
+ * Passing `db` is enough for callers that validate a single template
+ * (adminTemplatesRouter). The boot validator passes `specOverride` from a
+ * pre-loaded `buildAppSpecMap` to keep boot to one DB round-trip regardless
+ * of how many templates are active.
  */
 
 import {
@@ -26,6 +31,8 @@ import {
   specIsAuthless,
   type ConnectionAppSpec,
 } from "./connectionAppSpecs";
+import type { DbClient } from "../db";
+import { resolveSpecSafe } from "./listAppsSafe";
 
 /** Value form accepted for a secret field, e.g. `{{SECRET:api_key}}`. */
 export const SECRET_TOKEN_RE = /^\{\{\s*SECRET:([a-z][a-z0-9_]*)\s*\}\}$/;
@@ -45,7 +52,7 @@ export type TemplateBodyField = {
 };
 
 export type ValidateTemplateInput = {
-  /** Must resolve to an entry in CONNECTION_APP_SPECS or `specOverride`. */
+  /** Must resolve to an entry in `apps` table, CONNECTION_APP_SPECS, or `specOverride`. */
   appKey: string | null | undefined;
   /** The template's bodyFields array. */
   bodyFields: ReadonlyArray<TemplateBodyField>;
@@ -56,10 +63,18 @@ export type ValidateTemplateInput = {
    */
   headers?: Readonly<Record<string, string>> | null;
   /**
-   * Pre-resolved spec — bypasses the TS-constant lookup when the caller
-   * already resolved the spec from the `apps` DB table (for apps added
-   * via the admin UI after the last deploy that are not yet in the
-   * CONNECTION_APP_SPECS constant). Contract checks still run in full.
+   * DB client — when provided the spec is resolved from the `apps` table
+   * first (DB-first), falling back to the TS constant. Sufficient for
+   * save-time validation (adminTemplatesRouter).
+   */
+  db?: DbClient | null;
+  /**
+   * Pre-resolved spec — takes priority over `db` when provided, allowing
+   * callers like the boot validator to pre-load all specs in one DB
+   * round-trip (via `buildAppSpecMap`) instead of one query per template.
+   *
+   * Still accepted for backward compatibility. Callers that already have
+   * the spec in hand may pass it here to skip the DB lookup.
    */
   specOverride?: ConnectionAppSpec | null;
 };
@@ -94,10 +109,11 @@ export class TemplateContractError extends Error {
   }
 }
 
-function resolveSpec(
+async function resolveSpec(
   appKey: string | null | undefined,
-  override?: ConnectionAppSpec | null,
-): ConnectionAppSpec {
+  override: ConnectionAppSpec | null | undefined,
+  db: DbClient | null | undefined,
+): Promise<ConnectionAppSpec> {
   if (typeof appKey !== "string" || appKey.length === 0) {
     throw new TemplateContractError(
       "APP_KEY_MISSING",
@@ -105,12 +121,19 @@ function resolveSpec(
       {},
     );
   }
+  // Pre-loaded spec wins — caller already did the DB round-trip (boot efficiency path).
   if (override) return override;
+  // DB-first: resolveSpecSafe hits `apps` table, falls back to TS constant internally.
+  if (db) {
+    const spec = await resolveSpecSafe(db, appKey);
+    if (spec) return spec;
+  }
+  // TS constant fallback — used when db is not provided (e.g. unit tests without a DB).
   const spec = getAppSpec(appKey);
   if (!spec) {
     throw new TemplateContractError(
       "APP_KEY_UNKNOWN",
-      `App '${appKey}' is not registered. Add it to CONNECTION_APP_SPECS or insert a row into the 'apps' table.`,
+      `App '${appKey}' is not registered. Insert a row into the 'apps' table or pass a \`db\` client.`,
       { appKey },
     );
   }
@@ -197,11 +220,15 @@ function validateNonSecretSecretReferences(
  * on the first violation with a structured `code` + `details`. Returns
  * the resolved spec on success so callers can use it (e.g. to pull
  * field labels).
+ *
+ * Async since Step B: spec resolution now queries the `apps` DB table
+ * when `db` is provided, removing the requirement for callers to
+ * pre-resolve via `resolveSpecForValidation` + `specOverride`.
  */
-export function validateTemplateContract(
+export async function validateTemplateContract(
   input: ValidateTemplateInput,
-): ConnectionAppSpec {
-  const spec = resolveSpec(input.appKey, input.specOverride);
+): Promise<ConnectionAppSpec> {
+  const spec = await resolveSpec(input.appKey, input.specOverride, input.db);
   const isAuthless = specIsAuthless(spec);
 
   input.bodyFields.forEach((field, index) => {
