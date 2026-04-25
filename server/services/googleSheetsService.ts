@@ -13,6 +13,8 @@ import {
   type GoogleSheetsMappableField,
 } from "../../shared/googleSheets";
 import { inferDeliveryErrorType, type DeliveryErrorType } from "../lib/orderRetryPolicy";
+import { markGoogleSheetsConnectionsExpiredForOauthToken } from "./connectionService";
+import { withRetry } from "../utils/retry";
 
 /** Re-export for callers that import from service. */
 export { GOOGLE_SHEETS_MAPPABLE_FIELDS, type GoogleSheetsMappableField };
@@ -489,16 +491,34 @@ export async function appendLeadToGoogleSheet(params: {
   const sid = spreadsheetId.trim();
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(sid)}/values/${encodedRange}:append?valueInputOption=RAW`;
 
+  const oauthDebug = process.env.OAUTH_DEBUG === "1";
+
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ values: [values] }),
-      signal: AbortSignal.timeout(30_000),
-    });
+    const res = await withRetry(async () => {
+      const r = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ values: [values] }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (oauthDebug && !r.ok) {
+        console.log({
+          stage: "oauth_request",
+          appKey: GOOGLE_SHEETS_APP_KEY,
+          status: r.status,
+        });
+      }
+      if (r.status === 401 || r.status === 403) {
+        await markGoogleSheetsConnectionsExpiredForOauthToken(db, userId, googleAccountId);
+      }
+      if (r.status === 429 || r.status >= 500) {
+        throw new Error(`Sheets API retry: HTTP ${r.status}`);
+      }
+      return r;
+    }, 2);
 
     const text = await res.text();
     let data: unknown = text;

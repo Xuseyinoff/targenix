@@ -29,6 +29,12 @@ export type OAuthCodeExchange = {
   scope: string;
 };
 
+export interface RefreshAccessTokenResult {
+  accessToken: string;
+  /** Seconds until expiry (OAuth `expires_in`). */
+  expiresIn: number;
+}
+
 export interface OAuthProviderSpec {
   /** URL segment, e.g. "google" */
   name: string;
@@ -37,4 +43,9 @@ export interface OAuthProviderSpec {
   getConfig(db: DbClient | null): Promise<OAuthConfig>;
   buildAuthorizeUrl(state: string, mode: OAuthMode): string;
   exchangeCode(db: DbClient | null, code: string): Promise<OAuthCodeExchange>;
+  /** Use refresh token to get a new access token (for `getValidAccessToken`). */
+  refreshAccessToken(
+    db: DbClient | null,
+    refreshTokenPlain: string,
+  ): Promise<RefreshAccessTokenResult>;
 }

@@ -2,7 +2,7 @@ import axios from "axios";
 import { getGoogleSheetsOAuthConfig, GOOGLE_SHEETS_APP_KEY } from "../getOAuthConfig";
 import type { DbClient } from "../../db";
 import type { OAuthCodeExchange, OAuthMode, OAuthProviderSpec } from "../types";
-import { buildGoogleAuthUrl, type GoogleTokenResponse } from "../../services/googleService";
+import { buildGoogleAuthUrl, refreshGoogleToken, type GoogleTokenResponse } from "../../services/googleService";
 
 export const GOOGLE_OAUTH_NAME = "google" as const;
 
@@ -38,5 +38,9 @@ export const googleProvider: OAuthProviderSpec = {
       expiresIn: d.expires_in,
       scope: d.scope,
     };
+  },
+  async refreshAccessToken(_db: DbClient | null, refreshTokenPlain: string) {
+    const d = await refreshGoogleToken(refreshTokenPlain);
+    return { accessToken: d.access_token, expiresIn: d.expires_in };
   },
 };

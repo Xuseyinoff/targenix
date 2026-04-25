@@ -5,12 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { oauthTokens } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { encrypt, decrypt } from "../encryption";
-import {
-  refreshGoogleToken,
-  computeExpiryDate,
-  isTokenExpired,
-} from "../services/googleService";
-import { log } from "../services/appLogger";
+import { getValidAccessToken } from "./getValidAccessToken";
 import { GOOGLE_SHEETS_APP_KEY } from "./getOAuthConfig";
 
 export type UpsertGoogleSheetsTokenInput = {
@@ -79,7 +74,7 @@ export async function upsertGoogleSheetsIntegrationToken(
 
 /**
  * Valid access token for a Google Sheets integration `oauth_tokens` row.
- * Refreshes via Google token endpoint when expired.
+ * Delegates to `getValidAccessToken` (provider-based refresh when expired).
  */
 export async function getValidGoogleAccessToken(oauthTokenId: number): Promise<string> {
   const db = await getDb();
@@ -96,24 +91,24 @@ export async function getValidGoogleAccessToken(oauthTokenId: number): Promise<s
     throw new Error(`OAuth token ${oauthTokenId} is not a Google Sheets integration token`);
   }
 
-  if (row.expiryDate && !isTokenExpired(row.expiryDate)) {
-    return decrypt(row.accessToken);
+  try {
+    return await getValidAccessToken(db, {
+      userId: row.userId,
+      appKey: row.appKey,
+      oauthTokenId: row.id,
+    });
+  } catch (e) {
+    const code = e instanceof Error ? e.message : String(e);
+    if (code === "NO_REFRESH_TOKEN") {
+      throw new Error(
+        `Integration token ${oauthTokenId} expired and no refresh token. User must reconnect Google.`,
+      );
+    }
+    if (code === "PROVIDER_NOT_FOUND" || code === "TOKEN_NOT_FOUND") {
+      throw new Error(
+        e instanceof Error ? e.message : `OAuth token ${oauthTokenId} could not be resolved`,
+      );
+    }
+    throw e;
   }
-
-  if (!row.refreshToken) {
-    throw new Error(
-      `Integration token ${oauthTokenId} expired and no refresh token. User must reconnect Google.`,
-    );
-  }
-
-  const refreshed = await refreshGoogleToken(decrypt(row.refreshToken));
-  const newExpiry = computeExpiryDate(refreshed.expires_in);
-
-  await db
-    .update(oauthTokens)
-    .set({ accessToken: encrypt(refreshed.access_token), expiryDate: newExpiry })
-    .where(eq(oauthTokens.id, oauthTokenId));
-
-  await log.info("GOOGLE", "google_sheets token refreshed (oauth_tokens)", { oauthTokenId });
-  return refreshed.access_token;
 }

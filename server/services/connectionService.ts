@@ -92,6 +92,31 @@ export async function upsertGoogleConnection(
   return (inserted as unknown as { insertId: number }).insertId;
 }
 
+/**
+ * Mark `google_sheets` rows linked to this `oauth_tokens` id as expired (e.g. API 401/403).
+ * Best-effort; does not throw.
+ */
+export async function markGoogleSheetsConnectionsExpiredForOauthToken(
+  db: DbClient,
+  userId: number,
+  oauthTokenId: number,
+): Promise<void> {
+  try {
+    await db
+      .update(connections)
+      .set({ status: "expired" })
+      .where(
+        and(
+          eq(connections.userId, userId),
+          eq(connections.type, validateConnectionType("google_sheets")),
+          eq(connections.oauthTokenId, oauthTokenId),
+        ),
+      );
+  } catch {
+    // ignore
+  }
+}
+
 // ─── Telegram bot connection ─────────────────────────────────────────────────
 
 interface UpsertTelegramConnectionInput {
