@@ -16,6 +16,7 @@
 
 import * as React from "react";
 import { ArrowLeft, Loader2, Search, X } from "lucide-react";
+import { SAMPLE_LEAD_CONTEXT } from "@/hooks/useTransformPreview";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -429,6 +430,7 @@ export function DestinationCreatorInline({
           adapterVariableGroup(selectedApp.key),
           ...(triggerVariables ?? []),
         ]}
+        previewCtx={SAMPLE_LEAD_CONTEXT}
       />
 
       {/* Footer: cancel + save */}

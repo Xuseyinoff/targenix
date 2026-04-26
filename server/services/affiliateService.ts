@@ -7,6 +7,7 @@ import { specIsAuthless } from "../integrations/connectionAppSpecs";
 import { resolveSpecSafe } from "../integrations/listAppsSafe";
 import type { DbClient } from "../db";
 import { resolveMapping } from "../utils/resolveMapping";
+import { transform } from "@shared/transformEngine";
 
 // ─── Shared lead payload ────────────────────────────────────────────────────
 export interface LeadPayload {
@@ -215,17 +216,13 @@ export function buildVariableContext(
 }
 
 /**
- * Replace all {{variable}} placeholders in a string with values from the context.
- * Unknown variables are replaced with empty string.
+ * Evaluate all {{...}} expressions in a template string.
+ * Supports plain variables ({{name}}) and transform functions
+ * ({{upper(name)}}, {{concat(a, " ", b)}}, {{if(x == "y", "a", "b")}}, …).
+ * Unknown variables and unknown functions both return "" (soft miss).
  */
 export function injectVariables(template: string, ctx: Record<string, string>): string {
-  const safeCtx = Object.create(null) as Record<string, string>;
-  for (const [k, v] of Object.entries(ctx)) safeCtx[k] = v;
-  return template.replace(/\{\{([^}]+)\}\}/g, (_, key) => {
-    const k = key.trim();
-    if (!Object.prototype.hasOwnProperty.call(safeCtx, k)) return "";
-    return safeCtx[k];
-  });
+  return transform(template, ctx);
 }
 
 /**

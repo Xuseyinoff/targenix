@@ -1,6 +1,8 @@
 import { Textarea } from "@/components/ui/textarea";
 import { FieldShell } from "./FieldShell";
+import { TransformPreviewBadge } from "./TransformPreviewBadge";
 import type { BaseFieldProps } from "../types";
+import type { EvalContext } from "@shared/transformEngine";
 
 export interface TextareaFieldProps extends BaseFieldProps {
   value: string;
@@ -8,6 +10,8 @@ export interface TextareaFieldProps extends BaseFieldProps {
   /** Monospace font when rendering code / templates. */
   monospace?: boolean;
   rows?: number;
+  /** Context for real-time transform preview (Make.com-style). */
+  previewCtx?: EvalContext;
 }
 
 export function TextareaField({
@@ -20,8 +24,10 @@ export function TextareaField({
   className,
   monospace,
   rows = 4,
+  previewCtx,
 }: TextareaFieldProps) {
   const maxLength = field.validation?.maxLength;
+  const showPreview = field.showTransformPreview === true;
 
   return (
     <FieldShell
@@ -44,6 +50,9 @@ export function TextareaField({
         aria-required={field.required}
         className={monospace ? "font-mono text-xs" : undefined}
       />
+      {showPreview && value && (
+        <TransformPreviewBadge template={value} ctx={previewCtx} />
+      )}
     </FieldShell>
   );
 }

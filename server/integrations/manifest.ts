@@ -148,6 +148,13 @@ export interface ConfigField {
    */
   sensitive?: boolean;
 
+  /**
+   * When true the dynamic form renders a real-time transform-engine preview
+   * beneath this field (Make.com-style resolved-value pill). Only meaningful
+   * for 'text' and 'textarea' field types that accept {{expression}} syntax.
+   */
+  showTransformPreview?: boolean;
+
   // ── Repeatable fields (type === "repeatable") ──────────────────────────────
   /**
    * Shape of ONE row inside a repeatable field. The dynamic form renders each

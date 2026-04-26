@@ -67,6 +67,7 @@ export const telegramApp: AppManifest = {
           required: false,
           defaultValue: DEFAULT_MESSAGE_TEMPLATE,
           validation: { maxLength: 4000 },
+          showTransformPreview: true,
         },
       ],
     },

@@ -96,6 +96,13 @@ export interface DynamicFormProps {
    * different convention.
    */
   connectionFieldKey?: string;
+  /**
+   * Context for real-time transform-engine preview (Make.com-style resolved-
+   * value pills). Passed to textarea / text fields that declare
+   * `showTransformPreview: true` in their manifest. Typically a sample lead
+   * object built from the trigger step's available variables.
+   */
+  previewCtx?: Record<string, string>;
 }
 
 /** Seed any undefined values with type-appropriate defaults, idempotently.
@@ -130,6 +137,7 @@ export function DynamicForm({
   availableVariables,
   className,
   connectionFieldKey = "connectionId",
+  previewCtx,
 }: DynamicFormProps) {
   const connectionIdRaw = values[connectionFieldKey];
   const connectionId =
@@ -273,6 +281,7 @@ export function DynamicForm({
             onChange={setValue}
             error={error}
             disabled={disabled}
+            previewCtx={previewCtx}
           />,
         );
 

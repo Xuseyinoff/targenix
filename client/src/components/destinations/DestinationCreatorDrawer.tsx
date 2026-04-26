@@ -42,6 +42,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
+import { SAMPLE_LEAD_CONTEXT } from "@/hooks/useTransformPreview";
 import {
   DynamicForm,
   seedInitialValues,
@@ -520,6 +521,7 @@ function ConfigureStep({
         onChange={onChange}
         errors={errors}
         disabled={disabled}
+        previewCtx={SAMPLE_LEAD_CONTEXT}
       />
     </div>
   );
