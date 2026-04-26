@@ -75,7 +75,6 @@ function buildNavGroups(t: (k: string) => string): NavGroup[] {
       items: [
         { icon: Facebook, label: t("nav.connections"), path: "/connections" },
         { icon: Plug, label: t("nav.integrations"), path: "/integrations" },
-        { icon: Globe, label: t("nav.destinations"), path: "/destinations" },
       ],
     },
   ];
