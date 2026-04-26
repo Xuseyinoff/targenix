@@ -11,5 +11,7 @@
  */
 
 import { registerGoogleSheetsLoaders } from "./googleSheets";
+import { registerTelegramLoaders } from "./telegram";
 
 registerGoogleSheetsLoaders();
+registerTelegramLoaders();

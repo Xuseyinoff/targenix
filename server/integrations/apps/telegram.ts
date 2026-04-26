@@ -19,15 +19,20 @@ const TELEGRAM_TEMPLATE_VARIABLES = [
 const DEFAULT_MESSAGE_TEMPLATE =
   "\ud83d\udccb Yangi lead\n\n\ud83d\udc64 Ism: {{full_name}}\n\ud83d\udcde Telefon: {{phone_number}}\n\ud83d\udce7 Email: {{email}}";
 
+const LOADER_LIST_CHATS = "telegram.listChats";
+
 export const telegramApp: AppManifest = {
   key: "telegram",
   name: "Telegram",
-  version: "1.1.0",
+  version: "1.2.0",
   icon: "Send",
   category: "messaging",
   description: "Send each lead as a formatted message to a Telegram chat or channel.",
   adapterKey: "telegram",
   connectionType: "telegram_bot",
+  dynamicOptionsLoaders: {
+    [LOADER_LIST_CHATS]: "appsRouter.telegram.listChats",
+  },
   modules: [
     {
       key: "send_message",
@@ -45,13 +50,14 @@ export const telegramApp: AppManifest = {
         },
         {
           key: "chatId",
-          type: "text",
-          label: "Chat ID",
+          type: "async-select",
+          label: "Chat or channel",
           description:
-            "Leave blank to use the default chat stored on the connection. Override to send to a different channel.",
+            "Select the chat where leads will be sent. If no chats appear, send any message to the bot first, then refresh.",
           required: false,
-          placeholder: "-1001234567890",
-          validation: { maxLength: 64 },
+          optionsSource: LOADER_LIST_CHATS,
+          dependsOn: ["connectionId"],
+          placeholder: "Select a chat…",
         },
         {
           key: "messageTemplate",
