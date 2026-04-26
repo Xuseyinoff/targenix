@@ -47,7 +47,7 @@ function buildKey(
 /** Evict all expired entries (called periodically and before every read). */
 function evictExpired(): void {
   const now = Date.now();
-  for (const [key, entry] of store) {
+  for (const [key, entry] of Array.from(store.entries())) {
     if (entry.expiresAt <= now) store.delete(key);
   }
 }
@@ -114,7 +114,7 @@ export const loaderCache = {
   /** Invalidate all entries for a specific user+loader (e.g. after reconnect). */
   invalidate(userId: number, loaderKey: string): void {
     const prefix = `u${userId}:${loaderKey}:`;
-    for (const key of store.keys()) {
+    for (const key of Array.from(store.keys())) {
       if (key.startsWith(prefix)) store.delete(key);
     }
   },

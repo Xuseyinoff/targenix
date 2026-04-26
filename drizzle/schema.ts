@@ -288,6 +288,14 @@ export const appActions = mysqlTable(
     userFields: json("userFields").notNull(),
     variableFields: json("variableFields").notNull(),
     autoMappedFields: json("autoMappedFields").notNull(),
+    /**
+     * Make.com-style action schema (MVP).
+     * Stored in DB so new actions can be added/edited without deploy.
+     */
+    schemaVersion: int("schemaVersion").default(1).notNull(),
+    inputSchema: json("inputSchema"),
+    outputSchema: json("outputSchema"),
+    uiSchema: json("uiSchema"),
     isDefault: boolean("isDefault").default(true).notNull(),
     isActive: boolean("isActive").default(true).notNull(),
     createdAt: timestamp("createdAt").defaultNow().notNull(),

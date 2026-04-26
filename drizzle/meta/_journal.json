@@ -414,6 +414,13 @@
       "when": 1778096400000,
       "tag": "0062_drop_google_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "5",
+      "when": 1778182800000,
+      "tag": "0063_app_actions_action_schema",
+      "breakpoints": true
     }
   ]
 }

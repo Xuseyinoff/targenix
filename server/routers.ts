@@ -10,6 +10,7 @@ import { telegramRouter } from "./routers/telegramRouter";
 import { adminBackfillRouter } from "./routers/adminBackfillRouter";
 import { adminTemplatesRouter } from "./routers/adminTemplatesRouter";
 import { adminAppsRouter } from "./routers/adminAppsRouter";
+import { adminAppActionsRouter } from "./routers/adminAppActionsRouter";
 import { adminLeadsRouter } from "./routers/adminLeadsRouter";
 import { adAnalyticsRouter } from "./routers/adAnalyticsRouter";
 import { systemRouter } from "./_core/systemRouter";
@@ -35,6 +36,7 @@ export const appRouter = router({
   adminBackfill: adminBackfillRouter,
   adminTemplates: adminTemplatesRouter,
   adminApps: adminAppsRouter,
+  adminAppActions: adminAppActionsRouter,
   adminLeads: adminLeadsRouter,
   adAnalytics: adAnalyticsRouter,
 });

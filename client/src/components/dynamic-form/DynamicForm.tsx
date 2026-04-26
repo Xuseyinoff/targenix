@@ -59,6 +59,7 @@ import {
   isFieldVisible,
   type FieldValues,
 } from "./validation";
+import type { EvalContext } from "@shared/transformEngine";
 
 // ─── public API ────────────────────────────────────────────────────────────
 
@@ -102,7 +103,8 @@ export interface DynamicFormProps {
    * `showTransformPreview: true` in their manifest. Typically a sample lead
    * object built from the trigger step's available variables.
    */
-  previewCtx?: Record<string, string>;
+  /** Matches transform engine / preview: values may be string | number | boolean (sample lead). */
+  previewCtx?: EvalContext;
 }
 
 /** Seed any undefined values with type-appropriate defaults, idempotently.

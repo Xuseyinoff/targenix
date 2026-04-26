@@ -114,7 +114,7 @@ export const FUNCTIONS: Record<string, FnImpl> = {
   ceil:     ([a]) => String(Math.ceil(num(a))),
   abs:      ([a]) => String(Math.abs(num(a))),
   toNumber: ([a]) => String(num(a)),
-  toString: ([a]) => str(a),
+  toString: (args: string[]) => str(args[0]),
 
   // ── Date ──────────────────────────────────────────────────────────────────
   /** now() → current UTC ISO timestamp */

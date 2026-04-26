@@ -14,6 +14,7 @@ import {
 } from "../../services/googleSheetsService";
 import { __testing } from "./googleSheets";
 import { LoaderValidationError, type LoadOptionsContext } from "./types";
+import { loaderCache } from "./cache";
 
 const { listSpreadsheets, listSheetTabs, getHeaders, resolveGoogleAccountId } =
   __testing;
@@ -40,12 +41,14 @@ function makeCtx(overrides: Partial<LoadOptionsContext>): LoadOptionsContext {
     db: makeDb([]),
     connectionId: null,
     params: {},
+    limit: 50,
     ...overrides,
   };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  loaderCache.__clear();
 });
 
 describe("resolveGoogleAccountId", () => {
@@ -166,7 +169,7 @@ describe("listSpreadsheets loader", () => {
     const ctx = makeCtx({
       connectionId: 1,
       db: makeDb([healthyRow]),
-      params: { search: "sales" },
+      search: "sales",
     });
     await listSpreadsheets(ctx);
     expect(listUserSpreadsheets).toHaveBeenCalledWith(
@@ -195,7 +198,7 @@ describe("listSheetTabs loader", () => {
 
   it("requires spreadsheetId in params", async () => {
     const ctx = makeCtx({ connectionId: 1, db: makeDb([healthyRow]), params: {} });
-    await expect(listSheetTabs(ctx)).rejects.toThrow(/Spreadsheet is required/);
+    await expect(listSheetTabs(ctx)).rejects.toThrow(/'spreadsheetId' is required/);
   });
 
   it("returns tab names as value+label pairs", async () => {
@@ -231,7 +234,7 @@ describe("getSheetHeaders loader", () => {
       db: makeDb([healthyRow]),
       params: { spreadsheetId: "abc" },
     });
-    await expect(getHeaders(ctx)).rejects.toThrow(/Sheet is required/);
+    await expect(getHeaders(ctx)).rejects.toThrow(/'sheetName' is required/);
   });
 
   it("returns header labels with columnIndex metadata", async () => {

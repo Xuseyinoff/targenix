@@ -69,8 +69,8 @@ export function previewTemplate(template: string, ctx: EvalContext): PreviewResu
 
   return {
     output: evalTemplate(nodes, ctx),
-    unknownVars: [...unknownVars],
-    unknownFns: [...unknownFns],
+    unknownVars: Array.from(unknownVars),
+    unknownFns: Array.from(unknownFns),
   };
 }
 
@@ -94,7 +94,7 @@ export function validateTemplate(template: string): string[] {
     }
   }
   nodes.forEach(check);
-  return [...unknownFns];
+  return Array.from(unknownFns);
 }
 
 /** Evaluate a single expression string (without surrounding {{ }}) — used by tests. */
