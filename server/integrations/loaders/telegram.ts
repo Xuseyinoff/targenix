@@ -22,7 +22,7 @@ import { LoaderValidationError, type LoadOptionsContext, type LoadOptionsResult 
 
 async function resolveBotToken(ctx: LoadOptionsContext): Promise<string> {
   if (ctx.connectionId == null) {
-    throw new LoaderValidationError("Telegram bot is required — select a connection first.");
+    throw LoaderValidationError.connectionRequired("Select a Telegram bot connection first.");
   }
   const [row] = await ctx.db
     .select()
@@ -31,25 +31,29 @@ async function resolveBotToken(ctx: LoadOptionsContext): Promise<string> {
     .limit(1);
 
   if (!row) {
-    throw new LoaderValidationError("Connection not found or does not belong to you.");
+    throw LoaderValidationError.connectionInvalid("Connection not found or does not belong to you.");
   }
   if (row.type !== "telegram_bot") {
-    throw new LoaderValidationError(`Connection type is '${row.type}' — expected 'telegram_bot'.`);
+    throw LoaderValidationError.connectionInvalid(
+      `Connection type is '${row.type}' — expected 'telegram_bot'.`,
+    );
   }
   if (row.status !== "active") {
-    throw new LoaderValidationError(`Connection is '${row.status}'. Reconnect it before continuing.`);
+    throw LoaderValidationError.connectionInvalid(
+      `Connection is '${row.status}'. Reconnect it before continuing.`,
+    );
   }
 
   const creds = row.credentialsJson as { botTokenEncrypted?: string } | null;
   const encrypted = creds?.botTokenEncrypted;
   if (!encrypted) {
-    throw new LoaderValidationError("Connection is missing bot token — reconnect it.");
+    throw LoaderValidationError.connectionInvalid("Connection is missing bot token — reconnect it.");
   }
 
   try {
     return decrypt(encrypted);
   } catch {
-    throw new LoaderValidationError("Failed to decrypt bot token — reconnect the bot.");
+    throw LoaderValidationError.connectionInvalid("Failed to decrypt bot token — reconnect the bot.");
   }
 }
 
@@ -100,7 +104,7 @@ async function listChats(ctx: LoadOptionsContext): Promise<LoadOptionsResult> {
       updates = res.data.result ?? [];
     }
   } catch {
-    throw new LoaderValidationError(
+    throw LoaderValidationError.externalApiError(
       "Could not fetch chats from Telegram — check bot token and try again.",
     );
   }
@@ -137,8 +141,12 @@ async function listChats(ctx: LoadOptionsContext): Promise<LoadOptionsResult> {
     group: 2,
     private: 3,
   };
-  const sorted = [...seen.values()].sort(
-    (a, b) => (priority[a.type] ?? 9) - (priority[b.type] ?? 9),
+  const getPriority = (t: unknown) => {
+    if (typeof t === "string" && t in priority) return priority[t as TelegramChat["type"]];
+    return 9;
+  };
+  const sorted = Array.from(seen.values()).sort(
+    (a, b) => getPriority(a.type) - getPriority(b.type),
   );
 
   return {

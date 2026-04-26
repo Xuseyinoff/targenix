@@ -86,11 +86,16 @@ export const appsRouter = router({
         source: z.string().min(1).max(128),
         connectionId: z.number().int().positive().nullable().optional(),
         params: z.record(z.string(), z.unknown()).optional(),
+        /** Server-side search / filter string (Make.com-style). */
+        search: z.string().max(256).optional(),
+        /** Opaque pagination cursor from a previous response. */
+        cursor: z.string().max(512).optional(),
+        /** Max results per page. Clamped to [1, 200]. Default 50. */
+        limit: z.number().int().min(1).max(200).default(50),
       }),
     )
-    // Exposed as a query: it's idempotent (read-only list / headers) and
-    // pairs with React Query's cache so dependent <AsyncSelect>s don't
-    // re-hit the upstream Google API on every keystroke in the form.
+    // Exposed as a query: idempotent read-only and pairs with React Query
+    // so dependent <AsyncSelect>s don't re-hit the upstream API on every keystroke.
     .query(async ({ ctx, input }) => {
       checkUserRateLimit(ctx.user.id, "appsLoadOptions", {
         max: 60,
@@ -116,8 +121,6 @@ export const appsRouter = router({
 
       const loader = getLoader(input.source);
       if (!loader) {
-        // Manifest says this loader exists but no runtime implementation was
-        // registered — a server-side wiring bug, not a client problem.
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: `Loader '${input.source}' is declared on app '${input.appKey}' but not registered. Handler identifier was '${loaderKey}'.`,
@@ -138,10 +141,18 @@ export const appsRouter = router({
           db,
           connectionId: input.connectionId ?? null,
           params: input.params ?? {},
+          search: input.search,
+          cursor: input.cursor,
+          limit: Math.max(1, Math.min(200, input.limit)),
         });
       } catch (err) {
         if (err instanceof LoaderValidationError) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: err.message });
+          // Surface structured error code to the client alongside the message.
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: err.message,
+            cause: { code: err.code },
+          });
         }
         throw err;
       }
