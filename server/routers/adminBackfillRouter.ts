@@ -231,4 +231,42 @@ export const adminBackfillRouter = router({
   triggerRetry: adminProcedure.mutation(async () => {
     return retryAllFailedLeads();
   }),
+
+  // ── 6. Retry all failed BullMQ queue jobs (one-shot recovery) ──────────────
+  retryFailedQueueJobs: adminProcedure.mutation(async () => {
+    const { Queue } = await import("bullmq");
+    const redisUrl = process.env.REDIS_URL;
+    if (!redisUrl) return { retried: 0, errors: 0, message: "REDIS_URL not set — queue not active" };
+
+    const url = new URL(redisUrl);
+    const connection = {
+      host: url.hostname,
+      port: Number(url.port) || 6379,
+      password: url.password || undefined,
+      db: url.pathname ? Number(url.pathname.replace("/", "")) || 0 : 0,
+      tls: url.protocol === "rediss:" ? {} : undefined,
+    };
+
+    const queue = new Queue("lead-processing", { connection });
+
+    const failedCount = await queue.getFailedCount();
+    if (failedCount === 0) {
+      await queue.close();
+      return { retried: 0, errors: 0, message: "No failed jobs in queue" };
+    }
+
+    let retried = 0;
+    let errors = 0;
+    const jobs = await queue.getFailed(0, failedCount + 50);
+
+    await Promise.all(
+      jobs.map(async (job) => {
+        try { await job.retry(); retried++; }
+        catch { errors++; }
+      })
+    );
+
+    await queue.close();
+    return { retried, errors, total: failedCount };
+  }),
 });
