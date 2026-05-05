@@ -44,21 +44,43 @@ export interface OrderStatusResult {
 // ─── Sotuvchi Adapter ─────────────────────────────────────────────────────────
 const SOTUVCHI_BASE = "https://apiv3.sotuvchi.com/api";
 
-async function sotuvchiLogin(phone: string, password: string): Promise<LoginResult> {
-  const res = await axios.post(`${SOTUVCHI_BASE}/auth/login`, {
-    username: phone,
-    password,
-  }, { timeout: 10_000 });
+/** Platform headers documented for apiv3 (Accept-Language required for predictable messages). */
+const sotuvchiHeaders = {
+  Accept: "application/json",
+  "Accept-Language": "uz",
+} as const;
 
-  const token: string = res.data?.token ?? res.data?.data?.token;
+async function sotuvchiLogin(phone: string, password: string): Promise<LoginResult> {
+  // Field `phone` in CRM UI holds Sotuvchi **email** (see AdminCrmAccounts).
+  const res = await axios.post(
+    `${SOTUVCHI_BASE}/login`,
+    { email: phone.trim(), password },
+    { timeout: 10_000, headers: { "Content-Type": "application/json", ...sotuvchiHeaders } },
+  );
+
+  const d = res.data?.data;
+  const token: string =
+    res.data?.token ??
+    res.data?.access_token ??
+    (typeof d === "string" ? d : undefined) ??
+    (d && typeof d === "object" ? (d as { token?: string }).token : undefined) ??
+    (d && typeof d === "object"
+      ? (d as { access_token?: string }).access_token
+      : undefined);
   if (!token) throw new Error("Sotuvchi login: token topilmadi");
 
-  const meRes = await axios.get(`${SOTUVCHI_BASE}/users/info`, {
-    headers: { Authorization: `Bearer ${token}` },
+  const meRes = await axios.get(`${SOTUVCHI_BASE}/info`, {
+    headers: { Authorization: `Bearer ${token}`, ...sotuvchiHeaders },
     timeout: 10_000,
   });
 
-  const userId = String(meRes.data?.data?.id ?? meRes.data?.id ?? "");
+  const me = meRes.data?.data ?? meRes.data;
+  const userId = String(
+    (me && typeof me === "object" && (me as { id?: unknown }).id) ??
+      meRes.data?.user_id ??
+      meRes.data?.id ??
+      "",
+  );
   if (!userId) throw new Error("Sotuvchi login: userId topilmadi");
 
   return { bearerToken: token, platformUserId: userId };
@@ -70,7 +92,7 @@ async function sotuvchiGetOrderStatus(
 ): Promise<OrderStatusResult> {
   const res = await axios.get(`${SOTUVCHI_BASE}/getOrderDetails`, {
     params: { id: orderId },
-    headers: { Authorization: `Bearer ${bearerToken}`, Accept: "application/json" },
+    headers: { Authorization: `Bearer ${bearerToken}`, ...sotuvchiHeaders },
     timeout: 10_000,
   });
 
