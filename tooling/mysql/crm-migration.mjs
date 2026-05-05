@@ -30,13 +30,31 @@ async function main() {
   try {
     console.log("Running CRM migration...\n");
 
-    // 1. orders: add crmStatus + crmSyncedAt
-    await cn.query(`
-      ALTER TABLE orders
-        ADD COLUMN IF NOT EXISTS crmStatus   VARCHAR(32)  NULL AFTER responseData,
-        ADD COLUMN IF NOT EXISTS crmSyncedAt DATETIME(3)  NULL AFTER crmStatus
+    // 1. orders: add crmStatus (only if missing)
+    const [[{ hasCrmStatus }]] = await cn.query(`
+      SELECT COUNT(*) AS hasCrmStatus
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'crmStatus'
     `);
-    console.log("✓ orders.crmStatus + crmSyncedAt added");
+    if (!hasCrmStatus) {
+      await cn.query(`ALTER TABLE orders ADD COLUMN crmStatus VARCHAR(32) NULL AFTER responseData`);
+      console.log("✓ orders.crmStatus added");
+    } else {
+      console.log("– orders.crmStatus already exists, skipped");
+    }
+
+    // 2. orders: add crmSyncedAt (only if missing)
+    const [[{ hasCrmSyncedAt }]] = await cn.query(`
+      SELECT COUNT(*) AS hasCrmSyncedAt
+      FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'orders' AND COLUMN_NAME = 'crmSyncedAt'
+    `);
+    if (!hasCrmSyncedAt) {
+      await cn.query(`ALTER TABLE orders ADD COLUMN crmSyncedAt DATETIME(3) NULL AFTER crmStatus`);
+      console.log("✓ orders.crmSyncedAt added");
+    } else {
+      console.log("– orders.crmSyncedAt already exists, skipped");
+    }
 
     // 2. crm_connections: create table
     await cn.query(`
