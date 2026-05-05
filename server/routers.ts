@@ -18,6 +18,7 @@ import { googleAccountsRouter } from "./routers/googleAccountsRouter";
 import { googleRouter } from "./routers/googleRouter";
 import { appsRouter } from "./routers/appsRouter";
 import { connectionsRouter } from "./routers/connectionsRouter";
+import { crmRouter } from "./routers/crmRouter";
 
 export const appRouter = router({
   system: systemRouter,
@@ -39,6 +40,7 @@ export const appRouter = router({
   adminAppActions: adminAppActionsRouter,
   adminLeads: adminLeadsRouter,
   adAnalytics: adAnalyticsRouter,
+  adminCrm: crmRouter,
 });
 
 export type AppRouter = typeof appRouter;

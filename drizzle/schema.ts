@@ -660,6 +660,10 @@ export const orders = mysqlTable("orders", {
   /** After a failed delivery, set to now+1h until attempts reach max; hourly job selects due rows */
   nextRetryAt: timestamp("nextRetryAt"),
   responseData: json("responseData"),
+  /** CRM: latest status string fetched from the affiliate platform (new/accepted/delivered/...) */
+  crmStatus: varchar("crmStatus", { length: 32 }),
+  /** CRM: when crmStatus was last refreshed from the platform */
+  crmSyncedAt: timestamp("crmSyncedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
@@ -886,3 +890,36 @@ export const campaignInsightsCache = mysqlTable("campaign_insights_cache", {
 
 export type CampaignInsightsCacheRow = typeof campaignInsightsCache.$inferSelect;
 export type InsertCampaignInsightsCache = typeof campaignInsightsCache.$inferInsert;
+
+// ─── CRM Connections ──────────────────────────────────────────────────────────
+// Stores affiliate platform credentials for admin CRM status syncing.
+// Separate from `connections` table — CRM-only, admin-managed.
+export const crmConnections = mysqlTable("crm_connections", {
+  id: int("id").autoincrement().primaryKey(),
+  /** Admin user who added this account */
+  userId: int("userId").notNull(),
+  /** Affiliate platform */
+  platform: mysqlEnum("platform", ["sotuvchi", "100k"]).notNull(),
+  /** Human label shown in CRM UI */
+  displayName: varchar("displayName", { length: 64 }).notNull(),
+  /** Phone number used to log in (stored for auto re-login on 401) */
+  phone: varchar("phone", { length: 32 }).notNull(),
+  /** AES-encrypted login password — needed for automatic token refresh */
+  passwordEncrypted: text("passwordEncrypted").notNull(),
+  /** AES-encrypted Bearer token for Platform API calls */
+  bearerTokenEncrypted: text("bearerTokenEncrypted").notNull(),
+  /** Numeric user ID returned by the platform after login */
+  platformUserId: varchar("platformUserId", { length: 64 }).notNull(),
+  /** active = token is valid; error = last login attempt failed */
+  status: mysqlEnum("status", ["active", "error"]).default("active").notNull(),
+  /** When we last successfully logged in / refreshed the token */
+  lastLoginAt: timestamp("lastLoginAt"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  idxUserId: index("idx_crm_connections_user_id").on(t.userId),
+  idxPlatform: index("idx_crm_connections_platform").on(t.platform),
+}));
+
+export type CrmConnection = typeof crmConnections.$inferSelect;
+export type InsertCrmConnection = typeof crmConnections.$inferInsert;

@@ -45,6 +45,7 @@ import {
   Users,
   Webhook,
   Zap,
+  ClipboardList,
 } from "lucide-react";
 
 type NavItem = {
@@ -87,6 +88,7 @@ function buildAdminMenuItems(t: (k: string) => string) {
     { icon: Users, label: t("nav.adminLeads"), path: "/admin/leads" },
     { icon: SendHorizonal, label: t("nav.leadBackfill"), path: "/admin/backfill" },
     { icon: Globe, label: t("nav.destTemplates"), path: "/admin/destination-templates" },
+    { icon: ClipboardList, label: t("nav.adminCrm"), path: "/admin/crm/accounts" },
   ];
 }
 
