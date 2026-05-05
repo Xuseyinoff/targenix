@@ -57,6 +57,15 @@ export default function AdminBackfill() {
   const [userDialogOpen, setUserDialogOpen] = useState(false);
   const [integrationDialogOpen, setIntegrationDialogOpen] = useState(false);
 
+  // ── Queue retry ─────────────────────────────────────────────────────────────
+  const retryQueueMutation = trpc.adminBackfill.retryFailedQueueJobs.useMutation({
+    onSuccess: (r) => {
+      if ("message" in r) toast.info(r.message as string);
+      else toast.success(`✓ ${r.retried} job qayta ishga tushirildi${r.errors ? ` (${r.errors} xato)` : ""}`);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   // ── Data queries ────────────────────────────────────────────────────────────
   const { data: usersData, isLoading: loadingUsers } = trpc.adminBackfill.listUsers.useQuery(
     undefined,
@@ -142,7 +151,7 @@ export default function AdminBackfill() {
     <DashboardLayout>
       <div className="space-y-6 max-w-3xl">
         {/* Header */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl font-bold tracking-tight">Lead Backfill</h1>
@@ -155,6 +164,17 @@ export default function AdminBackfill() {
               Send pre-integration leads to affiliate websites on behalf of any user
             </p>
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={retryQueueMutation.isPending}
+            onClick={() => retryQueueMutation.mutate()}
+            title="Failed queue joblarini qayta ishga tushirish"
+          >
+            {retryQueueMutation.isPending
+              ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Retrying...</>
+              : <><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Retry Failed Jobs</>}
+          </Button>
         </div>
 
         {/* Step indicator */}
