@@ -20,9 +20,9 @@ import {
 } from "../services/facebookService";
 import {
   extractWithMappingForPoll,
-  processLead,
   resolveLeadMappingFromConfig,
 } from "../services/leadService";
+import { dispatchLeadProcessing } from "../services/leadDispatch";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
 
@@ -163,16 +163,14 @@ export const leadsRouter = router({
         .set({ dataStatus: "PENDING", deliveryStatus: "PENDING", dataError: null })
         .where(eq(leads.id, lead.id));
 
-      // Re-run lead processing (non-blocking)
-      setImmediate(() => {
-        processLead({
-          leadId: lead.id,
-          leadgenId: lead.leadgenId,
-          pageId: lead.pageId,
-          formId: lead.formId,
-          userId: lead.userId,
-        }).catch((err) => console.error(`[RetryLead] lead ${lead.id} error:`, err));
-      });
+      // Re-run lead processing via queue
+      void dispatchLeadProcessing({
+        leadId: lead.id,
+        leadgenId: lead.leadgenId,
+        pageId: lead.pageId,
+        formId: lead.formId,
+        userId: lead.userId,
+      }).catch((err) => console.error(`[RetryLead] lead ${lead.id} error:`, err));
 
       return { ok: true, leadId: lead.id };
     }),
@@ -214,17 +212,15 @@ export const leadsRouter = router({
           )
         );
 
-      // Re-process each lead
+      // Re-process each lead via queue
       for (const lead of failedLeads) {
-        setImmediate(() => {
-          processLead({
-            leadId: lead.id,
-            leadgenId: lead.leadgenId,
-            pageId: lead.pageId,
-            formId: lead.formId,
-            userId: lead.userId,
-          }).catch((err) => console.error(`[RetryAllFailed] lead ${lead.id} error:`, err));
-        });
+        void dispatchLeadProcessing({
+          leadId: lead.id,
+          leadgenId: lead.leadgenId,
+          pageId: lead.pageId,
+          formId: lead.formId,
+          userId: lead.userId,
+        }).catch((err) => console.error(`[RetryAllFailed] lead ${lead.id} error:`, err));
       }
 
       console.log(`[RetryAllFailed] Retrying ${failedLeads.length} failed leads for user ${userId}`);
@@ -424,17 +420,13 @@ export const leadsRouter = router({
           .limit(1);
 
         if (saved) {
-          setImmediate(() => {
-            processLead({
-              leadId: saved.id,
-              leadgenId: item.id,
-              pageId: input.pageId,
-              formId: item.form_id || input.formId,
-              userId,
-            }).catch((err) =>
-              console.error("[PollLeads] processLead error:", err)
-            );
-          });
+          void dispatchLeadProcessing({
+            leadId: saved.id,
+            leadgenId: item.id,
+            pageId: input.pageId,
+            formId: item.form_id || input.formId,
+            userId,
+          }).catch((err) => console.error("[PollLeads] dispatchLeadProcessing error:", err));
         }
 
         synced++;
