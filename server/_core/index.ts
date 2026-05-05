@@ -305,6 +305,25 @@ async function startServer() {
     console.warn("[Server] WARNING: REDIS_URL not set — leads processed in-process (not durable). Set REDIS_URL for production.");
   }
 
+  // If START_WORKER=true, run the BullMQ worker + schedulers inside this process.
+  // Used when a separate worker service is not deployed (single-service Railway setup).
+  if (process.env.START_WORKER === "true" && dispatchMode === "queue") {
+    console.log("[Server] START_WORKER=true — booting worker inside web process...");
+    const { startLeadWorker } = await import("../workers/leadWorker");
+    const { startRetryScheduler } = await import("../services/retryScheduler");
+    const { startLogRetentionScheduler } = await import("../services/logRetentionScheduler");
+    const { startFormsRefreshScheduler } = await import("../services/formsRefreshScheduler");
+    const { startAdsSyncScheduler } = await import("../services/adsSyncScheduler");
+    const { startLeadPollingScheduler } = await import("../services/leadPollingService");
+    startLeadWorker();
+    startRetryScheduler();
+    startLogRetentionScheduler();
+    startFormsRefreshScheduler();
+    startAdsSyncScheduler();
+    startLeadPollingScheduler();
+    console.log("[Server] Embedded worker + schedulers started.");
+  }
+
   // Register Telegram bot webhook URL with Telegram servers
   const appUrl = process.env.APP_URL;
   if (appUrl) {
