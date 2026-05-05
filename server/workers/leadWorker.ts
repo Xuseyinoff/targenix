@@ -34,7 +34,12 @@ export function startLeadWorker(): Worker {
   });
 
   _worker.on("failed", (job, err) => {
-    console.error(`[Worker] ✗ Job ${job?.id} failed (attempt ${job?.attemptsMade}):`, err.message);
+    const cause = (err as { cause?: unknown }).cause;
+    console.error(
+      `[Worker] ✗ Job ${job?.id} failed (attempt ${job?.attemptsMade}):`,
+      err.message,
+      cause ? `| cause: ${(cause as Error).message ?? String(cause)}` : "",
+    );
   });
 
   _worker.on("error", (err) => {
