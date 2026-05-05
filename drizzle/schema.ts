@@ -902,8 +902,8 @@ export const crmConnections = mysqlTable("crm_connections", {
   platform: mysqlEnum("platform", ["sotuvchi", "100k"]).notNull(),
   /** Human label shown in CRM UI */
   displayName: varchar("displayName", { length: 64 }).notNull(),
-  /** Phone number used to log in (stored for auto re-login on 401) */
-  phone: varchar("phone", { length: 32 }).notNull(),
+  /** Phone or email used to log in (stored for auto re-login on 401) */
+  phone: varchar("phone", { length: 64 }).notNull(),
   /** AES-encrypted login password — needed for automatic token refresh */
   passwordEncrypted: text("passwordEncrypted").notNull(),
   /** AES-encrypted Bearer token for Platform API calls */

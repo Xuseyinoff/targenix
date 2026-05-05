@@ -135,7 +135,7 @@ export default function AdminCrmAccounts() {
                     className="w-full border rounded-md px-3 py-2 text-sm bg-background"
                     value={form.platform}
                     onChange={(e) =>
-                      setForm((f) => ({ ...f, platform: e.target.value as "sotuvchi" | "100k" }))
+                      setForm((f) => ({ ...f, platform: e.target.value as "sotuvchi" | "100k", phone: "" }))
                     }
                   >
                     <option value="sotuvchi">Sotuvchi.com</option>
@@ -154,9 +154,12 @@ export default function AdminCrmAccounts() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs text-muted-foreground mb-1 block">Telefon</label>
+                  <label className="text-xs text-muted-foreground mb-1 block">
+                    {form.platform === "sotuvchi" ? "Email" : "Telefon"}
+                  </label>
                   <Input
-                    placeholder="+998XXXXXXXXX"
+                    type={form.platform === "sotuvchi" ? "email" : "tel"}
+                    placeholder={form.platform === "sotuvchi" ? "email@gmail.com" : "+998XXXXXXXXX"}
                     value={form.phone}
                     onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
                   />

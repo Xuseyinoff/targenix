@@ -44,7 +44,7 @@ export const crmRouter = router({
       z.object({
         platform: z.enum(["sotuvchi", "100k"]),
         displayName: z.string().trim().min(1).max(64),
-        phone: z.string().trim().min(7).max(32),
+        phone: z.string().trim().min(3).max(64),
         password: z.string().min(1),
       }),
     )
