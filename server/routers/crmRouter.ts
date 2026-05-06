@@ -40,7 +40,9 @@ export const syncState = {
   lastResult: null as SyncResult | null,
 };
 
-const REQUEST_DELAY_MS = 1200;       // pause between every API call (≈0.8 req/s max)
+const REQUEST_DELAY_MS = 300;        // delay between requests within a burst
+const BURST_SIZE = 20;               // requests per burst window
+const BURST_PAUSE_MS = 15_000;       // cooldown after each burst (15 sec)
 const CIRCUIT_BREAKER_HITS = 3;      // consecutive 429s before full stop
 const CIRCUIT_BREAKER_PAUSE_MS = 120_000; // 2 min pause after circuit breaker trips
 
@@ -225,9 +227,17 @@ export async function performCrmSync(
 
     if (syncState.progress) syncState.progress.current = synced + errors;
 
-    // Throttle: 300ms between every request to stay under rate limits
     if (i < pendingOrders.length - 1 && !syncState.aborted) {
-      await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS));
+      const burstIndex = i + 1; // 1-based count of completed requests
+      if (burstIndex % BURST_SIZE === 0) {
+        // End of burst window — long cooldown so API rate window can reset
+        console.log(`[CrmSync] Burst pause ${BURST_PAUSE_MS / 1000}s after ${burstIndex} requests`);
+        if (syncState.progress) syncState.progress.rateLimited = true;
+        await new Promise((r) => setTimeout(r, BURST_PAUSE_MS));
+        if (syncState.progress) syncState.progress.rateLimited = false;
+      } else {
+        await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS));
+      }
     }
   }
 
