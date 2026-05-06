@@ -7,13 +7,23 @@ const SOTUVCHI_STATUS_MAP: Record<string, string> = {
   new: "new",
   accepted: "accepted",
   order: "accepted",
+  filling: "accepted",
+  preparing: "booked",
   booked: "booked",
   sent: "sent",
   sold: "delivered",
   delivered: "delivered",
+  not_delivered: "not_delivered",
   callback: "callback",
+  recycling: "callback",
+  on_argue: "callback",
   cancelled: "cancelled",
   canceled: "cancelled",
+  trash: "cancelled",
+  not_sold: "cancelled",
+  not_sold_group: "cancelled",
+  product_out_of_stock: "cancelled",
+  client_returned: "cancelled",
   archived: "archived",
 };
 
@@ -74,9 +84,10 @@ async function sotuvchiLogin(phone: string, password: string): Promise<LoginResu
     timeout: 10_000,
   });
 
-  const me = meRes.data?.data ?? meRes.data;
+  // Response shape: { "user": { "id": 1, ... } }
+  const me = meRes.data?.user ?? meRes.data?.data ?? meRes.data;
   const userId = String(
-    (me && typeof me === "object" && (me as { id?: unknown }).id) ??
+    (me && typeof me === "object" ? (me as { id?: unknown }).id : undefined) ??
       meRes.data?.user_id ??
       meRes.data?.id ??
       "",
