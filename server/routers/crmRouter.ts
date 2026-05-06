@@ -16,6 +16,7 @@ import {
   extractExternalOrderId,
   type Platform,
 } from "../services/crmService";
+import { isFinalStatus } from "../../shared/crmStatuses";
 
 // ─── Background sync state (single-instance safe) ─────────────────────────────
 interface SyncResult {
@@ -74,6 +75,7 @@ async function performCrmSync(
       and(
         eq(orders.status, "SENT"),
         eq(orders.userId, userId),
+        eq(orders.isFinal, false),        // skip terminal orders — they won't change
         isNotNull(orders.responseData),
         or(isNull(orders.crmSyncedAt), lte(orders.crmSyncedAt, tenMinAgo)),
         sql`${orders.createdAt} >= ${thirtyDaysAgo}`,
@@ -179,7 +181,10 @@ async function performCrmSync(
             throw err;
           });
           consecutiveHits.set(plat, 0);
-          await db!.update(orders).set({ crmStatus: statusResult.status, crmSyncedAt: new Date() }).where(eq(orders.id, row.orderId));
+          const terminal = isFinalStatus(statusResult.status);
+          await db!.update(orders)
+            .set({ crmStatus: statusResult.status, crmSyncedAt: new Date(), isFinal: terminal })
+            .where(eq(orders.id, row.orderId));
           synced++;
         } catch {
           errors++;

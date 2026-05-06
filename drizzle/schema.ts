@@ -664,6 +664,8 @@ export const orders = mysqlTable("orders", {
   crmStatus: varchar("crmStatus", { length: 32 }),
   /** CRM: when crmStatus was last refreshed from the platform */
   crmSyncedAt: timestamp("crmSyncedAt"),
+  /** CRM: true once crmStatus reaches a terminal state — sync is skipped for these rows */
+  isFinal: boolean("isFinal").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
