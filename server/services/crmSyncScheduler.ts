@@ -11,8 +11,8 @@
 
 import { performCrmSync, syncState } from "../routers/crmRouter";
 
-const SYNC_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
-const INITIAL_DELAY_MS = 60 * 1000;       // 60 seconds after startup
+const SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes — SQL tier filter controls actual load
+const INITIAL_DELAY_MS = 60 * 1000;     // 60 seconds after startup
 
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -63,7 +63,7 @@ export function startCrmSyncScheduler(): void {
   if (schedulerTimer !== null) return; // idempotent
 
   console.log(
-    `[CrmSyncScheduler] Starting — first sync in ${INITIAL_DELAY_MS / 1000}s, then every ${SYNC_INTERVAL_MS / 60000} min`,
+    `[CrmSyncScheduler] Starting — first sync in ${INITIAL_DELAY_MS / 1000}s, then every ${SYNC_INTERVAL_MS / 1000}s (ACTIVE tier: 2 min, MID tier: 10 min)`,
   );
 
   schedulerTimer = setTimeout(() => {

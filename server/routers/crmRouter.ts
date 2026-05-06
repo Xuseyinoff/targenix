@@ -9,7 +9,7 @@ import {
   targetWebsites,
   orderEvents,
 } from "../../drizzle/schema";
-import { and, desc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { encrypt, decrypt } from "../encryption";
 import {
   crmLogin,
@@ -59,8 +59,21 @@ export async function performCrmSync(
     return { synced: 0, errors: 0, total: 0, syncedAt: new Date().toISOString(), message: "CRM akkaunt topilmadi" };
   }
 
-  const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+  // Tier-based sync windows: ACTIVE orders every 2 min, MID orders every 10 min
+  const twoMinAgo    = new Date(Date.now() -  2 * 60 * 1000);
+  const tenMinAgo    = new Date(Date.now() - 10 * 60 * 1000);
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
+  // ACTIVE: new/accepted/filling/callback (or unknown null) — poll every 2 min
+  const activeDue = sql`(
+    (${orders.crmStatus} IS NULL OR ${orders.crmStatus} IN ('new','accepted','filling','callback'))
+    AND (${orders.crmSyncedAt} IS NULL OR ${orders.crmSyncedAt} <= ${twoMinAgo})
+  )`;
+  // MID: sent/booked/preparing/recycling/on_argue — poll every 10 min
+  const midDue = sql`(
+    ${orders.crmStatus} IN ('sent','booked','preparing','recycling','on_argue')
+    AND (${orders.crmSyncedAt} IS NULL OR ${orders.crmSyncedAt} <= ${tenMinAgo})
+  )`;
 
   const pendingOrders = await db
     .select({
@@ -78,16 +91,17 @@ export async function performCrmSync(
       and(
         eq(orders.status, "SENT"),
         userId !== undefined ? eq(orders.userId, userId) : undefined,
-        eq(orders.isFinal, false),        // skip terminal orders — they won't change
+        eq(orders.isFinal, false),
         isNotNull(orders.responseData),
-        or(isNull(orders.crmSyncedAt), lte(orders.crmSyncedAt, tenMinAgo)),
+        sql`(${activeDue} OR ${midDue})`,
         sql`${orders.createdAt} >= ${thirtyDaysAgo}`,
         platform
           ? eq(targetWebsites.appKey, platform)
           : or(eq(targetWebsites.appKey, "sotuvchi"), eq(targetWebsites.appKey, "100k")),
       ),
     )
-    .limit(500);
+    .orderBy(asc(orders.crmSyncedAt))   // oldest-synced first (NULLs first in MySQL ASC)
+    .limit(200);
 
   const accountByPlatform = new Map<Platform, typeof accounts[number]>();
   for (const acc of accounts) {
