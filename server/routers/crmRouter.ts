@@ -203,6 +203,7 @@ export async function performCrmSync(
       await db!.update(orders)
         .set({
           crmStatus: statusResult.status,
+          crmRawStatus: statusResult.rawStatus,
           crmSyncedAt: new Date(),
           ...(statusChanged ? { isFinal: terminal } : {}),
         })
@@ -336,6 +337,7 @@ export const crmRouter = router({
             integrationId: orders.integrationId,
             responseData: orders.responseData,
             crmStatus: orders.crmStatus,
+            crmRawStatus: orders.crmRawStatus,
             crmSyncedAt: orders.crmSyncedAt,
             isFinal: orders.isFinal,
             createdAt: orders.createdAt,

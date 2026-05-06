@@ -352,8 +352,16 @@ export default function AdminCrmOrders() {
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <CrmStatusBadge status={row.crmStatus} />
+                            {row.crmRawStatus && row.crmRawStatus !== row.crmStatus && (
+                              <span
+                                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 font-mono"
+                                title="Platformadan kelgan original status"
+                              >
+                                {row.crmRawStatus}
+                              </span>
+                            )}
                             {row.isFinal && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 font-medium">
                                 final

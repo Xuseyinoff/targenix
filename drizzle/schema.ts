@@ -662,6 +662,8 @@ export const orders = mysqlTable("orders", {
   responseData: json("responseData"),
   /** CRM: latest status string fetched from the affiliate platform (new/accepted/delivered/...) */
   crmStatus: varchar("crmStatus", { length: 32 }),
+  /** CRM: raw status string as returned by the platform before normalization (e.g. "client_returned", "trash") */
+  crmRawStatus: varchar("crmRawStatus", { length: 64 }),
   /** CRM: when crmStatus was last refreshed from the platform */
   crmSyncedAt: timestamp("crmSyncedAt"),
   /** CRM: true once crmStatus reaches a terminal state — sync is skipped for these rows */
