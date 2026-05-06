@@ -30,14 +30,8 @@ const syncState = {
   lastResult: null as SyncResult | null,
 };
 
-const CONCURRENCY = 3;
-const BATCH_DELAY_MS = 1000;
-
-// Exponential backoff sleep: 1s → 2s → 4s → 8s (max)
-async function sleepBackoff(attempt: number): Promise<void> {
-  const ms = Math.min(1000 * 2 ** attempt, 8000);
-  await new Promise((r) => setTimeout(r, ms));
-}
+const CONCURRENCY = 2;
+const BATCH_DELAY_MS = 1200;
 
 async function performCrmSync(
   userId: number,
@@ -92,6 +86,24 @@ async function performCrmSync(
   let synced = 0;
   let errors = 0;
 
+  // Per-platform: timestamp until which we must not send requests (global pause)
+  const pausedUntil = new Map<Platform, number>();
+
+  async function waitIfPaused(plat: Platform): Promise<void> {
+    const until = pausedUntil.get(plat) ?? 0;
+    const remaining = until - Date.now();
+    if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
+  }
+
+  function applyRateLimit(plat: Platform, consecutiveHits: number): void {
+    // 429 hit: pause the whole platform. Delay: 5s → 10s → 20s → 30s (max)
+    const pauseMs = Math.min(5000 * 2 ** (consecutiveHits - 1), 30000);
+    pausedUntil.set(plat, Date.now() + pauseMs);
+    console.warn(`[CrmSync] 429 on ${plat} (hit #${consecutiveHits}) — pausing ${pauseMs / 1000}s`);
+  }
+
+  const consecutiveHits = new Map<Platform, number>();
+
   async function refreshToken(acc: typeof accounts[number]): Promise<string | null> {
     try {
       const password = decrypt(acc.passwordEncrypted);
@@ -109,9 +121,6 @@ async function performCrmSync(
     }
   }
 
-  // Per-platform rate-limit state: track consecutive 429s for backoff
-  const rateLimitHits = new Map<Platform, number>();
-
   for (let i = 0; i < pendingOrders.length; i += CONCURRENCY) {
     const batch = pendingOrders.slice(i, i + CONCURRENCY);
     await Promise.all(
@@ -122,6 +131,10 @@ async function performCrmSync(
         if (!acc) return;
         const externalId = extractExternalOrderId(row.responseData);
         if (!externalId) return;
+
+        // Wait out any active platform pause before sending
+        await waitIfPaused(plat);
+
         let bearerToken = decrypt(acc.bearerTokenEncrypted);
         const tryFetch = (token: string) => crmGetOrderStatus(plat, token, externalId, acc.platformUserId);
         try {
@@ -133,16 +146,16 @@ async function performCrmSync(
               return tryFetch(newToken);
             }
             if (err?.response?.status === 429) {
-              // Rate limited — backoff then retry once
-              const hits = (rateLimitHits.get(plat) ?? 0) + 1;
-              rateLimitHits.set(plat, hits);
-              console.warn(`[CrmSync] 429 rate limit (${plat}) attempt=${hits}, backing off...`);
-              await sleepBackoff(hits - 1);
+              const hits = (consecutiveHits.get(plat) ?? 0) + 1;
+              consecutiveHits.set(plat, hits);
+              applyRateLimit(plat, hits);
+              // Wait out the pause, then retry once
+              await waitIfPaused(plat);
               return tryFetch(bearerToken);
             }
             throw err;
           });
-          rateLimitHits.set(plat, 0); // reset on success
+          consecutiveHits.set(plat, 0); // reset streak on success
           await db!.update(orders).set({ crmStatus: statusResult.status, crmSyncedAt: new Date() }).where(eq(orders.id, row.orderId));
           synced++;
         } catch {
@@ -151,10 +164,7 @@ async function performCrmSync(
       }),
     );
     if (i + CONCURRENCY < pendingOrders.length) {
-      // Extra pause after a rate-limit hit — give the API time to breathe
-      const maxHits = Math.max(...Array.from(rateLimitHits.values()));
-      const pause = maxHits > 0 ? BATCH_DELAY_MS * (maxHits + 1) : BATCH_DELAY_MS;
-      await new Promise((r) => setTimeout(r, pause));
+      await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
     }
   }
 
