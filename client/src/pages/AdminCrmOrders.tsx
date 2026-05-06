@@ -285,7 +285,7 @@ export default function AdminCrmOrders() {
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-xs font-medium">
-                            {PLATFORM_LABELS[row.templateType ?? ""] ?? row.templateType ?? "—"}
+                            {PLATFORM_LABELS[row.appKey ?? ""] ?? row.appKey ?? "—"}
                           </span>
                         </td>
                         <td className="px-4 py-3">

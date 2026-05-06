@@ -51,7 +51,7 @@ async function performCrmSync(platform?: "sotuvchi" | "100k"): Promise<SyncResul
       orderId: orders.id,
       responseData: orders.responseData,
       crmSyncedAt: orders.crmSyncedAt,
-      templateType: targetWebsites.templateType,
+      appKey: targetWebsites.appKey,
     })
     .from(orders)
     .innerJoin(integrations, eq(orders.integrationId, integrations.id))
@@ -63,8 +63,8 @@ async function performCrmSync(platform?: "sotuvchi" | "100k"): Promise<SyncResul
         or(isNull(orders.crmSyncedAt), lte(orders.crmSyncedAt, tenMinAgo)),
         sql`${orders.createdAt} >= ${thirtyDaysAgo}`,
         platform
-          ? eq(targetWebsites.templateType, platform)
-          : or(eq(targetWebsites.templateType, "sotuvchi"), eq(targetWebsites.templateType, "100k")),
+          ? eq(targetWebsites.appKey, platform)
+          : or(eq(targetWebsites.appKey, "sotuvchi"), eq(targetWebsites.appKey, "100k")),
       ),
     )
     .limit(200);
@@ -101,7 +101,7 @@ async function performCrmSync(platform?: "sotuvchi" | "100k"): Promise<SyncResul
     const batch = pendingOrders.slice(i, i + CONCURRENCY);
     await Promise.all(
       batch.map(async (row) => {
-        const plat = row.templateType as Platform;
+        const plat = row.appKey as Platform;
         if (plat !== "sotuvchi" && plat !== "100k") return;
         const acc = accountByPlatform.get(plat);
         if (!acc) return;
@@ -222,8 +222,8 @@ export const crmRouter = router({
         eq(orders.userId, ctx.user.id),
         isNotNull(orders.responseData),
         input.platform
-          ? eq(targetWebsites.templateType, input.platform)
-          : undefined,
+          ? eq(targetWebsites.appKey, input.platform)
+          : or(eq(targetWebsites.appKey, "sotuvchi"), eq(targetWebsites.appKey, "100k")),
         input.crmStatus
           ? eq(orders.crmStatus, input.crmStatus)
           : undefined,
@@ -242,7 +242,7 @@ export const crmRouter = router({
             leadName: leads.fullName,
             leadPhone: leads.phone,
             integrationName: integrations.name,
-            templateType: targetWebsites.templateType,
+            appKey: targetWebsites.appKey,
           })
           .from(orders)
           .innerJoin(leads, eq(orders.leadId, leads.id))
