@@ -10,7 +10,7 @@ import {
   ChevronRight,
   UserCircle,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 
 const PAGE_SIZE = 50;
@@ -76,7 +76,8 @@ export default function AdminCrmOrders() {
   const [page, setPage] = useState(0);
   const [platformFilter, setPlatformFilter] = useState<"sotuvchi" | "100k" | "">("");
   const [statusFilter, setStatusFilter] = useState("");
-  const [syncResult, setSyncResult] = useState<{ synced: number; errors: number; total?: number; message?: string } | null>(null);
+  const [syncBanner, setSyncBanner] = useState<{ running: boolean; message?: string; synced?: number; errors?: number; total?: number } | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { data, isLoading, isFetching } = trpc.adminCrm.listOrders.useQuery(
     {
@@ -88,10 +89,40 @@ export default function AdminCrmOrders() {
     { enabled: user?.role === "admin" },
   );
 
+  const { refetch: refetchStatus } = trpc.adminCrm.getSyncStatus.useQuery(undefined, {
+    enabled: false,
+  });
+
+  const stopPolling = () => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  };
+
+  useEffect(() => () => stopPolling(), []);
+
+  const startPolling = () => {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      const { data: s } = await refetchStatus();
+      if (!s) return;
+      if (!s.running) {
+        stopPolling();
+        utils.adminCrm.listOrders.invalidate();
+        setSyncBanner(s.lastResult
+          ? { running: false, ...s.lastResult }
+          : { running: false, message: "Sync tugadi" },
+        );
+      }
+    }, 2000);
+  };
+
   const syncMutation = trpc.adminCrm.syncOrderStatuses.useMutation({
     onSuccess: (result) => {
-      setSyncResult(result);
-      utils.adminCrm.listOrders.invalidate();
+      if (!result.started && result.message) {
+        setSyncBanner({ running: false, message: result.message });
+        return;
+      }
+      setSyncBanner({ running: true, message: "Sync ishlayapti..." });
+      startPolling();
     },
   });
 
@@ -123,16 +154,16 @@ export default function AdminCrmOrders() {
             </Button>
             <Button
               size="sm"
-              disabled={syncMutation.isPending}
+              disabled={syncMutation.isPending || syncBanner?.running}
               onClick={() => {
-                setSyncResult(null);
+                setSyncBanner(null);
                 syncMutation.mutate({ platform: platformFilter || undefined });
               }}
             >
-              {syncMutation.isPending ? (
+              {syncBanner?.running ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  Sync bo'lyapti...
+                  Sync ishlayapti...
                 </>
               ) : (
                 <>
@@ -144,20 +175,22 @@ export default function AdminCrmOrders() {
           </div>
         </div>
 
-        {/* Sync result banner */}
-        {syncResult && (
-          <div className="rounded-lg border bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 px-4 py-3 text-sm text-emerald-700 dark:text-emerald-300 flex items-center justify-between">
-            <span>
-              {syncResult.message
-              ? syncResult.message
-              : `✓ Sync tugadi — ${syncResult.synced} ta yangilandi${syncResult.errors > 0 ? `, ${syncResult.errors} ta xato` : ""} (jami ${syncResult.total ?? 0} ta tekshirildi)`}
+        {/* Sync banner */}
+        {syncBanner && (
+          <div className={`rounded-lg border px-4 py-3 text-sm flex items-center justify-between ${
+            syncBanner.running
+              ? "bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300"
+              : "bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300"
+          }`}>
+            <span className="flex items-center gap-2">
+              {syncBanner.running && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+              {syncBanner.message
+                ? syncBanner.message
+                : `✓ Sync tugadi — ${syncBanner.synced} ta yangilandi${(syncBanner.errors ?? 0) > 0 ? `, ${syncBanner.errors} ta xato` : ""} (jami ${syncBanner.total ?? 0} ta tekshirildi)`}
             </span>
-            <button
-              className="text-emerald-500 hover:text-emerald-700 ml-4"
-              onClick={() => setSyncResult(null)}
-            >
-              ✕
-            </button>
+            {!syncBanner.running && (
+              <button className="ml-4 opacity-60 hover:opacity-100" onClick={() => setSyncBanner(null)}>✕</button>
+            )}
           </div>
         )}
 

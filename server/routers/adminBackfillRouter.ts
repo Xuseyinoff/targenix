@@ -14,7 +14,7 @@ import { adminProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import { users, integrations, leads, orders, facebookConnections, facebookAccounts, targetWebsites } from "../../drizzle/schema";
 import { and, eq, lt, gte, desc, inArray } from "drizzle-orm";
-import { processLead } from "../services/leadService";
+import { dispatchLeadProcessing } from "../services/leadDispatch";
 import { retryAllFailedLeads } from "../services/retryScheduler";
 
 export const adminBackfillRouter = router({
@@ -199,32 +199,20 @@ export const adminBackfillRouter = router({
         .from(leads)
         .where(and(eq(leads.userId, userId), eq(leads.pageId, pageId), eq(leads.formId, formId), inArray(leads.id, input.leadIds)));
 
-      const results: Array<{ leadId: number; fullName: string | null; phone: string | null; success: boolean; error?: string }> = [];
-
-      for (const lead of leadRows) {
-        try {
-          await processLead({
+      // Enqueue all leads in parallel — worker processes them with proper retry
+      await Promise.all(
+        leadRows.map((lead) =>
+          dispatchLeadProcessing({
             leadId: lead.id,
             leadgenId: lead.leadgenId,
             pageId: lead.pageId,
             formId: lead.formId,
             userId,
-            isAdmin: true,
-          });
-          results.push({ leadId: lead.id, fullName: lead.fullName, phone: lead.phone, success: true });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          results.push({ leadId: lead.id, fullName: lead.fullName, phone: lead.phone, success: false, error: msg });
-        }
+          }),
+        ),
+      );
 
-        // Small delay to avoid rate limiting
-        await new Promise(r => setTimeout(r, 300));
-      }
-
-      const sent = results.filter(r => r.success).length;
-      const failed = results.filter(r => !r.success).length;
-
-      return { results, sent, failed, total: results.length };
+      return { queued: leadRows.length, total: input.leadIds.length };
     }),
 
   // ── 5. Manually trigger retry of all FAILED leads ─────────────────────────

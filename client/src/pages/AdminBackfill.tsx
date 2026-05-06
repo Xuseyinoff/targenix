@@ -11,7 +11,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { Shield, Users, Zap, ChevronRight, ChevronLeft, Send, CheckCircle2, XCircle, Loader2, RefreshCw, ChevronsUpDown, Search } from "lucide-react";
+import { Shield, Users, Zap, ChevronRight, ChevronLeft, Send, CheckCircle2, Loader2, RefreshCw, ChevronsUpDown, Search } from "lucide-react";
 import {
   CommandDialog,
   CommandInput,
@@ -26,12 +26,9 @@ import { leadIsRetryable } from "@/lib/leadPipelineBadgeModel";
 type Step = 1 | 2 | 3 | 4;
 type Mode = "count" | "hours" | "manual";
 
-interface SendResult {
-  leadId: number;
-  fullName: string | null;
-  phone: string | null;
-  success: boolean;
-  error?: string;
+interface QueueResult {
+  queued: number;
+  total: number;
 }
 
 export default function AdminBackfill() {
@@ -52,7 +49,7 @@ export default function AdminBackfill() {
   const [hours, setHours] = useState(24);
   const [selectedLeadIds, setSelectedLeadIds] = useState<Set<number>>(new Set());
   const [sendTelegram, setSendTelegram] = useState(true);
-  const [sendResults, setSendResults] = useState<SendResult[] | null>(null);
+  const [queueResult, setQueueResult] = useState<QueueResult | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [userDialogOpen, setUserDialogOpen] = useState(false);
   const [integrationDialogOpen, setIntegrationDialogOpen] = useState(false);
@@ -109,9 +106,9 @@ export default function AdminBackfill() {
         leadIds: ids,
         sendTelegram,
       });
-      setSendResults(res.results);
+      setQueueResult(res);
       setStep(4);
-      toast.success(`${res.sent}/${res.total} leads sent successfully`);
+      toast.success(`${res.queued} ta lead worker queuega qo'shildi`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Send failed");
     } finally {
@@ -127,7 +124,7 @@ export default function AdminBackfill() {
     setCount(15);
     setHours(24);
     setSelectedLeadIds(new Set());
-    setSendResults(null);
+    setQueueResult(null);
   };
 
   // ── Guard ───────────────────────────────────────────────────────────────────
@@ -592,46 +589,38 @@ export default function AdminBackfill() {
           </div>
         )}
 
-        {/* ── Step 4: Results ─────────────────────────────────────────────── */}
-        {step === 4 && sendResults && (
+        {/* ── Step 4: Queued ──────────────────────────────────────────────── */}
+        {step === 4 && queueResult && (
           <div className="space-y-4">
             <Card>
               <CardHeader>
                 <CardTitle className="text-base flex items-center gap-2">
-                  <CheckCircle2 className="h-5 w-5 text-green-500" /> Backfill Complete
+                  <CheckCircle2 className="h-5 w-5 text-green-500" /> Queuega qo'shildi
                 </CardTitle>
                 <CardDescription>
-                  {sendResults.filter(r => r.success).length} sent ·{" "}
-                  {sendResults.filter(r => !r.success).length} failed ·{" "}
-                  {sendResults.length} total
+                  {queueResult.queued} ta lead worker tomonidan qayta ishlanadi
                 </CardDescription>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-1 max-h-80 overflow-y-auto pr-1">
-                  {sendResults.map(r => (
-                    <div key={r.leadId} className="flex items-center gap-3 px-3 py-2 rounded-lg">
-                      {r.success
-                        ? <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-                        : <XCircle className="h-4 w-4 text-destructive shrink-0" />}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{r.fullName || "—"}</p>
-                        <p className="text-xs text-muted-foreground">{r.phone || "—"}</p>
-                      </div>
-                      {!r.success && r.error && (
-                        <p className="text-xs text-destructive truncate max-w-48">{r.error}</p>
-                      )}
-                      <Badge variant={r.success ? "default" : "destructive"} className="text-xs shrink-0">
-                        {r.success ? "SENT" : "FAILED"}
-                      </Badge>
-                    </div>
-                  ))}
+              <CardContent className="space-y-3">
+                <div className="rounded-lg bg-muted/50 px-4 py-3 text-sm space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">So'ralgan</span>
+                    <span className="font-medium">{queueResult.total} ta</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Queuega qo'shildi</span>
+                    <span className="font-medium text-green-600 dark:text-green-400">{queueResult.queued} ta</span>
+                  </div>
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  Worker leadlarni birma-bir qayta ishlaydi. Natijani Leads sahifasidan kuzating.
+                </p>
               </CardContent>
             </Card>
 
             <div className="flex gap-2">
               <Button variant="outline" onClick={reset}>
-                <RefreshCw className="h-4 w-4 mr-2" /> New Backfill
+                <RefreshCw className="h-4 w-4 mr-2" /> Yangi backfill
               </Button>
             </div>
           </div>
