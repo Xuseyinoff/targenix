@@ -51,6 +51,23 @@ export interface OrderStatusResult {
   rawStatus: string;
 }
 
+export interface OrderPageItem {
+  id: number;
+  status: string;
+  created_at: string;
+}
+
+export interface OrderPageResult {
+  data: OrderPageItem[];
+  current_page: number;
+  last_page: number;
+  total: number;
+}
+
+export function normalizeSotuvchiStatus(raw: string): string {
+  return SOTUVCHI_STATUS_MAP[raw.toLowerCase()] ?? raw;
+}
+
 // ─── Sotuvchi Adapter ─────────────────────────────────────────────────────────
 const SOTUVCHI_BASE = "https://apiv3.sotuvchi.com/api";
 
@@ -112,6 +129,29 @@ async function sotuvchiGetOrderStatus(
     externalId: orderId,
     status: SOTUVCHI_STATUS_MAP[raw.toLowerCase()] ?? raw,
     rawStatus: raw,
+  };
+}
+
+export async function sotuvchiGetOrdersPage(
+  bearerToken: string,
+  page: number,
+  limit: number,
+): Promise<OrderPageResult> {
+  const res = await axios.get(`${SOTUVCHI_BASE}/getOrders`, {
+    params: { page, limit },
+    headers: { Authorization: `Bearer ${bearerToken}`, ...sotuvchiHeaders },
+    timeout: 15_000,
+  });
+  const o = res.data?.orders;
+  return {
+    data: (o?.data ?? []).map((item: Record<string, unknown>) => ({
+      id: Number(item.id),
+      status: String(item.status ?? ""),
+      created_at: String(item.created_at ?? ""),
+    })),
+    current_page: Number(o?.current_page ?? page),
+    last_page: Number(o?.last_page ?? page),
+    total: Number(o?.total ?? 0),
   };
 }
 

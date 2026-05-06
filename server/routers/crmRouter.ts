@@ -15,7 +15,10 @@ import {
   crmLogin,
   crmGetOrderStatus,
   extractExternalOrderId,
+  sotuvchiGetOrdersPage,
+  normalizeSotuvchiStatus,
   type Platform,
+  type OrderPageResult,
 } from "../services/crmService";
 import { isFinalStatus } from "../../shared/crmStatuses";
 
@@ -245,6 +248,177 @@ export async function performCrmSync(
   return { synced, errors, total: pendingOrders.length, syncedAt: new Date().toISOString() };
 }
 
+// ─── Pagination sync (bulk: 200 orders/page, stops at oldest non-final order) ──
+
+const PAGE_LIMIT = 200;
+const PAGE_DELAY_MS = 800;
+
+export async function performPaginationSync(): Promise<SyncResult> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  const [acc] = await db
+    .select()
+    .from(crmConnections)
+    .where(eq(crmConnections.platform, "sotuvchi"))
+    .limit(1);
+
+  if (!acc) {
+    return { synced: 0, errors: 0, total: 0, syncedAt: new Date().toISOString(), message: "Sotuvchi akkaunt topilmadi" };
+  }
+
+  // Find our oldest non-final Sotuvchi order — everything older than this can be skipped
+  const [oldestRow] = await db
+    .select({ createdAt: orders.createdAt })
+    .from(orders)
+    .innerJoin(integrations, eq(orders.integrationId, integrations.id))
+    .innerJoin(targetWebsites, eq(integrations.targetWebsiteId, targetWebsites.id))
+    .where(
+      and(
+        eq(orders.status, "SENT"),
+        eq(orders.isFinal, false),
+        isNotNull(orders.responseData),
+        eq(targetWebsites.appKey, "sotuvchi"),
+      ),
+    )
+    .orderBy(asc(orders.createdAt))
+    .limit(1);
+
+  // Stop 1 day before oldest active order (buffer for clock drift)
+  const stopBefore = oldestRow
+    ? new Date(oldestRow.createdAt.getTime() - 24 * 60 * 60 * 1000)
+    : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
+  console.log(`[PaginationSync] Stop boundary: ${stopBefore.toISOString()}`);
+
+  let bearerToken = decrypt(acc.bearerTokenEncrypted);
+  let page = 1;
+  let synced = 0;
+  let errors = 0;
+  let pagesProcessed = 0;
+
+  syncState.progress = { current: 0, total: 0, platform: "sotuvchi", rateLimited: false };
+
+  while (!syncState.aborted) {
+    // Fetch one page from Sotuvchi
+    let pageResult: OrderPageResult;
+    try {
+      pageResult = await sotuvchiGetOrdersPage(bearerToken, page, PAGE_LIMIT)
+        .catch(async (err) => {
+          if (err?.response?.status === 401) {
+            const password = decrypt(acc.passwordEncrypted);
+            const r = await crmLogin("sotuvchi", acc.phone, password);
+            bearerToken = r.bearerToken;
+            await db!.update(crmConnections)
+              .set({ bearerTokenEncrypted: encrypt(r.bearerToken), status: "active", lastLoginAt: new Date() })
+              .where(eq(crmConnections.id, acc.id));
+            return sotuvchiGetOrdersPage(bearerToken, page, PAGE_LIMIT);
+          }
+          if (err?.response?.status === 429) {
+            console.warn(`[PaginationSync] 429 on page ${page} — pausing 30s`);
+            if (syncState.progress) syncState.progress.rateLimited = true;
+            await new Promise((r) => setTimeout(r, 30_000));
+            if (syncState.progress) syncState.progress.rateLimited = false;
+            return sotuvchiGetOrdersPage(bearerToken, page, PAGE_LIMIT);
+          }
+          throw err;
+        });
+    } catch (err) {
+      console.error(`[PaginationSync] Failed on page ${page}:`, err instanceof Error ? err.message : err);
+      errors++;
+      break;
+    }
+
+    if (!pageResult.data.length) break;
+
+    if (page === 1) {
+      console.log(`[PaginationSync] ${pageResult.total.toLocaleString()} total Sotuvchi orders, ${pageResult.last_page.toLocaleString()} pages`);
+      if (syncState.progress) syncState.progress.total = pageResult.last_page;
+    }
+    if (syncState.progress) syncState.progress.current = page;
+
+    // Bulk match against our DB using JSON_EXTRACT
+    const externalIds = pageResult.data.map((o) => String(o.id));
+    try {
+      const matches = await db
+        .select({
+          orderId: orders.id,
+          orderUserId: orders.userId,
+          crmStatus: orders.crmStatus,
+          externalId: sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.id'))`,
+        })
+        .from(orders)
+        .where(
+          and(
+            eq(orders.isFinal, false),
+            isNotNull(orders.responseData),
+            sql`JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.id')) IN (${sql.join(
+              externalIds.map((id) => sql`${id}`),
+              sql`, `,
+            )})`,
+          ),
+        );
+
+      const sotuvchiMap = new Map(pageResult.data.map((o) => [String(o.id), o]));
+
+      for (const match of matches) {
+        const so = sotuvchiMap.get(match.externalId);
+        if (!so) continue;
+        const normalized = normalizeSotuvchiStatus(so.status);
+        const terminal = isFinalStatus(normalized);
+        const statusChanged = normalized !== match.crmStatus;
+        await db.update(orders)
+          .set({
+            crmStatus: normalized,
+            crmRawStatus: so.status,
+            crmSyncedAt: new Date(),
+            ...(statusChanged ? { isFinal: terminal } : {}),
+          })
+          .where(eq(orders.id, match.orderId));
+        if (statusChanged) {
+          console.log(`[PaginationSync] orderId=${match.orderId}: ${match.crmStatus ?? "null"} → ${normalized}${terminal ? " [FINAL]" : ""}`);
+          void db.insert(orderEvents).values({
+            orderId: match.orderId,
+            userId: match.orderUserId,
+            oldStatus: match.crmStatus ?? null,
+            newStatus: normalized,
+            source: "sync",
+          }).catch(() => {});
+        }
+        synced++;
+      }
+    } catch (err) {
+      console.error(`[PaginationSync] DB error on page ${page}:`, err instanceof Error ? err.message : err);
+      errors++;
+    }
+
+    pagesProcessed++;
+
+    // Stop when oldest order on this page is older than our stop boundary
+    const oldestOnPage = new Date(pageResult.data.at(-1)!.created_at);
+    if (oldestOnPage < stopBefore) {
+      console.log(`[PaginationSync] Reached stop boundary at page ${page} (${oldestOnPage.toISOString()}) — done`);
+      break;
+    }
+    if (page >= pageResult.last_page) break;
+    page++;
+
+    if (!syncState.aborted) {
+      await new Promise((r) => setTimeout(r, PAGE_DELAY_MS));
+    }
+  }
+
+  const result: SyncResult = {
+    synced,
+    errors,
+    total: pagesProcessed * PAGE_LIMIT,
+    syncedAt: new Date().toISOString(),
+    message: `${pagesProcessed} sahifa, ${synced} order yangilandi`,
+  };
+  console.log(`[PaginationSync] Done — pages=${pagesProcessed} synced=${synced} errors=${errors}`);
+  return result;
+}
+
 // ─── Accounts ─────────────────────────────────────────────────────────────────
 
 export const crmRouter = router({
@@ -378,7 +552,7 @@ export const crmRouter = router({
 
   syncOrderStatuses: adminProcedure
     .input(z.object({ platform: z.enum(["sotuvchi", "100k"]).optional() }))
-    .mutation(({ input, ctx }) => {
+    .mutation(({ }) => {
       if (syncState.running) {
         return { started: false, running: true, message: "Sync allaqachon ishlayapti..." };
       }
@@ -386,14 +560,14 @@ export const crmRouter = router({
       syncState.aborted = false;
       syncState.progress = null;
       syncState.lastResult = null;
-      void performCrmSync(ctx.user.id, input.platform)
+      void performPaginationSync()
         .then((r) => {
           syncState.running = false;
           syncState.progress = null;
           syncState.lastResult = r;
         })
         .catch((err: unknown) => {
-          console.error("[CrmSync] fatal error:", err);
+          console.error("[PaginationSync] fatal error:", err);
           syncState.running = false;
           syncState.progress = null;
           syncState.lastResult = {

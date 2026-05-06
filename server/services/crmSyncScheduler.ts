@@ -1,39 +1,39 @@
 /**
  * crmSyncScheduler.ts
  *
- * Automated CRM order-status sync — runs every 30 minutes in the background.
- * Skips a cycle if a manual sync (triggered via admin UI) is already in progress.
+ * Automated CRM sync via Sotuvchi pagination API.
+ * Fetches 200 orders/page, stops at our oldest non-final order (~3 months back).
+ * One full cycle: ~225 pages × 800ms ≈ 3 min. Waits 5 min between cycles.
  *
  * Registered in:
  *   server/workers/run.ts          (standalone worker process)
  *   server/_core/index.ts          (embedded worker when START_WORKER=true)
  */
 
-import { performCrmSync, syncState } from "../routers/crmRouter";
+import { performPaginationSync, syncState } from "../routers/crmRouter";
 
-const SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes — SQL tier filter controls actual load
+const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 min between cycles
 const INITIAL_DELAY_MS = 60 * 1000;     // 60 seconds after startup
 
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function runSync(): Promise<void> {
   if (syncState.running) {
-    console.log("[CrmSyncScheduler] Skipping — manual sync already in progress");
+    console.log("[CrmSyncScheduler] Skipping — sync already in progress");
     return;
   }
 
-  console.log(`[CrmSyncScheduler] ${new Date().toISOString()} — starting automated CRM status sync`);
+  console.log(`[CrmSyncScheduler] ${new Date().toISOString()} — starting pagination sync`);
   syncState.running = true;
   syncState.aborted = false;
   syncState.progress = null;
   syncState.lastResult = null;
 
   try {
-    // No userId → syncs ALL users' pending orders (scheduler is global)
-    const result = await performCrmSync();
+    const result = await performPaginationSync();
     syncState.lastResult = result;
     console.log(
-      `[CrmSyncScheduler] Done — synced=${result.synced} errors=${result.errors} total=${result.total}`,
+      `[CrmSyncScheduler] Done — ${result.message ?? `synced=${result.synced} errors=${result.errors}`}`,
     );
   } catch (err) {
     console.error("[CrmSyncScheduler] Sync failed:", err instanceof Error ? err.message : err);
@@ -63,7 +63,7 @@ export function startCrmSyncScheduler(): void {
   if (schedulerTimer !== null) return; // idempotent
 
   console.log(
-    `[CrmSyncScheduler] Starting — first sync in ${INITIAL_DELAY_MS / 1000}s, then every ${SYNC_INTERVAL_MS / 1000}s (ACTIVE tier: 2 min, MID tier: 10 min)`,
+    `[CrmSyncScheduler] Starting — first sync in ${INITIAL_DELAY_MS / 1000}s, then every ${SYNC_INTERVAL_MS / 60000} min after each cycle`,
   );
 
   schedulerTimer = setTimeout(() => {
