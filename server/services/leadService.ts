@@ -959,9 +959,10 @@ export async function processLead(params: {
   };
 
   const fields = extractWithMapping(leadData.field_data, leadMeta, nameField, phoneField, extraFields);
-  const fullName = fields.fullName;
-  const phone = fields.phone;
-  const email = fields.email;
+  // Truncate to column limits — guards against garbage form submissions
+  const fullName = fields.fullName?.slice(0, 512) ?? null;
+  const phone    = fields.phone?.slice(0, 64)    ?? null;
+  const email    = fields.email?.slice(0, 320)   ?? null;
   const extraFieldsResolved = fields.extra;
 
   if (leadData.platform === "fb" || leadData.platform === "ig") {
@@ -996,12 +997,12 @@ export async function processLead(params: {
       ...(platformToWrite ? { platform: platformToWrite } : {}),
       pageName,
       formName,
-      campaignId:   rawDataRecord?.campaign_id   as string | null ?? null,
-      campaignName: rawDataRecord?.campaign_name as string | null ?? null,
-      adsetId:      rawDataRecord?.adset_id      as string | null ?? null,
-      adsetName:    rawDataRecord?.adset_name    as string | null ?? null,
-      adId:         rawDataRecord?.ad_id         as string | null ?? null,
-      adName:       rawDataRecord?.ad_name       as string | null ?? null,
+      campaignId:   (rawDataRecord?.campaign_id   as string | null | undefined)?.slice(0, 64)  ?? null,
+      campaignName: (rawDataRecord?.campaign_name as string | null | undefined)?.slice(0, 255) ?? null,
+      adsetId:      (rawDataRecord?.adset_id      as string | null | undefined)?.slice(0, 64)  ?? null,
+      adsetName:    (rawDataRecord?.adset_name    as string | null | undefined)?.slice(0, 255) ?? null,
+      adId:         (rawDataRecord?.ad_id         as string | null | undefined)?.slice(0, 64)  ?? null,
+      adName:       (rawDataRecord?.ad_name       as string | null | undefined)?.slice(0, 255) ?? null,
       extraFields:  extraFieldsJson,
     })
     .where(and(eq(leads.id, params.leadId), eq(leads.userId, params.userId)));
