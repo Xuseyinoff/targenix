@@ -40,8 +40,9 @@ export const syncState = {
   lastResult: null as SyncResult | null,
 };
 
-const CONCURRENCY = 2;
-const BATCH_DELAY_MS = 1200;
+const REQUEST_DELAY_MS = 300;        // pause between every API call (≈3 req/s max)
+const CIRCUIT_BREAKER_HITS = 3;      // consecutive 429s before full stop
+const CIRCUIT_BREAKER_PAUSE_MS = 120_000; // 2 min pause after circuit breaker trips
 
 export async function performCrmSync(
   userId?: number,
@@ -134,9 +135,13 @@ export async function performCrmSync(
   }
 
   function applyRateLimit(plat: Platform, hits: number): void {
-    const pauseMs = Math.min(5000 * 2 ** (hits - 1), 30000);
+    const isCircuitBreaker = hits >= CIRCUIT_BREAKER_HITS;
+    const pauseMs = isCircuitBreaker
+      ? CIRCUIT_BREAKER_PAUSE_MS
+      : Math.min(5000 * 2 ** (hits - 1), 30_000); // 5s, 10s, 20s
     pausedUntil.set(plat, Date.now() + pauseMs);
-    console.warn(`[CrmSync] 429 on ${plat} (hit #${hits}) — pausing ${pauseMs / 1000}s`);
+    const tag = isCircuitBreaker ? " ⚡ CIRCUIT BREAKER" : "";
+    console.warn(`[CrmSync] 429 on ${plat} (hit #${hits}) — pausing ${pauseMs / 1000}s${tag}`);
   }
 
   async function refreshToken(acc: typeof accounts[number]): Promise<string | null> {
@@ -156,79 +161,72 @@ export async function performCrmSync(
     }
   }
 
-  for (let i = 0; i < pendingOrders.length; i += CONCURRENCY) {
-    // Check abort flag at the start of each batch
+  for (let i = 0; i < pendingOrders.length; i++) {
     if (syncState.aborted) {
       console.log(`[CrmSync] Aborted at ${i}/${pendingOrders.length}`);
       break;
     }
 
-    const batch = pendingOrders.slice(i, i + CONCURRENCY);
-    await Promise.all(
-      batch.map(async (row) => {
-        if (syncState.aborted) return;
+    const row = pendingOrders[i];
+    const plat = row.appKey as Platform;
+    if (plat !== "sotuvchi" && plat !== "100k") continue;
+    const acc = accountByPlatform.get(plat);
+    if (!acc) continue;
+    const externalId = extractExternalOrderId(row.responseData);
+    if (!externalId) continue;
 
-        const plat = row.appKey as Platform;
-        if (plat !== "sotuvchi" && plat !== "100k") return;
-        const acc = accountByPlatform.get(plat);
-        if (!acc) return;
-        const externalId = extractExternalOrderId(row.responseData);
-        if (!externalId) return;
+    await waitIfPaused(plat);
+    if (syncState.aborted) break;
 
-        await waitIfPaused(plat);
-        if (syncState.aborted) return;
-
-        let bearerToken = decrypt(acc.bearerTokenEncrypted);
-        const tryFetch = (token: string) => crmGetOrderStatus(plat, token, externalId, acc.platformUserId);
-        try {
-          const statusResult = await tryFetch(bearerToken).catch(async (err) => {
-            if (err?.response?.status === 401) {
-              const newToken = await refreshToken(acc);
-              if (!newToken) throw new Error("re-login failed");
-              bearerToken = newToken;
-              return tryFetch(newToken);
-            }
-            if (err?.response?.status === 429) {
-              const hits = (consecutiveHits.get(plat) ?? 0) + 1;
-              consecutiveHits.set(plat, hits);
-              applyRateLimit(plat, hits);
-              await waitIfPaused(plat);
-              return tryFetch(bearerToken);
-            }
-            throw err;
-          });
-          consecutiveHits.set(plat, 0);
-          const terminal = isFinalStatus(statusResult.status);
-          const statusChanged = statusResult.status !== row.crmStatus;
-          await db!.update(orders)
-            .set({
-              crmStatus: statusResult.status,
-              crmSyncedAt: new Date(),
-              ...(statusChanged ? { isFinal: terminal } : {}),
-            })
-            .where(eq(orders.id, row.orderId));
-          if (statusChanged) {
-            console.log(`[CrmSync] status change orderId=${row.orderId}: ${row.crmStatus ?? "null"} → ${statusResult.status}${terminal ? " [FINAL]" : ""}`);
-            // Append immutable event log entry
-            void db!.insert(orderEvents).values({
-              orderId: row.orderId,
-              userId: row.orderUserId,
-              oldStatus: row.crmStatus ?? null,
-              newStatus: statusResult.status,
-              source: "sync",
-            }).catch(() => {}); // non-blocking, best-effort
-          }
-          synced++;
-        } catch {
-          errors++;
+    let bearerToken = decrypt(acc.bearerTokenEncrypted);
+    const tryFetch = (token: string) => crmGetOrderStatus(plat, token, externalId, acc.platformUserId);
+    try {
+      const statusResult = await tryFetch(bearerToken).catch(async (err) => {
+        if (err?.response?.status === 401) {
+          const newToken = await refreshToken(acc);
+          if (!newToken) throw new Error("re-login failed");
+          bearerToken = newToken;
+          return tryFetch(newToken);
         }
+        if (err?.response?.status === 429) {
+          const hits = (consecutiveHits.get(plat) ?? 0) + 1;
+          consecutiveHits.set(plat, hits);
+          applyRateLimit(plat, hits);
+          await waitIfPaused(plat);
+          return tryFetch(bearerToken); // one retry after backoff
+        }
+        throw err;
+      });
+      consecutiveHits.set(plat, 0);
+      const terminal = isFinalStatus(statusResult.status);
+      const statusChanged = statusResult.status !== row.crmStatus;
+      await db!.update(orders)
+        .set({
+          crmStatus: statusResult.status,
+          crmSyncedAt: new Date(),
+          ...(statusChanged ? { isFinal: terminal } : {}),
+        })
+        .where(eq(orders.id, row.orderId));
+      if (statusChanged) {
+        console.log(`[CrmSync] status change orderId=${row.orderId}: ${row.crmStatus ?? "null"} → ${statusResult.status}${terminal ? " [FINAL]" : ""}`);
+        void db!.insert(orderEvents).values({
+          orderId: row.orderId,
+          userId: row.orderUserId,
+          oldStatus: row.crmStatus ?? null,
+          newStatus: statusResult.status,
+          source: "sync",
+        }).catch(() => {});
+      }
+      synced++;
+    } catch {
+      errors++;
+    }
 
-        // Update progress after each order
-        if (syncState.progress) syncState.progress.current = synced + errors;
-      }),
-    );
-    if (i + CONCURRENCY < pendingOrders.length && !syncState.aborted) {
-      await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+    if (syncState.progress) syncState.progress.current = synced + errors;
+
+    // Throttle: 300ms between every request to stay under rate limits
+    if (i < pendingOrders.length - 1 && !syncState.aborted) {
+      await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS));
     }
   }
 
