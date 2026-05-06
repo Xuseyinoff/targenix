@@ -40,7 +40,7 @@ export const syncState = {
   lastResult: null as SyncResult | null,
 };
 
-const REQUEST_DELAY_MS = 300;        // pause between every API call (≈3 req/s max)
+const REQUEST_DELAY_MS = 1200;       // pause between every API call (≈0.8 req/s max)
 const CIRCUIT_BREAKER_HITS = 3;      // consecutive 429s before full stop
 const CIRCUIT_BREAKER_PAUSE_MS = 120_000; // 2 min pause after circuit breaker trips
 
