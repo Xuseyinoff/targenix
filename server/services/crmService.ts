@@ -1,43 +1,8 @@
 import axios from "axios";
-
-// ─── Status mapping ────────────────────────────────────────────────────────────
-// Normalises platform-specific status strings to a single canonical set.
-const SOTUVCHI_STATUS_MAP: Record<string, string> = {
-  request: "new",
-  new: "new",
-  accepted: "accepted",
-  order: "accepted",
-  filling: "accepted",
-  preparing: "booked",
-  booked: "booked",
-  sent: "sent",
-  sold: "delivered",
-  delivered: "delivered",
-  not_delivered: "not_delivered",
-  callback: "callback",
-  recycling: "callback",
-  on_argue: "callback",
-  cancelled: "cancelled",
-  canceled: "cancelled",
-  trash: "cancelled",
-  not_sold: "cancelled",
-  not_sold_group: "cancelled",
-  product_out_of_stock: "cancelled",
-  client_returned: "cancelled",
-  archived: "archived",
-};
-
-const HUNDREDK_STATUS_MAP: Record<string, string> = {
-  new: "new",
-  accepted: "accepted",
-  booked: "booked",
-  sent: "sent",
-  delivered: "delivered",
-  callback: "callback",
-  cancelled: "cancelled",
-  canceled: "cancelled",
-  archived: "archived",
-};
+import {
+  mapHundredKRawToNormalized,
+  mapSotuvchiRawToNormalized,
+} from "../../shared/crmStatuses";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface LoginResult {
@@ -64,8 +29,9 @@ export interface OrderPageResult {
   total: number;
 }
 
+/** Sotuvchi raw API string → orders.crmStatus (canonical). */
 export function normalizeSotuvchiStatus(raw: string): string {
-  return SOTUVCHI_STATUS_MAP[raw.toLowerCase()] ?? raw;
+  return mapSotuvchiRawToNormalized(raw);
 }
 
 // ─── Sotuvchi Adapter ─────────────────────────────────────────────────────────
@@ -127,7 +93,7 @@ async function sotuvchiGetOrderStatus(
   const raw: string = res.data?.order?.status ?? res.data?.data?.status ?? res.data?.status ?? "";
   return {
     externalId: orderId,
-    status: SOTUVCHI_STATUS_MAP[raw.toLowerCase()] ?? raw,
+    status: mapSotuvchiRawToNormalized(raw),
     rawStatus: raw,
   };
 }
@@ -155,15 +121,19 @@ export async function sotuvchiGetOrdersPage(
   };
 }
 
-// ─── 100k Adapter ─────────────────────────────────────────────────────────────
+// ─── 100k Adapter ───────────────────────────────────────────────────────────────
 const HUNDREDK_BASE = "https://api.100k.uz/api";
 
 async function hundredKLogin(phone: string, password: string): Promise<LoginResult> {
-  const res = await axios.post(`${HUNDREDK_BASE}/auth/sign-in`, {
-    username: phone,
-    password,
-    phone,
-  }, { timeout: 10_000 });
+  const res = await axios.post(
+    `${HUNDREDK_BASE}/auth/sign-in`,
+    {
+      username: phone,
+      password,
+      phone,
+    },
+    { timeout: 10_000 },
+  );
 
   // Response: { message: "ok", data: "433376|TOKEN_STRING" }
   const tokenString: string = res.data?.data;
@@ -199,7 +169,7 @@ async function hundredKGetOrderStatus(
 
   return {
     externalId: orderId,
-    status: HUNDREDK_STATUS_MAP[raw.toLowerCase()] ?? raw,
+    status: mapHundredKRawToNormalized(raw),
     rawStatus: raw,
   };
 }

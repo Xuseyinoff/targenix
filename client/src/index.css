@@ -185,3 +185,20 @@
     }
   }
 }
+
+/* CRM orders: one-line integration name ticker (seamless loop) */
+@keyframes integration-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .integration-marquee-track {
+    animation: none !important;
+    transform: translateX(0) !important;
+  }
+}

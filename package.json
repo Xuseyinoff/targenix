@@ -14,7 +14,8 @@
     "test": "vitest run",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",
     "db:railway:migrate": "railway run node tooling/drizzle/backfill-migration-journal-0026-0027.mjs && railway run pnpm exec drizzle-kit migrate",
-    "db:sync:railway-to-local": "node tooling/mysql/full-sync.mjs"
+    "db:sync:railway-to-local": "node tooling/mysql/full-sync.mjs",
+    "db:backfill:crm-final": "tsx tooling/mysql/backfill-crm-status-final.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.12",

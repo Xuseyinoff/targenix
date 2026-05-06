@@ -69,15 +69,28 @@ export async function performCrmSync(
   const twoMinAgo    = new Date(Date.now() -  2 * 60 * 1000);
   const tenMinAgo    = new Date(Date.now() - 10 * 60 * 1000);
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  /** `in_progress` with a recent sync (or never synced) — treat like ACTIVE so hot orders are not stuck on 10‑min tier only */
+  const inProgressHotSince = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
-  // ACTIVE: new/accepted/filling/callback (or unknown null) — poll every 2 min
+  // ACTIVE — funnel top (+ legacy) + unknown (remap fast) + recent in_progress: poll every ~2 min
   const activeDue = sql`(
-    (${orders.crmStatus} IS NULL OR ${orders.crmStatus} IN ('new','accepted','filling','callback'))
+    (
+      ${orders.crmStatus} IS NULL
+      OR ${orders.crmStatus} IN ('new','contacted','accepted','filling','callback')
+      OR ${orders.crmStatus} = 'unknown'
+      OR (
+        ${orders.crmStatus} = 'in_progress'
+        AND (
+          ${orders.crmSyncedAt} IS NULL
+          OR ${orders.crmSyncedAt} >= ${inProgressHotSince}
+        )
+      )
+    )
     AND (${orders.crmSyncedAt} IS NULL OR ${orders.crmSyncedAt} <= ${twoMinAgo})
   )`;
-  // MID: sent/booked/preparing/recycling/on_argue — poll every 10 min
+  // MID — pipeline (+ legacy); stale in_progress (no sync in 48h) stays here at 10 min
   const midDue = sql`(
-    ${orders.crmStatus} IN ('sent','booked','preparing','recycling','on_argue')
+    ${orders.crmStatus} IN ('in_progress','success','unknown','sent','booked','preparing','recycling','on_argue')
     AND (${orders.crmSyncedAt} IS NULL OR ${orders.crmSyncedAt} <= ${tenMinAgo})
   )`;
 
