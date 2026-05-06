@@ -30,7 +30,19 @@ const syncState = {
   lastResult: null as SyncResult | null,
 };
 
-async function performCrmSync(platform?: "sotuvchi" | "100k"): Promise<SyncResult> {
+const CONCURRENCY = 3;
+const BATCH_DELAY_MS = 1000;
+
+// Exponential backoff sleep: 1s → 2s → 4s → 8s (max)
+async function sleepBackoff(attempt: number): Promise<void> {
+  const ms = Math.min(1000 * 2 ** attempt, 8000);
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+async function performCrmSync(
+  userId: number,
+  platform?: "sotuvchi" | "100k",
+): Promise<SyncResult> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
 
@@ -59,6 +71,7 @@ async function performCrmSync(platform?: "sotuvchi" | "100k"): Promise<SyncResul
     .where(
       and(
         eq(orders.status, "SENT"),
+        eq(orders.userId, userId),
         isNotNull(orders.responseData),
         or(isNull(orders.crmSyncedAt), lte(orders.crmSyncedAt, tenMinAgo)),
         sql`${orders.createdAt} >= ${thirtyDaysAgo}`,
@@ -67,7 +80,7 @@ async function performCrmSync(platform?: "sotuvchi" | "100k"): Promise<SyncResul
           : or(eq(targetWebsites.appKey, "sotuvchi"), eq(targetWebsites.appKey, "100k")),
       ),
     )
-    .limit(200);
+    .limit(500);
 
   const accountByPlatform = new Map<Platform, typeof accounts[number]>();
   for (const acc of accounts) {
@@ -96,7 +109,9 @@ async function performCrmSync(platform?: "sotuvchi" | "100k"): Promise<SyncResul
     }
   }
 
-  const CONCURRENCY = 5;
+  // Per-platform rate-limit state: track consecutive 429s for backoff
+  const rateLimitHits = new Map<Platform, number>();
+
   for (let i = 0; i < pendingOrders.length; i += CONCURRENCY) {
     const batch = pendingOrders.slice(i, i + CONCURRENCY);
     await Promise.all(
@@ -117,8 +132,17 @@ async function performCrmSync(platform?: "sotuvchi" | "100k"): Promise<SyncResul
               bearerToken = newToken;
               return tryFetch(newToken);
             }
+            if (err?.response?.status === 429) {
+              // Rate limited — backoff then retry once
+              const hits = (rateLimitHits.get(plat) ?? 0) + 1;
+              rateLimitHits.set(plat, hits);
+              console.warn(`[CrmSync] 429 rate limit (${plat}) attempt=${hits}, backing off...`);
+              await sleepBackoff(hits - 1);
+              return tryFetch(bearerToken);
+            }
             throw err;
           });
+          rateLimitHits.set(plat, 0); // reset on success
           await db!.update(orders).set({ crmStatus: statusResult.status, crmSyncedAt: new Date() }).where(eq(orders.id, row.orderId));
           synced++;
         } catch {
@@ -127,7 +151,10 @@ async function performCrmSync(platform?: "sotuvchi" | "100k"): Promise<SyncResul
       }),
     );
     if (i + CONCURRENCY < pendingOrders.length) {
-      await new Promise((r) => setTimeout(r, 700));
+      // Extra pause after a rate-limit hit — give the API time to breathe
+      const maxHits = Math.max(...Array.from(rateLimitHits.values()));
+      const pause = maxHits > 0 ? BATCH_DELAY_MS * (maxHits + 1) : BATCH_DELAY_MS;
+      await new Promise((r) => setTimeout(r, pause));
     }
   }
 
@@ -267,13 +294,13 @@ export const crmRouter = router({
 
   syncOrderStatuses: adminProcedure
     .input(z.object({ platform: z.enum(["sotuvchi", "100k"]).optional() }))
-    .mutation(({ input }) => {
+    .mutation(({ input, ctx }) => {
       if (syncState.running) {
         return { started: false, running: true, message: "Sync allaqachon ishlayapti..." };
       }
       syncState.running = true;
       syncState.lastResult = null;
-      void performCrmSync(input.platform)
+      void performCrmSync(ctx.user.id, input.platform)
         .then((r) => {
           syncState.running = false;
           syncState.lastResult = r;
