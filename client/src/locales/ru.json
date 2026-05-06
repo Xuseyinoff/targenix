@@ -17,6 +17,9 @@
     "adminLeads": "Лиды (Админ)",
     "leadBackfill": "Заполнение лидов",
     "destTemplates": "Шаблоны назначений",
+    "adminCrm": "CRM",
+    "adminCrmOrders": "Заказы",
+    "adminCrmAccounts": "Аккаунты",
     "admin": "Админ"
   },
   "common": {

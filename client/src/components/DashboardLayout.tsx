@@ -46,6 +46,8 @@ import {
   Webhook,
   Zap,
   ClipboardList,
+  CircleUser,
+  LayoutList,
 } from "lucide-react";
 
 type NavItem = {
@@ -60,6 +62,7 @@ type NavGroup = {
 };
 import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
+import { cn } from "@/lib/utils";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 
@@ -88,7 +91,13 @@ function buildAdminMenuItems(t: (k: string) => string) {
     { icon: Users, label: t("nav.adminLeads"), path: "/admin/leads" },
     { icon: SendHorizonal, label: t("nav.leadBackfill"), path: "/admin/backfill" },
     { icon: Globe, label: t("nav.destTemplates"), path: "/admin/destination-templates" },
-    { icon: ClipboardList, label: t("nav.adminCrm"), path: "/admin/crm/accounts" },
+  ];
+}
+
+function buildAdminCrmSubItems(t: (k: string) => string): NavItem[] {
+  return [
+    { icon: LayoutList, label: t("nav.adminCrmOrders"), path: "/admin/crm/orders" },
+    { icon: CircleUser, label: t("nav.adminCrmAccounts"), path: "/admin/crm/accounts" },
   ];
 }
 
@@ -127,6 +136,7 @@ function buildBusinessToolsItems(t: (k: string) => string) {
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const BUSINESS_TOOLS_EXPAND_KEY = "targenix.sidebar.businessToolsExpanded";
+const CRM_EXPAND_KEY = "targenix.sidebar.crmExpanded";
 const DEFAULT_WIDTH = 260;
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 400;
@@ -135,6 +145,17 @@ function readBusinessToolsExpanded(): boolean {
   if (typeof window === "undefined") return true;
   try {
     const raw = localStorage.getItem(BUSINESS_TOOLS_EXPAND_KEY);
+    if (raw === null || raw === "") return true;
+    return raw === "1" || raw === "true";
+  } catch {
+    return true;
+  }
+}
+
+function readCrmExpanded(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = localStorage.getItem(CRM_EXPAND_KEY);
     if (raw === null || raw === "") return true;
     return raw === "1" || raw === "true";
   } catch {
@@ -204,9 +225,14 @@ function DashboardLayoutContent({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const navGroups = useMemo(() => buildNavGroups(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
   const adminMenuItems = useMemo(() => buildAdminMenuItems(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
+  const adminCrmSubItems = useMemo(() => buildAdminCrmSubItems(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
   const businessToolsItems = useMemo(() => buildBusinessToolsItems(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
   const allItems = navGroups.flatMap((g) => g.items);
   const activeMenuItem = allItems.find((item) => item.path === location);
+  const activeAdminCrmItem = adminCrmSubItems.find(
+    (item) => location === item.path || location.startsWith(`${item.path}/`),
+  );
+  const headerNavLabel = activeMenuItem?.label ?? activeAdminCrmItem?.label;
   const activeGroupLabel = useMemo(() => {
     for (const g of navGroups) {
       if (g.items.some((it) => it.path === location)) return g.label ?? t("nav.overview");
@@ -226,8 +252,14 @@ function DashboardLayoutContent({
     readBusinessToolsExpanded
   );
 
+  const [crmExpanded, setCrmExpanded] = useState(readCrmExpanded);
+
   const isBusinessToolsActive = businessToolsItems.some(
     (item) => location === item.path || location.startsWith("/business/")
+  );
+
+  const isCrmActive = adminCrmSubItems.some(
+    (item) => location === item.path || location.startsWith(`${item.path}/`),
   );
 
   const prevLocationRef = useRef<string | null>(null);
@@ -243,6 +275,19 @@ function DashboardLayoutContent({
     }
   }, [location, isCollapsed]);
 
+  const prevCrmLocationRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevCrmLocationRef.current;
+    prevCrmLocationRef.current = location;
+    if (isCollapsed) return;
+    if (!location.startsWith("/admin/crm")) return;
+    const enteredFromOutside =
+      prev === null || !prev.startsWith("/admin/crm");
+    if (enteredFromOutside) {
+      setCrmExpanded(true);
+    }
+  }, [location, isCollapsed]);
+
   useEffect(() => {
     try {
       localStorage.setItem(
@@ -253,6 +298,14 @@ function DashboardLayoutContent({
       /* quota / private mode */
     }
   }, [businessToolsExpanded]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CRM_EXPAND_KEY, crmExpanded ? "1" : "0");
+    } catch {
+      /* quota / private mode */
+    }
+  }, [crmExpanded]);
 
   useEffect(() => {
     if (isCollapsed) setIsResizing(false);
@@ -410,35 +463,41 @@ function DashboardLayoutContent({
 
                   {!isCollapsed && (
                     <div
-                      className="overflow-hidden transition-all duration-200 ease-in-out"
-                      style={{
-                        maxHeight: businessToolsExpanded
-                          ? `${visibleBusinessToolsItems.length * 44}px`
-                          : "0px",
-                        opacity: businessToolsExpanded ? 1 : 0,
-                      }}
+                      className={cn(
+                        "grid transition-[grid-template-rows] duration-200 ease-in-out",
+                        businessToolsExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                      )}
                     >
-                      <SidebarMenu className="pl-3 pr-0 py-0.5">
-                        {visibleBusinessToolsItems.map((item) => {
-                          const isActive =
-                            location === item.path || location.startsWith(item.path);
-                          return (
-                            <SidebarMenuItem key={item.path}>
-                              <SidebarMenuButton
-                                isActive={isActive}
-                                onClick={() => setLocation(item.path)}
-                                tooltip={item.label}
-                                className="text-sidebar-foreground/80 hover:text-sidebar-foreground h-8 text-sm font-normal transition-all"
-                              >
-                                <item.icon
-                                  className={`h-3.5 w-3.5 ${isActive ? "text-sidebar-primary" : ""}`}
-                                />
-                                <span>{item.label}</span>
-                              </SidebarMenuButton>
-                            </SidebarMenuItem>
-                          );
-                        })}
-                      </SidebarMenu>
+                      <div
+                        className={cn(
+                          "min-h-0 overflow-hidden transition-opacity duration-200 ease-in-out",
+                          businessToolsExpanded
+                            ? "opacity-100"
+                            : "pointer-events-none opacity-0"
+                        )}
+                      >
+                        <SidebarMenu className="pl-3 pr-0 py-0.5">
+                          {visibleBusinessToolsItems.map((item) => {
+                            const isActive =
+                              location === item.path || location.startsWith(item.path);
+                            return (
+                              <SidebarMenuItem key={item.path}>
+                                <SidebarMenuButton
+                                  isActive={isActive}
+                                  onClick={() => setLocation(item.path)}
+                                  tooltip={item.label}
+                                  className="text-sidebar-foreground/80 hover:text-sidebar-foreground h-8 text-sm font-normal transition-all"
+                                >
+                                  <item.icon
+                                    className={`h-3.5 w-3.5 ${isActive ? "text-sidebar-primary" : ""}`}
+                                  />
+                                  <span>{item.label}</span>
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            );
+                          })}
+                        </SidebarMenu>
+                      </div>
                     </div>
                   )}
 
@@ -496,6 +555,101 @@ function DashboardLayoutContent({
                     );
                   })}
                 </SidebarMenu>
+
+                {/* CRM — expandable submenu (routes unchanged) */}
+                <div className="px-2 mt-0.5 pb-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isCollapsed) setCrmExpanded((v) => !v);
+                    }}
+                    className={`
+                  w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left
+                  transition-colors hover:bg-sidebar-accent/60
+                  ${isCrmActive ? "text-sidebar-foreground" : "text-sidebar-foreground/70"}
+                  ${isCollapsed ? "justify-center" : ""}
+                `}
+                    title={t("nav.adminCrm")}
+                    aria-expanded={!isCollapsed ? crmExpanded : undefined}
+                  >
+                    <ClipboardList
+                      className={`h-4 w-4 shrink-0 ${isCrmActive ? "text-sidebar-primary" : "text-violet-500"}`}
+                    />
+                    {!isCollapsed && (
+                      <>
+                        <span className="flex-1 text-sm font-normal text-sidebar-foreground/90 select-none truncate">
+                          {t("nav.adminCrm")}
+                        </span>
+                        <ChevronDown
+                          className={`h-3.5 w-3.5 text-sidebar-foreground/40 transition-transform duration-200 shrink-0 ${crmExpanded ? "rotate-0" : "-rotate-90"}`}
+                        />
+                      </>
+                    )}
+                  </button>
+
+                  {!isCollapsed && (
+                    <div
+                      className={cn(
+                        "grid transition-[grid-template-rows] duration-200 ease-in-out",
+                        crmExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "min-h-0 overflow-hidden transition-opacity duration-200 ease-in-out",
+                          crmExpanded ? "opacity-100" : "pointer-events-none opacity-0"
+                        )}
+                      >
+                        <SidebarMenu className="pl-3 pr-0 py-0.5">
+                          {adminCrmSubItems.map((item) => {
+                            const isActive =
+                              location === item.path ||
+                              location.startsWith(`${item.path}/`);
+                            return (
+                              <SidebarMenuItem key={item.path} className="shrink-0">
+                                <SidebarMenuButton
+                                  isActive={isActive}
+                                  onClick={() => setLocation(item.path)}
+                                  tooltip={item.label}
+                                  className="text-sidebar-foreground/80 hover:text-sidebar-foreground h-8 text-sm font-normal transition-all"
+                                >
+                                  <item.icon
+                                    className={`h-3.5 w-3.5 shrink-0 ${isActive ? "text-sidebar-primary" : "text-violet-500/80"}`}
+                                  />
+                                  <span className="min-w-0 truncate">{item.label}</span>
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            );
+                          })}
+                        </SidebarMenu>
+                      </div>
+                    </div>
+                  )}
+
+                  {isCollapsed && (
+                    <SidebarMenu className="px-0 py-0.5">
+                      {adminCrmSubItems.map((item) => {
+                        const isActive =
+                          location === item.path ||
+                          location.startsWith(`${item.path}/`);
+                        return (
+                          <SidebarMenuItem key={item.path}>
+                            <SidebarMenuButton
+                              isActive={isActive}
+                              onClick={() => setLocation(item.path)}
+                              tooltip={item.label}
+                              className="h-8"
+                            >
+                              <item.icon
+                                className={`h-3.5 w-3.5 ${isActive ? "text-sidebar-primary" : "text-violet-500"}`}
+                              />
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        );
+                      })}
+                    </SidebarMenu>
+                  )}
+                </div>
               </>
             )}
           </SidebarContent>
@@ -582,7 +736,7 @@ function DashboardLayoutContent({
                   <span className="text-muted-foreground/60 hidden sm:inline">/</span>
                 )}
                 <span className="font-medium text-sm truncate">
-                  {activeMenuItem?.label ?? "Dashboard"}
+                  {headerNavLabel ?? "Dashboard"}
                 </span>
               </div>
             </div>

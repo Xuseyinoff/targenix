@@ -13,7 +13,20 @@
  *   railway run --service targenix.uz node tooling/mysql/audit-db-only-readiness.mjs
  */
 
+import "dotenv/config";
 import mysql from "mysql2/promise";
+
+function getMysqlUrl() {
+  for (const raw of [
+    process.env.MYSQL_PUBLIC_URL,
+    process.env.MYSQL_URL,
+    process.env.DATABASE_URL,
+  ]) {
+    const u = raw?.trim().replace(/^=+/, "");
+    if (u?.startsWith("mysql://")) return u;
+  }
+  return null;
+}
 
 const CANONICAL_APPS = [
   {
@@ -99,9 +112,9 @@ const CANONICAL_APPS = [
 ];
 
 async function run() {
-  const url = process.env.DATABASE_URL;
+  const url = getMysqlUrl();
   if (!url) {
-    console.error("ABORT: DATABASE_URL not set");
+    console.error("ABORT: DATABASE_URL / MYSQL_URL / MYSQL_PUBLIC_URL (mysql://) yo‘q");
     process.exit(1);
   }
 
@@ -109,6 +122,24 @@ async function run() {
 
   try {
     console.log("=== SEED MISSING CANONICAL APPS ===\n");
+
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS \`apps\` (
+        \`id\` INT NOT NULL AUTO_INCREMENT,
+        \`appKey\` VARCHAR(64) NOT NULL,
+        \`displayName\` VARCHAR(128) NOT NULL,
+        \`category\` VARCHAR(32) NOT NULL,
+        \`authType\` VARCHAR(32) NOT NULL,
+        \`fields\` JSON NOT NULL,
+        \`oauthConfig\` JSON NULL,
+        \`iconUrl\` VARCHAR(512) NULL,
+        \`docsUrl\` VARCHAR(512) NULL,
+        \`isActive\` BOOLEAN NOT NULL DEFAULT TRUE,
+        \`createdAt\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`id\`),
+        UNIQUE KEY \`uq_apps_appKey\` (\`appKey\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
 
     const [existingRows] = await conn.execute("SELECT appKey FROM apps");
     const existingKeys = new Set(existingRows.map((r) => r.appKey));

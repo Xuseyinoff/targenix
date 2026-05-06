@@ -18,6 +18,8 @@
     "leadBackfill": "Lead Backfill",
     "destTemplates": "Dest. Templates",
     "adminCrm": "CRM",
+    "adminCrmOrders": "Orders",
+    "adminCrmAccounts": "Accounts",
     "admin": "Admin"
   },
   "common": {
