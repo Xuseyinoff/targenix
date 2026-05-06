@@ -314,12 +314,14 @@ async function startServer() {
     const { startLogRetentionScheduler } = await import("../services/logRetentionScheduler");
     const { startFormsRefreshScheduler } = await import("../services/formsRefreshScheduler");
     const { startAdsSyncScheduler } = await import("../services/adsSyncScheduler");
+    const { startCrmSyncScheduler } = await import("../services/crmSyncScheduler");
     const { startLeadPollingScheduler } = await import("../services/leadPollingService");
     startLeadWorker();
     startRetryScheduler();
     startLogRetentionScheduler();
     startFormsRefreshScheduler();
     startAdsSyncScheduler();
+    startCrmSyncScheduler();
     startLeadPollingScheduler();
     console.log("[Server] Embedded worker + schedulers started.");
   }

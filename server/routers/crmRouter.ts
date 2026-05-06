@@ -33,7 +33,7 @@ interface SyncProgress {
   platform: string;
   rateLimited: boolean;
 }
-const syncState = {
+export const syncState = {
   running: false,
   aborted: false,
   progress: null as SyncProgress | null,
@@ -43,8 +43,8 @@ const syncState = {
 const CONCURRENCY = 2;
 const BATCH_DELAY_MS = 1200;
 
-async function performCrmSync(
-  userId: number,
+export async function performCrmSync(
+  userId?: number,
   platform?: "sotuvchi" | "100k",
 ): Promise<SyncResult> {
   const db = await getDb();
@@ -65,6 +65,7 @@ async function performCrmSync(
   const pendingOrders = await db
     .select({
       orderId: orders.id,
+      orderUserId: orders.userId,
       responseData: orders.responseData,
       crmSyncedAt: orders.crmSyncedAt,
       crmStatus: orders.crmStatus,
@@ -76,7 +77,7 @@ async function performCrmSync(
     .where(
       and(
         eq(orders.status, "SENT"),
-        eq(orders.userId, userId),
+        userId !== undefined ? eq(orders.userId, userId) : undefined,
         eq(orders.isFinal, false),        // skip terminal orders — they won't change
         isNotNull(orders.responseData),
         or(isNull(orders.crmSyncedAt), lte(orders.crmSyncedAt, tenMinAgo)),
@@ -197,7 +198,7 @@ async function performCrmSync(
             // Append immutable event log entry
             void db!.insert(orderEvents).values({
               orderId: row.orderId,
-              userId,
+              userId: row.orderUserId,
               oldStatus: row.crmStatus ?? null,
               newStatus: statusResult.status,
               source: "sync",
