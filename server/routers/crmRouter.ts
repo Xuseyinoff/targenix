@@ -7,6 +7,7 @@ import {
   leads,
   integrations,
   targetWebsites,
+  orderEvents,
 } from "../../drizzle/schema";
 import { and, desc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { encrypt, decrypt } from "../encryption";
@@ -66,6 +67,7 @@ async function performCrmSync(
       orderId: orders.id,
       responseData: orders.responseData,
       crmSyncedAt: orders.crmSyncedAt,
+      crmStatus: orders.crmStatus,
       appKey: targetWebsites.appKey,
     })
     .from(orders)
@@ -182,9 +184,25 @@ async function performCrmSync(
           });
           consecutiveHits.set(plat, 0);
           const terminal = isFinalStatus(statusResult.status);
+          const statusChanged = statusResult.status !== row.crmStatus;
           await db!.update(orders)
-            .set({ crmStatus: statusResult.status, crmSyncedAt: new Date(), isFinal: terminal })
+            .set({
+              crmStatus: statusResult.status,
+              crmSyncedAt: new Date(),
+              ...(statusChanged ? { isFinal: terminal } : {}),
+            })
             .where(eq(orders.id, row.orderId));
+          if (statusChanged) {
+            console.log(`[CrmSync] status change orderId=${row.orderId}: ${row.crmStatus ?? "null"} → ${statusResult.status}${terminal ? " [FINAL]" : ""}`);
+            // Append immutable event log entry
+            void db!.insert(orderEvents).values({
+              orderId: row.orderId,
+              userId,
+              oldStatus: row.crmStatus ?? null,
+              newStatus: statusResult.status,
+              source: "sync",
+            }).catch(() => {}); // non-blocking, best-effort
+          }
           synced++;
         } catch {
           errors++;
@@ -306,6 +324,7 @@ export const crmRouter = router({
             responseData: orders.responseData,
             crmStatus: orders.crmStatus,
             crmSyncedAt: orders.crmSyncedAt,
+            isFinal: orders.isFinal,
             createdAt: orders.createdAt,
             leadName: leads.fullName,
             leadPhone: leads.phone,

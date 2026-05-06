@@ -698,6 +698,25 @@ export const orders = mysqlTable("orders", {
 export type Order = typeof orders.$inferSelect;
 export type InsertOrder = typeof orders.$inferInsert;
 
+// ─── Order CRM Status Events ──────────────────────────────────────────────────
+// Immutable audit log: every CRM status change appends one row.
+// Powers: status timeline, analytics (time-in-state, funnel), debugging.
+export const orderEvents = mysqlTable("order_events", {
+  id: int("id").autoincrement().primaryKey(),
+  orderId: int("orderId").notNull(),
+  userId: int("userId").notNull(),
+  oldStatus: varchar("oldStatus", { length: 32 }),
+  newStatus: varchar("newStatus", { length: 32 }).notNull(),
+  source: varchar("source", { length: 32 }).default("sync").notNull(), // 'sync' | 'manual'
+  changedAt: timestamp("changedAt").defaultNow().notNull(),
+}, (t) => ({
+  idxOrderId: index("idx_order_events_order_id").on(t.orderId),
+  idxUserId:  index("idx_order_events_user_id").on(t.userId),
+  idxChangedAt: index("idx_order_events_changed_at").on(t.changedAt),
+}));
+
+export type OrderEvent = typeof orderEvents.$inferSelect;
+
 // ─── Webhook Events ───────────────────────────────────────────────────────────
 export const webhookEvents = mysqlTable("webhook_events", {
   id: int("id").autoincrement().primaryKey(),

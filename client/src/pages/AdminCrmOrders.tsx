@@ -352,7 +352,14 @@ export default function AdminCrmOrders() {
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <CrmStatusBadge status={row.crmStatus} />
+                          <div className="flex items-center gap-1.5">
+                            <CrmStatusBadge status={row.crmStatus} />
+                            {row.isFinal && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 font-medium">
+                                final
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-4 py-3">
                           <span className="text-xs text-muted-foreground truncate max-w-[120px] block">
