@@ -313,13 +313,12 @@ export const crmRouter = router({
         crmStatus: z.string().optional(),
       }),
     )
-    .query(async ({ input, ctx }) => {
+    .query(async ({ input }) => {
       const db = await getDb();
       if (!db) return { items: [], total: 0 };
 
       const where = and(
         eq(orders.status, "SENT"),
-        eq(orders.userId, ctx.user.id),
         isNotNull(orders.responseData),
         input.platform
           ? eq(targetWebsites.appKey, input.platform)
