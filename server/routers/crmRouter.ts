@@ -25,8 +25,16 @@ interface SyncResult {
   syncedAt: string;
   message?: string;
 }
+interface SyncProgress {
+  current: number;
+  total: number;
+  platform: string;
+  rateLimited: boolean;
+}
 const syncState = {
   running: false,
+  aborted: false,
+  progress: null as SyncProgress | null,
   lastResult: null as SyncResult | null,
 };
 
@@ -88,21 +96,29 @@ async function performCrmSync(
 
   // Per-platform: timestamp until which we must not send requests (global pause)
   const pausedUntil = new Map<Platform, number>();
+  const consecutiveHits = new Map<Platform, number>();
+
+  // Detect the dominant platform for progress display
+  const platformLabel = platform ?? (pendingOrders[0]?.appKey ?? "sotuvchi");
+
+  // Initialise progress
+  syncState.progress = { current: 0, total: pendingOrders.length, platform: platformLabel, rateLimited: false };
 
   async function waitIfPaused(plat: Platform): Promise<void> {
     const until = pausedUntil.get(plat) ?? 0;
     const remaining = until - Date.now();
-    if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
+    if (remaining > 0) {
+      if (syncState.progress) syncState.progress.rateLimited = true;
+      await new Promise((r) => setTimeout(r, remaining));
+      if (syncState.progress) syncState.progress.rateLimited = false;
+    }
   }
 
-  function applyRateLimit(plat: Platform, consecutiveHits: number): void {
-    // 429 hit: pause the whole platform. Delay: 5s → 10s → 20s → 30s (max)
-    const pauseMs = Math.min(5000 * 2 ** (consecutiveHits - 1), 30000);
+  function applyRateLimit(plat: Platform, hits: number): void {
+    const pauseMs = Math.min(5000 * 2 ** (hits - 1), 30000);
     pausedUntil.set(plat, Date.now() + pauseMs);
-    console.warn(`[CrmSync] 429 on ${plat} (hit #${consecutiveHits}) — pausing ${pauseMs / 1000}s`);
+    console.warn(`[CrmSync] 429 on ${plat} (hit #${hits}) — pausing ${pauseMs / 1000}s`);
   }
-
-  const consecutiveHits = new Map<Platform, number>();
 
   async function refreshToken(acc: typeof accounts[number]): Promise<string | null> {
     try {
@@ -122,9 +138,17 @@ async function performCrmSync(
   }
 
   for (let i = 0; i < pendingOrders.length; i += CONCURRENCY) {
+    // Check abort flag at the start of each batch
+    if (syncState.aborted) {
+      console.log(`[CrmSync] Aborted at ${i}/${pendingOrders.length}`);
+      break;
+    }
+
     const batch = pendingOrders.slice(i, i + CONCURRENCY);
     await Promise.all(
       batch.map(async (row) => {
+        if (syncState.aborted) return;
+
         const plat = row.appKey as Platform;
         if (plat !== "sotuvchi" && plat !== "100k") return;
         const acc = accountByPlatform.get(plat);
@@ -132,8 +156,8 @@ async function performCrmSync(
         const externalId = extractExternalOrderId(row.responseData);
         if (!externalId) return;
 
-        // Wait out any active platform pause before sending
         await waitIfPaused(plat);
+        if (syncState.aborted) return;
 
         let bearerToken = decrypt(acc.bearerTokenEncrypted);
         const tryFetch = (token: string) => crmGetOrderStatus(plat, token, externalId, acc.platformUserId);
@@ -149,21 +173,23 @@ async function performCrmSync(
               const hits = (consecutiveHits.get(plat) ?? 0) + 1;
               consecutiveHits.set(plat, hits);
               applyRateLimit(plat, hits);
-              // Wait out the pause, then retry once
               await waitIfPaused(plat);
               return tryFetch(bearerToken);
             }
             throw err;
           });
-          consecutiveHits.set(plat, 0); // reset streak on success
+          consecutiveHits.set(plat, 0);
           await db!.update(orders).set({ crmStatus: statusResult.status, crmSyncedAt: new Date() }).where(eq(orders.id, row.orderId));
           synced++;
         } catch {
           errors++;
         }
+
+        // Update progress after each order
+        if (syncState.progress) syncState.progress.current = synced + errors;
       }),
     );
-    if (i + CONCURRENCY < pendingOrders.length) {
+    if (i + CONCURRENCY < pendingOrders.length && !syncState.aborted) {
       await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
     }
   }
@@ -309,15 +335,19 @@ export const crmRouter = router({
         return { started: false, running: true, message: "Sync allaqachon ishlayapti..." };
       }
       syncState.running = true;
+      syncState.aborted = false;
+      syncState.progress = null;
       syncState.lastResult = null;
       void performCrmSync(ctx.user.id, input.platform)
         .then((r) => {
           syncState.running = false;
+          syncState.progress = null;
           syncState.lastResult = r;
         })
         .catch((err: unknown) => {
           console.error("[CrmSync] fatal error:", err);
           syncState.running = false;
+          syncState.progress = null;
           syncState.lastResult = {
             synced: 0, errors: 1, total: 0,
             syncedAt: new Date().toISOString(),
@@ -327,7 +357,19 @@ export const crmRouter = router({
       return { started: true, running: true };
     }),
 
+  stopSync: adminProcedure.mutation(() => {
+    if (!syncState.running) return { ok: false, message: "Sync ishlamayapti" };
+    syncState.aborted = true;
+    console.log("[CrmSync] Stop requested by admin");
+    return { ok: true };
+  }),
+
   // ─── Poll sync state ───────────────────────────────────────────────────────
 
-  getSyncStatus: adminProcedure.query(() => ({ ...syncState })),
+  getSyncStatus: adminProcedure.query(() => ({
+    running: syncState.running,
+    aborted: syncState.aborted,
+    progress: syncState.progress,
+    lastResult: syncState.lastResult,
+  })),
 });
