@@ -11,17 +11,18 @@ export function startLeadWorker(): Worker {
   _worker = new Worker<LeadJobData>(
     "lead-processing",
     async (job: Job<LeadJobData>) => {
-      console.log(`[Worker] Processing job ${job.id} — leadgenId=${job.data.leadgenId}`);
+      const { leadId, leadgenId, userId } = job.data;
+      console.log(`[Worker] ▶ START job=${job.id} leadId=${leadId} userId=${userId} leadgenId=${leadgenId}`);
 
       await processLead({
-        leadId: job.data.leadId,
-        leadgenId: job.data.leadgenId,
+        leadId,
+        leadgenId,
         pageId: job.data.pageId,
         formId: job.data.formId ?? "",
-        userId: job.data.userId,
+        userId,
       });
 
-      console.log(`[Worker] Job ${job.id} completed successfully`);
+      console.log(`[Worker] ✓ DONE  job=${job.id} leadId=${leadId}`);
     },
     {
       connection: getRedisConnection() as any,
@@ -30,7 +31,7 @@ export function startLeadWorker(): Worker {
   );
 
   _worker.on("completed", (job) => {
-    console.log(`[Worker] ✓ Job ${job.id} completed`);
+    console.log(`[Worker] ✓ Job ${job.id} completed leadId=${job.data.leadId}`);
   });
 
   _worker.on("failed", (job, err) => {
