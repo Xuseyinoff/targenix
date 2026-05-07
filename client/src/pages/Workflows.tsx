@@ -394,7 +394,7 @@ function WorkflowBuilderSheet({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [isActive, setIsActive] = useState(true);
-  const [triggerId, setTriggerId] = useState<string>("");
+  const [triggerId, setTriggerId] = useState<string>("none");
   const [steps, setSteps] = useState<StepDraft[]>([]);
   const [stepEditorOpen, setStepEditorOpen] = useState(false);
   const [editingStep, setEditingStep] = useState<StepDraft | undefined>();
@@ -407,7 +407,7 @@ function WorkflowBuilderSheet({
     setName(existing.name);
     setDescription(existing.description ?? "");
     setIsActive(existing.isActive);
-    setTriggerId(existing.triggerId ? String(existing.triggerId) : "");
+    setTriggerId(existing.triggerId ? String(existing.triggerId) : "none");
     setSteps(existing.steps.map(s => ({
       id: s.id, type: s.type as StepType, name: s.name,
       config: s.config as Record<string, unknown>,
@@ -456,7 +456,7 @@ function WorkflowBuilderSheet({
       name: name.trim(),
       description: description.trim() || undefined,
       isActive,
-      triggerId: triggerId ? Number(triggerId) : undefined,
+      triggerId: triggerId && triggerId !== "none" ? Number(triggerId) : undefined,
       steps: steps.map(s => ({
         type: s.type, name: s.name, config: s.config,
         continueOnError: s.continueOnError, position: s.position,
@@ -494,7 +494,7 @@ function WorkflowBuilderSheet({
                   <Select value={triggerId} onValueChange={setTriggerId}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Tanlash..." /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="" className="text-xs">— Trigger yo'q —</SelectItem>
+                      <SelectItem value="none" className="text-xs">— Trigger yo'q —</SelectItem>
                       {triggers?.map(t => (
                         <SelectItem key={t.id} value={String(t.id)} className="text-xs">{t.name} ({t.type})</SelectItem>
                       ))}
