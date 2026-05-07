@@ -88,6 +88,11 @@ function buildAdminMenuItems(t: (k: string) => string) {
   return [
     { icon: Webhook, label: t("nav.webhookHealth"), path: "/webhook" },
     { icon: Shield, label: t("nav.adminLogs"), path: "/admin/logs" },
+  ];
+}
+
+function buildAdminMenuItemsBottom(t: (k: string) => string) {
+  return [
     { icon: Users, label: t("nav.adminLeads"), path: "/admin/leads" },
     { icon: SendHorizonal, label: t("nav.leadBackfill"), path: "/admin/backfill" },
     { icon: Globe, label: t("nav.destTemplates"), path: "/admin/destination-templates" },
@@ -225,6 +230,7 @@ function DashboardLayoutContent({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const navGroups = useMemo(() => buildNavGroups(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
   const adminMenuItems = useMemo(() => buildAdminMenuItems(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
+  const adminMenuItemsBottom = useMemo(() => buildAdminMenuItemsBottom(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
   const adminCrmSubItems = useMemo(() => buildAdminCrmSubItems(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
   const businessToolsItems = useMemo(() => buildBusinessToolsItems(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
   const allItems = navGroups.flatMap((g) => g.items);
@@ -650,6 +656,27 @@ function DashboardLayoutContent({
                     </SidebarMenu>
                   )}
                 </div>
+
+                <SidebarMenu className="px-2 py-1">
+                  {adminMenuItemsBottom.map((item) => {
+                    const isActive = location === item.path;
+                    return (
+                      <SidebarMenuItem key={item.path}>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          onClick={() => setLocation(item.path)}
+                          tooltip={item.label}
+                          className="h-9 transition-all font-normal text-sidebar-foreground/80 hover:text-sidebar-foreground"
+                        >
+                          <item.icon
+                            className={`h-4 w-4 ${isActive ? "text-sidebar-primary" : "text-violet-500"}`}
+                          />
+                          <span>{item.label}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
               </>
             )}
           </SidebarContent>
