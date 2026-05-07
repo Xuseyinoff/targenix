@@ -32,6 +32,7 @@ const AdminTemplates = lazy(() => import("./pages/AdminTemplates"));
 const AdminLeads = lazy(() => import("./pages/AdminLeads"));
 const AdminCrmAccounts = lazy(() => import("./pages/AdminCrmAccounts"));
 const AdminCrmOrders = lazy(() => import("./pages/AdminCrmOrders"));
+const AdminDlq = lazy(() => import("./pages/AdminDlq"));
 const LeadDetail = lazy(() => import("./pages/LeadDetail"));
 const Settings = lazy(() => import("./pages/Settings"));
 const SettingsProfile = lazy(() => import("./pages/SettingsProfile"));
@@ -186,6 +187,7 @@ function Router() {
       <Route path="/admin/destination-templates" component={AdminTemplates} />
       <Route path="/admin/crm/accounts" component={AdminCrmAccounts} />
       <Route path="/admin/crm/orders" component={AdminCrmOrders} />
+      <Route path="/admin/dlq" component={AdminDlq} />
       <Route path="/leads/:id" component={LeadDetail} />
       <Route path="/settings" component={Settings} />
       <Route path="/settings/profile" component={SettingsProfile} />

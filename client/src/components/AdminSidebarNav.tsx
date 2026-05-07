@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import { useSidebar } from "@/components/ui/sidebar";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import type { LucideIcon } from "lucide-react";
-import { ChevronDown, ClipboardList, CircleUser, LayoutList, Shield, Users, SendHorizonal, Globe, Webhook } from "lucide-react";
+import { ChevronDown, ClipboardList, CircleUser, LayoutList, Shield, Users, SendHorizonal, Globe, Webhook, AlertTriangle } from "lucide-react";
 import { useT } from "@/hooks/useT";
 
 type NavLeaf = {
@@ -67,6 +67,7 @@ export function AdminSidebarNav() {
       { key: "admin-logs", label: t("nav.adminLogs"), icon: Shield, href: "/admin/logs" },
       { key: "lead-backfill", label: t("nav.leadBackfill"), icon: SendHorizonal, href: "/admin/backfill" },
       { key: "dest-templates", label: t("nav.destTemplates"), icon: Globe, href: "/admin/destination-templates" },
+      { key: "dlq", label: "DLQ", icon: AlertTriangle, href: "/admin/dlq" },
     ],
     [t],
   );
