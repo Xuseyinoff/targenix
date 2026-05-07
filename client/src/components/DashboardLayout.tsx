@@ -267,6 +267,8 @@ function DashboardLayoutContent({
   const isCrmActive = adminCrmSubItems.some(
     (item) => location === item.path || location.startsWith(`${item.path}/`),
   );
+  const isCrmSection = location === "/admin/crm" || location.startsWith("/admin/crm/");
+  const isCrmParentActive = location === "/admin/crm";
 
   const prevLocationRef = useRef<string | null>(null);
   useEffect(() => {
@@ -549,17 +551,22 @@ function DashboardLayoutContent({
                 <SidebarMenu className="px-2 py-1">
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      isActive={isCrmActive}
+                      isActive={isCrmParentActive}
                       onClick={() => {
                         if (!isCollapsed) setCrmExpanded((v) => !v);
                       }}
                       tooltip={t("nav.adminCrm")}
-                      className={cn("h-9", isCollapsed ? "justify-center" : "")}
+                      className={cn(
+                        "h-9",
+                        isCollapsed ? "justify-center" : "",
+                        // When a child route is active, keep parent readable but not "active"
+                        isCrmSection && !isCrmParentActive ? "text-sidebar-foreground/90" : "",
+                      )}
                       aria-expanded={!isCollapsed ? crmExpanded : undefined}
                       type="button"
                     >
                       <ClipboardList
-                        className={`h-4 w-4 shrink-0 ${isCrmActive ? "text-sidebar-primary" : "text-violet-500"}`}
+                        className={`h-4 w-4 shrink-0 ${isCrmSection ? "text-sidebar-primary" : "text-violet-500"}`}
                       />
                       {!isCollapsed && (
                         <>
