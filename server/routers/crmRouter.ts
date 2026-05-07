@@ -20,7 +20,7 @@ import {
   type Platform,
   type OrderPageResult,
 } from "../services/crmService";
-import { isFinalStatus } from "../../shared/crmStatuses";
+import { isFinalStatus, mapSotuvchiRawToNormalized } from "../../shared/crmStatuses";
 
 // ─── Background sync state (single-instance safe) ─────────────────────────────
 interface SyncResult {
@@ -377,7 +377,7 @@ export async function performPaginationSync(): Promise<SyncResult> {
       for (const match of matches) {
         const so = sotuvchiMap.get(match.externalId);
         if (!so) continue;
-        const normalized = normalizeSotuvchiStatus(so.status);
+        const normalized = mapSotuvchiRawToNormalized(so.status);
         const terminal = isFinalStatus(normalized);
         const statusChanged = normalized !== match.crmStatus;
         await db.update(orders)

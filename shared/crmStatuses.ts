@@ -11,6 +11,8 @@ export type CrmNormalizedStatus =
   | "new"
   | "contacted"
   | "in_progress"
+  | "sent"
+  | "callback"
   | "success"
   | "delivered"
   | "cancelled"
@@ -29,6 +31,8 @@ export const CANONICAL_CRM_STATUS_ORDER = [
   "new",
   "contacted",
   "in_progress",
+  "sent",
+  "callback",
   "unknown",
   "success",
   "delivered",
@@ -51,13 +55,15 @@ export function mapSotuvchiRawToNormalized(raw: string): CrmNormalizedStatus | s
     case "filling":
     case "order":
       return "contacted";
-    case "sent":
     case "booked":
     case "preparing":
+      return "in_progress";
+    case "sent":
+      return "sent";
     case "recycling":
     case "on_argue":
     case "callback":
-      return "in_progress";
+      return "callback";
     case "sold":
       return "success";
     case "delivered":
@@ -94,11 +100,13 @@ export function mapHundredKRawToNormalized(raw: string): CrmNormalizedStatus | s
     case "filling":
     case "order":
       return "contacted";
-    case "sent":
     case "booked":
     case "preparing":
-    case "callback":
       return "in_progress";
+    case "sent":
+      return "sent";
+    case "callback":
+      return "callback";
     case "sold":
       return "success";
     case "delivered":
@@ -147,9 +155,10 @@ export const FINAL_STATUSES = new Set<string>([
  */
 export const MID_STATUSES = new Set<string>([
   "in_progress",
+  "sent",
+  "callback",
   "success",
   "unknown",
-  "sent",
   "booked",
   "preparing",
   "recycling",
@@ -158,14 +167,13 @@ export const MID_STATUSES = new Set<string>([
 
 /**
  * ACTIVE — high-churn funnel top; poll more often.
- * Legacy: accepted, filling, callback matched old normalization.
+ * Legacy: accepted, filling matched old normalization.
  */
 export const ACTIVE_STATUSES = new Set<string>([
   "new",
   "contacted",
   "accepted",
   "filling",
-  "callback",
 ]);
 
 export function classifyStatus(status: string | null | undefined): "FINAL" | "MID" | "ACTIVE" {
