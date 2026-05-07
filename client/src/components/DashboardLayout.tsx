@@ -360,8 +360,12 @@ function DashboardLayoutContent({
   return (
     <>
       <div className="relative" ref={sidebarRef}>
-        <Sidebar collapsible="icon" className="border-r border-sidebar-border" disableTransition={isResizing}>
-          <SidebarHeader className="h-16 justify-center border-b border-sidebar-border">
+        <Sidebar
+          collapsible="icon"
+          className="border-r border-sidebar-border h-dvh flex flex-col"
+          disableTransition={isResizing}
+        >
+          <SidebarHeader className="h-16 shrink-0 justify-center border-b border-sidebar-border">
             <div className="flex items-center gap-3 px-2 w-full">
               <button
                 onClick={toggleSidebar}
@@ -383,7 +387,7 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          <SidebarContent className="gap-0 pt-2 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+          <SidebarContent className="flex-1 min-h-0 gap-0 pt-2 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             {!isCollapsed && (
               <div className="px-3 pb-2">
                 <div className="relative">
@@ -563,35 +567,34 @@ function DashboardLayoutContent({
                 </SidebarMenu>
 
                 {/* CRM — expandable submenu (routes unchanged) */}
-                <div className="px-2 mt-0.5 pb-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!isCollapsed) setCrmExpanded((v) => !v);
-                    }}
-                    className={`
-                  w-full flex items-center gap-2 px-2 py-2 rounded-lg text-left
-                  transition-colors hover:bg-sidebar-accent/60
-                  ${isCrmActive ? "text-sidebar-foreground" : "text-sidebar-foreground/70"}
-                  ${isCollapsed ? "justify-center" : ""}
-                `}
-                    title={t("nav.adminCrm")}
-                    aria-expanded={!isCollapsed ? crmExpanded : undefined}
-                  >
-                    <ClipboardList
-                      className={`h-4 w-4 shrink-0 ${isCrmActive ? "text-sidebar-primary" : "text-violet-500"}`}
-                    />
-                    {!isCollapsed && (
-                      <>
-                        <span className="flex-1 text-sm font-normal text-sidebar-foreground/90 select-none truncate">
-                          {t("nav.adminCrm")}
-                        </span>
-                        <ChevronDown
-                          className={`h-3.5 w-3.5 text-sidebar-foreground/40 transition-transform duration-200 shrink-0 ${crmExpanded ? "rotate-0" : "-rotate-90"}`}
-                        />
-                      </>
-                    )}
-                  </button>
+                <SidebarMenu className="px-2 py-1">
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      isActive={isCrmActive}
+                      onClick={() => {
+                        if (!isCollapsed) setCrmExpanded((v) => !v);
+                      }}
+                      tooltip={t("nav.adminCrm")}
+                      className={cn("h-9", isCollapsed ? "justify-center" : "")}
+                      aria-expanded={!isCollapsed ? crmExpanded : undefined}
+                      type="button"
+                    >
+                      <ClipboardList
+                        className={`h-4 w-4 shrink-0 ${isCrmActive ? "text-sidebar-primary" : "text-violet-500"}`}
+                      />
+                      {!isCollapsed && (
+                        <>
+                          <span className="flex-1 min-w-0 truncate whitespace-nowrap text-sm font-normal text-sidebar-foreground/90 select-none">
+                            {t("nav.adminCrm")}
+                          </span>
+                          <ChevronDown
+                            className={`h-3.5 w-3.5 text-sidebar-foreground/40 transition-transform duration-200 shrink-0 ${crmExpanded ? "rotate-0" : "-rotate-90"}`}
+                          />
+                        </>
+                      )}
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
 
                   {!isCollapsed && (
                     <div
@@ -655,7 +658,6 @@ function DashboardLayoutContent({
                       })}
                     </SidebarMenu>
                   )}
-                </div>
 
                 <SidebarMenu className="px-2 py-1">
                   {adminMenuItemsBottom.map((item) => {
@@ -681,7 +683,7 @@ function DashboardLayoutContent({
             )}
           </SidebarContent>
 
-          <SidebarFooter className="p-3 border-t border-sidebar-border">
+          <SidebarFooter className="p-3 border-t border-sidebar-border shrink-0">
             <div className="flex items-center gap-1">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
