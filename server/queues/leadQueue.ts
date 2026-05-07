@@ -49,8 +49,19 @@ export async function enqueueLeadJob(data: LeadJobData): Promise<void> {
         // Already queued or running — nothing to do
         return;
       }
-      // "completed" or unknown — remove stale job so we can re-add
-      await existing.remove();
+      // "completed" or unknown — remove stale job so we can re-add.
+      // If the worker holds a lock during cleanup, removal fails — treat as no-op
+      // (the job is either finishing or already done; re-enqueue is unnecessary).
+      try {
+        await existing.remove();
+      } catch (removeErr) {
+        const msg = removeErr instanceof Error ? removeErr.message : String(removeErr);
+        if (msg.includes("locked")) {
+          console.warn(`[Queue] Job ${jobId} locked during cleanup — skipping re-enqueue`);
+          return;
+        }
+        throw removeErr;
+      }
     }
 
     await queue.add("process-lead", data, { jobId });
