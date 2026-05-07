@@ -487,14 +487,14 @@ const sidebarMenuButtonVariants = cva(
     "transition-colors duration-200",
     "disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50",
     "group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2!",
-    "[&>span]:min-w-0 [&>span]:truncate [&>span]:whitespace-nowrap [&>svg]:size-4 [&>svg]:shrink-0",
+    "[&>span]:min-w-0 [&>span]:truncate [&>span]:whitespace-nowrap [&>svg]:size-[18px] [&>svg]:shrink-0",
 
     // Hover (ONLY when not active)
     "data-[active=false]:hover:bg-sidebar-accent/60 data-[active=false]:hover:text-sidebar-accent-foreground",
 
     // Active (single clean state: solid bg + left indicator; no glow/ring/shadow stacking)
     "data-[active=true]:bg-sidebar-accent/60 data-[active=true]:text-foreground data-[active=true]:font-semibold",
-    "data-[active=true]:before:absolute data-[active=true]:before:left-0 data-[active=true]:before:top-1.5 data-[active=true]:before:bottom-1.5 data-[active=true]:before:w-[3px] data-[active=true]:before:rounded-full data-[active=true]:before:bg-primary",
+    "data-[active=true]:before:absolute data-[active=true]:before:left-0 data-[active=true]:before:top-2 data-[active=true]:before:bottom-2 data-[active=true]:before:w-[2px] data-[active=true]:before:rounded-full data-[active=true]:before:bg-primary",
 
     // Focus (keep accessible without adding noise)
     "focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-0",
@@ -507,7 +507,7 @@ const sidebarMenuButtonVariants = cva(
           "bg-background shadow-[0_0_0_1px_hsl(var(--sidebar-border))] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_hsl(var(--sidebar-accent))]",
       },
       size: {
-        default: "h-8 text-sm",
+        default: "h-10 text-sm",
         sm: "h-7 text-xs",
         lg: "h-12 text-sm group-data-[collapsible=icon]:p-0!",
       },
