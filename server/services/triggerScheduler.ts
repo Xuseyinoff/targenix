@@ -10,7 +10,7 @@
  */
 
 import { getDb } from "../db";
-import { triggers, triggerExecutions } from "../../drizzle/schema";
+import { triggers, triggerExecutions, workflows } from "../../drizzle/schema";
 import { and, eq } from "drizzle-orm";
 
 let schedulerTimer: ReturnType<typeof setInterval> | null = null;
@@ -70,6 +70,9 @@ async function runScheduledTriggers(): Promise<void> {
         .where(eq(triggers.id, trigger.id));
 
       console.log(`[TriggerScheduler] Fired schedule trigger id=${trigger.id} name="${trigger.name}" cron="${cfg.cron}"`);
+
+      // Fire linked workflows (non-blocking)
+      void fireLinkedWorkflows(db, trigger.id, trigger.userId, { firedAt: now.toISOString(), cron: cfg.cron });
     }
   } catch (err) {
     console.error("[TriggerScheduler] Error:", err instanceof Error ? err.message : err);
@@ -98,5 +101,32 @@ export function stopTriggerScheduler(): void {
   if (schedulerTimer !== null) {
     clearInterval(schedulerTimer);
     schedulerTimer = null;
+  }
+}
+
+/** Fire all active workflows linked to this trigger. Non-blocking. */
+async function fireLinkedWorkflows(
+  db: Awaited<ReturnType<typeof import("../db").getDb>>,
+  triggerId: number,
+  userId: number,
+  triggerData: Record<string, unknown>,
+): Promise<void> {
+  if (!db) return;
+  try {
+    const { executeWorkflow } = await import("./workflowExecutor");
+    const linked = await db
+      .select({ id: workflows.id })
+      .from(workflows)
+      .where(and(eq(workflows.triggerId, triggerId), eq(workflows.isActive, true)));
+
+    for (const wf of linked) {
+      try {
+        await executeWorkflow({ db, workflowId: wf.id, userId, triggerData });
+      } catch (err) {
+        console.error(`[TriggerScheduler] Workflow ${wf.id} error:`, err instanceof Error ? err.message : err);
+      }
+    }
+  } catch (err) {
+    console.error("[TriggerScheduler] fireLinkedWorkflows error:", err instanceof Error ? err.message : err);
   }
 }

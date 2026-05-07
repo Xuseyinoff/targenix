@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { getDb } from "../db";
-import { triggers, triggerExecutions } from "../../drizzle/schema";
-import { eq } from "drizzle-orm";
+import { triggers, triggerExecutions, workflows } from "../../drizzle/schema";
+import { and, eq } from "drizzle-orm";
 
 export const triggerWebhookRouter = Router();
 
@@ -39,18 +39,38 @@ triggerWebhookRouter.post("/wh/:key", async (req, res) => {
       return;
     }
 
-    // Store execution — non-blocking
+    const webhookPayload = (req.body ?? null) as Record<string, unknown> | null;
+    const capturedTrigger = trigger;
+
+    // Store execution + fire linked workflows — non-blocking
     void db.insert(triggerExecutions).values({
-      triggerId:  trigger.id,
-      userId:     trigger.userId,
+      triggerId:  capturedTrigger.id,
+      userId:     capturedTrigger.userId,
       status:     "received",
-      payload:    req.body ?? null,
+      payload:    webhookPayload,
       source:     "webhook",
     }).then(() =>
       db.update(triggers)
         .set({ lastFiredAt: new Date() })
-        .where(eq(triggers.id, trigger.id))
-    ).catch((err: unknown) => {
+        .where(eq(triggers.id, capturedTrigger.id))
+    ).then(async () => {
+      // Fire linked workflows
+      const { executeWorkflow } = await import("../services/workflowExecutor");
+      const linked = await db
+        .select({ id: workflows.id })
+        .from(workflows)
+        .where(and(eq(workflows.triggerId, capturedTrigger.id), eq(workflows.isActive, true)));
+      for (const wf of linked) {
+        await executeWorkflow({
+          db,
+          workflowId:  wf.id,
+          userId:      capturedTrigger.userId,
+          triggerData: webhookPayload ?? {},
+        }).catch((err: unknown) => {
+          console.error(`[TriggerWebhook] Workflow ${wf.id} error:`, err instanceof Error ? err.message : err);
+        });
+      }
+    }).catch((err: unknown) => {
       console.error("[TriggerWebhook] Failed to log execution:", err);
     });
 

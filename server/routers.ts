@@ -21,6 +21,7 @@ import { connectionsRouter } from "./routers/connectionsRouter";
 import { crmRouter } from "./routers/crmRouter";
 import { adminDlqRouter } from "./routers/adminDlqRouter";
 import { triggersRouter } from "./routers/triggersRouter";
+import { workflowsRouter } from "./routers/workflowsRouter";
 
 export const appRouter = router({
   system: systemRouter,
@@ -45,6 +46,7 @@ export const appRouter = router({
   adminCrm: crmRouter,
   adminDlq: adminDlqRouter,
   triggers: triggersRouter,
+  workflows: workflowsRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -990,3 +990,76 @@ export const triggerExecutions = mysqlTable("trigger_executions", {
 
 export type TriggerExecution       = typeof triggerExecutions.$inferSelect;
 export type InsertTriggerExecution = typeof triggerExecutions.$inferInsert;
+
+// ─── Workflows ────────────────────────────────────────────────────────────────
+
+export const workflows = mysqlTable("workflows", {
+  id:          int().autoincrement().primaryKey(),
+  userId:      int().notNull(),
+  triggerId:   int(),           // optional FK → triggers.id
+  name:        varchar("name",  { length: 255 }).notNull(),
+  description: text("description"),
+  isActive:    boolean("isActive").default(true).notNull(),
+  createdAt:   timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:   timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  idxUserId:    index("idx_workflows_user_id").on(t.userId),
+  idxTriggerId: index("idx_workflows_trigger_id").on(t.triggerId),
+}));
+
+export type Workflow       = typeof workflows.$inferSelect;
+export type InsertWorkflow = typeof workflows.$inferInsert;
+
+export const workflowSteps = mysqlTable("workflow_steps", {
+  id:             int().autoincrement().primaryKey(),
+  workflowId:     int().notNull(),
+  position:       int().notNull().default(0),
+  type:           varchar("type", { length: 64 }).notNull(), // http_request | telegram | set_variable | condition
+  name:           varchar("name", { length: 255 }).notNull(),
+  config:         json("config").notNull(),
+  continueOnError: boolean("continueOnError").default(false).notNull(),
+  createdAt:      timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  idxWorkflowId: index("idx_wf_steps_workflow_id").on(t.workflowId),
+}));
+
+export type WorkflowStep       = typeof workflowSteps.$inferSelect;
+export type InsertWorkflowStep = typeof workflowSteps.$inferInsert;
+
+export const workflowExecutions = mysqlTable("workflow_executions", {
+  id:          int().autoincrement().primaryKey(),
+  workflowId:  int().notNull(),
+  userId:      int().notNull(),
+  status:      mysqlEnum("status", ["running", "success", "failed", "cancelled"]).default("running").notNull(),
+  triggerData: json("triggerData"),
+  contextJson: json("contextJson"), // accumulated step outputs
+  startedAt:   timestamp("startedAt").defaultNow().notNull(),
+  completedAt: timestamp("completedAt"),
+  error:       text("error"),
+}, (t) => ({
+  idxWorkflowId: index("idx_wf_exec_workflow_id").on(t.workflowId),
+  idxUserId:     index("idx_wf_exec_user_id").on(t.userId),
+  idxStatus:     index("idx_wf_exec_status").on(t.status),
+}));
+
+export type WorkflowExecution       = typeof workflowExecutions.$inferSelect;
+export type InsertWorkflowExecution = typeof workflowExecutions.$inferInsert;
+
+export const workflowStepExecutions = mysqlTable("workflow_step_executions", {
+  id:          int().autoincrement().primaryKey(),
+  executionId: int().notNull(),
+  stepId:      int().notNull(),
+  position:    int().notNull(),
+  status:      mysqlEnum("status", ["running", "success", "failed", "skipped"]).default("running").notNull(),
+  inputJson:   json("inputJson"),  // resolved config after template substitution
+  outputJson:  json("outputJson"), // step result
+  error:       text("error"),
+  durationMs:  int("durationMs"),
+  executedAt:  timestamp("executedAt").defaultNow().notNull(),
+}, (t) => ({
+  idxExecutionId: index("idx_wf_step_exec_exec_id").on(t.executionId),
+  idxStepId:      index("idx_wf_step_exec_step_id").on(t.stepId),
+}));
+
+export type WorkflowStepExecution       = typeof workflowStepExecutions.$inferSelect;
+export type InsertWorkflowStepExecution = typeof workflowStepExecutions.$inferInsert;
