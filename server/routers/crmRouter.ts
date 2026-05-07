@@ -8,6 +8,7 @@ import {
   integrations,
   targetWebsites,
   orderEvents,
+  users,
 } from "../../drizzle/schema";
 import { and, asc, desc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { encrypt, decrypt } from "../encryption";
@@ -435,6 +436,21 @@ export async function performPaginationSync(): Promise<SyncResult> {
 // ─── Accounts ─────────────────────────────────────────────────────────────────
 
 export const crmRouter = router({
+  listUsers: adminProcedure.query(async () => {
+    const db = await getDb();
+    if (!db) return [];
+    const rows = await db
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        role: users.role,
+      })
+      .from(users)
+      .orderBy(asc(users.id));
+    return rows;
+  }),
+
   listAccounts: adminProcedure.query(async () => {
     const db = await getDb();
     if (!db) return [];
@@ -508,6 +524,7 @@ export const crmRouter = router({
         offset: z.number().min(0).default(0),
         platform: z.enum(["sotuvchi", "100k"]).optional(),
         crmStatus: z.string().optional(),
+        userId: z.number().int().positive().optional(),
       }),
     )
     .query(async ({ input }) => {
@@ -517,6 +534,7 @@ export const crmRouter = router({
       const where = and(
         eq(orders.status, "SENT"),
         isNotNull(orders.responseData),
+        input.userId ? eq(orders.userId, input.userId) : undefined,
         input.platform
           ? eq(targetWebsites.appKey, input.platform)
           : or(eq(targetWebsites.appKey, "sotuvchi"), eq(targetWebsites.appKey, "100k")),

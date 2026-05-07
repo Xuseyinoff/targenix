@@ -196,6 +196,12 @@ export default function AdminCrmOrders() {
   const [page, setPage] = useState(0);
   const [platformFilter, setPlatformFilter] = useState<"sotuvchi" | "100k" | "">("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [userFilter, setUserFilter] = useState<number | "">("");
+
+  const { data: usersData } = trpc.adminCrm.listUsers.useQuery(undefined, {
+    enabled: user?.role === "admin",
+  });
+  const users = usersData ?? [];
 
   const { data, isLoading, isFetching } = trpc.adminCrm.listOrders.useQuery(
     {
@@ -203,6 +209,7 @@ export default function AdminCrmOrders() {
       offset: page * PAGE_SIZE,
       platform: platformFilter || undefined,
       crmStatus: statusFilter || undefined,
+      userId: userFilter === "" ? undefined : userFilter,
     },
     { enabled: user?.role === "admin" },
   );
@@ -227,6 +234,22 @@ export default function AdminCrmOrders() {
 
         {/* Filters */}
         <div className="flex gap-2 flex-wrap">
+          <select
+            className="border rounded-md px-3 py-1.5 text-sm bg-background"
+            value={userFilter}
+            onChange={(e) => {
+              const v = e.target.value;
+              setUserFilter(v === "" ? "" : Number(v));
+              setPage(0);
+            }}
+          >
+            <option value="">Barcha userlar</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>
+                {u.name ? `${u.name}${u.email ? ` (${u.email})` : ""}` : u.email ?? `User #${u.id}`}
+              </option>
+            ))}
+          </select>
           <select
             className="border rounded-md px-3 py-1.5 text-sm bg-background"
             value={platformFilter}
