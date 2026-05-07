@@ -32,6 +32,7 @@ import {
   type TargetWebsite,
 } from "../../drizzle/schema";
 import { isMultiDestinationsEnabled } from "./featureFlags";
+import type { FilterRule } from "./filterEngine";
 
 export type IntegrationDestinationRow = typeof integrationDestinations.$inferSelect;
 
@@ -50,6 +51,8 @@ export interface ResolvedDestination {
   enabled: boolean;
   /** Full target_websites row — the dispatcher needs the whole thing. */
   targetWebsite: TargetWebsite;
+  /** Per-destination filter rule. null = no filter (always deliver). */
+  filterJson: FilterRule | null;
 }
 
 // ─── public helpers ────────────────────────────────────────────────────────
@@ -234,6 +237,7 @@ async function readFromLegacyColumn(
       position: 0,
       enabled: true,
       targetWebsite: row,
+      filterJson: null,
     },
   ];
 }
@@ -277,6 +281,7 @@ async function readFromNewTable(
       position: r.mapping.position,
       enabled: r.mapping.enabled,
       targetWebsite: r.tw,
+      filterJson: (r.mapping.filterJson as FilterRule | null) ?? null,
     });
   }
   resolved.sort((a, b) => a.position - b.position || (a.mappingId ?? 0) - (b.mappingId ?? 0));

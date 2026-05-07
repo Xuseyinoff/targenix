@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Filter,
   FlaskConical,
   Loader2,
   Pencil,
@@ -28,6 +29,7 @@ import {
   XCircle,
   Zap,
 } from "lucide-react";
+import { FilterBuilderSheet } from "@/components/FilterBuilder";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -67,6 +69,7 @@ export default function Integrations() {
     error?: string;
     durationMs: number;
   } | null>(null);
+  const [filterIntegrationId, setFilterIntegrationId] = useState<number | null>(null);
 
   const toggleExpand = (id: number) => {
     setExpandedIds((prev) => {
@@ -450,6 +453,16 @@ export default function Integrations() {
                                 {t("integrations.edit")}
                               </Button>
                               <Button
+                                variant="outline"
+                                size="sm"
+                                className="h-8 text-xs text-violet-600 border-violet-200 hover:bg-violet-50 hover:text-violet-700 dark:border-violet-800 dark:hover:bg-violet-950/30"
+                                title="Filtr sozlamalari"
+                                onClick={() => setFilterIntegrationId(integration.id)}
+                              >
+                                <Filter className="mr-1.5 h-3.5 w-3.5" />
+                                Filtr
+                              </Button>
+                              <Button
                                 variant="ghost"
                                 size="sm"
                                 className="h-8 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 ml-auto"
@@ -566,6 +579,27 @@ export default function Integrations() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Filter Builder Sheet */}
+      {filterIntegrationId !== null && (() => {
+        const fi = routingIntegrations.find((i) => i.id === filterIntegrationId);
+        if (!fi) return null;
+        const destNames: Record<number, string> = {};
+        const destIds = (fi as { destinationIds?: number[] }).destinationIds ?? [];
+        destIds.forEach((id) => {
+          destNames[id] = (fi as { targetWebsiteName?: string }).targetWebsiteName ?? `#${id}`;
+        });
+        return (
+          <FilterBuilderSheet
+            open={true}
+            onClose={() => setFilterIntegrationId(null)}
+            integrationId={fi.id}
+            integrationName={fi.name}
+            integrationConfig={(fi.config ?? {}) as Record<string, unknown>}
+            destinationNames={destNames}
+          />
+        );
+      })()}
 
       {/* Delete Confirm */}
       <Dialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>

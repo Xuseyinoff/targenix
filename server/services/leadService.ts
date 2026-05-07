@@ -1056,7 +1056,18 @@ export async function processLead(params: {
       });
 
       if (destinations.length > 0) {
+        const { evaluateFilter } = await import("./filterEngine");
         for (const dest of destinations) {
+          // Per-destination filter: skip delivery if lead doesn't match.
+          if (dest.filterJson?.enabled) {
+            const passes = evaluateFilter(dest.filterJson, leadPayload);
+            if (!passes) {
+              console.log(
+                `[FilterEngine] Lead ${params.leadId} skipped dest=${dest.mappingId ?? 0} (tw=${dest.targetWebsite.id}) — filter did not match`,
+              );
+              continue;
+            }
+          }
           await deliverOneDestination({
             db,
             integration,
@@ -1248,6 +1259,7 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
       position: destRow.mapping.position,
       enabled: destRow.mapping.enabled,
       targetWebsite: destRow.tw,
+      filterJson: null, // retry path — filter already passed on first dispatch
     };
   }
 

@@ -18,6 +18,7 @@ import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getAdapter } from "../integrations";
 import { resolveIntegrationDestinations } from "../services/integrationDestinations";
 import type { DbClient } from "../db";
+import type { FilterRule } from "../services/filterEngine";
 
 export const integrationsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
@@ -323,6 +324,79 @@ export const integrationsRouter = router({
         durationMs,
         results: perDestinationResults,
       };
+    }),
+
+  // ─── Filter CRUD ─────────────────────────────────────────────────────────────
+
+  /**
+   * Get all destination rows with their filterJson for one integration.
+   * Used by the FilterBuilder UI to load current rules.
+   */
+  getDestinationFilters: protectedProcedure
+    .input(z.object({ integrationId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) return [];
+
+      const list = await getIntegrations(ctx.user.id);
+      if (!list.find((i) => i.id === input.integrationId)) return [];
+
+      const rows = await db
+        .select({
+          mappingId: integrationDestinations.id,
+          targetWebsiteId: integrationDestinations.targetWebsiteId,
+          filterJson: integrationDestinations.filterJson,
+          position: integrationDestinations.position,
+          enabled: integrationDestinations.enabled,
+        })
+        .from(integrationDestinations)
+        .where(eq(integrationDestinations.integrationId, input.integrationId))
+        .orderBy(asc(integrationDestinations.position), asc(integrationDestinations.id));
+
+      return rows.map((r) => ({
+        ...r,
+        filterJson: (r.filterJson ?? null) as FilterRule | null,
+      }));
+    }),
+
+  /**
+   * Save a FilterRule for a specific destination mapping row.
+   * Ownership is verified via the parent integration.
+   * Pass filter: null to clear the rule.
+   */
+  setDestinationFilter: protectedProcedure
+    .input(z.object({
+      integrationId:  z.number(),
+      targetWebsiteId: z.number(),
+      filter: z.object({
+        enabled:    z.boolean(),
+        logic:      z.enum(["AND", "OR"]),
+        conditions: z.array(z.object({
+          field:    z.string().min(1).max(128),
+          operator: z.enum(["eq","neq","contains","not_contains","starts_with","ends_with","gt","gte","lt","lte","exists","not_exists","in","not_in"]),
+          value:    z.string().max(500),
+        })).max(20),
+      }).nullable(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+
+      // Ownership guard: integration must belong to this user.
+      const list = await getIntegrations(ctx.user.id);
+      if (!list.find((i) => i.id === input.integrationId)) {
+        throw new Error("Integration not found");
+      }
+
+      await db
+        .update(integrationDestinations)
+        .set({ filterJson: input.filter })
+        .where(and(
+          eq(integrationDestinations.integrationId, input.integrationId),
+          eq(integrationDestinations.targetWebsiteId, input.targetWebsiteId),
+        ));
+
+      return { ok: true };
     }),
 });
 
