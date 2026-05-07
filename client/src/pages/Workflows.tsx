@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,7 @@ import { toast } from "sonner";
 import {
   Plus, Play, Trash2, History, ChevronRight, Loader2, CheckCircle2,
   XCircle, Clock, Globe, Send, Variable, GitBranch, Layers, Pencil,
-  ArrowUp, ArrowDown,
+  ArrowUp, ArrowDown, LayoutTemplate,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -325,12 +326,14 @@ function WorkflowCard({
   onEdit,
   onDelete,
   onHistory,
+  onCanvas,
 }: {
   wf: { id: number; name: string; isActive: boolean; stepCount: number; lastRunAt: Date | null; lastStatus: string | null };
   onRun: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onHistory: () => void;
+  onCanvas: () => void;
 }) {
   const lastSt = wf.lastStatus as keyof typeof EXEC_STATUS | null;
   return (
@@ -367,6 +370,9 @@ function WorkflowCard({
         </Button>
         <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs" onClick={onEdit} title="Tahrirlash">
           <Pencil className="h-3.5 w-3.5" />
+        </Button>
+        <Button size="sm" variant="outline" className="h-8 px-2.5 text-xs text-violet-600 border-violet-200 hover:bg-violet-50" onClick={onCanvas} title="Canvas Editor">
+          <LayoutTemplate className="h-3.5 w-3.5" />
         </Button>
         <Button size="sm" className="h-8 px-2.5 text-xs bg-violet-600 hover:bg-violet-700" onClick={onRun} title="Ishlatish">
           <Play className="h-3.5 w-3.5" />
@@ -670,6 +676,7 @@ function RunResultDialog({ result, onClose }: {
 
 export default function Workflows() {
   const utils = trpc.useUtils();
+  const [, setLocation] = useLocation();
   const [builderOpen, setBuilderOpen] = useState(false);
   const [editId, setEditId] = useState<number | undefined>();
   const [deleteId, setDeleteId] = useState<number | null>(null);
@@ -735,6 +742,7 @@ export default function Workflows() {
                   onEdit={() => { setEditId(wf.id); setBuilderOpen(true); }}
                   onDelete={() => setDeleteId(wf.id)}
                   onHistory={() => setHistoryId(wf.id)}
+                  onCanvas={() => setLocation(`/workflows/${wf.id}/canvas`)}
                 />
               ))
             )}

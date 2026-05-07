@@ -58,6 +58,7 @@
     "@types/bcryptjs": "^3.0.0",
     "@types/node-telegram-bot-api": "^0.64.14",
     "@types/nodemailer": "^8.0.0",
+    "@xyflow/react": "^12.10.2",
     "ai": "^6.0.38",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",

@@ -1000,6 +1000,7 @@ export const workflows = mysqlTable("workflows", {
   name:        varchar("name",  { length: 255 }).notNull(),
   description: text("description"),
   isActive:    boolean("isActive").default(true).notNull(),
+  canvasJson:  json("canvasJson"),  // React Flow nodes + edges
   createdAt:   timestamp("createdAt").defaultNow().notNull(),
   updatedAt:   timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({

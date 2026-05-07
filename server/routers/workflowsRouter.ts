@@ -203,6 +203,55 @@ export const workflowsRouter = router({
       return { ok: true };
     }),
 
+  // ─── Save Canvas ─────────────────────────────────────────────────────────────
+
+  saveCanvas: protectedProcedure
+    .input(z.object({
+      id:         z.number(),
+      name:       z.string().trim().min(1).max(255),
+      isActive:   z.boolean(),
+      triggerId:  z.number().int().positive().nullable().optional(),
+      canvasJson: z.object({
+        nodes: z.array(z.record(z.string(), z.unknown())),
+        edges: z.array(z.record(z.string(), z.unknown())),
+      }),
+      steps: z.array(StepInputSchema).max(50),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+
+      const [wf] = await db
+        .select({ id: workflows.id })
+        .from(workflows)
+        .where(and(eq(workflows.id, input.id), eq(workflows.userId, ctx.user.id)))
+        .limit(1);
+      if (!wf) throw new Error("Workflow topilmadi");
+
+      await db.update(workflows).set({
+        name:       input.name,
+        isActive:   input.isActive,
+        triggerId:  input.triggerId ?? null,
+        canvasJson: input.canvasJson,
+      }).where(eq(workflows.id, input.id));
+
+      await db.delete(workflowSteps).where(eq(workflowSteps.workflowId, input.id));
+      if (input.steps.length > 0) {
+        await db.insert(workflowSteps).values(
+          input.steps.map(s => ({
+            workflowId:      input.id,
+            position:        s.position,
+            type:            s.type,
+            name:            s.name,
+            config:          s.config,
+            continueOnError: s.continueOnError,
+          }))
+        );
+      }
+
+      return { ok: true };
+    }),
+
   // ─── Run ────────────────────────────────────────────────────────────────────
 
   run: protectedProcedure
