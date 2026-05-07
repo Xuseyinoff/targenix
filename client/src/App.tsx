@@ -46,6 +46,7 @@ const DevFormPreview = lazy(() => import("./pages/DevFormPreview"));
 const Triggers = lazy(() => import("./pages/Triggers"));
 const Workflows = lazy(() => import("./pages/Workflows"));
 const WorkflowCanvas = lazy(() => import("./pages/WorkflowCanvas"));
+const ExecutionDebugger = lazy(() => import("./pages/ExecutionDebugger"));
 
 function PageLoader() {
   return (
@@ -180,6 +181,7 @@ function Router() {
       <Route path="/triggers" component={Triggers} />
       <Route path="/workflows" component={Workflows} />
       <Route path="/workflows/:id/canvas" component={WorkflowCanvas} />
+      <Route path="/workflows/:wfId/executions/:execId" component={ExecutionDebugger} />
       {/* Legacy redirects kept for any bookmarks */}
       <Route path="/facebook" component={Connections} />
       <Route path="/facebook-accounts" component={Connections} />

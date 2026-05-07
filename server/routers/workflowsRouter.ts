@@ -326,11 +326,51 @@ export const workflowsRouter = router({
       if (!exec) return null;
 
       const steps = await db
-        .select()
+        .select({
+          id:          workflowStepExecutions.id,
+          executionId: workflowStepExecutions.executionId,
+          stepId:      workflowStepExecutions.stepId,
+          position:    workflowStepExecutions.position,
+          status:      workflowStepExecutions.status,
+          inputJson:   workflowStepExecutions.inputJson,
+          outputJson:  workflowStepExecutions.outputJson,
+          error:       workflowStepExecutions.error,
+          durationMs:  workflowStepExecutions.durationMs,
+          executedAt:  workflowStepExecutions.executedAt,
+          stepName:    workflowSteps.name,
+          stepType:    workflowSteps.type,
+        })
         .from(workflowStepExecutions)
+        .leftJoin(workflowSteps, eq(workflowStepExecutions.stepId, workflowSteps.id))
         .where(eq(workflowStepExecutions.executionId, input.executionId))
         .orderBy(asc(workflowStepExecutions.position), asc(workflowStepExecutions.id));
 
       return { ...exec, steps };
+    }),
+
+  // ─── Replay execution ────────────────────────────────────────────────────────
+
+  replayExecution: protectedProcedure
+    .input(z.object({ executionId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+
+      const [exec] = await db
+        .select()
+        .from(workflowExecutions)
+        .where(and(
+          eq(workflowExecutions.id, input.executionId),
+          eq(workflowExecutions.userId, ctx.user.id),
+        ))
+        .limit(1);
+      if (!exec) throw new Error("Execution topilmadi");
+
+      return executeWorkflow({
+        db,
+        workflowId:  exec.workflowId,
+        userId:      ctx.user.id,
+        triggerData: (exec.triggerData as Record<string, unknown>) ?? {},
+      });
     }),
 });

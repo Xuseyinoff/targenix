@@ -592,45 +592,53 @@ function WorkflowBuilderSheet({
 
 function HistorySheet({ workflowId, onClose }: { workflowId: number; onClose: () => void }) {
   const [page, setPage] = useState(0);
-  const [detailId, setDetailId] = useState<number | null>(null);
+  const [, setLocation] = useLocation();
   const { data } = trpc.workflows.executions.useQuery({ workflowId, limit: 20, offset: page * 20 });
 
   return (
-    <>
-      <Sheet open onOpenChange={v => !v && onClose()}>
-        <SheetContent side="right" className="w-full sm:max-w-md flex flex-col gap-0 p-0">
-          <SheetHeader className="px-6 py-4 border-b">
-            <SheetTitle className="flex items-center gap-2 text-sm"><History className="h-4 w-4 text-muted-foreground" /> Execution tarixi</SheetTitle>
-          </SheetHeader>
-          <div className="flex-1 overflow-y-auto divide-y">
-            {!data || data.items.length === 0 ? (
-              <p className="text-center py-10 text-sm text-muted-foreground">Hali ishlatilmagan</p>
-            ) : data.items.map(e => {
-              const st = EXEC_STATUS[e.status as keyof typeof EXEC_STATUS];
-              return (
-                <button key={e.id} type="button" onClick={() => setDetailId(e.id)}
-                  className="w-full flex items-center gap-3 px-6 py-3 hover:bg-muted/30 transition-colors text-left">
-                  <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0", st?.cls)}>{st?.label ?? e.status}</span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-muted-foreground">{new Date(e.startedAt).toLocaleString("uz-UZ")}</p>
-                    {e.error && <p className="text-xs text-red-500 truncate">{e.error}</p>}
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                </button>
-              );
-            })}
+    <Sheet open onOpenChange={v => !v && onClose()}>
+      <SheetContent side="right" className="w-full sm:max-w-md flex flex-col gap-0 p-0">
+        <SheetHeader className="px-6 py-4 border-b">
+          <SheetTitle className="flex items-center gap-2 text-sm">
+            <History className="h-4 w-4 text-muted-foreground" /> Execution tarixi
+          </SheetTitle>
+        </SheetHeader>
+        <div className="flex-1 overflow-y-auto divide-y">
+          {!data || data.items.length === 0 ? (
+            <p className="text-center py-10 text-sm text-muted-foreground">Hali ishlatilmagan</p>
+          ) : data.items.map(e => {
+            const st = EXEC_STATUS[e.status as keyof typeof EXEC_STATUS];
+            return (
+              <button
+                key={e.id}
+                type="button"
+                onClick={() => {
+                  onClose();
+                  setLocation(`/workflows/${workflowId}/executions/${e.id}`);
+                }}
+                className="w-full flex items-center gap-3 px-6 py-3 hover:bg-muted/30 transition-colors text-left"
+              >
+                <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium shrink-0", st?.cls)}>
+                  {st?.label ?? e.status}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-muted-foreground">{new Date(e.startedAt).toLocaleString("uz-UZ")}</p>
+                  {e.error && <p className="text-xs text-red-500 truncate">{e.error}</p>}
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+              </button>
+            );
+          })}
+        </div>
+        {data && data.total > 20 && (
+          <div className="px-6 py-3 border-t flex items-center justify-between">
+            <Button size="sm" variant="outline" disabled={page === 0} onClick={() => setPage(p => p - 1)}>Oldingi</Button>
+            <span className="text-xs text-muted-foreground">{page + 1}/{Math.ceil(data.total / 20)}</span>
+            <Button size="sm" variant="outline" disabled={(page + 1) * 20 >= data.total} onClick={() => setPage(p => p + 1)}>Keyingi</Button>
           </div>
-          {data && data.total > 20 && (
-            <div className="px-6 py-3 border-t flex items-center justify-between">
-              <Button size="sm" variant="outline" disabled={page === 0} onClick={() => setPage(p => p - 1)}>Oldingi</Button>
-              <span className="text-xs text-muted-foreground">{page + 1}/{Math.ceil(data.total / 20)}</span>
-              <Button size="sm" variant="outline" disabled={(page + 1) * 20 >= data.total} onClick={() => setPage(p => p + 1)}>Keyingi</Button>
-            </div>
-          )}
-        </SheetContent>
-      </Sheet>
-      {detailId !== null && <ExecutionDetailSheet executionId={detailId} onClose={() => setDetailId(null)} />}
-    </>
+        )}
+      </SheetContent>
+    </Sheet>
   );
 }
 
