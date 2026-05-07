@@ -43,6 +43,7 @@ const DestinationAnalytics = lazy(() => import("./pages/DestinationAnalytics"));
 const Campaigns = lazy(() => import("./pages/Campaigns"));
 const AdSets = lazy(() => import("./pages/AdSets"));
 const DevFormPreview = lazy(() => import("./pages/DevFormPreview"));
+const Triggers = lazy(() => import("./pages/Triggers"));
 
 function PageLoader() {
   return (
@@ -174,6 +175,7 @@ function Router() {
       <Route path="/integrations/new-v2" component={IntegrationWizardV2} />
       <Route path="/integrations/edit-v2/:id" component={IntegrationWizardV2} />
       <Route path="/connections" component={Connections} />
+      <Route path="/triggers" component={Triggers} />
       {/* Legacy redirects kept for any bookmarks */}
       <Route path="/facebook" component={Connections} />
       <Route path="/facebook-accounts" component={Connections} />

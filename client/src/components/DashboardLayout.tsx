@@ -73,6 +73,7 @@ function buildNavGroups(t: (k: string) => string): NavGroup[] {
       items: [
         { icon: LayoutDashboard, label: t("nav.overview"), path: "/overview" },
         { icon: Zap, label: t("nav.leads"), path: "/leads" },
+        { icon: Webhook, label: t("nav.triggers"), path: "/triggers" },
       ],
     },
     {

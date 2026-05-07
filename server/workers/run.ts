@@ -20,6 +20,7 @@ import { startFormsRefreshScheduler } from "../services/formsRefreshScheduler";
 import { startAdsSyncScheduler } from "../services/adsSyncScheduler";
 import { startCrmSyncScheduler } from "../services/crmSyncScheduler";
 import { startLeadPollingScheduler } from "../services/leadPollingService";
+import { startTriggerScheduler } from "../services/triggerScheduler";
 import { getDb } from "../db";
 
 if (!process.env.REDIS_URL) {
@@ -60,6 +61,7 @@ async function boot() {
   // When enabled, every 10 min it reconciles each active (user, page, form)
   // against Facebook and saves + dispatches any leadgen the webhook missed.
   startLeadPollingScheduler();
+  startTriggerScheduler();
 
   console.log("[Worker] All systems running. Waiting for jobs...");
 

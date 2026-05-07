@@ -18,6 +18,7 @@ import { registerFacebookOAuthRoutes } from "../routes/facebookOAuthCallback";
 import { registerFacebookLoginRoutes } from "../routes/facebookLoginOAuth";
 import { registerOAuthRoutes } from "../routes/oauthRouter";
 import { handleTelegramWebhook, registerTelegramWebhook } from "../webhooks/telegramWebhook";
+import { triggerWebhookRouter } from "../routes/triggerWebhookRoute";
 import { log } from "../services/appLogger";
 import { getLeadDispatchMode } from "../services/leadDispatch";
 import { getDb } from "../db";
@@ -258,6 +259,9 @@ async function startServer() {
 
   // Webhook routes (no auth required)
   app.use("/api/webhooks", facebookWebhookRouter);
+
+  // User-defined trigger webhook receiver
+  app.use("/api/trigger", triggerWebhookRouter);
 
   // Telegram bot webhook
   app.post("/api/telegram/webhook", (req, res) => {
