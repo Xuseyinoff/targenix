@@ -545,27 +545,6 @@ function DashboardLayoutContent({
                     {t("nav.admin")}
                   </span>
                 </div>
-                <SidebarMenu className="px-2 py-1">
-                  {adminMenuItems.map((item) => {
-                    const isActive = location === item.path;
-                    return (
-                      <SidebarMenuItem key={item.path}>
-                        <SidebarMenuButton
-                          isActive={isActive}
-                          onClick={() => setLocation(item.path)}
-                          tooltip={item.label}
-                          className="h-9 transition-all font-normal text-sidebar-foreground/80 hover:text-sidebar-foreground"
-                        >
-                          <item.icon
-                            className={`h-4 w-4 ${isActive ? "text-sidebar-primary" : "text-violet-500"}`}
-                          />
-                          <span>{item.label}</span>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-
                 {/* CRM — expandable submenu (routes unchanged) */}
                 <SidebarMenu className="px-2 py-1">
                   <SidebarMenuItem>
@@ -658,6 +637,27 @@ function DashboardLayoutContent({
                       })}
                     </SidebarMenu>
                   )}
+
+                <SidebarMenu className="px-2 py-1">
+                  {adminMenuItems.map((item) => {
+                    const isActive = location === item.path;
+                    return (
+                      <SidebarMenuItem key={item.path}>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          onClick={() => setLocation(item.path)}
+                          tooltip={item.label}
+                          className="h-9 transition-all font-normal text-sidebar-foreground/80 hover:text-sidebar-foreground"
+                        >
+                          <item.icon
+                            className={`h-4 w-4 ${isActive ? "text-sidebar-primary" : "text-violet-500"}`}
+                          />
+                          <span>{item.label}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
 
                 <SidebarMenu className="px-2 py-1">
                   {adminMenuItemsBottom.map((item) => {
