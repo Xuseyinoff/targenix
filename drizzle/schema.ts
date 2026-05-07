@@ -946,3 +946,47 @@ export const crmConnections = mysqlTable("crm_connections", {
 
 export type CrmConnection = typeof crmConnections.$inferSelect;
 export type InsertCrmConnection = typeof crmConnections.$inferInsert;
+
+// ─── Triggers ────────────────────────────────────────────────────────────────
+
+export const triggers = mysqlTable("triggers", {
+  id:          int("id").autoincrement().primaryKey(),
+  userId:      int("userId").notNull(),
+  name:        varchar("name", { length: 255 }).notNull(),
+  type:        mysqlEnum("type", ["webhook", "schedule", "manual", "api"]).notNull(),
+  /** Unique slug used in webhook URL: /api/trigger/wh/:webhookKey */
+  webhookKey:  varchar("webhookKey", { length: 64 }).unique(),
+  /** Type-specific config. Schedule: { cron: "0 * * * *" }. API: { secretHash: "..." } */
+  config:      json("config"),
+  isActive:    boolean("isActive").default(true).notNull(),
+  lastFiredAt: timestamp("lastFiredAt"),
+  createdAt:   timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:   timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  idxUserId:    index("idx_triggers_user_id").on(t.userId),
+  idxWebhookKey: index("idx_triggers_webhook_key").on(t.webhookKey),
+}));
+
+export type Trigger       = typeof triggers.$inferSelect;
+export type InsertTrigger = typeof triggers.$inferInsert;
+
+// ─── Trigger Executions ───────────────────────────────────────────────────────
+
+export const triggerExecutions = mysqlTable("trigger_executions", {
+  id:          int("id").autoincrement().primaryKey(),
+  triggerId:   int("triggerId").notNull(),
+  userId:      int("userId").notNull(),
+  status:      mysqlEnum("status", ["received", "success", "failed"]).default("received").notNull(),
+  /** Raw incoming payload (webhook body, schedule tick metadata, etc.) */
+  payload:     json("payload"),
+  source:      varchar("source", { length: 64 }),
+  executedAt:  timestamp("executedAt").defaultNow().notNull(),
+  error:       text("error"),
+}, (t) => ({
+  idxTriggerId: index("idx_trigger_exec_trigger_id").on(t.triggerId),
+  idxUserId:    index("idx_trigger_exec_user_id").on(t.userId),
+  idxFiredAt:   index("idx_trigger_exec_fired_at").on(t.executedAt),
+}));
+
+export type TriggerExecution       = typeof triggerExecutions.$inferSelect;
+export type InsertTriggerExecution = typeof triggerExecutions.$inferInsert;

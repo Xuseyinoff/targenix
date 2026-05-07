@@ -240,7 +240,8 @@ function ExecutionHistorySheet({
           ) : (
             <div className="divide-y">
               {data.items.map((exec) => {
-                const meta = EXEC_STATUS_META[exec.status ?? "received"] ?? EXEC_STATUS_META.received;
+                const statusKey = (exec.status ?? "received") as keyof typeof EXEC_STATUS_META;
+                const meta = EXEC_STATUS_META[statusKey] ?? EXEC_STATUS_META.received;
                 return (
                   <div key={exec.id} className="px-6 py-3 flex items-start gap-3">
                     <div className="pt-0.5 shrink-0">
