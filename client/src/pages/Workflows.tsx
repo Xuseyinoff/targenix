@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
@@ -29,6 +29,8 @@ import {
   ArrowUp, ArrowDown, LayoutTemplate,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ExpressionInput } from "@/components/ExpressionInput";
+import { makePreviewContext, type TemplateContext } from "@/lib/expressionEngine";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,19 +51,22 @@ const EXEC_STATUS = {
   skipped:   { label: "O'tkazildi", cls: "bg-slate-100 text-slate-500" },
 };
 
-const TEMPLATE_HINTS = [
-  "{{trigger.phone}}", "{{trigger.email}}", "{{trigger.fullName}}",
-  "{{steps.0.output.body.id}}", "{{steps.0.output.status}}", "{{vars.myVar}}",
-];
-
 // ─── Step config forms ────────────────────────────────────────────────────────
 
-function HttpRequestForm({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+interface FormProps {
+  config:    Record<string, unknown>;
+  onChange:  (c: Record<string, unknown>) => void;
+  variables: string[];
+  ctx:       TemplateContext;
+}
+
+function HttpRequestForm({ config, onChange, variables, ctx }: FormProps) {
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
-        <Label className="text-xs">URL <span className="text-muted-foreground">({"{{template}}"} ishlaydi)</span></Label>
-        <Input className="text-xs font-mono" placeholder="https://api.example.com/leads" value={String(config.url ?? "")} onChange={e => onChange({ ...config, url: e.target.value })} />
+        <Label className="text-xs">URL</Label>
+        <ExpressionInput value={String(config.url ?? "")} onChange={v => onChange({ ...config, url: v })}
+          placeholder="https://api.example.com/leads" variables={variables} ctx={ctx} />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-1.5">
@@ -79,14 +84,15 @@ function HttpRequestForm({ config, onChange }: { config: Record<string, unknown>
         </div>
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs">Body (JSON yoki {"{{template}}"})</Label>
-        <Textarea className="text-xs font-mono resize-none" rows={4} placeholder={'{"phone": "{{trigger.phone}}", "name": "{{trigger.fullName}}"}'} value={String(config.body ?? "")} onChange={e => onChange({ ...config, body: e.target.value })} />
+        <Label className="text-xs">Body (JSON)</Label>
+        <ExpressionInput multiline rows={4} value={String(config.body ?? "")} onChange={v => onChange({ ...config, body: v })}
+          placeholder={'{"phone": "{{trigger.phone}}", "name": "{{trigger.fullName}}"}'} variables={variables} ctx={ctx} />
       </div>
     </div>
   );
 }
 
-function TelegramForm({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+function TelegramForm({ config, onChange, variables, ctx }: FormProps) {
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
@@ -94,14 +100,15 @@ function TelegramForm({ config, onChange }: { config: Record<string, unknown>; o
         <Input className="text-xs" placeholder="-1001234567890 yoki @channel" value={String(config.chatId ?? "")} onChange={e => onChange({ ...config, chatId: e.target.value })} />
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs">Xabar <span className="text-muted-foreground">({"{{template}}"} ishlaydi)</span></Label>
-        <Textarea className="text-xs resize-none" rows={4} placeholder={"Yangi lid: {{trigger.fullName}}\nTelefon: {{trigger.phone}}\nCRM ID: {{steps.0.output.body.id}}"} value={String(config.message ?? "")} onChange={e => onChange({ ...config, message: e.target.value })} />
+        <Label className="text-xs">Xabar</Label>
+        <ExpressionInput multiline rows={4} value={String(config.message ?? "")} onChange={v => onChange({ ...config, message: v })}
+          placeholder={"Yangi lid: {{trigger.fullName}}\nTelefon: {{trigger.phone}}"} variables={variables} ctx={ctx} />
       </div>
     </div>
   );
 }
 
-function SetVariableForm({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+function SetVariableForm({ config, onChange, variables, ctx }: FormProps) {
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
@@ -109,21 +116,23 @@ function SetVariableForm({ config, onChange }: { config: Record<string, unknown>
         <Input className="text-xs font-mono" placeholder="crmId" value={String(config.key ?? "")} onChange={e => onChange({ ...config, key: e.target.value })} />
       </div>
       <div className="space-y-1.5">
-        <Label className="text-xs">Qiymat <span className="text-muted-foreground">({"{{template}}"} ishlaydi)</span></Label>
-        <Input className="text-xs font-mono" placeholder="{{steps.0.output.body.id}}" value={String(config.value ?? "")} onChange={e => onChange({ ...config, value: e.target.value })} />
+        <Label className="text-xs">Qiymat</Label>
+        <ExpressionInput value={String(config.value ?? "")} onChange={v => onChange({ ...config, value: v })}
+          placeholder={"{{trigger.phone}}"} variables={variables} ctx={ctx} />
         <p className="text-[10px] text-muted-foreground">Keyingi steplarda: <code className="bg-muted px-1 rounded">{"{{vars.crmId}}"}</code></p>
       </div>
     </div>
   );
 }
 
-function ConditionForm({ config, onChange }: { config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+function ConditionForm({ config, onChange, variables, ctx }: FormProps) {
   const operators = ["eq","neq","contains","starts_with","ends_with","exists","not_exists","gt","gte","lt","lte"];
   return (
     <div className="space-y-3">
       <div className="space-y-1.5">
-        <Label className="text-xs">Maydon ({"{{template}}"} yoki qiymat)</Label>
-        <Input className="text-xs font-mono" placeholder="{{steps.0.output.status}}" value={String(config.field ?? "")} onChange={e => onChange({ ...config, field: e.target.value })} />
+        <Label className="text-xs">Maydon</Label>
+        <ExpressionInput value={String(config.field ?? "")} onChange={v => onChange({ ...config, field: v })}
+          placeholder={"{{trigger.status}}"} variables={variables} ctx={ctx} />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-1.5">
@@ -135,7 +144,8 @@ function ConditionForm({ config, onChange }: { config: Record<string, unknown>; 
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Qiymat</Label>
-          <Input className="text-xs" placeholder="200" value={String(config.value ?? "")} onChange={e => onChange({ ...config, value: e.target.value })} />
+          <ExpressionInput value={String(config.value ?? "")} onChange={v => onChange({ ...config, value: v })}
+            placeholder="200" variables={variables} ctx={ctx} />
         </div>
       </div>
       <div className="space-y-1.5">
@@ -152,12 +162,12 @@ function ConditionForm({ config, onChange }: { config: Record<string, unknown>; 
   );
 }
 
-function StepConfigForm({ type, config, onChange }: { type: StepType; config: Record<string, unknown>; onChange: (c: Record<string, unknown>) => void }) {
+function StepConfigForm({ type, config, onChange, variables, ctx }: FormProps & { type: StepType }) {
   switch (type) {
-    case "http_request":  return <HttpRequestForm config={config} onChange={onChange} />;
-    case "telegram":      return <TelegramForm config={config} onChange={onChange} />;
-    case "set_variable":  return <SetVariableForm config={config} onChange={onChange} />;
-    case "condition":     return <ConditionForm config={config} onChange={onChange} />;
+    case "http_request":  return <HttpRequestForm config={config} onChange={onChange} variables={variables} ctx={ctx} />;
+    case "telegram":      return <TelegramForm config={config} onChange={onChange} variables={variables} ctx={ctx} />;
+    case "set_variable":  return <SetVariableForm config={config} onChange={onChange} variables={variables} ctx={ctx} />;
+    case "condition":     return <ConditionForm config={config} onChange={onChange} variables={variables} ctx={ctx} />;
   }
 }
 
@@ -177,11 +187,15 @@ function StepEditorDialog({
   initial,
   onSave,
   onClose,
+  variables,
+  previewCtx,
 }: {
   open: boolean;
   initial?: StepDraft;
   onSave: (s: StepDraft) => void;
   onClose: () => void;
+  variables: string[];
+  previewCtx: TemplateContext;
 }) {
   const [type, setType]   = useState<StepType>(initial?.type ?? "http_request");
   const [name, setName]   = useState(initial?.name ?? "");
@@ -227,20 +241,7 @@ function StepEditorDialog({
             <Input id="step-name" className="text-xs" placeholder="CRM ga yozish" value={name} onChange={e => setName(e.target.value)} autoFocus={!!initial?.id} />
           </div>
 
-          <StepConfigForm type={type} config={config} onChange={setConfig} />
-
-          {/* Template hints */}
-          <div className="space-y-1.5">
-            <p className="text-[10px] text-muted-foreground font-medium">Mavjud o'zgaruvchilar:</p>
-            <div className="flex flex-wrap gap-1">
-              {TEMPLATE_HINTS.map(h => (
-                <button key={h} type="button" onClick={() => navigator.clipboard.writeText(h)}
-                  className="font-mono text-[10px] bg-muted/60 hover:bg-muted px-1.5 py-0.5 rounded border transition-colors">
-                  {h}
-                </button>
-              ))}
-            </div>
-          </div>
+          <StepConfigForm type={type} config={config} onChange={setConfig} variables={variables} ctx={previewCtx} />
 
           <div className="flex items-center gap-2">
             <Switch id="coe" checked={coe} onCheckedChange={setCoe} />
@@ -423,6 +424,25 @@ function WorkflowBuilderSheet({
     setLoaded(true);
   }
 
+  // Build variables + sample preview context from current steps
+  const { variables, previewCtx } = useMemo(() => {
+    const common = [
+      "trigger.phone", "trigger.fullName", "trigger.firstName", "trigger.lastName",
+      "trigger.email", "trigger.formId", "trigger.campaignName", "trigger.adsetName",
+      "trigger.adName", "trigger.leadId", "trigger.createdAt",
+    ];
+    const varFields = steps
+      .filter(s => s.type === "set_variable" && s.config.key)
+      .map(s => `vars.${String(s.config.key)}`);
+    const sampleTrigger: Record<string, unknown> = {
+      phone: "+998901234567", fullName: "Ali Valiyev", firstName: "Ali", lastName: "Valiyev",
+      email: "ali@example.com", formId: "12345", campaignName: "Summer Sale",
+      adsetName: "Toshkent 25-35", adName: "Ad 1", leadId: "lead-001",
+      createdAt: new Date().toISOString(),
+    };
+    return { variables: [...common, ...varFields], previewCtx: makePreviewContext(sampleTrigger) };
+  }, [steps]);
+
   const create = trpc.workflows.create.useMutation({
     onSuccess: () => { toast.success("Workflow yaratildi"); void utils.workflows.list.invalidate(); onClose(); },
     onError: e => toast.error(e.message),
@@ -583,6 +603,8 @@ function WorkflowBuilderSheet({
           else addStep(s);
         }}
         onClose={() => setStepEditorOpen(false)}
+        variables={variables}
+        previewCtx={previewCtx}
       />
     </>
   );

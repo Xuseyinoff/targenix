@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import {
   ReactFlow,
@@ -26,6 +26,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import { ExpressionInput } from "@/components/ExpressionInput";
+import { makePreviewContext, type TemplateContext } from "@/lib/expressionEngine";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -232,12 +234,14 @@ function NodePalette() {
 type TriggerItem = { id: number; name: string; type: string };
 
 function SettingsPanel({
-  node, triggers, onChange, onDelete,
+  node, triggers, onChange, onDelete, variables, previewCtx,
 }: {
   node: WFNode;
   triggers: TriggerItem[];
   onChange: (patch: Partial<NodeData>) => void;
   onDelete: () => void;
+  variables: string[];
+  previewCtx: TemplateContext;
 }) {
   const d = node.data;
   const c = d.config;
@@ -285,8 +289,13 @@ function SettingsPanel({
           <>
             <div className="space-y-1.5">
               <Label className="text-xs">URL</Label>
-              <Input className="text-xs h-8 font-mono" placeholder="https://api.example.com/leads"
-                value={String(c.url ?? "")} onChange={e => sc({ url: e.target.value })} />
+              <ExpressionInput
+                value={String(c.url ?? "")}
+                onChange={v => sc({ url: v })}
+                placeholder="https://api.example.com/leads"
+                variables={variables}
+                ctx={previewCtx}
+              />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1.5">
@@ -307,9 +316,15 @@ function SettingsPanel({
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Body (JSON)</Label>
-              <Textarea className="text-xs font-mono resize-none" rows={4}
+              <ExpressionInput
+                multiline
+                rows={4}
+                value={String(c.body ?? "")}
+                onChange={v => sc({ body: v })}
                 placeholder={'{"phone": "{{trigger.phone}}"}'}
-                value={String(c.body ?? "")} onChange={e => sc({ body: e.target.value })} />
+                variables={variables}
+                ctx={previewCtx}
+              />
             </div>
           </>
         )}
@@ -324,9 +339,15 @@ function SettingsPanel({
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Xabar</Label>
-              <Textarea className="text-xs resize-none" rows={4}
+              <ExpressionInput
+                multiline
+                rows={4}
+                value={String(c.message ?? "")}
+                onChange={v => sc({ message: v })}
                 placeholder={"Yangi lid: {{trigger.fullName}}\nTelefon: {{trigger.phone}}"}
-                value={String(c.message ?? "")} onChange={e => sc({ message: e.target.value })} />
+                variables={variables}
+                ctx={previewCtx}
+              />
             </div>
           </>
         )}
@@ -341,8 +362,13 @@ function SettingsPanel({
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Qiymat</Label>
-              <Input className="text-xs h-8 font-mono" placeholder="{{steps.0.output.body.id}}"
-                value={String(c.value ?? "")} onChange={e => sc({ value: e.target.value })} />
+              <ExpressionInput
+                value={String(c.value ?? "")}
+                onChange={v => sc({ value: v })}
+                placeholder={"{{trigger.phone}}"}
+                variables={variables}
+                ctx={previewCtx}
+              />
             </div>
           </>
         )}
@@ -352,8 +378,13 @@ function SettingsPanel({
           <>
             <div className="space-y-1.5">
               <Label className="text-xs">Maydon</Label>
-              <Input className="text-xs h-8 font-mono" placeholder="{{steps.0.output.status}}"
-                value={String(c.field ?? "")} onChange={e => sc({ field: e.target.value })} />
+              <ExpressionInput
+                value={String(c.field ?? "")}
+                onChange={v => sc({ field: v })}
+                placeholder={"{{trigger.status}}"}
+                variables={variables}
+                ctx={previewCtx}
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Operator</Label>
@@ -367,8 +398,13 @@ function SettingsPanel({
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Qiymat</Label>
-              <Input className="text-xs h-8 font-mono" placeholder="200"
-                value={String(c.value ?? "")} onChange={e => sc({ value: e.target.value })} />
+              <ExpressionInput
+                value={String(c.value ?? "")}
+                onChange={v => sc({ value: v })}
+                placeholder="200"
+                variables={variables}
+                ctx={previewCtx}
+              />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Shart bajarilmasa</Label>
@@ -518,6 +554,33 @@ function CanvasInner({ workflowId }: { workflowId: number }) {
   }, [workflow, initialized, rf, setNodes, setEdges]);
 
   const selectedNode = nodes.find(n => n.id === selectedId) ?? null;
+
+  // Build variables list + sample preview context from the canvas
+  const { variables, previewCtx } = useMemo(() => {
+    const commonFields = [
+      "trigger.phone", "trigger.fullName", "trigger.firstName", "trigger.lastName",
+      "trigger.email", "trigger.formId", "trigger.campaignName", "trigger.adsetName",
+      "trigger.adName", "trigger.leadId", "trigger.createdAt",
+    ];
+    const varFields: string[] = [];
+    for (const n of nodes) {
+      if (n.data.stepType === "set_variable" && n.data.config.key) {
+        varFields.push(`vars.${String(n.data.config.key)}`);
+      }
+    }
+    const allVars = [...commonFields, ...varFields];
+    // Sample values for preview
+    const sampleTrigger: Record<string, unknown> = {
+      phone: "+998901234567", fullName: "Ali Valiyev", firstName: "Ali", lastName: "Valiyev",
+      email: "ali@example.com", formId: "12345", campaignName: "Summer Sale",
+      adsetName: "Toshkent 25-35", adName: "Ad 1", leadId: "lead-001",
+      createdAt: new Date().toISOString(),
+    };
+    return {
+      variables: allVars,
+      previewCtx: makePreviewContext(sampleTrigger),
+    };
+  }, [nodes]);
 
   const onConnect = useCallback((conn: Connection) => {
     setEdges(eds => addEdge({
@@ -697,6 +760,8 @@ function CanvasInner({ workflowId }: { workflowId: number }) {
             triggers={(triggersList ?? []) as TriggerItem[]}
             onChange={updateNodeData}
             onDelete={deleteSelectedNode}
+            variables={variables}
+            previewCtx={previewCtx}
           />
         )}
       </div>
