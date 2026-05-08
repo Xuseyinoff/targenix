@@ -62,13 +62,14 @@ export const workflowsRouter = router({
 
     const rows = await db
       .select({
-        id:        workflows.id,
-        name:      workflows.name,
-        isActive:  workflows.isActive,
-        triggerId: workflows.triggerId,
-        createdAt: workflows.createdAt,
-        stepCount: sql<number>`(SELECT COUNT(*) FROM workflow_steps WHERE workflowId = ${workflows.id})`,
-        lastRunAt: sql<Date | null>`(SELECT MAX(startedAt) FROM workflow_executions WHERE workflowId = ${workflows.id})`,
+        id:            workflows.id,
+        name:          workflows.name,
+        isActive:      workflows.isActive,
+        triggerOnLead: workflows.triggerOnLead,
+        triggerId:     workflows.triggerId,
+        createdAt:     workflows.createdAt,
+        stepCount:  sql<number>`(SELECT COUNT(*) FROM workflow_steps WHERE workflowId = ${workflows.id})`,
+        lastRunAt:  sql<Date | null>`(SELECT MAX(startedAt) FROM workflow_executions WHERE workflowId = ${workflows.id})`,
         lastStatus: sql<string | null>`(SELECT status FROM workflow_executions WHERE workflowId = ${workflows.id} ORDER BY startedAt DESC LIMIT 1)`,
       })
       .from(workflows)
@@ -103,10 +104,11 @@ export const workflowsRouter = router({
 
   create: protectedProcedure
     .input(z.object({
-      name:        z.string().trim().min(1).max(255),
-      description: z.string().max(1000).optional(),
-      triggerId:   z.number().int().positive().optional(),
-      steps:       z.array(StepInputSchema).max(20),
+      name:          z.string().trim().min(1).max(255),
+      description:   z.string().max(1000).optional(),
+      triggerId:     z.number().int().positive().optional(),
+      triggerOnLead: z.boolean().default(false),
+      steps:         z.array(StepInputSchema).max(20),
     }))
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
@@ -115,11 +117,12 @@ export const workflowsRouter = router({
       const [ins] = await db
         .insert(workflows)
         .values({
-          userId:      ctx.user.id,
-          name:        input.name,
-          description: input.description ?? null,
-          triggerId:   input.triggerId ?? null,
-          isActive:    true,
+          userId:        ctx.user.id,
+          name:          input.name,
+          description:   input.description ?? null,
+          triggerId:     input.triggerId ?? null,
+          triggerOnLead: input.triggerOnLead,
+          isActive:      true,
         })
         .$returningId();
 
@@ -143,12 +146,13 @@ export const workflowsRouter = router({
 
   update: protectedProcedure
     .input(z.object({
-      id:          z.number(),
-      name:        z.string().trim().min(1).max(255).optional(),
-      description: z.string().max(1000).optional(),
-      isActive:    z.boolean().optional(),
-      triggerId:   z.number().int().positive().nullable().optional(),
-      steps:       z.array(StepInputSchema).max(20).optional(),
+      id:            z.number(),
+      name:          z.string().trim().min(1).max(255).optional(),
+      description:   z.string().max(1000).optional(),
+      isActive:      z.boolean().optional(),
+      triggerOnLead: z.boolean().optional(),
+      triggerId:     z.number().int().positive().nullable().optional(),
+      steps:         z.array(StepInputSchema).max(20).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
@@ -162,10 +166,11 @@ export const workflowsRouter = router({
       if (!wf) throw new Error("Workflow topilmadi");
 
       const patch: Record<string, unknown> = {};
-      if (input.name        !== undefined) patch.name        = input.name;
-      if (input.description !== undefined) patch.description = input.description;
-      if (input.isActive    !== undefined) patch.isActive    = input.isActive;
-      if (input.triggerId   !== undefined) patch.triggerId   = input.triggerId;
+      if (input.name          !== undefined) patch.name          = input.name;
+      if (input.description   !== undefined) patch.description   = input.description;
+      if (input.isActive      !== undefined) patch.isActive      = input.isActive;
+      if (input.triggerOnLead !== undefined) patch.triggerOnLead = input.triggerOnLead;
+      if (input.triggerId     !== undefined) patch.triggerId     = input.triggerId;
 
       if (Object.keys(patch).length) {
         await db.update(workflows).set(patch).where(eq(workflows.id, input.id));
@@ -207,11 +212,12 @@ export const workflowsRouter = router({
 
   saveCanvas: protectedProcedure
     .input(z.object({
-      id:         z.number(),
-      name:       z.string().trim().min(1).max(255),
-      isActive:   z.boolean(),
-      triggerId:  z.number().int().positive().nullable().optional(),
-      canvasJson: z.object({
+      id:            z.number(),
+      name:          z.string().trim().min(1).max(255),
+      isActive:      z.boolean(),
+      triggerOnLead: z.boolean().default(false),
+      triggerId:     z.number().int().positive().nullable().optional(),
+      canvasJson:    z.object({
         nodes: z.array(z.record(z.string(), z.unknown())),
         edges: z.array(z.record(z.string(), z.unknown())),
       }),
@@ -229,10 +235,11 @@ export const workflowsRouter = router({
       if (!wf) throw new Error("Workflow topilmadi");
 
       await db.update(workflows).set({
-        name:       input.name,
-        isActive:   input.isActive,
-        triggerId:  input.triggerId ?? null,
-        canvasJson: input.canvasJson,
+        name:          input.name,
+        isActive:      input.isActive,
+        triggerOnLead: input.triggerOnLead,
+        triggerId:     input.triggerId ?? null,
+        canvasJson:    input.canvasJson,
       }).where(eq(workflows.id, input.id));
 
       await db.delete(workflowSteps).where(eq(workflowSteps.workflowId, input.id));

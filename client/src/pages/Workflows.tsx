@@ -329,7 +329,7 @@ function WorkflowCard({
   onHistory,
   onCanvas,
 }: {
-  wf: { id: number; name: string; isActive: boolean; stepCount: number; lastRunAt: Date | null; lastStatus: string | null };
+  wf: { id: number; name: string; isActive: boolean; triggerOnLead?: boolean; stepCount: number; lastRunAt: Date | null; lastStatus: string | null };
   onRun: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -346,6 +346,11 @@ function WorkflowCard({
       <div className="flex-1 min-w-0 space-y-0.5">
         <div className="flex items-center gap-2">
           <span className="font-medium text-sm truncate">{wf.name}</span>
+          {wf.triggerOnLead && (
+            <Badge className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 border-0">
+              ⚡ Lead kelganda
+            </Badge>
+          )}
           {!wf.isActive && <Badge variant="outline" className="text-[10px] px-1.5 py-0">Nofaol</Badge>}
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -401,6 +406,7 @@ function WorkflowBuilderSheet({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [isActive, setIsActive] = useState(true);
+  const [triggerOnLead, setTriggerOnLead] = useState(false);
   const [triggerId, setTriggerId] = useState<string>("none");
   const [steps, setSteps] = useState<StepDraft[]>([]);
   const [stepEditorOpen, setStepEditorOpen] = useState(false);
@@ -414,6 +420,7 @@ function WorkflowBuilderSheet({
     setName(existing.name);
     setDescription(existing.description ?? "");
     setIsActive(existing.isActive);
+    setTriggerOnLead((existing as Record<string, unknown>).triggerOnLead as boolean ?? false);
     setTriggerId(existing.triggerId ? String(existing.triggerId) : "none");
     setSteps(existing.steps.map(s => ({
       id: s.id, type: s.type as StepType, name: s.name,
@@ -482,6 +489,7 @@ function WorkflowBuilderSheet({
       name: name.trim(),
       description: description.trim() || undefined,
       isActive,
+      triggerOnLead,
       triggerId: triggerId && triggerId !== "none" ? Number(triggerId) : undefined,
       steps: steps.map(s => ({
         type: s.type, name: s.name, config: s.config,
@@ -514,9 +522,23 @@ function WorkflowBuilderSheet({
                 <Label className="text-xs">Tavsif (ixtiyoriy)</Label>
                 <Textarea className="resize-none text-xs" rows={2} value={description} onChange={e => setDescription(e.target.value)} placeholder="Bu workflow nima qiladi..." />
               </div>
+              {/* Lead Arrives trigger — highlighted option */}
+              <div className={cn(
+                "rounded-lg border px-3 py-2.5 flex items-start gap-3 cursor-pointer transition-colors",
+                triggerOnLead ? "border-emerald-500 bg-emerald-50" : "border-dashed hover:border-muted-foreground/40",
+              )} onClick={() => setTriggerOnLead(!triggerOnLead)}>
+                <Switch checked={triggerOnLead} onCheckedChange={setTriggerOnLead} className="mt-0.5" onClick={e => e.stopPropagation()} />
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium">Lead kelganda avtomatik ishga tush</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Har yangi lead qayta ishlanganda bu workflow avtomatik bajariladi
+                  </p>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs">Trigger (ixtiyoriy)</Label>
+                  <Label className="text-xs">Webhook Trigger (ixtiyoriy)</Label>
                   <Select value={triggerId} onValueChange={setTriggerId}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Tanlash..." /></SelectTrigger>
                     <SelectContent>

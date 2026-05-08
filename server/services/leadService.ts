@@ -1,6 +1,6 @@
 import { and, desc, eq, isNotNull, lt, lte } from "drizzle-orm";
-import { facebookConnections, facebookAccounts, facebookForms, integrationDestinations, leads, orders, integrations, users, targetWebsites } from "../../drizzle/schema";
-import { getDb } from "../db";
+import { facebookConnections, facebookAccounts, facebookForms, integrationDestinations, leads, orders, integrations, users, targetWebsites, workflows } from "../../drizzle/schema";
+import { getDb, type DbClient } from "../db";
 import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
@@ -17,6 +17,7 @@ import {
   type DeliveryErrorType,
 } from "../lib/orderRetryPolicy";
 import { incFailedOrders } from "../monitoring/metrics";
+import { executeWorkflow } from "./workflowExecutor";
 
 // ─── Field extraction helpers ─────────────────────────────────────────────────
 
@@ -856,6 +857,36 @@ export async function recalculateLeadDeliveryStatus(leadId: number, userId?: num
 }
 
 /**
+ * Execute all active workflows for this user that have triggerOnLead=true.
+ * Called at the end of processLead — failures are swallowed so they never
+ * interrupt the main lead delivery pipeline.
+ */
+async function fireLeadWorkflows(
+  db: DbClient,
+  userId: number,
+  triggerData: Record<string, unknown>,
+): Promise<void> {
+  const activeWorkflows = await db
+    .select({ id: workflows.id })
+    .from(workflows)
+    .where(
+      and(
+        eq(workflows.userId, userId),
+        eq(workflows.isActive, true),
+        eq(workflows.triggerOnLead, true),
+      )
+    );
+
+  for (const wf of activeWorkflows) {
+    try {
+      await executeWorkflow({ db, workflowId: wf.id, userId, triggerData });
+    } catch (err) {
+      console.error(`[Workflow] Failed to execute workflow ${wf.id} for user ${userId}:`, (err as Error).message);
+    }
+  }
+}
+
+/**
  * Full lead processing pipeline:
  * 1. Resolve page access token → Graph API enrichment (dataStatus)
  * 2. If enrichment fails → dataStatus ERROR, deliveryStatus PENDING, no routing
@@ -1119,6 +1150,20 @@ export async function processLead(params: {
   }
 
   await recalculateLeadDeliveryStatus(params.leadId, params.userId);
+
+  // Fire "Lead Arrives" workflows — non-blocking, errors are swallowed
+  void fireLeadWorkflows(db, params.userId, {
+    leadId:    params.leadId,
+    leadgenId: params.leadgenId,
+    fullName:  fullName ?? null,
+    phone:     phone    ?? null,
+    email:     email    ?? null,
+    pageId:    params.pageId,
+    formId:    params.formId,
+    campaignName: (leadRow as Record<string, unknown>).campaignName as string ?? null,
+    adsetName:    (leadRow as Record<string, unknown>).adsetName    as string ?? null,
+    adName:       (leadRow as Record<string, unknown>).adName       as string ?? null,
+  }).catch((err) => console.error("[Workflow] fireLeadWorkflows error:", (err as Error).message));
 
   await log.info("LEAD", `Processing complete — leadId=${params.leadId} fullName=${fullName ?? "unknown"} phone=${phone ?? "none"}`, { leadId: params.leadId, fullName, phone, email, pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
 }

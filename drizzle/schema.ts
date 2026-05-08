@@ -1025,10 +1025,12 @@ export const workflows = mysqlTable("workflows", {
   triggerId:   int(),           // optional FK → triggers.id
   name:        varchar("name",  { length: 255 }).notNull(),
   description: text("description"),
-  isActive:    boolean("isActive").default(true).notNull(),
-  canvasJson:  json("canvasJson"),  // React Flow nodes + edges
-  createdAt:   timestamp("createdAt").defaultNow().notNull(),
-  updatedAt:   timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  isActive:       boolean("isActive").default(true).notNull(),
+  /** When true, this workflow fires for every new lead this user receives. */
+  triggerOnLead:  boolean("triggerOnLead").default(false).notNull(),
+  canvasJson:     json("canvasJson"),  // React Flow nodes + edges
+  createdAt:      timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:      timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
   idxUserId:    index("idx_workflows_user_id").on(t.userId),
   idxTriggerId: index("idx_workflows_trigger_id").on(t.triggerId),
