@@ -29,6 +29,24 @@ export type AppCategory =
 export type AppAvailability = "stable" | "beta" | "deprecated";
 
 /**
+ * Execution endpoint descriptor for http-api-key apps.
+ * Consumed by httpApiKeyAdapter to build the outbound HTTP request.
+ */
+export interface AppExecutionEndpoint {
+  url: string;
+  method?: "POST" | "GET" | "PUT" | "PATCH";
+  contentType?: string;
+  /**
+   * How to send the API key.
+   *   "bearer"           → Authorization: Bearer {key}
+   *   "basic"            → Authorization: Basic base64(key)
+   *   "header:X-Name"    → X-Name: {key}
+   *   "body:field_name"  → include key as JSON body field
+   */
+  authScheme?: "bearer" | "basic" | `header:${string}` | `body:${string}`;
+}
+
+/**
  * How this app acquires credentials.
  *   "none"          — inline credentials stored per-destination in
  *                     target_websites.templateConfig (legacy path).
@@ -280,6 +298,12 @@ export interface AppManifest {
 
   /** UI gating. Deprecated apps are still usable but should not be promoted. */
   availability: AppAvailability;
+
+  /**
+   * For apps with adapterKey === "http-api-key": describes the HTTP call.
+   * The adapter reads this at delivery time to build the outbound request.
+   */
+  executionEndpoint?: AppExecutionEndpoint;
 
   /**
    * When true the app is hidden from end-user pickers (legacy/internal only).

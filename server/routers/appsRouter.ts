@@ -12,7 +12,7 @@
 
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
 import { listApps, getApp } from "../integrations";
 import type { AppManifest } from "../integrations";
 import { getDb } from "../db";
@@ -20,6 +20,7 @@ import { checkUserRateLimit } from "../lib/userRateLimit";
 import "../integrations/loaders/register";
 import { getLoader } from "../integrations/loaders/registry";
 import { LoaderValidationError } from "../integrations/loaders/types";
+import { getAdapter } from "../integrations/registry";
 
 /**
  * Shape exposed to clients. We intentionally strip `configSchema` for now —
@@ -155,6 +156,90 @@ export const appsRouter = router({
           });
         }
         throw err;
+      }
+    }),
+
+  /**
+   * Admin-only: test an app's delivery adapter with a mock lead.
+   * Useful for verifying connections + endpoint config without needing a real lead.
+   *
+   * Rate-limited to 10 calls per minute per user.
+   */
+  testConfig: adminProcedure
+    .input(
+      z.object({
+        appKey: z.string().min(1).max(64),
+        /** templateConfig values (same shape as target_websites.templateConfig). */
+        templateConfig: z.record(z.string(), z.unknown()),
+        /** Override connectionId — takes precedence over templateConfig.connectionId. */
+        connectionId: z.number().int().positive().nullable().optional(),
+        /** Mock lead payload. Defaults provided for fields not supplied. */
+        mockLead: z
+          .object({
+            fullName:    z.string().optional(),
+            phone:       z.string().optional(),
+            email:       z.string().optional(),
+            extraFields: z.record(z.string(), z.string()).optional(),
+          })
+          .optional(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      checkUserRateLimit(ctx.user.id, "appsTestConfig", {
+        max: 10,
+        windowMs: 60_000,
+        message: "Too many test requests. Max 10 per minute.",
+      });
+
+      const app = getApp(input.appKey);
+      if (!app) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Unknown app '${input.appKey}'.` });
+      }
+
+      const adapter = getAdapter(app.adapterKey);
+      if (!adapter) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: `Adapter '${app.adapterKey}' not registered for app '${input.appKey}'.`,
+        });
+      }
+
+      const db = await getDb();
+      if (!db) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable." });
+      }
+
+      const lead = {
+        leadgenId:   "test-lead-id",
+        pageId:      "test-page-id",
+        formId:      "test-form-id",
+        fullName:    input.mockLead?.fullName    ?? "Test User",
+        phone:       input.mockLead?.phone       ?? "+998901234567",
+        email:       input.mockLead?.email       ?? "test@example.com",
+        extraFields: input.mockLead?.extraFields ?? {},
+      };
+
+      const adapterInput = {
+        appKey:         input.appKey,
+        templateConfig: input.templateConfig,
+        leadRow:        {},
+        db,
+        userId:         ctx.user.id,
+        connectionId:   input.connectionId ?? null,
+      };
+
+      try {
+        const result = await adapter.send(adapterInput, lead);
+        return { ok: result.success, result };
+      } catch (err) {
+        return {
+          ok: false,
+          result: {
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+            errorType: "network" as const,
+          },
+        };
       }
     }),
 });

@@ -17,6 +17,8 @@
  */
 
 import "./register";
+// Ensure the manifest registry is populated before http-api-key adapter looks up manifests.
+import "./apps/index";
 
 import { eq } from "drizzle-orm";
 import type { DbClient } from "../db";
@@ -282,6 +284,18 @@ export async function dispatchDelivery(
         url: tw?.url,
         connection,
         userId: ctx.userId,
+      };
+      break;
+    }
+
+    case "http-api-key": {
+      adapterInput = {
+        appKey: tw?.appKey ?? null,
+        templateConfig: tw?.templateConfig,
+        leadRow,
+        db: ctx.db,
+        userId: ctx.userId,
+        connectionId: tw?.connectionId ?? null,
       };
       break;
     }

@@ -16,6 +16,18 @@
  * production to avoid per-delivery `console.log` volume. For resolved adapter
  * + appKey, see `STAGE2_APP_ROUTING_LOG=1` in `dispatchDelivery`.
  */
+/**
+ * Phase 9 — app keys whose delivery is handled by the generic httpApiKeyAdapter.
+ * Add a new entry here whenever a new http-api-key app manifest is registered.
+ * Keys must match the `key` field in the app manifest exactly.
+ */
+const HTTP_API_KEY_APP_KEYS = new Set([
+  "eskiz-sms",
+  "playmobile-sms",
+  "openai",
+  "crm-generic",
+]);
+
 export function resolveAdapterKey(
   integrationType: string,
   tw?: {
@@ -49,6 +61,8 @@ export function resolveAdapterKey(
     if (effectiveKey === "google-sheets" || effectiveKey === "google_sheets") return "google-sheets";
     // Sentinel written by the NOT NULL backfill for destinations that had no templateType.
     if (effectiveKey === "plain-url") return "plain-url";
+    // Phase 9 — manifest-driven HTTP api_key apps (no destination_templates row needed).
+    if (HTTP_API_KEY_APP_KEYS.has(effectiveKey)) return "http-api-key";
     // No templateId → appKey was copied from legacy templateType column during the NOT NULL
     // backfill (sotuvchi, 100k, albato, custom, …). Route to legacy-template so the
     // legacyTemplateAdapter continues to use tw.templateType for delivery, exactly as before.
