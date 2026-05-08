@@ -583,7 +583,7 @@ export const crmRouter = router({
 
   syncOrderStatuses: adminProcedure
     .input(z.object({ platform: z.enum(["sotuvchi", "100k"]).optional() }))
-    .mutation(({ }) => {
+    .mutation(({ input }) => {
       if (syncState.running) {
         return { started: false, running: true, message: "Sync allaqachon ishlayapti..." };
       }
@@ -591,14 +591,18 @@ export const crmRouter = router({
       syncState.aborted = false;
       syncState.progress = null;
       syncState.lastResult = null;
-      void performPaginationSync()
+      // 100k.uz uses per-order status polling; Sotuvchi uses bulk pagination.
+      const job = input.platform === "100k"
+        ? performCrmSync(undefined, "100k")
+        : performPaginationSync();
+      void job
         .then((r) => {
           syncState.running = false;
           syncState.progress = null;
           syncState.lastResult = r;
         })
         .catch((err: unknown) => {
-          console.error("[PaginationSync] fatal error:", err);
+          console.error("[CrmSync] fatal error:", err);
           syncState.running = false;
           syncState.progress = null;
           syncState.lastResult = {
