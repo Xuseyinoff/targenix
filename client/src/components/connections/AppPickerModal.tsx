@@ -118,6 +118,8 @@ interface AppEntry {
   userVisibleFields: string[];
   /** DB auth type (oauth2/api_key/bearer/none). Helps decide connect flow. */
   authType?: string | null;
+  /** Manifest connectionType (e.g. oauth2, telegram_bot, oauth2_google, …) */
+  connectionType?: string | null;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -211,6 +213,7 @@ export function AppPickerModal({
         destTypeKey: a.key,
         userVisibleFields: [],
         authType: authByKey.get(a.key) ?? null,
+        connectionType: (a as { connectionType?: string | null }).connectionType ?? null,
       });
     }
     for (const t of templates) {
@@ -305,7 +308,10 @@ export function AppPickerModal({
 
       // Variant A: any manifest app whose DB app spec says authType=oauth2
       // uses the generic /api/oauth/:appKey flow and stores a reusable connection.
-      if (typeof entry.destTypeKey === "string" && entry.authType === "oauth2") {
+      if (
+        typeof entry.destTypeKey === "string" &&
+        (entry.authType === "oauth2" || entry.connectionType === "oauth2")
+      ) {
         setOauth2BusyAppKey(entry.destTypeKey);
         void startOAuth2();
         return;
