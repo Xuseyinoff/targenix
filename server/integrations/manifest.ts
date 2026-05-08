@@ -24,6 +24,7 @@ export type AppCategory =
   | "webhook"
   | "ecommerce"
   | "affiliate"
+  | "crm"
   | "other";
 
 export type AppAvailability = "stable" | "beta" | "deprecated";
@@ -43,7 +44,7 @@ export interface AppExecutionEndpoint {
    *   "header:X-Name"    → X-Name: {key}
    *   "body:field_name"  → include key as JSON body field
    */
-  authScheme?: "bearer" | "basic" | `header:${string}` | `body:${string}`;
+  authScheme?: "bearer" | "basic" | "none" | `header:${string}` | `body:${string}`;
 }
 
 /**

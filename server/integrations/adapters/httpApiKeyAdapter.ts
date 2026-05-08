@@ -140,7 +140,7 @@ export const httpApiKeyAdapter = {
 
     // Load API key — skip for no-auth apps (authScheme "none")
     let apiKey = "";
-    if (authScheme !== "none") {
+    if ((authScheme as string) !== "none") {
       const keyResult = await loadApiKey(opts.db, opts.userId, connectionId);
       if ("error" in keyResult) {
         return { success: false, error: keyResult.error, errorType: "validation" };
@@ -158,11 +158,11 @@ export const httpApiKeyAdapter = {
     const contentType = endpoint.contentType ?? "application/json";
 
     // Build auth headers (empty for "none")
-    const authHeaders = authScheme !== "none" ? buildAuthHeader(authScheme, apiKey) : {};
+    const authHeaders = (authScheme as string) !== "none" ? buildAuthHeader(authScheme, apiKey) : {};
 
     // Build body: merge expanded fields; inject auth key if body:field scheme
     const bodyFields: Record<string, string> = { ...expanded };
-    if (authScheme.startsWith("body:")) {
+    if (typeof authScheme === "string" && authScheme.startsWith("body:")) {
       const fieldName = authScheme.slice("body:".length);
       bodyFields[fieldName] = apiKey;
     }

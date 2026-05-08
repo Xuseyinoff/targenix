@@ -453,8 +453,6 @@ export async function sendLeadTelegramNotification(params: {
   await sendTelegramMessage(chatId, html, "HTML");
 }
 
-type DbClient = NonNullable<Awaited<ReturnType<typeof getDb>>>;
-
 type IntegrationDeliveryResult = {
   success: boolean;
   responseData?: unknown;

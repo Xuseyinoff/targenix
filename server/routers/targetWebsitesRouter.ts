@@ -506,7 +506,9 @@ export const targetWebsitesRouter = router({
       z.object({
         id: z.number(),
         name: z.string().min(1).optional(),
-        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram", "google-sheets"]).optional(),
+        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram", "google-sheets", "http-api-key"]).optional(),
+        appKey: z.string().min(1).max(64).optional(),
+        templateConfig: z.record(z.string(), z.any()).optional(),
         apiKey: z.string().optional(),
         googleAccountId: z.number().int().positive().optional(),
         spreadsheetId: z.string().optional(),
