@@ -39,6 +39,7 @@ interface SyncProgress {
 }
 export const syncState = {
   running: false,
+  running100k: false,
   aborted: false,
   progress: null as SyncProgress | null,
   lastResult: null as SyncResult | null,
