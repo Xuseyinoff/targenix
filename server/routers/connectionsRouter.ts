@@ -95,7 +95,7 @@ export const connectionsRouter = router({
       z
         .object({
           type: z
-            .enum(["google_sheets", "telegram_bot", "api_key"])
+            .enum(["google_sheets", "telegram_bot", "api_key", "hubspot", "kommo", "pipedrive"])
             .optional(),
         })
         .optional(),

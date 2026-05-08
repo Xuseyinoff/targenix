@@ -36,6 +36,10 @@ export const APP_KEY_TO_TEMPLATE_TYPE = {
   "webhook-json":  "http-api-key",
   "bitrix24":      "http-api-key",
   "amocrm":        "http-api-key",
+  // OAuth2 CRM apps — same templateType; adapter resolved by appKey at delivery
+  "hubspot":       "http-api-key",
+  "kommo":         "http-api-key",
+  "pipedrive":     "http-api-key",
 } as const satisfies Record<string, "telegram" | "google-sheets" | "custom" | "http-api-key">;
 
 export type SupportedAppKey = keyof typeof APP_KEY_TO_TEMPLATE_TYPE;

@@ -24,7 +24,13 @@ import type { BaseFieldProps } from "../types";
 // dynamicTemplate adapter and store secrets at destination level) we render
 // a bridge card that deep-links to /connections. When the first manifest
 // surfaces an api_key field we'll promote that card to a full inline dialog.
-const SUPPORTED_PICKER_TYPES = new Set<SupportedType>(["google_sheets", "telegram_bot"]);
+const SUPPORTED_PICKER_TYPES = new Set<SupportedType>([
+  "google_sheets",
+  "telegram_bot",
+  "hubspot",
+  "kommo",
+  "pipedrive",
+]);
 
 export interface ConnectionPickerFieldProps extends BaseFieldProps {
   value: number | null;

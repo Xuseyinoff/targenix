@@ -32,6 +32,13 @@ const HTTP_API_KEY_APP_KEYS = new Set([
   "amocrm",
 ]);
 
+// Phase 12 — OAuth2 CRM apps (token from oauth_tokens via getValidAccessToken)
+const HTTP_OAUTH2_APP_KEYS = new Set([
+  "hubspot",
+  "kommo",
+  "pipedrive",
+]);
+
 export function resolveAdapterKey(
   integrationType: string,
   tw?: {
@@ -67,6 +74,8 @@ export function resolveAdapterKey(
     if (effectiveKey === "plain-url") return "plain-url";
     // Phase 9 — manifest-driven HTTP api_key apps (no destination_templates row needed).
     if (HTTP_API_KEY_APP_KEYS.has(effectiveKey)) return "http-api-key";
+    // Phase 12 — OAuth2 CRM apps (token fetched via getValidAccessToken).
+    if (HTTP_OAUTH2_APP_KEYS.has(effectiveKey)) return "http-oauth2";
     // No templateId → appKey was copied from legacy templateType column during the NOT NULL
     // backfill (sotuvchi, 100k, albato, custom, …). Route to legacy-template so the
     // legacyTemplateAdapter continues to use tw.templateType for delivery, exactly as before.

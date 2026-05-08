@@ -301,6 +301,18 @@ export async function dispatchDelivery(
       break;
     }
 
+    case "http-oauth2": {
+      adapterInput = {
+        appKey: tw?.appKey ?? null,
+        templateConfig: tw?.templateConfig,
+        leadRow,
+        db: ctx.db,
+        userId: ctx.userId,
+        connectionId: tw?.connectionId ?? null,
+      };
+      break;
+    }
+
     case "plain-url":
     default: {
       targetUrlUsed = (cfg.targetUrl as string | undefined) ?? undefined;

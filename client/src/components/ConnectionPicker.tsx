@@ -34,9 +34,10 @@ import { cn } from "@/lib/utils";
 import { useT } from "@/hooks/useT";
 import { trpc } from "@/lib/trpc";
 import { useGoogleOAuthPopup } from "@/hooks/useGoogleOAuthPopup";
+import { useOAuth2Popup } from "@/hooks/useOAuth2Popup";
 import { TelegramConnectDialog } from "@/components/connections/TelegramConnectDialog";
 
-export type ConnectionPickerType = "google_sheets" | "telegram_bot";
+export type ConnectionPickerType = "google_sheets" | "telegram_bot" | "hubspot" | "kommo" | "pipedrive";
 
 export interface ConnectionPickerProps {
   type: ConnectionPickerType;
@@ -94,7 +95,7 @@ export function ConnectionPicker({
   // connections list and auto-select the connection that now points at the
   // newly linked google_accounts row — this removes the "open new tab,
   // come back, pick from dropdown" three-step dance Make.com/Zapier avoid.
-  const { start: startGoogleOAuth, isConnecting } = useGoogleOAuthPopup({
+  const { start: startGoogleOAuth, isConnecting: isGoogleConnecting } = useGoogleOAuthPopup({
     onConnected: async (googleAccountId, email) => {
       toast.success(
         email
@@ -114,6 +115,25 @@ export function ConnectionPicker({
     },
   });
 
+  // Generic OAuth2 popup for CRM apps (HubSpot, Kommo, Pipedrive).
+  // Hook is always instantiated (Rules of Hooks) but only active when type is a CRM key.
+  const { start: startCrmOAuth, isConnecting: isCrmConnecting } = useOAuth2Popup({
+    appKey: type,
+    onConnected: async (connectionId, _email, displayName) => {
+      toast.success(displayName ? `${displayName} ulandi` : "Ulandi");
+      const res = await refetch();
+      const list = res.data ?? [];
+      const fresh = list.find((c) => c.id === connectionId);
+      if (fresh) onChange(fresh.id);
+      if (onAfterConnect) onAfterConnect();
+    },
+    onError: (message) => {
+      toast.error(message);
+    },
+  });
+
+  const isConnecting = isGoogleConnecting || isCrmConnecting;
+
   // Telegram bot connections are created via a reusable dialog that uses the
   // `connections.createTelegramBot` mutation (bot-token + chat-id, probed on
   // the server before storage). After creation we refetch the list so the
@@ -122,7 +142,8 @@ export function ConnectionPicker({
 
   const supportsInlineOAuth = type === "google_sheets";
   const supportsInlineTelegram = type === "telegram_bot";
-  const supportsInlineCreate = supportsInlineOAuth || supportsInlineTelegram;
+  const supportsInlineCrmOAuth = type === "hubspot" || type === "kommo" || type === "pipedrive";
+  const supportsInlineCreate = supportsInlineOAuth || supportsInlineTelegram || supportsInlineCrmOAuth;
 
   const handleOpenConnectionsPage = () => {
     if (onAfterConnect) onAfterConnect();
@@ -138,8 +159,10 @@ export function ConnectionPicker({
       setTelegramDialogOpen(true);
       return;
     }
-    // Fallback for any future connection type without an inline creator —
-    // open /connections and refetch on return.
+    if (supportsInlineCrmOAuth) {
+      void startCrmOAuth();
+      return;
+    }
     window.open("/connections", "_blank", "noreferrer");
     handleOpenConnectionsPage();
   };

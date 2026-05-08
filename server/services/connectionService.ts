@@ -143,7 +143,7 @@ export async function upsertOAuthConnection(
     .insert(connections)
     .values({
       userId,
-      type: validateConnectionType("oauth2"),
+      type: validateConnectionType(appKey),
       appKey,
       displayName,
       status: "active",
