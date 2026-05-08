@@ -757,7 +757,7 @@ export default function Connections() {
             / admin-template API keys). Facebook accounts stay in the
             Collapsible cards above because their page-level management
             doesn't fit a flat row. */}
-        <ConnectionsList />
+        <ConnectionsList onReconnect={() => setPickerOpen(true)} />
 
         <AppPickerModal open={pickerOpen} onOpenChange={setPickerOpen} />
 

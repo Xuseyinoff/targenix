@@ -402,6 +402,26 @@ export const connections = mysqlTable("connections", {
 export type Connection = typeof connections.$inferSelect;
 export type InsertConnection = typeof connections.$inferInsert;
 
+// ─── Connection Health Logs ───────────────────────────────────────────────────
+// Audit trail for connection health checks. One row per check run (manual or
+// scheduled). Powers the health history panel in the Connection Manager UI.
+export const connectionHealthLogs = mysqlTable("connection_health_logs", {
+  id:           int("id").autoincrement().primaryKey(),
+  connectionId: int("connectionId").notNull(),
+  userId:       int("userId").notNull(),
+  /** 'ok' | 'error' | 'expired' — result of the health probe */
+  checkStatus:  varchar("checkStatus", { length: 16 }).notNull(),
+  latencyMs:    int("latencyMs"),
+  /** Truncated error message (max 500 chars) */
+  errorMessage: varchar("errorMessage", { length: 500 }),
+  checkedAt:    timestamp("checkedAt").defaultNow().notNull(),
+}, (t) => ({
+  idxConnection: index("idx_chl_connection_id").on(t.connectionId),
+  idxUserChecked: index("idx_chl_user_checked").on(t.userId, t.checkedAt),
+}));
+
+export type ConnectionHealthLog = typeof connectionHealthLogs.$inferSelect;
+
 // ─── Target Websites ──────────────────────────────────────────────────────────
 // A list of affiliate/CRM websites that leads are routed to.
 //

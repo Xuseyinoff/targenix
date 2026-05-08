@@ -23,6 +23,7 @@ import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import {
+  connectionHealthLogs,
   connections,
   destinationTemplates,
   oauthTokens,
@@ -37,6 +38,10 @@ import {
   insertTelegramConnection,
   mapConnectionUsage,
 } from "../services/connectionService";
+import {
+  verifyConnectionHealth,
+  getRecentHealthLogs,
+} from "../services/connectionHealthService";
 import { sendTelegramRawMessage } from "../services/telegramService";
 import { log } from "../services/appLogger";
 import { listAppKeyOptionsForPicker } from "../integrations/listAppsSafe";
@@ -540,5 +545,54 @@ export const connectionsRouter = router({
       });
 
       return { success: true, id };
+    }),
+
+  /**
+   * Manually trigger a health check for a single connection.
+   * Returns { ok, latencyMs, error?, newStatus, tokenRefreshed? }.
+   * Also writes to connection_health_logs and updates connections.status.
+   */
+  verify: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database not available" });
+
+      const row = await findConnectionForUser(db, userId, input.id);
+      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Connection not found" });
+
+      const result = await verifyConnectionHealth(db, input.id, userId);
+
+      await log.info("CONNECTIONS", "connection verified", {
+        userId,
+        connectionId: input.id,
+        type: row.type,
+        ok: result.ok,
+        latencyMs: result.latencyMs,
+        tokenRefreshed: result.tokenRefreshed,
+      });
+
+      return result;
+    }),
+
+  /**
+   * Return the last N health check log entries for a connection.
+   * Used by the Connection Manager detail panel.
+   */
+  healthLogs: protectedProcedure
+    .input(z.object({
+      id:    z.number().int().positive(),
+      limit: z.number().int().min(1).max(50).default(10),
+    }))
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) return [];
+
+      const row = await findConnectionForUser(db, userId, input.id);
+      if (!row) return [];
+
+      return getRecentHealthLogs(db, input.id, input.limit);
     }),
 });
