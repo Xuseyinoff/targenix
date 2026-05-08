@@ -61,6 +61,7 @@ export interface AppExecutionEndpoint {
 export type ConnectionType =
   | "none"
   | "oauth2_google"
+  | "oauth2"
   | "telegram_bot"
   | "custom_http";
 
@@ -120,10 +121,18 @@ export interface ConfigFieldShowWhen {
 }
 
 /**
- * Which Connections row type this picker filters on. Mirrors the
- * connections.type enum declared in drizzle/schema.ts.
+ * Which connection bucket this picker filters on.
+ *
+ * In Phase 4 this is intentionally permissive so manifests can reference
+ * DB-driven apps (apps.appKey) without code changes.
+ *
+ * Examples:
+ * - "google_sheets"
+ * - "telegram_bot"
+ * - "api_key"
+ * - "hubspot" (oauth2 appKey; connections.type will be "oauth2" with appKey="hubspot")
  */
-export type ConnectionPickerType = "google_sheets" | "telegram_bot" | "api_key";
+export type ConnectionPickerType = string;
 
 export interface ConfigField {
   /** Stable key — persisted to integration config JSON. */

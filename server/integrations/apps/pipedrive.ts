@@ -1,0 +1,71 @@
+import type { AppManifest } from "../manifest";
+
+export const pipedriveApp: AppManifest = {
+  key: "pipedrive",
+  name: "Pipedrive",
+  version: "1.0.0",
+  icon: "Users",
+  category: "crm",
+  description: "Create persons (contacts) in Pipedrive CRM via OAuth2.",
+  adapterKey: "http-oauth2",
+  connectionType: "oauth2",
+  modules: [
+    {
+      key: "create_person",
+      name: "Create person",
+      kind: "action",
+      description: "Create a new person (contact) in Pipedrive from a Facebook lead.",
+      fields: [
+        {
+          key: "connectionId",
+          type: "connection-picker",
+          label: "Pipedrive account",
+          description: "Connect your Pipedrive account via OAuth.",
+          required: true,
+          connectionType: "pipedrive",
+        },
+        {
+          key: "name",
+          type: "text",
+          label: "Full name",
+          required: false,
+          defaultValue: "{{full_name}}",
+          showTransformPreview: true,
+          mappable: true,
+        },
+        {
+          key: "phone",
+          type: "text",
+          label: "Phone",
+          required: false,
+          defaultValue: "{{phone}}",
+          showTransformPreview: true,
+          mappable: true,
+        },
+        {
+          key: "email",
+          type: "text",
+          label: "Email",
+          required: false,
+          defaultValue: "{{email}}",
+          showTransformPreview: true,
+          mappable: true,
+        },
+        {
+          key: "owner_id",
+          type: "number",
+          label: "Owner ID",
+          description: "Optional Pipedrive user ID to assign as owner.",
+          required: false,
+        },
+      ],
+    },
+  ],
+  executionEndpoint: {
+    url: "https://api.pipedrive.com/v1/persons",
+    method: "POST",
+    contentType: "application/json",
+    authScheme: "bearer",
+  },
+  availability: "stable",
+};

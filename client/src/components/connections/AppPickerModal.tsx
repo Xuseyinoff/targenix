@@ -36,6 +36,7 @@ import {
   type ApiKeyTemplate,
 } from "@/components/connections/ApiKeyConnectDialog";
 import { useGoogleOAuthPopup } from "@/hooks/useGoogleOAuthPopup";
+import { useOAuth2Popup } from "@/hooks/useOAuth2Popup";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useT } from "@/hooks/useT";
@@ -115,6 +116,8 @@ interface AppEntry {
   destTypeKey: string | number;
   /** Present for admin-template entries — drives the ApiKeyConnectDialog. */
   userVisibleFields: string[];
+  /** DB auth type (oauth2/api_key/bearer/none). Helps decide connect flow. */
+  authType?: string | null;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -136,6 +139,7 @@ export function AppPickerModal({
   // Telegram bot creation form — opened when the user picks the Telegram card.
   // Kept inside this modal so closing the picker cascades to closing the form.
   const [telegramOpen, setTelegramOpen] = useState(false);
+  const [oauth2BusyAppKey, setOauth2BusyAppKey] = useState<string | null>(null);
 
   // API-key creation form — opened when the user picks an admin template.
   // Stores the full template row so the dialog can render its userVisibleFields
@@ -160,7 +164,25 @@ export function AppPickerModal({
       },
     });
 
+  const { start: startOAuth2, isConnecting: isOAuth2Connecting } = useOAuth2Popup({
+    appKey: oauth2BusyAppKey ?? "",
+    onConnected: (_connectionId, email, displayName) => {
+      toast.success(displayName ? `Connected: ${displayName}` : `Connected: ${email}`);
+      utils.connections.list.invalidate();
+      setOauth2BusyAppKey(null);
+      onOpenChange(false);
+    },
+    onError: (message) => {
+      toast.error(message || "OAuth connect failed");
+      setOauth2BusyAppKey(null);
+    },
+  });
+
   const { data: apps = [] } = trpc.apps.list.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+    enabled: open,
+  });
+  const { data: appKeyOptions = [] } = trpc.connections.listAppKeys.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
     enabled: open,
   });
@@ -175,6 +197,7 @@ export function AppPickerModal({
 
   // Build the unified entry list once.
   const entries = useMemo<AppEntry[]>(() => {
+    const authByKey = new Map(appKeyOptions.map((a) => [a.appKey, a.authType]));
     const out: AppEntry[] = [];
     for (const a of apps) {
       out.push({
@@ -187,6 +210,7 @@ export function AppPickerModal({
         templateId: null,
         destTypeKey: a.key,
         userVisibleFields: [],
+        authType: authByKey.get(a.key) ?? null,
       });
     }
     for (const t of templates) {
@@ -207,7 +231,7 @@ export function AppPickerModal({
       });
     }
     return out;
-  }, [apps, templates]);
+  }, [apps, templates, appKeyOptions]);
 
   // Which entries already have at least one connection — drives "Your top apps".
   const usageCount = useMemo(() => {
@@ -279,6 +303,14 @@ export function AppPickerModal({
         return;
       }
 
+      // Variant A: any manifest app whose DB app spec says authType=oauth2
+      // uses the generic /api/oauth/:appKey flow and stores a reusable connection.
+      if (typeof entry.destTypeKey === "string" && entry.authType === "oauth2") {
+        setOauth2BusyAppKey(entry.destTypeKey);
+        void startOAuth2();
+        return;
+      }
+
       // http-webhook and any future manifest app without an in-modal flow
       // fall back to the existing /destinations creation path.
       onOpenChange(false);
@@ -289,9 +321,8 @@ export function AppPickerModal({
   // Indicates which specific app row is currently in a busy state (OAuth
   // popup open, etc.) so the row can render a spinner without blocking the
   // rest of the picker.
-  const busyKey: string | number | null = isGoogleConnecting
-    ? "google-sheets"
-    : null;
+  const busyKey: string | number | null =
+    isGoogleConnecting ? "google-sheets" : (isOAuth2Connecting ? oauth2BusyAppKey : null);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

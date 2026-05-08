@@ -30,6 +30,9 @@ import { crmGenericApp } from "./crmGeneric";
 import { webhookJsonApp } from "./webhookJson";
 import { bitrix24App } from "./bitrix24";
 import { amocrmApp } from "./amocrm";
+import { hubspotApp } from "./hubspot";
+import { kommoApp } from "./kommo";
+import { pipedriveApp } from "./pipedrive";
 
 registerApp(telegramApp);
 registerApp(googleSheetsApp);
@@ -46,3 +49,6 @@ registerApp(crmGenericApp);
 registerApp(webhookJsonApp);
 registerApp(bitrix24App);
 registerApp(amocrmApp);
+registerApp(hubspotApp);
+registerApp(kommoApp);
+registerApp(pipedriveApp);

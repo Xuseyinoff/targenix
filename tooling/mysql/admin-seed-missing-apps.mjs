@@ -109,6 +109,58 @@ const CANONICAL_APPS = [
     docsUrl: null,
     isActive: true,
   },
+  // OAuth2 CRMs — Variant A: provider config lives in apps.oauthConfig (no code).
+  {
+    appKey: "hubspot",
+    displayName: "HubSpot",
+    authType: "oauth2",
+    category: "crm",
+    fields: [],
+    oauthConfig: {
+      authorizeUrl: "https://app.hubspot.com/oauth/authorize",
+      tokenUrl: "https://api.hubapi.com/oauth/v1/token",
+      clientIdEnv: "HUBSPOT_CLIENT_ID",
+      clientSecretEnv: "HUBSPOT_CLIENT_SECRET",
+      scopes: ["crm.objects.contacts.write", "crm.objects.contacts.read"],
+    },
+    iconUrl: null,
+    docsUrl: null,
+    isActive: true,
+  },
+  {
+    appKey: "kommo",
+    displayName: "Kommo (AmoCRM)",
+    authType: "oauth2",
+    category: "crm",
+    fields: [],
+    oauthConfig: {
+      authorizeUrl: "https://www.kommo.com/oauth/",
+      tokenUrl: "https://www.kommo.com/oauth2/access_token",
+      clientIdEnv: "KOMMO_CLIENT_ID",
+      clientSecretEnv: "KOMMO_CLIENT_SECRET",
+      scopes: [],
+    },
+    iconUrl: null,
+    docsUrl: null,
+    isActive: true,
+  },
+  {
+    appKey: "pipedrive",
+    displayName: "Pipedrive",
+    authType: "oauth2",
+    category: "crm",
+    fields: [],
+    oauthConfig: {
+      authorizeUrl: "https://oauth.pipedrive.com/oauth/authorize",
+      tokenUrl: "https://oauth.pipedrive.com/oauth/token",
+      clientIdEnv: "PIPEDRIVE_CLIENT_ID",
+      clientSecretEnv: "PIPEDRIVE_CLIENT_SECRET",
+      scopes: ["contacts:full", "deals:full"],
+    },
+    iconUrl: null,
+    docsUrl: null,
+    isActive: true,
+  },
 ];
 
 async function run() {
@@ -155,14 +207,15 @@ async function run() {
       }
 
       await conn.execute(
-        `INSERT INTO apps (appKey, displayName, authType, category, fields, iconUrl, docsUrl, isActive)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO apps (appKey, displayName, authType, category, fields, oauthConfig, iconUrl, docsUrl, isActive)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           app.appKey,
           app.displayName,
           app.authType,
           app.category,
           JSON.stringify(app.fields),
+          app.oauthConfig ? JSON.stringify(app.oauthConfig) : null,
           app.iconUrl,
           app.docsUrl,
           app.isActive ? 1 : 0,
