@@ -10,14 +10,26 @@
  *   adapterKey VARCHAR(64)  — which adapter handled the delivery
  *
  * Usage:
- *   node tooling/mysql/add-orders-observability-cols.mjs
  *   railway run node tooling/mysql/add-orders-observability-cols.mjs
+ *
+ * IMPORTANT: Uses MYSQL_PUBLIC_URL (Railway public endpoint) first, then
+ * DATABASE_URL as fallback. Do NOT use dotenv — Railway injects env vars
+ * directly and dotenv would override them with local .env values.
  */
 
 import mysql from "mysql2/promise";
-import "dotenv/config";
 
-const db = await mysql.createConnection(process.env.DATABASE_URL);
+// Priority: public endpoint > local fallback. Never use MYSQL_URL (internal only).
+const connectionUrl = process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL;
+
+if (!connectionUrl) {
+  console.error("❌ No database URL found. Set MYSQL_PUBLIC_URL or DATABASE_URL.");
+  process.exit(1);
+}
+
+console.log("Connecting to:", connectionUrl.replace(/:\/\/[^@]+@/, "://***@"));
+
+const db = await mysql.createConnection(connectionUrl);
 
 const [cols] = await db.execute(`
   SELECT COLUMN_NAME
@@ -27,6 +39,7 @@ const [cols] = await db.execute(`
     AND COLUMN_NAME IN ('errorType', 'durationMs', 'adapterKey')
 `);
 const existing = new Set(cols.map((r) => r.COLUMN_NAME));
+console.log("Existing observability columns:", [...existing]);
 
 const toAdd = [];
 if (!existing.has("errorType"))  toAdd.push("ADD COLUMN errorType  VARCHAR(32) NULL AFTER responseData");
@@ -41,3 +54,4 @@ if (toAdd.length === 0) {
 }
 
 await db.end();
+process.exit(0);
