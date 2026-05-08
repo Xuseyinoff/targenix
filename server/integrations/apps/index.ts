@@ -26,6 +26,10 @@ import { eskizSmsApp } from "./eskizSms";
 import { playmobileSmsApp } from "./playmobileSms";
 import { openAiApp } from "./openAi";
 import { crmGenericApp } from "./crmGeneric";
+// Phase 11 — new integrations
+import { webhookJsonApp } from "./webhookJson";
+import { bitrix24App } from "./bitrix24";
+import { amocrmApp } from "./amocrm";
 
 registerApp(telegramApp);
 registerApp(googleSheetsApp);
@@ -38,3 +42,7 @@ registerApp(eskizSmsApp);
 registerApp(playmobileSmsApp);
 registerApp(openAiApp);
 registerApp(crmGenericApp);
+// Phase 11
+registerApp(webhookJsonApp);
+registerApp(bitrix24App);
+registerApp(amocrmApp);

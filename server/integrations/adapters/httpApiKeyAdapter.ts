@@ -124,13 +124,6 @@ export const httpApiKeyAdapter = {
       opts.connectionId ??
       (typeof templateConfig.connectionId === "number" ? templateConfig.connectionId : null);
 
-    // Load the API key from the connection
-    const keyResult = await loadApiKey(opts.db, opts.userId, connectionId);
-    if ("error" in keyResult) {
-      return { success: false, error: keyResult.error, errorType: "validation" };
-    }
-    const { apiKey } = keyResult;
-
     // Look up execution endpoint from manifest
     const manifest = opts.appKey ? getApp(opts.appKey) : null;
     const endpoint: AppExecutionEndpoint = manifest?.executionEndpoint ?? { url: "" };
@@ -143,6 +136,18 @@ export const httpApiKeyAdapter = {
       };
     }
 
+    const authScheme = endpoint.authScheme ?? "bearer";
+
+    // Load API key — skip for no-auth apps (authScheme "none")
+    let apiKey = "";
+    if (authScheme !== "none") {
+      const keyResult = await loadApiKey(opts.db, opts.userId, connectionId);
+      if ("error" in keyResult) {
+        return { success: false, error: keyResult.error, errorType: "validation" };
+      }
+      apiKey = keyResult.apiKey;
+    }
+
     // Build context + expand template values
     const context = buildLeadContext(lead, opts.leadRow ?? {});
     const expanded = expandConfig(templateConfig, context);
@@ -152,13 +157,12 @@ export const httpApiKeyAdapter = {
     const method = endpoint.method ?? "POST";
     const contentType = endpoint.contentType ?? "application/json";
 
-    // Build auth headers
-    const authScheme = endpoint.authScheme ?? "bearer";
-    const authHeaders = buildAuthHeader(authScheme, apiKey);
+    // Build auth headers (empty for "none")
+    const authHeaders = authScheme !== "none" ? buildAuthHeader(authScheme, apiKey) : {};
 
     // Build body: merge expanded fields; inject auth key if body:field scheme
     const bodyFields: Record<string, string> = { ...expanded };
-    if (typeof authScheme === "string" && authScheme.startsWith("body:")) {
+    if (authScheme.startsWith("body:")) {
       const fieldName = authScheme.slice("body:".length);
       bodyFields[fieldName] = apiKey;
     }

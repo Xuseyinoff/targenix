@@ -26,6 +26,10 @@ const HTTP_API_KEY_APP_KEYS = new Set([
   "playmobile-sms",
   "openai",
   "crm-generic",
+  // Phase 11
+  "webhook-json",
+  "bitrix24",
+  "amocrm",
 ]);
 
 export function resolveAdapterKey(

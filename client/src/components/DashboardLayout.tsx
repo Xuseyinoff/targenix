@@ -68,13 +68,13 @@ import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 import { AdminSidebarNav } from "./AdminSidebarNav";
 
-function buildNavGroups(t: (k: string) => string): NavGroup[] {
+function buildNavGroups(t: (k: string) => string, isAdmin = false): NavGroup[] {
   return [
     {
       items: [
         { icon: LayoutDashboard, label: t("nav.overview"), path: "/overview" },
         { icon: Zap, label: t("nav.leads"), path: "/leads" },
-        { icon: GitBranch, label: t("nav.workflows"), path: "/workflows" },
+        ...(isAdmin ? [{ icon: GitBranch, label: t("nav.workflows"), path: "/workflows" }] : []),
       ],
     },
     {
@@ -201,7 +201,8 @@ function DashboardLayoutContent({
   const t = useT();
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const navGroups = useMemo(() => buildNavGroups(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
+  const isAdmin = user?.role === "admin";
+  const navGroups = useMemo(() => buildNavGroups(t, isAdmin), [locale, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   // Admin sidebar is handled by `AdminSidebarNav` (data-driven, nested-safe).
   const businessToolsItems = useMemo(() => buildBusinessToolsItems(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
   const allItems = navGroups.flatMap((g) => g.items);

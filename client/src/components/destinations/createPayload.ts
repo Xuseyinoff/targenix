@@ -19,12 +19,24 @@ import type { FieldValues } from "@/components/dynamic-form";
 /**
  * Manifest `app.key` → `targetWebsites.create` templateType. Apps not in
  * this map are rejected by `buildCreatePayload`.
+ *
+ * "http-api-key" entries use the generic handler below — no per-app branch
+ * needed. Adding a new app only requires a server manifest + one line here.
  */
 export const APP_KEY_TO_TEMPLATE_TYPE = {
-  telegram: "telegram",
+  // Dedicated template types
+  telegram:        "telegram",
   "google-sheets": "google-sheets",
-  "plain-url": "custom",
-} as const satisfies Record<string, "telegram" | "google-sheets" | "custom">;
+  "plain-url":     "custom",
+  // HTTP API-key apps — all routed through the generic http-api-key handler
+  "eskiz-sms":     "http-api-key",
+  "playmobile-sms":"http-api-key",
+  "openai":        "http-api-key",
+  "crm-generic":   "http-api-key",
+  "webhook-json":  "http-api-key",
+  "bitrix24":      "http-api-key",
+  "amocrm":        "http-api-key",
+} as const satisfies Record<string, "telegram" | "google-sheets" | "custom" | "http-api-key">;
 
 export type SupportedAppKey = keyof typeof APP_KEY_TO_TEMPLATE_TYPE;
 
@@ -64,10 +76,16 @@ export type CreatePayload =
       method?: "POST" | "GET";
       contentType?: "json" | "form" | "form-urlencoded" | "multipart";
       bodyTemplate?: string;
-      // Used when contentType is form-urlencoded or multipart — matches the
-      // shape affiliateService.buildCustomBody already consumes at delivery.
       bodyFields?: Array<{ key: string; value: string }>;
       headers?: Record<string, string>;
+    }
+  | {
+      /** Generic handler for all manifest-driven http-api-key apps */
+      name: string;
+      templateType: "http-api-key";
+      appKey: string;
+      connectionId?: number;
+      templateConfig: Record<string, unknown>;
     };
 
 // ─── Builder ─────────────────────────────────────────────────────────────────
@@ -180,6 +198,21 @@ export function buildCreatePayload(
       ...(bodyFields && bodyFields.length > 0 ? { bodyFields } : {}),
       ...(headers ? { headers } : {}),
     };
+  }
+
+  // Generic http-api-key handler — works for any manifest app with that type.
+  // connectionId is extracted and sent top-level; all other field values go
+  // into templateConfig so the server's httpApiKeyAdapter can read them.
+  if (APP_KEY_TO_TEMPLATE_TYPE[appKey as SupportedAppKey] === "http-api-key") {
+    const connectionId = asNumber(v.connectionId);
+    const templateConfig: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v)) {
+      if (k === "connectionId") continue;
+      if (val !== undefined && val !== null && val !== "") {
+        templateConfig[k] = val;
+      }
+    }
+    return { name, templateType: "http-api-key", appKey, connectionId, templateConfig };
   }
 
   throw new Error(`Unsupported app: ${appKey}`);

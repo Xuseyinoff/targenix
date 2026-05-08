@@ -51,6 +51,12 @@ export interface HttpApiKeyAppOptions {
    * it is injected automatically as the first field.
    */
   extraFields?: ConfigField[];
+  /**
+   * Set to true for apps that use authScheme "none" (e.g. Bitrix24 REST
+   * webhooks where the token is embedded in the URL). When true, the
+   * connectionId picker is omitted from the form.
+   */
+  noConnection?: boolean;
 }
 
 /**
@@ -80,14 +86,16 @@ export function defineHttpApiKeyApp(opts: HttpApiKeyAppOptions): AppManifest {
         name: "Send data",
         kind: "action",
         fields: [
-          defineField({
-            key: "connectionId",
-            type: "connection-picker",
-            label: "API connection",
-            description: "Pick an api_key connection that holds the credentials for this service.",
-            required: true,
-            connectionType: "api_key",
-          }),
+          ...(opts.noConnection ? [] : [
+            defineField({
+              key: "connectionId",
+              type: "connection-picker",
+              label: "API connection",
+              description: "Pick an api_key connection that holds the credentials for this service.",
+              required: true,
+              connectionType: "api_key",
+            }),
+          ]),
           ...(opts.extraFields ?? []),
         ],
       },

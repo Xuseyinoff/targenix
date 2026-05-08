@@ -272,7 +272,11 @@ export const targetWebsitesRouter = router({
     .input(
       z.object({
         name: z.string().min(1),
-        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram", "google-sheets"]),
+        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram", "google-sheets", "http-api-key"]),
+        /** For http-api-key apps — which app manifest handles delivery */
+        appKey: z.string().min(1).max(64).optional(),
+        /** For http-api-key apps — all form field values (except connectionId) */
+        templateConfig: z.record(z.string(), z.any()).optional(),
         /** Plain-text apiKey — only for sotuvchi / 100k */
         apiKey: z.string().optional(),
         /** Google Sheets destination */
@@ -423,6 +427,25 @@ export const targetWebsitesRouter = router({
         });
         const id = (inserted as unknown as { insertId?: number })?.insertId;
         return { success: true, id, name: input.name, templateType: "google-sheets" as const };
+      }
+
+      // HTTP API-key apps (Eskiz SMS, PlayMobile, Bitrix24, Webhook, etc.)
+      // The manifest executionEndpoint provides the URL at delivery time —
+      // we only need to store appKey + templateConfig + connectionId.
+      if (input.templateType === "http-api-key") {
+        if (!input.appKey?.trim()) throw new Error("appKey is required for app destinations");
+        const inserted = await db.insert(targetWebsites).values({
+          userId:         ctx.user.id,
+          name:           input.name,
+          url:            null,
+          templateType:   "custom",
+          appKey:         input.appKey.trim(),
+          templateConfig: input.templateConfig ?? {},
+          isActive:       true,
+          ...(validatedConnectionId ? { connectionId: validatedConnectionId } : {}),
+        });
+        const id = (inserted as unknown as { insertId?: number })?.insertId;
+        return { success: true, id, name: input.name, templateType: "http-api-key" as const };
       }
 
       // Build URL — resolve from destination_templates by appKey for known affiliate types
