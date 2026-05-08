@@ -460,6 +460,8 @@ type IntegrationDeliveryResult = {
   error?: string;
   durationMs?: number;
   errorType?: DeliveryErrorType;
+  /** Phase 10 — which adapter handled this delivery. */
+  adapterKey?: string;
 };
 
 async function persistOrderDeliveryAttemptResult(
@@ -494,9 +496,13 @@ async function persistOrderDeliveryAttemptResult(
   merged.attempts = newAttempts;
 
   const common = {
-    attempts: newAttempts,
+    attempts:     newAttempts,
     lastAttemptAt: now,
-    responseData: merged,
+    responseData:  merged,
+    // Phase 10 observability columns (nullable for legacy rows)
+    errorType:  (result.errorType  ?? null) as string | null,
+    durationMs: (result.durationMs ?? null) as number | null,
+    adapterKey: (result.adapterKey ?? null) as string | null,
   };
 
   const setPayload = result.success
@@ -660,10 +666,12 @@ async function runOrderIntegrationSend(params: {
       );
       targetUrlUsed = dispatched.targetUrlUsed;
       result = {
-        success: dispatched.success,
+        success:      dispatched.success,
         responseData: dispatched.responseData,
-        error: dispatched.error,
-        errorType: dispatched.errorType,
+        error:        dispatched.error,
+        errorType:    dispatched.errorType,
+        durationMs:   dispatched.durationMs,
+        adapterKey:   dispatched.adapterKey,
       };
     }
     result.durationMs = Date.now() - _t0Routing;

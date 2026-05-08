@@ -28,6 +28,7 @@ import type { LeadPayload } from "../services/affiliateService";
 import type { DeliveryResult } from "./types";
 import { getAdapter } from "./registry";
 import { resolveAdapterKey } from "./resolveAdapterKey";
+import { isCircuitAllowed, recordCircuitSuccess, recordCircuitFailure } from "../services/circuitBreakerService";
 
 export interface DispatchContext {
   db: DbClient;
@@ -308,6 +309,28 @@ export async function dispatchDelivery(
     }
   }
 
+  // Circuit breaker — only applied for targeted deliveries (tw.id > 0)
+  const cbKey = tw?.id ? `dest:${tw.id}` : null;
+  if (cbKey) {
+    const { allowed, reason } = isCircuitAllowed(cbKey);
+    if (!allowed) {
+      return {
+        success:   false,
+        error:     reason ?? `Circuit open for ${cbKey}`,
+        errorType: "network",
+        adapterKey,
+        targetUrlUsed,
+      };
+    }
+  }
+
   const result = await adapter.send(adapterInput, leadPayload);
+
+  // Record circuit outcome
+  if (cbKey) {
+    if (result.success) recordCircuitSuccess(cbKey);
+    else                recordCircuitFailure(cbKey);
+  }
+
   return { ...result, adapterKey, targetUrlUsed };
 }

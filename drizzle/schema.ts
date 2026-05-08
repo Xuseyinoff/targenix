@@ -680,6 +680,12 @@ export const orders = mysqlTable("orders", {
   /** After a failed delivery, set to now+1h until attempts reach max; hourly job selects due rows */
   nextRetryAt: timestamp("nextRetryAt"),
   responseData: json("responseData"),
+  /** Phase 10 observability — delivery error classification (network | validation | …). */
+  errorType: varchar("errorType", { length: 32 }),
+  /** Phase 10 observability — end-to-end delivery latency in milliseconds. */
+  durationMs: int("durationMs"),
+  /** Phase 10 observability — which adapter key handled this delivery (telegram, google-sheets, http-api-key, …). */
+  adapterKey: varchar("adapterKey", { length: 64 }),
   /** CRM: latest status string fetched from the affiliate platform (new/accepted/delivered/...) */
   crmStatus: varchar("crmStatus", { length: 32 }),
   /** CRM: raw status string as returned by the platform before normalization (e.g. "client_returned", "trash") */
