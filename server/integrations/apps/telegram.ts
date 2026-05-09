@@ -25,7 +25,7 @@ export const telegramApp: AppManifest = {
   key: "telegram",
   name: "Telegram",
   version: "1.2.0",
-  icon: "https://logo.clearbit.com/telegram.org",
+  icon: "/api/brand-icons/telegram.svg?color=fff",
   category: "messaging",
   description: "Send each lead as a formatted message to a Telegram chat or channel.",
   adapterKey: "telegram",

@@ -10,7 +10,7 @@ import { defineHttpApiKeyApp, defineField } from "../sdk";
 export const amocrmApp = defineHttpApiKeyApp({
   key: "amocrm",
   name: "AmoCRM / Kommo",
-  icon: "https://logo.clearbit.com/amocrm.com",
+  icon: "/api/brand-icons/amocrm.svg?color=fff",
   category: "crm",
   description: "Create leads in AmoCRM (Kommo) via API v4 using a Bearer access token.",
   endpoint: {

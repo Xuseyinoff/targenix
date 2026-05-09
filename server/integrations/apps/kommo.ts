@@ -9,7 +9,7 @@ export const kommoApp: AppManifest = {
   key: "kommo",
   name: "Kommo (AmoCRM) OAuth",
   version: "1.0.0",
-  icon: "https://logo.clearbit.com/kommo.com",
+  icon: "/api/brand-icons/kommo.svg?color=fff",
   category: "crm",
   description: "Create leads in Kommo CRM via OAuth2. Connect once, send leads automatically.",
   adapterKey: "http-oauth2",

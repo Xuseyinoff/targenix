@@ -17,6 +17,7 @@ import facebookWebhookRouter from "../webhooks/facebookWebhook";
 import { registerFacebookOAuthRoutes } from "../routes/facebookOAuthCallback";
 import { registerFacebookLoginRoutes } from "../routes/facebookLoginOAuth";
 import { registerOAuthRoutes } from "../routes/oauthRouter";
+import { registerBrandIconRoutes } from "../routes/brandIconsRouter";
 import { handleTelegramWebhook, registerTelegramWebhook } from "../webhooks/telegramWebhook";
 import { triggerWebhookRouter } from "../routes/triggerWebhookRoute";
 import { log } from "../services/appLogger";
@@ -272,6 +273,8 @@ async function startServer() {
   registerFacebookOAuthRoutes(app);
   // Facebook Login/Register OAuth (separate from connection flow)
   registerFacebookLoginRoutes(app);
+  // Brand icons (served from our domain; avoids external CDN hotlinking)
+  registerBrandIconRoutes(app);
   // Google OAuth 2.0 (account connection — Sheets, Drive, etc.)
   registerOAuthRoutes(app);
   // Chat API disabled — no auth guard; re-enable with session check when needed

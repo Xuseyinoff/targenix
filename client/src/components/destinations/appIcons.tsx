@@ -45,7 +45,8 @@ const ICON_MAP: Record<string, LucideIcon> = {
 
 function isIconUrl(name: string | null | undefined): name is string {
   if (!name) return false;
-  return /^https?:\/\//i.test(name);
+  // Support absolute URLs (https://...) and same-origin paths (/api/...)
+  return /^https?:\/\//i.test(name) || name.startsWith("/");
 }
 
 export function resolveAppIcon(name: string | null | undefined): LucideIcon {
