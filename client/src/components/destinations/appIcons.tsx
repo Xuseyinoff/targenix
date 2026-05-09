@@ -10,10 +10,16 @@
 
 import {
   Archive,
+  Briefcase,
+  Database,
   FileJson,
   Globe,
+  MessageSquare,
   Send,
+  Smartphone,
+  Sparkles,
   Table2,
+  Users,
   Webhook,
   Zap,
   type LucideIcon,
@@ -28,6 +34,12 @@ const ICON_MAP: Record<string, LucideIcon> = {
   FileJson,
   Archive,
   Zap,
+  Users,
+  Briefcase,
+  Database,
+  Sparkles,
+  Smartphone,
+  MessageSquare,
 };
 
 export function resolveAppIcon(name: string | null | undefined): LucideIcon {
