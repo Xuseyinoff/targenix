@@ -1742,7 +1742,7 @@ function DestinationEditor({
                 {rawIcon ? (
                   <AppIcon name={rawIcon} className="h-4 w-4" />
                 ) : (
-                  <CategoryIcon className="h-4 w-4 text-zinc-600 dark:text-zinc-300" />
+                  <CategoryIcon className="h-4 w-4 text-zinc-600" />
                 )}
               </div>
               <div className="min-w-0 flex-1">
@@ -1903,7 +1903,7 @@ function DestinationEditor({
                       {rawIcon ? (
                         <AppIcon name={rawIcon} className="h-3 w-3" />
                       ) : (
-                        <CategoryIcon className="h-3 w-3 text-zinc-600 dark:text-zinc-300" />
+                        <CategoryIcon className="h-3 w-3 text-zinc-600" />
                       )}
                     </div>
                     <div className="min-w-0 flex-1">

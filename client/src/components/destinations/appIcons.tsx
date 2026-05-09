@@ -50,14 +50,14 @@ export function isIconUrl(name: string | null | undefined): name is string {
 }
 
 /**
- * Neutral “app store” tile behind logos — white-ish on light UI, deep surface on dark,
- * so full-colour PNG/SVG and monochrome favicons stay legible in both themes.
+ * Brand logo chip: white/light surface so marks read clearly. On dark dashboards the navy UI
+ * needs a bright circular pad — grey/red logos vanish on dark slate; white chips pop off the modal.
  */
 export function appBrandIconTileClass(className?: string): string {
   return cn(
-    "flex shrink-0 items-center justify-center overflow-hidden rounded-md p-0.5",
+    "flex shrink-0 items-center justify-center overflow-hidden rounded-md p-[3px]",
     "bg-white shadow-sm ring-1 ring-zinc-200/90",
-    "dark:bg-zinc-800 dark:ring-zinc-600/90 dark:shadow-black/30",
+    "dark:bg-zinc-50 dark:shadow-[0_2px_14px_rgba(0,0,0,0.55)] dark:ring-2 dark:ring-white/35",
     className,
   );
 }

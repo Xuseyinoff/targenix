@@ -351,7 +351,7 @@ function ConnectionRowView({
         type="button"
         onClick={onDetail}
         className={cn(
-          appBrandIconTileClass("h-9 w-9 rounded-lg"),
+          appBrandIconTileClass("h-9 w-9 rounded-full"),
           "transition-opacity hover:opacity-80",
         )}
         title="View details"
@@ -360,7 +360,7 @@ function ConnectionRowView({
           <AppIcon name={v.logoUrl} className="h-4 w-4" />
         ) : (
           <Icon
-            className="h-4 w-4 text-zinc-700 dark:text-zinc-200"
+            className="h-4 w-4 text-zinc-700"
             strokeWidth={2.2}
           />
         )}
@@ -495,12 +495,12 @@ function ConnectionDetailSheet({
       <SheetContent side="right" className="w-full sm:max-w-md flex flex-col gap-0 p-0">
         <SheetHeader className="px-5 py-4 border-b">
           <SheetTitle className="flex items-center gap-2.5 text-sm">
-            <span className={appBrandIconTileClass("h-7 w-7 rounded-lg")}>
+            <span className={appBrandIconTileClass("h-7 w-7 rounded-full")}>
               {v.logoUrl ? (
                 <AppIcon name={v.logoUrl} className="h-3.5 w-3.5" />
               ) : (
                 <Icon
-                  className="h-3.5 w-3.5 text-zinc-700 dark:text-zinc-200"
+                  className="h-3.5 w-3.5 text-zinc-700"
                   strokeWidth={2.2}
                 />
               )}

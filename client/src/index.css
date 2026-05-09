@@ -43,80 +43,86 @@
 }
 
 :root {
-  --primary: var(--color-blue-700);
-  --primary-foreground: var(--color-blue-50);
+  /*
+   * Light “Sotuvchi-style” shell: white sidebar + cards on a soft gray canvas (~gray-50),
+   * subtle borders, vivid blue accents + pill active nav.
+   */
+  --radius: 0.9rem;
+  --primary: var(--color-blue-600);
+  --primary-foreground: oklch(0.99 0 0);
   --sidebar-primary: var(--color-blue-600);
-  --sidebar-primary-foreground: var(--color-blue-50);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
   --chart-1: var(--color-blue-300);
   --chart-2: var(--color-blue-500);
   --chart-3: var(--color-blue-600);
   --chart-4: var(--color-blue-700);
   --chart-5: var(--color-blue-800);
-  --radius: 0.65rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.235 0.015 65);
+  --background: oklch(0.985 0.004 264);
+  --foreground: oklch(0.28 0.02 264);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.235 0.015 65);
+  --card-foreground: oklch(0.28 0.02 264);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.235 0.015 65);
-  --secondary: oklch(0.98 0.001 286.375);
-  --secondary-foreground: oklch(0.4 0.015 65);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.141 0.005 285.823);
+  --popover-foreground: oklch(0.28 0.02 264);
+  --secondary: oklch(0.97 0.005 264);
+  --secondary-foreground: oklch(0.38 0.02 264);
+  --muted: oklch(0.965 0.006 264);
+  --muted-foreground: oklch(0.52 0.018 264);
+  --accent: oklch(0.965 0.006 264);
+  --accent-foreground: oklch(0.28 0.02 264);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.623 0.214 259.815);
-  /* Light sidebar: same “white” family as the page, slightly tinted + border for separation */
-  --sidebar: oklch(0.98 0.002 286);
-  --sidebar-foreground: oklch(0.235 0.015 65);
-  --sidebar-accent: oklch(0.955 0.003 286);
-  --sidebar-accent-foreground: oklch(0.235 0.015 65);
-  --sidebar-border: oklch(0.91 0.004 286.32);
-  --sidebar-ring: oklch(0.623 0.214 259.815);
+  --border: oklch(0.91 0.006 264);
+  --input: oklch(0.94 0.006 264);
+  --ring: oklch(0.55 0.19 264);
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.32 0.02 264);
+  --sidebar-accent: oklch(0.965 0.006 264);
+  --sidebar-accent-foreground: oklch(0.32 0.02 264);
+  --sidebar-border: oklch(0.92 0.007 264);
+  --sidebar-ring: oklch(0.55 0.19 264);
 }
 
 .dark {
-  --primary: var(--color-blue-700);
-  --primary-foreground: var(--color-blue-50);
+  /*
+   * Sotuvchi-style navy stack: canvas ~#0b1120, cards ~#161f31, sidebar a shade darker,
+   * muted text ~slate-400 (#94a3b8), blue-500 accents — depth from hue layers, not heavy shadow.
+   */
+  --radius: 0.9rem;
+  --primary: var(--color-blue-500);
+  --primary-foreground: oklch(0.99 0 0);
   --sidebar-primary: var(--color-blue-500);
-  --sidebar-primary-foreground: var(--color-blue-50);
-  /* Dark mode tuned for eye comfort:
-     - slightly lighter background (avoid pure-black)
-     - clearer surface elevation steps (background/card/muted)
-     - softer borders to reduce visual noise */
-  --background: oklch(0.165 0.006 285.9);
-  --foreground: oklch(0.88 0.005 65);
-  --card: oklch(0.225 0.007 285.9);
-  --card-foreground: oklch(0.88 0.005 65);
-  --popover: oklch(0.225 0.007 285.9);
-  --popover-foreground: oklch(0.88 0.005 65);
-  --secondary: oklch(0.255 0.007 286.0);
-  --secondary-foreground: oklch(0.74 0.006 65);
-  --muted: oklch(0.285 0.008 286.0);
-  --muted-foreground: oklch(0.67 0.013 286.1);
-  --accent: oklch(0.285 0.008 286.0);
-  --accent-foreground:  oklch(0.92 0.004 65);
-  --destructive: oklch(0.704 0.191 22.216);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --background: oklch(0.138 0.042 264);
+  --foreground: oklch(0.985 0.01 264);
+  --card: oklch(0.212 0.048 264);
+  --card-foreground: oklch(0.985 0.01 264);
+  --popover: oklch(0.218 0.048 264);
+  --popover-foreground: oklch(0.985 0.01 264);
+  --secondary: oklch(0.245 0.045 264);
+  --secondary-foreground: oklch(0.96 0.012 264);
+  --muted: oklch(0.185 0.038 264);
+  --muted-foreground: oklch(0.71 0.022 252);
+  --accent: oklch(0.255 0.042 264);
+  --accent-foreground: oklch(0.985 0.01 264);
+  --destructive: oklch(0.65 0.2 25);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 8%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.488 0.243 264.376);
+  --border: oklch(0.32 0.035 264);
+  --input: oklch(0.225 0.045 264);
+  --ring: var(--color-blue-500);
+  --scrollbar-thumb: oklch(0.36 0.038 264);
+  --scrollbar-thumb-hover: oklch(0.42 0.04 264);
+  --scrollbar-track: oklch(0.138 0.042 264);
   --chart-1: var(--color-blue-300);
   --chart-2: var(--color-blue-500);
   --chart-3: var(--color-blue-600);
   --chart-4: var(--color-blue-700);
   --chart-5: var(--color-blue-800);
-  /* Dark mode: sidebar matches app shell; separation is border only (no “second black”) */
-  --sidebar: oklch(0.165 0.006 285.9);
-  --sidebar-foreground: oklch(0.88 0.005 65);
-  --sidebar-accent: oklch(0.285 0.008 286.0);
-  --sidebar-accent-foreground: oklch(0.92 0.004 65);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.488 0.243 264.376);
+  --sidebar: oklch(0.118 0.038 264);
+  --sidebar-foreground: oklch(0.94 0.015 264);
+  --sidebar-accent: oklch(0.205 0.045 264);
+  --sidebar-accent-foreground: oklch(0.985 0.01 264);
+  --sidebar-border: oklch(0.28 0.032 264);
+  --sidebar-ring: var(--color-blue-500);
 }
 
 @layer base {
@@ -129,6 +135,27 @@
   }
   html {
     scroll-behavior: smooth;
+  }
+
+  /* Dark: tame native scrollbars (modals / overflow-y-auto) — avoids harsh light thumbs */
+  .dark {
+    color-scheme: dark;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+  .dark ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .dark ::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border-radius: 9999px;
+    border: 2px solid var(--scrollbar-track);
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),

@@ -344,7 +344,7 @@ export function AppPickerModal({
       >
         <div className="flex h-[560px] max-h-[80vh] w-full">
           {/* ── Left sidebar ───────────────────────────────────────────── */}
-          <aside className="w-[180px] shrink-0 border-r border-border/70 bg-muted/30 p-2 space-y-0.5">
+          <aside className="w-[180px] shrink-0 border-r border-border/70 bg-muted/30 p-2 space-y-0.5 dark:bg-sidebar dark:border-border/50">
             {SIDEBAR.map((item) => {
               const Icon = item.icon;
               const active = activeNav === item.id;
@@ -356,8 +356,8 @@ export function AppPickerModal({
                   className={cn(
                     "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
                     active
-                      ? "bg-background text-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
+                      ? "bg-background text-foreground shadow-sm dark:bg-card dark:shadow-md dark:ring-1 dark:ring-border/50"
+                      : "text-muted-foreground hover:bg-background/60 hover:text-foreground dark:hover:bg-card/40",
                   )}
                 >
                   <Icon
@@ -517,9 +517,9 @@ function AppRow({
         "disabled:cursor-not-allowed disabled:opacity-60",
       )}
     >
-      <span className={appBrandIconTileClass("h-7 w-7")}>
+      <span className={appBrandIconTileClass("h-7 w-7 rounded-full")}>
         {busy ? (
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
         ) : (
           <AppIcon name={entry.iconName} className="h-4 w-4" />
         )}

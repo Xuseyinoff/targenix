@@ -568,14 +568,14 @@ function Row({
         "disabled:cursor-not-allowed disabled:opacity-60",
       )}
     >
-      <span className={appBrandIconTileClass("h-7 w-7")}>
+      <span className={appBrandIconTileClass("h-7 w-7 rounded-full")}>
         {busy ? (
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <Loader2 className="h-4 w-4 animate-spin text-zinc-500" />
         ) : entry.kind === "connection" ? (
           entry.iconName ? (
             <AppIcon name={entry.iconName} className="h-4 w-4" />
           ) : (
-            <KeyRound className="h-4 w-4 text-muted-foreground" strokeWidth={2.2} />
+            <KeyRound className="h-4 w-4 text-zinc-600" strokeWidth={2.2} />
           )
         ) : (
           <AppIcon name={entry.iconName} className="h-4 w-4" />
