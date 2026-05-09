@@ -515,12 +515,9 @@ function AppRow({
         "disabled:cursor-not-allowed disabled:opacity-60",
       )}
     >
-      <span
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md"
-        style={{ backgroundColor: `${entry.color}1A`, color: entry.color }}
-      >
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/90 ring-1 ring-border dark:bg-muted/70">
         {busy ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         ) : (
           <AppIcon name={entry.iconName} className="h-4 w-4" />
         )}

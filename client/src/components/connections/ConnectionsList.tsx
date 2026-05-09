@@ -64,7 +64,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { resolveAppIcon } from "@/components/destinations/appIcons";
+import { AppIcon, isIconUrl, resolveAppIcon } from "@/components/destinations/appIcons";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../../server/routers";
 
@@ -75,6 +75,8 @@ type HealthLog     = inferRouterOutputs<AppRouter>["connections"]["healthLogs"][
 
 type TypeVisuals = {
   icon:      LucideIcon;
+  /** When set, render brand `<AppIcon>` instead of the Lucide `icon`. */
+  logoUrl:   string | null;
   color:     string;
   typeLabel: string;
   detail:    string;
@@ -100,16 +102,30 @@ function colorForCategory(category: string): string {
 
 function visualFor(row: ConnectionRow, appByKey: Map<string, AppMeta>): TypeVisuals {
   if (row.type === "google_sheets") {
-    return { icon: Table2,   color: "#0F9D58", typeLabel: "Google Sheets", detail: row.google?.email ?? "—" };
+    return {
+      icon: Table2,
+      logoUrl: null,
+      color: "#0F9D58",
+      typeLabel: "Google Sheets",
+      detail: row.google?.email ?? "—",
+    };
   }
   if (row.type === "telegram_bot") {
-    return { icon: Send,     color: "#229ED9", typeLabel: "Telegram",      detail: row.telegram?.chatId ? `chat id ${row.telegram.chatId}` : "No chat id" };
+    return {
+      icon: Send,
+      logoUrl: null,
+      color: "#229ED9",
+      typeLabel: "Telegram",
+      detail: row.telegram?.chatId ? `chat id ${row.telegram.chatId}` : "No chat id",
+    };
   }
   // Manifest-driven apps (HubSpot/Kommo/Pipedrive/etc.) — render icon + label from manifests.
   const app = appByKey.get(row.type);
   if (app) {
+    const logoUrl = isIconUrl(app.icon) ? app.icon : null;
     return {
       icon: resolveAppIcon(app.icon),
+      logoUrl,
       color: colorForCategory(app.category),
       typeLabel: app.name,
       detail: row.status === "active" ? "Connected" : `Status: ${row.status}`,
@@ -118,6 +134,7 @@ function visualFor(row: ConnectionRow, appByKey: Map<string, AppMeta>): TypeVisu
   const keys = row.apiKey?.secretKeys ?? [];
   return {
     icon:      KeyRound,
+    logoUrl:   null,
     color:     row.apiKey?.templateColor ?? "#6366F1",
     typeLabel: row.apiKey?.templateName ?? "API key",
     detail:    keys.length === 0 ? "No secrets stored" : keys.length === 1 ? `${keys[0]} encrypted` : `${keys.length} secrets encrypted`,
@@ -322,11 +339,14 @@ function ConnectionRowView({
       <button
         type="button"
         onClick={onDetail}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-opacity hover:opacity-80"
-        style={{ backgroundColor: `${v.color}1A`, color: v.color }}
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted/90 ring-1 ring-border transition-opacity hover:opacity-80 dark:bg-muted/70"
         title="View details"
       >
-        <Icon className="h-4 w-4" strokeWidth={2.2} />
+        {v.logoUrl ? (
+          <AppIcon name={v.logoUrl} className="h-4 w-4" />
+        ) : (
+          <Icon className="h-4 w-4" strokeWidth={2.2} style={{ color: v.color }} />
+        )}
       </button>
 
       {/* Name + meta */}
@@ -458,8 +478,12 @@ function ConnectionDetailSheet({
       <SheetContent side="right" className="w-full sm:max-w-md flex flex-col gap-0 p-0">
         <SheetHeader className="px-5 py-4 border-b">
           <SheetTitle className="flex items-center gap-2.5 text-sm">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ backgroundColor: `${v.color}1A`, color: v.color }}>
-              <Icon className="h-3.5 w-3.5" strokeWidth={2.2} />
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-muted/90 ring-1 ring-border dark:bg-muted/70">
+              {v.logoUrl ? (
+                <AppIcon name={v.logoUrl} className="h-3.5 w-3.5" />
+              ) : (
+                <Icon className="h-3.5 w-3.5" strokeWidth={2.2} style={{ color: v.color }} />
+              )}
             </span>
             {row.displayName}
           </SheetTitle>

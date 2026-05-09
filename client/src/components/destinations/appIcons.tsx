@@ -43,9 +43,9 @@ const ICON_MAP: Record<string, LucideIcon> = {
   MessageSquare,
 };
 
-function isIconUrl(name: string | null | undefined): name is string {
+/** True when `name` should be rendered as an `<img>` (URL path or absolute URL). */
+export function isIconUrl(name: string | null | undefined): name is string {
   if (!name) return false;
-  // Support absolute URLs (https://...) and same-origin paths (/api/...)
   return /^https?:\/\//i.test(name) || name.startsWith("/");
 }
 
@@ -67,39 +67,17 @@ export function AppIcon({
   const [failed, setFailed] = React.useState(false);
 
   if (isIconUrl(name)) {
-    const isSameOriginPath = typeof name === "string" && name.startsWith("/");
-    // Render SVG/PNG logo URLs (Make.com-style).
-    // `alt` is intentionally empty: the adjacent text label already names the app.
-    // If the external host blocks hotlinking or 404s, we fall back to a generic icon.
+    // Raster (Clearbit PNG) and SVG both need real pixels — CSS masks break PNGs
+    // and force single-color silhouettes, which hides full-color logos on light UI.
     if (failed) {
       const Fallback = Globe;
       return <Fallback className={cn(className)} />;
-    }
-    // Best UX for light/dark: for same-origin assets we render as a mask so the
-    // logo color can come from `currentColor` (like Make.com's colored tiles).
-    if (isSameOriginPath) {
-      return (
-        <span
-          aria-hidden
-          className={cn("inline-block bg-current", className)}
-          style={{
-            WebkitMaskImage: `url(${name})`,
-            maskImage: `url(${name})`,
-            WebkitMaskRepeat: "no-repeat",
-            maskRepeat: "no-repeat",
-            WebkitMaskPosition: "center",
-            maskPosition: "center",
-            WebkitMaskSize: "contain",
-            maskSize: "contain",
-          }}
-        />
-      );
     }
     return (
       <img
         src={name}
         alt=""
-        className={cn("block object-contain", className)}
+        className={cn("block max-h-full max-w-full object-contain", className)}
         loading="lazy"
         referrerPolicy="no-referrer"
         onError={() => setFailed(true)}
