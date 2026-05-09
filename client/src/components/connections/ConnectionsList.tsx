@@ -64,7 +64,13 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { AppIcon, isIconUrl, resolveAppIcon } from "@/components/destinations/appIcons";
+import {
+  AppIcon,
+  appBrandIconTileClass,
+  isIconUrl,
+  resolveAppIcon,
+} from "@/components/destinations/appIcons";
+import { iconUrlForTemplateAppKey } from "@shared/affiliateBrandDomains";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../../server/routers";
 
@@ -77,35 +83,17 @@ type TypeVisuals = {
   icon:      LucideIcon;
   /** When set, render brand `<AppIcon>` instead of the Lucide `icon`. */
   logoUrl:   string | null;
-  color:     string;
   typeLabel: string;
   detail:    string;
 };
 
 type AppMeta = { key: string; name: string; icon: string | null; category: string };
 
-function colorForCategory(category: string): string {
-  switch (category) {
-    case "crm":
-      return "#6366F1"; // indigo
-    case "messaging":
-      return "#229ED9"; // telegram-ish
-    case "data":
-    case "spreadsheet":
-      return "#0F9D58"; // sheets-ish
-    case "webhook":
-      return "#8B5CF6";
-    default:
-      return "#3B82F6";
-  }
-}
-
 function visualFor(row: ConnectionRow, appByKey: Map<string, AppMeta>): TypeVisuals {
   if (row.type === "google_sheets") {
     return {
       icon: Table2,
       logoUrl: null,
-      color: "#0F9D58",
       typeLabel: "Google Sheets",
       detail: row.google?.email ?? "—",
     };
@@ -114,9 +102,32 @@ function visualFor(row: ConnectionRow, appByKey: Map<string, AppMeta>): TypeVisu
     return {
       icon: Send,
       logoUrl: null,
-      color: "#229ED9",
       typeLabel: "Telegram",
       detail: row.telegram?.chatId ? `chat id ${row.telegram.chatId}` : "No chat id",
+    };
+  }
+  if (row.type === "api_key") {
+    const ak = row.apiKey;
+    const keys = ak?.secretKeys ?? [];
+    const detail =
+      keys.length === 0
+        ? "No secrets stored"
+        : keys.length === 1
+          ? `${keys[0]} encrypted`
+          : `${keys.length} secrets encrypted`;
+    if (ak) {
+      return {
+        icon: KeyRound,
+        logoUrl: iconUrlForTemplateAppKey(ak.templateAppKey),
+        typeLabel: ak.templateName ?? "API key",
+        detail,
+      };
+    }
+    return {
+      icon: KeyRound,
+      logoUrl: null,
+      typeLabel: "API key",
+      detail,
     };
   }
   // Manifest-driven apps (HubSpot/Kommo/Pipedrive/etc.) — render icon + label from manifests.
@@ -126,18 +137,18 @@ function visualFor(row: ConnectionRow, appByKey: Map<string, AppMeta>): TypeVisu
     return {
       icon: resolveAppIcon(app.icon),
       logoUrl,
-      color: colorForCategory(app.category),
       typeLabel: app.name,
       detail: row.status === "active" ? "Connected" : `Status: ${row.status}`,
     };
   }
-  const keys = row.apiKey?.secretKeys ?? [];
+  const rawType = row.type as string;
+  const humanType =
+    rawType.length > 0 ? rawType.replace(/_/g, " ") : "Connection";
   return {
     icon:      KeyRound,
     logoUrl:   null,
-    color:     row.apiKey?.templateColor ?? "#6366F1",
-    typeLabel: row.apiKey?.templateName ?? "API key",
-    detail:    keys.length === 0 ? "No secrets stored" : keys.length === 1 ? `${keys[0]} encrypted` : `${keys.length} secrets encrypted`,
+    typeLabel: humanType,
+    detail:    row.status === "active" ? "Connected" : `Status: ${row.status}`,
   };
 }
 
@@ -339,13 +350,19 @@ function ConnectionRowView({
       <button
         type="button"
         onClick={onDetail}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted/90 ring-1 ring-border transition-opacity hover:opacity-80 dark:bg-muted/70"
+        className={cn(
+          appBrandIconTileClass("h-9 w-9 rounded-lg"),
+          "transition-opacity hover:opacity-80",
+        )}
         title="View details"
       >
         {v.logoUrl ? (
           <AppIcon name={v.logoUrl} className="h-4 w-4" />
         ) : (
-          <Icon className="h-4 w-4" strokeWidth={2.2} style={{ color: v.color }} />
+          <Icon
+            className="h-4 w-4 text-zinc-700 dark:text-zinc-200"
+            strokeWidth={2.2}
+          />
         )}
       </button>
 
@@ -478,11 +495,14 @@ function ConnectionDetailSheet({
       <SheetContent side="right" className="w-full sm:max-w-md flex flex-col gap-0 p-0">
         <SheetHeader className="px-5 py-4 border-b">
           <SheetTitle className="flex items-center gap-2.5 text-sm">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-muted/90 ring-1 ring-border dark:bg-muted/70">
+            <span className={appBrandIconTileClass("h-7 w-7 rounded-lg")}>
               {v.logoUrl ? (
                 <AppIcon name={v.logoUrl} className="h-3.5 w-3.5" />
               ) : (
-                <Icon className="h-3.5 w-3.5" strokeWidth={2.2} style={{ color: v.color }} />
+                <Icon
+                  className="h-3.5 w-3.5 text-zinc-700 dark:text-zinc-200"
+                  strokeWidth={2.2}
+                />
               )}
             </span>
             {row.displayName}

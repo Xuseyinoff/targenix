@@ -75,7 +75,7 @@ import {
   GroupedFieldPicker,
   type GroupedFieldPickerGroup,
 } from "@/components/common/GroupedFieldPicker";
-import { AppIcon, appIconBgClass, appIconRingClass, resolveAppIcon } from "@/components/destinations/appIcons";
+import { AppIcon, appBrandIconTileClass, appIconRingClass } from "@/components/destinations/appIcons";
 import { isSupportedAppKey } from "@/components/destinations/createPayload";
 import { WizardActionPickerModal } from "@/components/wizard/WizardActionPickerModal";
 import type { AppManifestService } from "./lead-routing/shared";
@@ -398,13 +398,6 @@ const CATEGORY_META: Record<
 function iconForCategory(category: string) {
   const meta = CATEGORY_META[category as DestinationCategory];
   return meta?.icon ?? Globe;
-}
-
-function colorForCategory(category: string) {
-  return (
-    CATEGORY_META[category as DestinationCategory]?.colorClass ??
-    CATEGORY_META.affiliate.colorClass
-  );
 }
 
 // ─── Zapier-style step chrome ─────────────────────────────────────────────────
@@ -1695,6 +1688,12 @@ function DestinationEditor({
     [appList],
   );
 
+  const appIconByKey = useMemo(() => {
+    const m = new Map<string, string | null>();
+    for (const a of appList) m.set(a.key, a.icon ?? null);
+    return m;
+  }, [appList]);
+
   // showPicker: true  = full picker (app cards + existing list)
   //             false = chip view (selected destinations summary)
   // Starts as true when nothing selected, false once something is selected.
@@ -1732,20 +1731,19 @@ function DestinationEditor({
         {selectedIds.map((id, idx) => {
           const d = destinations.find((x) => x.id === id);
           if (!d) return null;
-          const Icon = iconForCategory(d.category);
-          const color = colorForCategory(d.category);
+          const rawIcon = appIconByKey.get(d.templateType) ?? null;
+          const CategoryIcon = iconForCategory(d.category);
           return (
             <div
               key={id}
               className="flex items-center gap-3 rounded-xl border border-primary/25 bg-primary/5 px-3 py-3"
             >
-              <div
-                className={cn(
-                  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg",
-                  color,
+              <div className={appBrandIconTileClass("h-9 w-9 rounded-lg")}>
+                {rawIcon ? (
+                  <AppIcon name={rawIcon} className="h-4 w-4" />
+                ) : (
+                  <CategoryIcon className="h-4 w-4 text-zinc-600 dark:text-zinc-300" />
                 )}
-              >
-                <Icon className="h-4 w-4" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-semibold">{d.name}</div>
@@ -1828,8 +1826,9 @@ function DestinationEditor({
               >
                 <div
                   className={cn(
-                    "flex h-11 w-11 items-center justify-center rounded-xl transition-transform group-hover:scale-105",
-                    appIconBgClass(app.category),
+                    appBrandIconTileClass(
+                      "h-11 w-11 rounded-xl transition-transform group-hover:scale-105",
+                    ),
                   )}
                 >
                   <AppIcon name={app.icon} className="h-5 w-5" />
@@ -1888,8 +1887,8 @@ function DestinationEditor({
             <div className="max-h-52 overflow-y-auto rounded-lg border bg-muted/5 p-1 space-y-0.5">
               {filteredExisting.map((d) => {
                 const isSelected = selectedSet.has(d.id);
-                const Icon = iconForCategory(d.category);
-                const color = colorForCategory(d.category);
+                const rawIcon = appIconByKey.get(d.templateType) ?? null;
+                const CategoryIcon = iconForCategory(d.category);
                 return (
                   <button
                     key={d.id}
@@ -1900,13 +1899,12 @@ function DestinationEditor({
                       isSelected ? "bg-primary/8 font-medium" : "hover:bg-muted/60",
                     )}
                   >
-                    <div
-                      className={cn(
-                        "flex h-6 w-6 shrink-0 items-center justify-center rounded",
-                        color,
+                    <div className={appBrandIconTileClass("h-6 w-6 rounded")}>
+                      {rawIcon ? (
+                        <AppIcon name={rawIcon} className="h-3 w-3" />
+                      ) : (
+                        <CategoryIcon className="h-3 w-3 text-zinc-600 dark:text-zinc-300" />
                       )}
-                    >
-                      <Icon className="h-3 w-3" />
                     </div>
                     <div className="min-w-0 flex-1">
                       <span className="block truncate leading-tight">{d.name}</span>

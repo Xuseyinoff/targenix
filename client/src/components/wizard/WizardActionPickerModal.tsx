@@ -45,7 +45,8 @@ import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { AppIcon } from "@/components/destinations/appIcons";
+import { AppIcon, appBrandIconTileClass } from "@/components/destinations/appIcons";
+import { iconUrlForTemplateAppKey } from "@shared/affiliateBrandDomains";
 import {
   ApiKeyConnectDialog,
   type ApiKeyTemplate,
@@ -221,12 +222,12 @@ export function WizardActionPickerModal({
       { name: string; color: string; category: UiCategory; iconName: string | null }
     >();
     for (const t of templates) {
-      const tpl = t as { category?: string };
+      const tpl = t as { category?: string; appKey?: string | null };
       m.set(t.id, {
         name: t.name,
         color: t.color,
         category: normalizeTemplateCategory(tpl.category ?? null),
-        iconName: null,
+        iconName: iconUrlForTemplateAppKey(tpl.appKey ?? null),
       });
     }
     return m;
@@ -247,7 +248,9 @@ export function WizardActionPickerModal({
         subtitle: c.displayName,
         category: tpl?.category ?? "affiliate",
         color: tpl?.color ?? c.apiKey.templateColor,
-        iconName: tpl?.iconName ?? null,
+        iconName:
+          tpl?.iconName ??
+          iconUrlForTemplateAppKey(c.apiKey.templateAppKey ?? null),
         connectionId: c.id,
         templateId: c.apiKey.templateId,
         templateName: tpl?.name ?? c.apiKey.templateName,
@@ -294,6 +297,7 @@ export function WizardActionPickerModal({
       const tpl = t as {
         category?: string;
         userVisibleFields?: string[] | null;
+        appKey?: string | null;
       };
       out.push({
         kind: "template",
@@ -302,7 +306,7 @@ export function WizardActionPickerModal({
         subtitle: "Admin-managed affiliate",
         category: normalizeTemplateCategory(tpl.category ?? null),
         color: t.color,
-        iconName: null,
+        iconName: iconUrlForTemplateAppKey(tpl.appKey ?? null),
         templateId: t.id,
         templateName: t.name,
         userVisibleFields: tpl.userVisibleFields ?? [],
@@ -564,11 +568,15 @@ function Row({
         "disabled:cursor-not-allowed disabled:opacity-60",
       )}
     >
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/90 ring-1 ring-border dark:bg-muted/70">
+      <span className={appBrandIconTileClass("h-7 w-7")}>
         {busy ? (
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         ) : entry.kind === "connection" ? (
-          <KeyRound className="h-4 w-4 text-muted-foreground" strokeWidth={2.2} />
+          entry.iconName ? (
+            <AppIcon name={entry.iconName} className="h-4 w-4" />
+          ) : (
+            <KeyRound className="h-4 w-4 text-muted-foreground" strokeWidth={2.2} />
+          )
         ) : (
           <AppIcon name={entry.iconName} className="h-4 w-4" />
         )}

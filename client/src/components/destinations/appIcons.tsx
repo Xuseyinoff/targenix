@@ -49,6 +49,19 @@ export function isIconUrl(name: string | null | undefined): name is string {
   return /^https?:\/\//i.test(name) || name.startsWith("/");
 }
 
+/**
+ * Neutral “app store” tile behind logos — white-ish on light UI, deep surface on dark,
+ * so full-colour PNG/SVG and monochrome favicons stay legible in both themes.
+ */
+export function appBrandIconTileClass(className?: string): string {
+  return cn(
+    "flex shrink-0 items-center justify-center overflow-hidden rounded-md p-0.5",
+    "bg-white shadow-sm ring-1 ring-zinc-200/90",
+    "dark:bg-zinc-800 dark:ring-zinc-600/90 dark:shadow-black/30",
+    className,
+  );
+}
+
 export function resolveAppIcon(name: string | null | undefined): LucideIcon {
   if (!name) return Globe;
   // If an app uses a brand logo URL, UI should render <img>.
@@ -86,27 +99,6 @@ export function AppIcon({
   }
   const Component = resolveAppIcon(name);
   return <Component className={cn(className)} />;
-}
-
-/**
- * Soft coloured background for an app tile based on its manifest category.
- * Returns Tailwind classes compatible with both light and dark mode.
- */
-export function appIconBgClass(category: string): string {
-  switch (category) {
-    case "messaging":
-      return "bg-sky-50 text-sky-600 dark:bg-sky-950/40 dark:text-sky-400";
-    case "spreadsheet":
-      return "bg-green-50 text-green-600 dark:bg-green-950/40 dark:text-green-400";
-    case "webhook":
-      return "bg-violet-50 text-violet-600 dark:bg-violet-950/40 dark:text-violet-400";
-    case "ecommerce":
-      return "bg-orange-50 text-orange-600 dark:bg-orange-950/40 dark:text-orange-400";
-    case "affiliate":
-      return "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400";
-    default:
-      return "bg-muted text-muted-foreground";
-  }
 }
 
 /** Hover border colour for an app shortcut card, matched to its category. */

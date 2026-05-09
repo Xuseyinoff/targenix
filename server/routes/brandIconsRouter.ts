@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import * as icons from "simple-icons";
+import { resolveAffiliateBrandDomain } from "@shared/affiliateBrandDomains";
 import { log } from "../services/appLogger";
 
 const CLEARBIT_BY_SLUG: Record<string, string> = {
@@ -23,21 +24,52 @@ function exportNameForSlug(slug: string): string {
   return `si${base}`;
 }
 
-async function proxyClearbit(domain: string, res: Response): Promise<void> {
-  const url = `https://logo.clearbit.com/${domain}`;
-  const r = await fetch(url, {
-    // Clearbit may vary by UA; provide a common browser UA.
-    headers: { "User-Agent": "Mozilla/5.0 targenix.uz server" },
-  });
-  if (!r.ok) {
+const FETCH_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+async function fetchLogoBytes(
+  domain: string,
+): Promise<{ buf: Buffer; contentType: string } | null> {
+  const tryFetch = async (url: string): Promise<{ buf: Buffer; contentType: string } | null> => {
+    try {
+      const r = await fetch(url, {
+        headers: { "User-Agent": FETCH_UA },
+        redirect: "follow",
+      });
+      if (!r.ok) return null;
+      const rawCt = r.headers.get("content-type") ?? "";
+      const ct = rawCt.split(";")[0].trim().toLowerCase();
+      if (!ct.startsWith("image/")) return null;
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length < 32) return null;
+      return { buf, contentType: ct };
+    } catch {
+      return null;
+    }
+  };
+
+  // Clearbit often 404s / is deprecated for public use — don't stop there.
+  let got = await tryFetch(`https://logo.clearbit.com/${domain}`);
+  if (got) return got;
+
+  got = await tryFetch(
+    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`,
+  );
+  if (got) return got;
+
+  got = await tryFetch(`https://icons.duckduckgo.com/ip3/${domain}.ico`);
+  return got;
+}
+
+async function proxyRasterBrand(domain: string, res: Response): Promise<void> {
+  const got = await fetchLogoBytes(domain);
+  if (!got) {
     res.status(404).send("Not found");
     return;
   }
-  const ct = r.headers.get("content-type") ?? "image/png";
-  const buf = Buffer.from(await r.arrayBuffer());
-  res.setHeader("Content-Type", ct);
-  res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-  res.status(200).send(buf);
+  res.setHeader("Content-Type", got.contentType);
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.status(200).send(got.buf);
 }
 
 /**
@@ -48,6 +80,25 @@ async function proxyClearbit(domain: string, res: Response): Promise<void> {
  * Optional: ?color=fff (defaults to white)
  */
 export function registerBrandIconRoutes(app: Express): void {
+  /**
+   * Raster logo for DB `apps.appKey` / `destination_templates.appKey` affiliates
+   * (Clearbit → Google favicon → DuckDuckGo). Extensionless URL avoids clashing
+   * with `/api/brand-icons/:slug.svg` reserved slugs like `app`.
+   */
+  app.get("/api/brand-icons-by-key/:appKey", async (req: Request, res: Response) => {
+    const raw = String(req.params.appKey ?? "").trim().toLowerCase();
+    if (!/^[a-z0-9_-]{1,64}$/.test(raw)) {
+      res.status(400).send("Invalid app key");
+      return;
+    }
+    const domain = resolveAffiliateBrandDomain(raw);
+    if (!domain) {
+      res.status(404).send("Not found");
+      return;
+    }
+    await proxyRasterBrand(domain, res);
+  });
+
   app.get("/api/brand-icons/:slug.svg", async (req: Request, res: Response) => {
     const slug = String(req.params.slug ?? "").trim().toLowerCase();
     if (!/^[a-z0-9-]{2,40}$/.test(slug)) {
@@ -55,9 +106,9 @@ export function registerBrandIconRoutes(app: Express): void {
       return;
     }
 
-    const clearbit = CLEARBIT_BY_SLUG[slug];
-    if (clearbit) {
-      await proxyClearbit(clearbit, res);
+    const rasterDomain = CLEARBIT_BY_SLUG[slug];
+    if (rasterDomain) {
+      await proxyRasterBrand(rasterDomain, res);
       return;
     }
 

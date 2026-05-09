@@ -1,20 +1,12 @@
 import { useState } from "react";
 import {
-  Globe,
-  MessageSquare,
-  Smartphone,
-  Sparkles,
-  Database,
-  Send,
-  Sheet,
-  Webhook,
-  Tag,
-  Zap,
   CheckCircle2,
   XCircle,
   Loader2,
   FlaskConical,
   ChevronRight,
+  Zap,
+  Tag,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -30,19 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-
-// ─── Icon resolver ────────────────────────────────────────────────────────────
-
-const ICONS: Record<string, React.FC<{ className?: string }>> = {
-  Globe, MessageSquare, Smartphone, Sparkles, Database, Send, Sheet, Webhook,
-  Tag, Zap,
-};
-
-function AppIcon({ name, className }: { name?: string | null; className?: string }) {
-  const Icon = (name && ICONS[name]) ? ICONS[name] : Globe;
-  return <Icon className={className} />;
-}
-
+import { AppIcon, appBrandIconTileClass } from "@/components/destinations/appIcons";
 // ─── Category colours ─────────────────────────────────────────────────────────
 
 const CAT_COLOR: Record<string, string> = {
@@ -213,7 +193,7 @@ function AppCard({ app }: AppCardProps) {
         <CardHeader className="pb-2">
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-primary/10 text-primary">
+              <div className={appBrandIconTileClass("h-10 w-10 rounded-lg")}>
                 <AppIcon name={app.icon} className="h-5 w-5" />
               </div>
               <div>

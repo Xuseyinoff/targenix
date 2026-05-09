@@ -78,6 +78,8 @@ interface ListedConnection {
     templateId: number;
     templateName: string;
     templateColor: string;
+    /** `destination_templates.appKey` — drives `/api/brand-icons-by-key/…`. */
+    templateAppKey: string | null;
     /** Keys present in credentialsJson.secretsEncrypted — for display only. */
     secretKeys: string[];
   } | null;
@@ -173,7 +175,7 @@ export const connectionsRouter = router({
 
       const templateById = new Map<
         number,
-        { id: number; name: string; color: string }
+        { id: number; name: string; color: string; appKey: string | null }
       >();
       if (templateIds.length > 0) {
         const tpls = await db
@@ -181,6 +183,7 @@ export const connectionsRouter = router({
             id: destinationTemplates.id,
             name: destinationTemplates.name,
             color: destinationTemplates.color,
+            appKey: destinationTemplates.appKey,
           })
           .from(destinationTemplates)
           .where(inArray(destinationTemplates.id, templateIds));
@@ -225,6 +228,7 @@ export const connectionsRouter = router({
                 templateId: meta.id,
                 templateName: meta.name,
                 templateColor: meta.color,
+                templateAppKey: meta.appKey ?? null,
                 secretKeys: Object.keys(secretsEncrypted),
               };
             }

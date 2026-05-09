@@ -29,7 +29,8 @@ import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { AppIcon } from "@/components/destinations/appIcons";
+import { AppIcon, appBrandIconTileClass } from "@/components/destinations/appIcons";
+import { iconUrlForTemplateAppKey } from "@shared/affiliateBrandDomains";
 import { TelegramConnectDialog } from "@/components/connections/TelegramConnectDialog";
 import {
   ApiKeyConnectDialog,
@@ -220,12 +221,13 @@ export function AppPickerModal({
       const tpl = t as {
         category?: string;
         userVisibleFields?: string[] | null;
+        appKey?: string | null;
       };
       out.push({
         id: `tpl-${t.id}`,
         name: t.name,
         category: normalizeTemplateCategory(tpl.category ?? null),
-        iconName: null,
+        iconName: iconUrlForTemplateAppKey(tpl.appKey ?? null),
         color: t.color,
         source: "template",
         templateId: t.id,
@@ -515,7 +517,7 @@ function AppRow({
         "disabled:cursor-not-allowed disabled:opacity-60",
       )}
     >
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-muted/90 ring-1 ring-border dark:bg-muted/70">
+      <span className={appBrandIconTileClass("h-7 w-7")}>
         {busy ? (
           <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
         ) : (

@@ -50,7 +50,7 @@ import {
   type FieldValues,
 } from "@/components/dynamic-form";
 import type { ConfigField } from "@/components/dynamic-form";
-import { AppIcon, appIconBgClass } from "./appIcons";
+import { AppIcon, appBrandIconTileClass } from "./appIcons";
 import {
   APP_KEY_TO_TEMPLATE_TYPE,
   buildCreatePayload,
@@ -412,12 +412,7 @@ function AppPicker({
                   onClick={() => onPick(app)}
                   className="group flex items-start gap-3 rounded-lg border bg-background p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted/30"
                 >
-                  <div
-                    className={cn(
-                      "flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
-                      appIconBgClass(app.category),
-                    )}
-                  >
+                  <div className={appBrandIconTileClass("h-9 w-9 rounded-md")}>
                     <AppIcon name={app.icon ?? "Globe"} className="h-4 w-4" />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -475,12 +470,7 @@ function ConfigureStep({
   return (
     <div className="p-5 space-y-5">
       <div className="flex items-center gap-3 rounded-md border bg-muted/20 p-3">
-        <div
-          className={cn(
-            "flex h-9 w-9 shrink-0 items-center justify-center rounded-md",
-            appIconBgClass(app.category),
-          )}
-        >
+        <div className={appBrandIconTileClass("h-9 w-9 rounded-md")}>
           <AppIcon name={app.icon ?? "Globe"} className="h-4 w-4" />
         </div>
         <div className="min-w-0">
