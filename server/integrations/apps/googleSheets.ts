@@ -17,7 +17,7 @@ export const googleSheetsApp: AppManifest = {
   key: "google-sheets",
   name: "Google Sheets",
   version: "1.1.0",
-  icon: "https://unpkg.com/simple-icons@14.15.0/icons/googlesheets.svg",
+  icon: "https://logo.clearbit.com/google.com",
   category: "spreadsheet",
   description: "Append each lead as a new row in a Google Sheets spreadsheet.",
   adapterKey: "google-sheets",

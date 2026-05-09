@@ -8,6 +8,7 @@
  * wizard without bloating the manifest contract.
  */
 
+import * as React from "react";
 import {
   Archive,
   Briefcase,
@@ -62,18 +63,24 @@ export function AppIcon({
   name: string | null | undefined;
   className?: string;
 }) {
+  const [failed, setFailed] = React.useState(false);
+
   if (isIconUrl(name)) {
     // Render SVG/PNG logo URLs (Make.com-style).
     // `alt` is intentionally empty: the adjacent text label already names the app.
-    const isSvg = /\.svg(\?|#|$)/i.test(name);
+    // If the external host blocks hotlinking or 404s, we fall back to a generic icon.
+    if (failed) {
+      const Fallback = Globe;
+      return <Fallback className={cn(className)} />;
+    }
     return (
       <img
         src={name}
         alt=""
-        className={cn("block", className)}
-        style={isSvg ? { filter: "invert(1)" } : undefined}
+        className={cn("block object-contain", className)}
         loading="lazy"
         referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
       />
     );
   }
