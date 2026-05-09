@@ -313,7 +313,8 @@ export function AppPickerModal({
         (entry.authType === "oauth2" || entry.connectionType === "oauth2")
       ) {
         setOauth2BusyAppKey(entry.destTypeKey);
-        void startOAuth2();
+        // Pass key explicitly: setState is async — hook would still see previous appKey for one tick.
+        void startOAuth2(entry.destTypeKey);
         return;
       }
 

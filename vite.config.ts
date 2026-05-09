@@ -47,6 +47,20 @@ export default defineConfig({
   server: {
     host: true,
     allowedHosts: ["localhost", "127.0.0.1"],
+    /**
+     * When running the Vite dev server standalone (e.g. `vite` on :5173),
+     * forward API calls to the Express server (usually :3000).
+     *
+     * In the default dev script (`pnpm dev`) we run Express with Vite middleware,
+     * so this proxy isn't used — but it prevents "Unexpected token '<'" JSON
+     * parse errors when someone opens the standalone Vite origin.
+     */
+    proxy: {
+      "/api": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+      },
+    },
     fs: {
       strict: true,
       deny: ["**/.*"],
