@@ -4,7 +4,8 @@ export const hubspotApp: AppManifest = {
   key: "hubspot",
   name: "HubSpot",
   version: "1.0.0",
-  icon: "Users",
+  // Brand logo (Make.com-style): white glyph on colored tile in UI.
+  icon: "https://unpkg.com/simple-icons@14.15.0/icons/hubspot.svg",
   category: "crm",
   description: "Create contacts in HubSpot CRM via OAuth2. Connect once, sync leads automatically.",
   adapterKey: "http-oauth2",

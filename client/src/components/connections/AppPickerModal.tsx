@@ -29,7 +29,7 @@ import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { resolveAppIcon } from "@/components/destinations/appIcons";
+import { AppIcon } from "@/components/destinations/appIcons";
 import { TelegramConnectDialog } from "@/components/connections/TelegramConnectDialog";
 import {
   ApiKeyConnectDialog,
@@ -504,7 +504,6 @@ function AppRow({
   busy: boolean;
   disabled: boolean;
 }) {
-  const Icon = resolveAppIcon(entry.iconName);
   return (
     <button
       type="button"
@@ -523,7 +522,7 @@ function AppRow({
         {busy ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : (
-          <Icon className="h-4 w-4" strokeWidth={2.2} />
+          <AppIcon name={entry.iconName} className="h-4 w-4" />
         )}
       </span>
       <span className="truncate text-sm font-medium text-foreground">

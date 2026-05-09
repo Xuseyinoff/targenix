@@ -45,7 +45,7 @@ import { useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { resolveAppIcon } from "@/components/destinations/appIcons";
+import { AppIcon } from "@/components/destinations/appIcons";
 import {
   ApiKeyConnectDialog,
   type ApiKeyTemplate,
@@ -553,7 +553,6 @@ function Row({
   busy: boolean;
   disabled: boolean;
 }) {
-  const Icon = resolveAppIcon(entry.iconName);
   return (
     <button
       type="button"
@@ -574,7 +573,7 @@ function Row({
         ) : entry.kind === "connection" ? (
           <KeyRound className="h-4 w-4" strokeWidth={2.2} />
         ) : (
-          <Icon className="h-4 w-4" strokeWidth={2.2} />
+          <AppIcon name={entry.iconName} className="h-4 w-4" />
         )}
       </span>
       <span className="min-w-0 flex-1">

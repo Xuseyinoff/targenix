@@ -75,7 +75,7 @@ import {
   GroupedFieldPicker,
   type GroupedFieldPickerGroup,
 } from "@/components/common/GroupedFieldPicker";
-import { resolveAppIcon, appIconBgClass, appIconRingClass } from "@/components/destinations/appIcons";
+import { AppIcon, appIconBgClass, appIconRingClass, resolveAppIcon } from "@/components/destinations/appIcons";
 import { isSupportedAppKey } from "@/components/destinations/createPayload";
 import { WizardActionPickerModal } from "@/components/wizard/WizardActionPickerModal";
 import type { AppManifestService } from "./lead-routing/shared";
@@ -1811,7 +1811,6 @@ function DestinationEditor({
         </div>
         <div className="grid grid-cols-3 gap-2">
           {shortcutApps.map((app) => {
-            const Icon = resolveAppIcon(app.icon);
             const desc = app.description
               ? app.description.length > 38
                 ? app.description.slice(0, 38) + "…"
@@ -1833,7 +1832,7 @@ function DestinationEditor({
                     appIconBgClass(app.category),
                   )}
                 >
-                  <Icon className="h-5 w-5" />
+                  <AppIcon name={app.icon} className="h-5 w-5" />
                 </div>
                 <div>
                   <div className="text-xs font-semibold leading-tight">

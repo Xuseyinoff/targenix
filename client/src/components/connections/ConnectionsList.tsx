@@ -64,6 +64,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { resolveAppIcon } from "@/components/destinations/appIcons";
 import type { inferRouterOutputs } from "@trpc/server";
 import type { AppRouter } from "../../../../server/routers";
 
@@ -79,12 +80,40 @@ type TypeVisuals = {
   detail:    string;
 };
 
-function visualFor(row: ConnectionRow): TypeVisuals {
+type AppMeta = { key: string; name: string; icon: string | null; category: string };
+
+function colorForCategory(category: string): string {
+  switch (category) {
+    case "crm":
+      return "#6366F1"; // indigo
+    case "messaging":
+      return "#229ED9"; // telegram-ish
+    case "data":
+    case "spreadsheet":
+      return "#0F9D58"; // sheets-ish
+    case "webhook":
+      return "#8B5CF6";
+    default:
+      return "#3B82F6";
+  }
+}
+
+function visualFor(row: ConnectionRow, appByKey: Map<string, AppMeta>): TypeVisuals {
   if (row.type === "google_sheets") {
     return { icon: Table2,   color: "#0F9D58", typeLabel: "Google Sheets", detail: row.google?.email ?? "—" };
   }
   if (row.type === "telegram_bot") {
     return { icon: Send,     color: "#229ED9", typeLabel: "Telegram",      detail: row.telegram?.chatId ? `chat id ${row.telegram.chatId}` : "No chat id" };
+  }
+  // Manifest-driven apps (HubSpot/Kommo/Pipedrive/etc.) — render icon + label from manifests.
+  const app = appByKey.get(row.type);
+  if (app) {
+    return {
+      icon: resolveAppIcon(app.icon),
+      color: colorForCategory(app.category),
+      typeLabel: app.name,
+      detail: row.status === "active" ? "Connected" : `Status: ${row.status}`,
+    };
   }
   const keys = row.apiKey?.secretKeys ?? [];
   return {
@@ -135,6 +164,16 @@ function HealthDot({ row }: { row: ConnectionRow }) {
 export function ConnectionsList({ onReconnect }: { onReconnect?: () => void }) {
   const utils = trpc.useUtils();
   const { data: rows = [], isLoading } = trpc.connections.list.useQuery();
+  const { data: apps = [] } = trpc.apps.list.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+  });
+  const appByKey = useMemo(() => {
+    const m = new Map<string, AppMeta>();
+    for (const a of apps) {
+      m.set(a.key, { key: a.key, name: a.name, icon: a.icon ?? null, category: a.category });
+    }
+    return m;
+  }, [apps]);
 
   const [renameTarget, setRenameTarget] = useState<ConnectionRow | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ConnectionRow | null>(null);
@@ -196,6 +235,7 @@ export function ConnectionsList({ onReconnect }: { onReconnect?: () => void }) {
           <ConnectionRowView
             key={row.id}
             row={row}
+            appByKey={appByKey}
             onRename={() => setRenameTarget(row)}
             onDelete={() => setDeleteTarget(row)}
             onDetail={() => setDetailTarget(row)}
@@ -247,16 +287,17 @@ export function ConnectionsList({ onReconnect }: { onReconnect?: () => void }) {
 // ─── Row ─────────────────────────────────────────────────────────────────────
 
 function ConnectionRowView({
-  row, onRename, onDelete, onDetail, onVerifySuccess, onReconnect,
+  row, appByKey, onRename, onDelete, onDetail, onVerifySuccess, onReconnect,
 }: {
   row:             ConnectionRow;
+  appByKey:        Map<string, AppMeta>;
   onRename:        () => void;
   onDelete:        () => void;
   onDetail:        () => void;
   onVerifySuccess: () => void;
   onReconnect?:    () => void;
 }) {
-  const v = visualFor(row);
+  const v = visualFor(row, appByKey);
   const Icon = v.icon;
   const h = healthFor(row);
   const isExpiredOAuth = (row.google?.expired || row.status === "expired") && row.type === "google_sheets";
@@ -399,7 +440,16 @@ function ConnectionDetailSheet({
 
   if (!row) return null;
 
-  const v   = visualFor(row);
+  const { data: apps = [] } = trpc.apps.list.useQuery(undefined, { staleTime: 5 * 60 * 1000 });
+  const appByKey = useMemo(() => {
+    const m = new Map<string, AppMeta>();
+    for (const a of apps) {
+      m.set(a.key, { key: a.key, name: a.name, icon: a.icon ?? null, category: a.category });
+    }
+    return m;
+  }, [apps]);
+
+  const v   = visualFor(row, appByKey);
   const h   = healthFor(row);
   const Icon = v.icon;
 

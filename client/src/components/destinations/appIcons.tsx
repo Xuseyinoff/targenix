@@ -42,8 +42,16 @@ const ICON_MAP: Record<string, LucideIcon> = {
   MessageSquare,
 };
 
+function isIconUrl(name: string | null | undefined): name is string {
+  if (!name) return false;
+  return /^https?:\/\//i.test(name);
+}
+
 export function resolveAppIcon(name: string | null | undefined): LucideIcon {
   if (!name) return Globe;
+  // If an app uses a brand logo URL, UI should render <img>.
+  // Keep resolveAppIcon returning a component for legacy call sites.
+  if (isIconUrl(name)) return Globe;
   return ICON_MAP[name] ?? Globe;
 }
 
@@ -54,6 +62,21 @@ export function AppIcon({
   name: string | null | undefined;
   className?: string;
 }) {
+  if (isIconUrl(name)) {
+    // Render SVG/PNG logo URLs (Make.com-style).
+    // `alt` is intentionally empty: the adjacent text label already names the app.
+    const isSvg = /\.svg(\?|#|$)/i.test(name);
+    return (
+      <img
+        src={name}
+        alt=""
+        className={cn("block", className)}
+        style={isSvg ? { filter: "invert(1)" } : undefined}
+        loading="lazy"
+        referrerPolicy="no-referrer"
+      />
+    );
+  }
   const Component = resolveAppIcon(name);
   return <Component className={cn(className)} />;
 }

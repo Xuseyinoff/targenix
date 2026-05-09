@@ -3,7 +3,7 @@ import { defineHttpApiKeyApp, defineField } from "../sdk";
 export const openAiApp = defineHttpApiKeyApp({
   key: "openai",
   name: "OpenAI",
-  icon: "Sparkles",
+  icon: "https://unpkg.com/simple-icons@14.15.0/icons/openai.svg",
   category: "other",
   description: "Run a GPT completion on each incoming lead — summarise, qualify, or route automatically.",
   endpoint: {
