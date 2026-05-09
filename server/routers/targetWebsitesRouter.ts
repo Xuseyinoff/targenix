@@ -386,7 +386,7 @@ export const targetWebsitesRouter = router({
           config.chatId = input.chatId.trim();
           config.messageTemplate = input.messageTemplate?.trim() || defaultTemplate;
         }
-        const inserted = await db.insert(targetWebsites).values({
+        const [inserted] = await db.insert(targetWebsites).values({
           userId: ctx.user.id,
           name: input.name,
           url: null,
@@ -413,7 +413,7 @@ export const targetWebsitesRouter = router({
         };
         config.sheetHeaders = input.sheetHeaders ?? [];
         config.mapping = input.mapping ?? {};
-        const inserted = await db.insert(targetWebsites).values({
+        const [inserted] = await db.insert(targetWebsites).values({
           userId: ctx.user.id,
           name: input.name,
           url: null,
@@ -434,7 +434,7 @@ export const targetWebsitesRouter = router({
       // we only need to store appKey + templateConfig + connectionId.
       if (input.templateType === "http-api-key") {
         if (!input.appKey?.trim()) throw new Error("appKey is required for app destinations");
-        const inserted = await db.insert(targetWebsites).values({
+        const [inserted] = await db.insert(targetWebsites).values({
           userId:         ctx.user.id,
           name:           input.name,
           url:            null,
@@ -481,7 +481,7 @@ export const targetWebsitesRouter = router({
         if (input.variableFields) config.variableFields = input.variableFields;
       }
 
-      const inserted = await db.insert(targetWebsites).values({
+      const [inserted] = await db.insert(targetWebsites).values({
         userId: ctx.user.id,
         name: input.name,
         url,
