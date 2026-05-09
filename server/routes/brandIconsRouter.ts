@@ -23,18 +23,6 @@ function exportNameForSlug(slug: string): string {
   return `si${base}`;
 }
 
-function clampHexColor(raw: unknown): string | null {
-  if (typeof raw !== "string") return null;
-  const v = raw.trim().replace(/^#/, "");
-  if (!/^[0-9a-fA-F]{3}$/.test(v) && !/^[0-9a-fA-F]{6}$/.test(v)) return null;
-  return `#${v}`;
-}
-
-function paintSvg(svg: string, fill: string): string {
-  // simple-icons SVGs are typically single-color paths; force a fill for visibility on colored tiles
-  return svg.replace(/<path\s/gi, `<path fill="${fill}" `);
-}
-
 async function proxyClearbit(domain: string, res: Response): Promise<void> {
   const url = `https://logo.clearbit.com/${domain}`;
   const r = await fetch(url, {
@@ -83,8 +71,7 @@ export function registerBrandIconRoutes(app: Express): void {
       return;
     }
 
-    const fill = clampHexColor(req.query.color) ?? "#ffffff";
-    const svg = paintSvg(icon.svg, fill);
+    const svg = icon.svg;
 
     // cache hard: content addressed by versioned server deploy; safe to cache
     res.setHeader("Content-Type", "image/svg+xml; charset=utf-8");

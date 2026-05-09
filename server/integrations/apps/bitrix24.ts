@@ -10,7 +10,7 @@ import { defineHttpApiKeyApp, defineField } from "../sdk";
 export const bitrix24App = defineHttpApiKeyApp({
   key: "bitrix24",
   name: "Bitrix24",
-  icon: "/api/brand-icons/bitrix24.svg?color=fff",
+  icon: "/api/brand-icons/bitrix24.svg",
   category: "crm",
   description: "Create CRM leads in Bitrix24 via REST webhook. Popular in Uzbekistan and CIS.",
   noConnection: true,

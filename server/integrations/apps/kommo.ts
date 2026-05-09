@@ -9,7 +9,7 @@ export const kommoApp: AppManifest = {
   key: "kommo",
   name: "Kommo (AmoCRM) OAuth",
   version: "1.0.0",
-  icon: "/api/brand-icons/kommo.svg?color=fff",
+  icon: "/api/brand-icons/kommo.svg",
   category: "crm",
   description: "Create leads in Kommo CRM via OAuth2. Connect once, send leads automatically.",
   adapterKey: "http-oauth2",

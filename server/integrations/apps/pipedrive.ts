@@ -4,7 +4,7 @@ export const pipedriveApp: AppManifest = {
   key: "pipedrive",
   name: "Pipedrive",
   version: "1.0.0",
-  icon: "/api/brand-icons/pipedrive.svg?color=fff",
+  icon: "/api/brand-icons/pipedrive.svg",
   category: "crm",
   description: "Create persons (contacts) in Pipedrive CRM via OAuth2.",
   adapterKey: "http-oauth2",
