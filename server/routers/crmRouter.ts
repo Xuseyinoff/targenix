@@ -17,11 +17,15 @@ import {
   crmGetOrderStatus,
   extractExternalOrderId,
   sotuvchiGetOrdersPage,
-  normalizeSotuvchiStatus,
+  hundredKGetAdvertiserOrdersPage,
   type Platform,
   type OrderPageResult,
 } from "../services/crmService";
-import { isFinalStatus, mapSotuvchiRawToNormalized } from "../../shared/crmStatuses";
+import {
+  isFinalStatus,
+  mapSotuvchiRawToNormalized,
+  mapHundredKRawToNormalized,
+} from "../../shared/crmStatuses";
 
 // ─── Background sync state (single-instance safe) ─────────────────────────────
 interface SyncResult {
@@ -259,7 +263,9 @@ export async function performCrmSync(
     }
   }
 
-  console.log(`[CrmSync] Done — synced=${synced} errors=${errors} total=${pendingOrders.length}`);
+  console.log(
+    `[CrmSync/per-order] Done — synced=${synced} errors=${errors} total=${pendingOrders.length} (max 200 queue)`,
+  );
   return { synced, errors, total: pendingOrders.length, syncedAt: new Date().toISOString() };
 }
 
@@ -267,6 +273,94 @@ export async function performCrmSync(
 
 const PAGE_LIMIT = 200;
 const PAGE_DELAY_MS = 800;
+
+/** 100k advertiser list: smaller pages (~20) — pause longer to stay under rate limits. */
+const HUNDREDK_PAGE_DELAY_MS = 2000;
+/** ±jitter on top of the page delay — randomises traffic so it doesn't look bot-like. */
+const HUNDREDK_PAGE_JITTER_MS = 700;
+/** Fallback when API omits `meta.total` (approx rows scanned). */
+const HUNDREDK_FALLBACK_PAGE_ROWS = 20;
+/**
+ * Daily request budget (UTC day) — once we've burned this many advertiser-
+ * orders requests in a 24h window we bail until the counter rolls over. At
+ * worst case this caps load at 5000 requests/day = 100k orders scanned/day,
+ * which is plenty for incremental sync once initial backfill is finished.
+ */
+const HUNDREDK_DAILY_REQUEST_BUDGET = 5000;
+/**
+ * Consecutive non-429 errors before circuit-breaker trips and we abort the
+ * cycle entirely. Keeps a misbehaving server (or our network) from
+ * hammering 100k.uz with retry storms.
+ */
+const HUNDREDK_CIRCUIT_BREAKER_HITS = 5;
+/**
+ * Single allowed value for the API's `lead_source_grouped` parameter. Tested
+ * against api.100k.uz: alternative buckets ("new"/"completed") return HTTP
+ * 422, but with `in_progress` the response actually contains EVERY funnel
+ * status (new, accepted, booked, sent, archived, delivered, cancelled, …) —
+ * the parameter does not filter, it's just a required incantation.
+ */
+const HUNDREDK_LEAD_SOURCE_GROUPED = "in_progress";
+/**
+ * Hard ceiling on pages walked per cycle. The advertiser-orders feed for
+ * an established advertiser can have 10k+ pages of historical orders; we
+ * stop early either when we cross the `stopBefore` boundary OR when this
+ * cap fires, whichever comes first. 1000 pages × 20 rows = ~20k orders ≈
+ * the last 60 days of activity for a heavy advertiser, plus a 33-min
+ * worst-case wall time at HUNDREDK_PAGE_DELAY_MS — comfortable headroom.
+ */
+const HUNDREDK_MAX_PAGES_PER_CYCLE = 1000;
+
+function hundredK429BackoffMs(err: unknown): number {
+  const ax = err as {
+    response?: { headers?: Record<string, string | undefined>; status?: number };
+  };
+  if (ax?.response?.status !== 429) return 45_000;
+  const raw =
+    ax.response.headers?.["retry-after"] ??
+    ax.response.headers?.["Retry-After"] ??
+    "";
+  const sec = parseInt(String(raw).trim(), 10);
+  if (!Number.isFinite(sec) || sec < 1) return 45_000;
+  return Math.min(Math.max(sec, 5), 120) * 1000;
+}
+
+/**
+ * Module-scope daily request budget for the 100k.uz advertiser-orders feed.
+ * Persists across sync cycles within the same process so a single greedy
+ * cycle can't blow past the daily cap. Resets at the next UTC midnight.
+ */
+const hundredKBudget = {
+  spent: 0,
+  /** UTC YYYY-MM-DD of the day the counter belongs to. */
+  day: "",
+};
+
+function hundredKBudgetCheck(): { allowed: boolean; remaining: number; day: string } {
+  const today = new Date().toISOString().slice(0, 10);
+  if (hundredKBudget.day !== today) {
+    hundredKBudget.day = today;
+    hundredKBudget.spent = 0;
+  }
+  const remaining = HUNDREDK_DAILY_REQUEST_BUDGET - hundredKBudget.spent;
+  return { allowed: remaining > 0, remaining, day: today };
+}
+
+function hundredKBudgetSpend(n = 1): void {
+  const today = new Date().toISOString().slice(0, 10);
+  if (hundredKBudget.day !== today) {
+    hundredKBudget.day = today;
+    hundredKBudget.spent = 0;
+  }
+  hundredKBudget.spent += n;
+}
+
+/** Sleep for `base` plus uniform random jitter in ±jitter range. */
+async function hundredKPagePause(base: number, jitter: number): Promise<void> {
+  const offset = (Math.random() * 2 - 1) * jitter;
+  const ms = Math.max(0, base + offset);
+  await new Promise((r) => setTimeout(r, ms));
+}
 
 export async function performPaginationSync(): Promise<SyncResult> {
   const db = await getDb();
@@ -434,6 +528,298 @@ export async function performPaginationSync(): Promise<SyncResult> {
   return result;
 }
 
+// ─── 100k.uz pagination sync (bulk list → match DB orders by external id) ───────
+
+export async function performPaginationSync100k(): Promise<SyncResult> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  const [acc] = await db
+    .select()
+    .from(crmConnections)
+    .where(eq(crmConnections.platform, "100k"))
+    .limit(1);
+
+  if (!acc) {
+    return {
+      synced: 0,
+      errors: 0,
+      total: 0,
+      syncedAt: new Date().toISOString(),
+      message: "100k.uz akkaunt topilmadi",
+    };
+  }
+
+  const profileId = acc.platformUserId?.trim();
+  if (!profileId) {
+    return {
+      synced: 0,
+      errors: 0,
+      total: 0,
+      syncedAt: new Date().toISOString(),
+      message: "100k platformUserId bo'sh",
+    };
+  }
+
+  const [oldestRow] = await db
+    .select({ createdAt: orders.createdAt })
+    .from(orders)
+    .innerJoin(integrations, eq(orders.integrationId, integrations.id))
+    .innerJoin(targetWebsites, eq(integrations.targetWebsiteId, targetWebsites.id))
+    .where(
+      and(
+        eq(orders.status, "SENT"),
+        eq(orders.isFinal, false),
+        isNotNull(orders.responseData),
+        eq(targetWebsites.appKey, "100k"),
+      ),
+    )
+    .orderBy(asc(orders.createdAt))
+    .limit(1);
+
+  const stopBefore = oldestRow
+    ? new Date(oldestRow.createdAt.getTime() - 24 * 60 * 60 * 1000)
+    : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
+  console.log(`[PaginationSync/100k] Stop boundary: ${stopBefore.toISOString()}`);
+
+  let bearerToken = decrypt(acc.bearerTokenEncrypted);
+  let page = 1;
+  let synced = 0;
+  let errors = 0;
+  let pagesProcessed = 0;
+  let consecutiveErrors = 0;
+  /** From API `meta.total` on first page — total advertiser orders ever. */
+  let apiReportedTotal = 0;
+
+  syncState.progress = { current: 0, total: 0, platform: "100k", rateLimited: false };
+
+  // The advertiser-orders feed is sorted by created_at DESC across ALL
+  // statuses (the `lead_source_grouped` parameter is required but does not
+  // actually filter — verified empirically against api.100k.uz). One pass
+  // walks newest-first; we stop as soon as we cross the oldest pending DB
+  // order's created_at, OR when the safety cap fires.
+  while (!syncState.aborted) {
+    // Daily request budget — bail out if we've already burned today's quota.
+    const budget = hundredKBudgetCheck();
+    if (!budget.allowed) {
+      console.warn(
+        `[PaginationSync/100k] Daily budget exhausted (${HUNDREDK_DAILY_REQUEST_BUDGET}/day, day=${budget.day}) — stopping until next UTC midnight`,
+      );
+      break;
+    }
+
+    let pageResult: OrderPageResult;
+    try {
+      hundredKBudgetSpend(1);
+      pageResult = await hundredKGetAdvertiserOrdersPage(
+        bearerToken,
+        profileId,
+        page,
+        HUNDREDK_LEAD_SOURCE_GROUPED,
+      ).catch(async (err: unknown) => {
+        const axiosErr = err as { response?: { status?: number } };
+        if (axiosErr?.response?.status === 401) {
+          const password = decrypt(acc.passwordEncrypted);
+          const r = await crmLogin("100k", acc.phone, password);
+          bearerToken = r.bearerToken;
+          await db!.update(crmConnections)
+            .set({
+              bearerTokenEncrypted: encrypt(r.bearerToken),
+              status: "active",
+              lastLoginAt: new Date(),
+            })
+            .where(eq(crmConnections.id, acc.id));
+          return hundredKGetAdvertiserOrdersPage(
+            bearerToken,
+            profileId,
+            page,
+            HUNDREDK_LEAD_SOURCE_GROUPED,
+          );
+        }
+        if (axiosErr?.response?.status === 429) {
+          const pauseMs = hundredK429BackoffMs(err);
+          console.warn(
+            `[PaginationSync/100k] 429 on page ${page} — pausing ${pauseMs / 1000}s`,
+          );
+          if (syncState.progress) syncState.progress.rateLimited = true;
+          await new Promise((r) => setTimeout(r, pauseMs));
+          if (syncState.progress) syncState.progress.rateLimited = false;
+          return hundredKGetAdvertiserOrdersPage(
+            bearerToken,
+            profileId,
+            page,
+            HUNDREDK_LEAD_SOURCE_GROUPED,
+          );
+        }
+        throw err;
+      });
+    } catch (err) {
+      console.error(
+        `[PaginationSync/100k] Failed on page ${page}:`,
+        err instanceof Error ? err.message : err,
+      );
+      errors++;
+      consecutiveErrors++;
+      if (consecutiveErrors >= HUNDREDK_CIRCUIT_BREAKER_HITS) {
+        console.warn(
+          `[PaginationSync/100k] Circuit breaker tripped (${consecutiveErrors} consecutive errors) — bailing out`,
+        );
+        break;
+      }
+      // Skip this page, try next — long pause first so we don't hammer the API
+      await hundredKPagePause(HUNDREDK_PAGE_DELAY_MS * 3, HUNDREDK_PAGE_JITTER_MS);
+      page++;
+      continue;
+    }
+    consecutiveErrors = 0;
+
+    if (!pageResult.data.length) break;
+
+    if (page === 1) {
+      apiReportedTotal = pageResult.total > 0 ? pageResult.total : 0;
+      console.log(
+        `[PaginationSync/100k] ${pageResult.total.toLocaleString()} orders (API), ${pageResult.last_page.toLocaleString()} sahifa`,
+      );
+      if (syncState.progress) syncState.progress.total = pageResult.last_page;
+    }
+    if (syncState.progress) syncState.progress.current = page;
+
+    const externalIds = pageResult.data.map((o) => String(o.id));
+    /** Align with `extractExternalOrderId` (100k API shape varies). */
+    const externalIdExpr = sql<string>`COALESCE(
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.id')), ''),
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.order_id')), ''),
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.data.id')), ''),
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.data.order_id')), ''),
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.data.data.id')), ''),
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.order.id')), ''),
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.body.id')), ''),
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.body.order_id')), ''),
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.body.data.id')), ''),
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.body.data.order_id')), ''),
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.body.data.data.id')), ''),
+      NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.body.order.id')), '')
+    )`;
+    try {
+      const matches = await db
+        .select({
+          orderId: orders.id,
+          orderUserId: orders.userId,
+          crmStatus: orders.crmStatus,
+          crmRawStatus: orders.crmRawStatus,
+          externalId: externalIdExpr,
+        })
+        .from(orders)
+        .innerJoin(integrations, eq(orders.integrationId, integrations.id))
+        .innerJoin(targetWebsites, eq(integrations.targetWebsiteId, targetWebsites.id))
+        .where(
+          and(
+            eq(targetWebsites.appKey, "100k"),
+            eq(orders.isFinal, false),
+            isNotNull(orders.responseData),
+            sql`${externalIdExpr} IN (${sql.join(
+              externalIds.map((id) => sql`${id}`),
+              sql`, `,
+            )})`,
+          ),
+        );
+
+      const hundredKMap = new Map(pageResult.data.map((o) => [String(o.id), o]));
+
+      for (const match of matches) {
+        const ho = hundredKMap.get(match.externalId);
+        if (!ho) continue;
+        const normalized = mapHundredKRawToNormalized(ho.status) as string;
+        const rawIncoming = String(ho.status ?? "");
+        const rawStored = String(match.crmRawStatus ?? "");
+        if (normalized === match.crmStatus && rawIncoming === rawStored) {
+          continue;
+        }
+
+        const terminal = isFinalStatus(normalized);
+        const statusChanged = normalized !== match.crmStatus;
+        await db
+          .update(orders)
+          .set({
+            crmStatus: normalized,
+            crmRawStatus: ho.status,
+            crmSyncedAt: new Date(),
+            ...(statusChanged ? { isFinal: terminal } : {}),
+          })
+          .where(eq(orders.id, match.orderId));
+        if (statusChanged) {
+          console.log(
+            `[PaginationSync/100k] orderId=${match.orderId}: ${match.crmStatus ?? "null"} → ${normalized}${terminal ? " [FINAL]" : ""}`,
+          );
+          void db
+            .insert(orderEvents)
+            .values({
+              orderId: match.orderId,
+              userId: match.orderUserId,
+              oldStatus: match.crmStatus ?? null,
+              newStatus: normalized,
+              source: "sync",
+            })
+            .catch(() => {});
+        }
+        synced++;
+      }
+    } catch (err) {
+      console.error(
+        `[PaginationSync/100k] DB error on page ${page}:`,
+        err instanceof Error ? err.message : err,
+      );
+      errors++;
+    }
+
+    pagesProcessed++;
+
+    // Periodic progress so a long backfill is visible in the logs without
+    // having to wait for status changes to fire the per-order line.
+    if (pagesProcessed % 25 === 0) {
+      console.log(
+        `[PaginationSync/100k] Progress page=${page}, oldestOnPage=${pageResult.data.at(-1)!.created_at}, synced=${synced}`,
+      );
+    }
+
+    const oldestOnPage = new Date(pageResult.data.at(-1)!.created_at);
+    if (oldestOnPage < stopBefore) {
+      console.log(
+        `[PaginationSync/100k] Stop boundary at page ${page} (oldest=${oldestOnPage.toISOString()}, stopBefore=${stopBefore.toISOString()}) — done`,
+      );
+      break;
+    }
+    if (page >= pageResult.last_page) break;
+    if (page >= HUNDREDK_MAX_PAGES_PER_CYCLE) {
+      console.warn(
+        `[PaginationSync/100k] Hit max-pages cap (${HUNDREDK_MAX_PAGES_PER_CYCLE}) at oldest=${oldestOnPage.toISOString()} — bailing for next cycle`,
+      );
+      break;
+    }
+    page++;
+
+    if (!syncState.aborted) {
+      await hundredKPagePause(HUNDREDK_PAGE_DELAY_MS, HUNDREDK_PAGE_JITTER_MS);
+    }
+  }
+
+  const scannedApprox =
+    apiReportedTotal > 0
+      ? apiReportedTotal
+      : pagesProcessed * HUNDREDK_FALLBACK_PAGE_ROWS;
+
+  const result: SyncResult = {
+    synced,
+    errors,
+    total: scannedApprox,
+    syncedAt: new Date().toISOString(),
+    message: `${pagesProcessed} sahifa (100k), ${synced} order yangilandi`,
+  };
+  console.log(`[PaginationSync/100k] Done — pages=${pagesProcessed} synced=${synced} errors=${errors}`);
+  return result;
+}
+
 // ─── Accounts ─────────────────────────────────────────────────────────────────
 
 export const crmRouter = router({
@@ -585,26 +971,33 @@ export const crmRouter = router({
   syncOrderStatuses: adminProcedure
     .input(z.object({ platform: z.enum(["sotuvchi", "100k"]).optional() }))
     .mutation(({ input }) => {
-      if (syncState.running) {
-        return { started: false, running: true, message: "Sync allaqachon ishlayapti..." };
+      const is100k = input.platform === "100k";
+      if (is100k) {
+        if (syncState.running100k) {
+          return { started: false, running: true, message: "100k sync allaqachon ishlayapti..." };
+        }
+      } else {
+        if (syncState.running) {
+          return { started: false, running: true, message: "Sotuvchi sync allaqachon ishlayapti..." };
+        }
       }
-      syncState.running = true;
+      if (!is100k) syncState.running = true;
+      else syncState.running100k = true;
       syncState.aborted = false;
       syncState.progress = null;
       syncState.lastResult = null;
-      // 100k.uz uses per-order status polling; Sotuvchi uses bulk pagination.
-      const job = input.platform === "100k"
-        ? performCrmSync(undefined, "100k")
-        : performPaginationSync();
+      const job = is100k ? performPaginationSync100k() : performPaginationSync();
       void job
         .then((r) => {
-          syncState.running = false;
+          if (!is100k) syncState.running = false;
+          else syncState.running100k = false;
           syncState.progress = null;
           syncState.lastResult = r;
         })
         .catch((err: unknown) => {
           console.error("[CrmSync] fatal error:", err);
-          syncState.running = false;
+          if (!is100k) syncState.running = false;
+          else syncState.running100k = false;
           syncState.progress = null;
           syncState.lastResult = {
             synced: 0, errors: 1, total: 0,
@@ -616,7 +1009,9 @@ export const crmRouter = router({
     }),
 
   stopSync: adminProcedure.mutation(() => {
-    if (!syncState.running) return { ok: false, message: "Sync ishlamayapti" };
+    if (!syncState.running && !syncState.running100k) {
+      return { ok: false, message: "Sync ishlamayapti" };
+    }
     syncState.aborted = true;
     console.log("[CrmSync] Stop requested by admin");
     return { ok: true };
@@ -626,6 +1021,7 @@ export const crmRouter = router({
 
   getSyncStatus: adminProcedure.query(() => ({
     running: syncState.running,
+    running100k: syncState.running100k,
     aborted: syncState.aborted,
     progress: syncState.progress,
     lastResult: syncState.lastResult,

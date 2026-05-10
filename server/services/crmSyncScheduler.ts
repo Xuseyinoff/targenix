@@ -2,8 +2,8 @@
  * crmSyncScheduler.ts
  *
  * Two independent sync loops running in parallel:
- *   Sotuvchi — bulk pagination (200 orders/page, ~225 pages, ≈3 min/cycle). Every 5 min.
- *   100k.uz  — per-order status polling. Every 3 min.
+ *   Sotuvchi — bulk pagination (200 orders/page). Every 5 min.
+ *   100k.uz  — advertiser-orders list pagination (~20/page, 2s between pages). Every 5 min.
  *
  * Each loop owns its own running flag so they never block each other.
  *
@@ -12,11 +12,15 @@
  *   server/_core/index.ts          (embedded worker when START_WORKER=true)
  */
 
-import { performPaginationSync, performCrmSync, syncState } from "../routers/crmRouter";
+import {
+  performPaginationSync,
+  performPaginationSync100k,
+  syncState,
+} from "../routers/crmRouter";
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const INITIAL_DELAY_MS = 60 * 1000;
-const HUNDREDK_INTERVAL_MS = 3 * 60 * 1000;
+const HUNDREDK_INTERVAL_MS = 5 * 60 * 1000;
 const HUNDREDK_INITIAL_DELAY_MS = 90 * 1000;
 
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -79,9 +83,13 @@ async function run100kSync(): Promise<void> {
   syncState.running100k = true;
   syncState.aborted = false;
   try {
-    const result = await performCrmSync(undefined, "100k");
+    const result = await performPaginationSync100k();
     syncState.lastResult = result;
-    console.log(`[CrmSyncScheduler/100k] Done — synced=${result.synced} errors=${result.errors}`);
+    console.log(
+      `[CrmSyncScheduler/100k] Done — synced=${result.synced} errors=${result.errors}` +
+        (result.message ? ` — ${result.message}` : "") +
+        (result.total ? ` (API~rows ${result.total})` : ""),
+    );
   } catch (err) {
     console.error("[CrmSyncScheduler/100k] Sync failed:", err instanceof Error ? err.message : err);
   } finally {
@@ -102,7 +110,7 @@ export function startCrmSyncScheduler(): void {
   if (schedulerTimer !== null) return; // idempotent
 
   console.log(
-    `[CrmSyncScheduler] Starting — Sotuvchi in ${INITIAL_DELAY_MS / 1000}s every ${SYNC_INTERVAL_MS / 60000}min; 100k.uz in ${HUNDREDK_INITIAL_DELAY_MS / 1000}s every ${HUNDREDK_INTERVAL_MS / 60000}min`,
+    `[CrmSyncScheduler] Starting — Sotuvchi in ${INITIAL_DELAY_MS / 1000}s every ${SYNC_INTERVAL_MS / 60000}min; 100k (pagination) in ${HUNDREDK_INITIAL_DELAY_MS / 1000}s every ${HUNDREDK_INTERVAL_MS / 60000}min`,
   );
 
   schedulerTimer = setTimeout(() => {

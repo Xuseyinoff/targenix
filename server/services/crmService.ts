@@ -3,6 +3,9 @@ import {
   mapHundredKRawToNormalized,
   mapSotuvchiRawToNormalized,
 } from "../../shared/crmStatuses";
+import { extractExternalOrderId } from "../../shared/extractExternalOrderId";
+
+export { extractExternalOrderId };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export interface LoginResult {
@@ -174,6 +177,50 @@ async function hundredKGetOrderStatus(
   };
 }
 
+/**
+ * Bulk advertiser order list (admin.100k.uz parity).
+ * Default `lead_source_grouped=in_progress` matches the web UI funnel bucket.
+ *
+ * The User-Agent below intentionally mimics admin.100k.uz's own dashboard
+ * traffic — keeps our calls from standing out in their logs as a bot run.
+ */
+export async function hundredKGetAdvertiserOrdersPage(
+  bearerToken: string,
+  profileId: string,
+  page: number,
+  leadSourceGrouped = "in_progress",
+): Promise<OrderPageResult> {
+  const res = await axios.get(`${HUNDREDK_BASE}/users/${profileId}/advertiser-orders`, {
+    params: {
+      profile_id: profileId,
+      page,
+      lead_source_grouped: leadSourceGrouped,
+    },
+    headers: {
+      Authorization: `Bearer ${bearerToken}`,
+      Accept: "application/json",
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      Referer: "https://admin.100k.uz/",
+      Origin: "https://admin.100k.uz",
+    },
+    timeout: 45_000,
+  });
+
+  const rows = res.data?.data ?? [];
+  const meta = res.data?.meta ?? {};
+  return {
+    data: (rows as Record<string, unknown>[]).map((item) => ({
+      id: Number(item.id),
+      status: String(item.status ?? ""),
+      created_at: String(item.created_at ?? ""),
+    })),
+    current_page: Number(meta.current_page ?? page),
+    last_page: Number(meta.last_page ?? page),
+    total: Number(meta.total ?? 0),
+  };
+}
+
 // ─── Unified adapter interface ────────────────────────────────────────────────
 export type Platform = "sotuvchi" | "100k";
 
@@ -196,14 +243,3 @@ export async function crmGetOrderStatus(
   return hundredKGetOrderStatus(bearerToken, orderId, platformUserId);
 }
 
-/**
- * Extracts the external order ID from an order's responseData JSON.
- * Sotuvchi: { ok: "true", id: 694147 }
- * 100k.uz:  { data: { id: "abc" } } or { id: "abc" }
- */
-export function extractExternalOrderId(responseData: unknown): string | null {
-  if (!responseData || typeof responseData !== "object") return null;
-  const d = responseData as Record<string, unknown>;
-  const id = d.id ?? (d.data as Record<string, unknown> | undefined)?.id;
-  return id != null ? String(id) : null;
-}
