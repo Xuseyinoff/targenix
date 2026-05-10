@@ -25,6 +25,7 @@ import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { LeadPipelineBadge, OrderIntegrationBadge } from "@/components/leads/PipelineBadges";
 import { useBackToLeads } from "@/hooks/useBackToLeads";
+import { extractExternalOrderId } from "@shared/extractExternalOrderId";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -434,7 +435,12 @@ export default function LeadDetail() {
             </div>
           ) : (
             <div className="space-y-2.5">
-              {orders.map(order => (
+              {orders.map((order) => {
+                const platformOrderId =
+                  (order.status as string) === "SENT"
+                    ? extractExternalOrderId(order.responseData as unknown)
+                    : null;
+                return (
                 <Card
                   key={order.id}
                   className={`rounded-2xl ${(order.status as string) === "FAILED" ? "border-destructive/40" : ""}`}
@@ -488,6 +494,12 @@ export default function LeadDetail() {
                           Attempts {order.attempts as number}×
                         </span>
                       )}
+                      {platformOrderId && (
+                        <span className="flex items-center gap-1 font-mono text-foreground/80" title="Platform buyurtma ID">
+                          <Link2 className="h-3 w-3 shrink-0 text-muted-foreground" />
+                          {platformOrderId}
+                        </span>
+                      )}
                     </div>
 
                     {order.responseData && (
@@ -498,7 +510,8 @@ export default function LeadDetail() {
                     )}
                   </CardContent>
                 </Card>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

@@ -4,6 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { trpc } from "@/lib/trpc";
 import { CANONICAL_CRM_STATUS_ORDER } from "@shared/crmStatuses";
+import { extractExternalOrderId } from "@shared/extractExternalOrderId";
 import {
   ClipboardList,
   RefreshCw,
@@ -75,13 +76,6 @@ function timeAgo(date: Date | string | null | undefined): string {
   if (diff < 3600) return `${Math.floor(diff / 60)}m oldin`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}s oldin`;
   return `${Math.floor(diff / 86400)}k oldin`;
-}
-
-function extractExternalId(responseData: unknown): string | null {
-  if (!responseData || typeof responseData !== "object") return null;
-  const d = responseData as Record<string, unknown>;
-  const id = d.id ?? (d.data as Record<string, unknown> | undefined)?.id;
-  return id != null ? String(id) : null;
 }
 
 const INTEGRATION_COL_W = "8rem"; // fixed column width — tableLayout otherwise expands cell and marquee never triggers
@@ -324,7 +318,7 @@ export default function AdminCrmOrders() {
                   </tr>
                 ) : (
                   items.map((row) => {
-                    const externalId = extractExternalId(row.responseData);
+                    const externalId = extractExternalOrderId(row.responseData);
                     return (
                       <tr
                         key={row.orderId}
