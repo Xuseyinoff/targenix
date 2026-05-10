@@ -341,7 +341,7 @@ export function WizardActionPickerModal({
 
   // Click routing ─────────────────────────────────────────────────────────
 
-  const useConnection = async (
+  const createDestinationFromConnection = async (
     connectionId: number,
     rowId: string,
     nameHint: string,
@@ -367,7 +367,7 @@ export function WizardActionPickerModal({
     if (busyRow) return;
 
     if (entry.kind === "connection") {
-      void useConnection(entry.connectionId, entry.id, entry.name);
+      void createDestinationFromConnection(entry.connectionId, entry.id, entry.name);
       return;
     }
 

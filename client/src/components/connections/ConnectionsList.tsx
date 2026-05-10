@@ -8,7 +8,7 @@
  *  • Connection detail sheet — health check history, usage list, re-verify
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -475,9 +475,10 @@ function ConnectionDetailSheet({
     onError: (err) => toast.error(err.message),
   });
 
-  if (!row) return null;
-
-  const { data: apps = [] } = trpc.apps.list.useQuery(undefined, { staleTime: 5 * 60 * 1000 });
+  const { data: apps = [] } = trpc.apps.list.useQuery(undefined, {
+    staleTime: 5 * 60 * 1000,
+    enabled: !!row,
+  });
   const appByKey = useMemo(() => {
     const m = new Map<string, AppMeta>();
     for (const a of apps) {
@@ -485,6 +486,8 @@ function ConnectionDetailSheet({
     }
     return m;
   }, [apps]);
+
+  if (!row) return null;
 
   const v   = visualFor(row, appByKey);
   const h   = healthFor(row);
@@ -620,7 +623,9 @@ function HealthLogRow({ log }: { log: HealthLog }) {
 function RenameConnectionDialog({ target, onClose }: { target: ConnectionRow | null; onClose: () => void }) {
   const utils = trpc.useUtils();
   const [value, setValue] = useState("");
-  useMemo(() => { if (target) setValue(target.displayName); }, [target]);
+  useEffect(() => {
+    if (target) setValue(target.displayName);
+  }, [target]);
 
   const mutation = trpc.connections.rename.useMutation({
     onSuccess: () => { toast.success("Connection renamed"); utils.connections.list.invalidate(); onClose(); },

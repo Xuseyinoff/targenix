@@ -137,31 +137,12 @@ export function MapToggleWrapper({
   );
   const hasVariables = groups.length > 0 && groups.some((g) => g.variables.length > 0);
 
-  // Hidden completely when either the manifest hasn't opted in or the host
-  // hasn't supplied variables — zero visual change for every existing form.
-  if (!field.mappable || !hasVariables) {
-    return <>{children}</>;
-  }
-
   const stringValue = typeof value === "string" ? value : "";
 
-  const insertVariable = (variableKey: string) => {
-    const token = `{{${variableKey}}}`;
-    // If the current value is empty, just drop the token in. Otherwise
-    // append with a single space so "Hello " + {{name}} reads naturally.
-    const sep =
-      stringValue.length === 0 || /\s$/.test(stringValue) ? "" : " ";
-    onChange(`${stringValue}${sep}${token}`);
-  };
-
-  // Extract tokens present in the current value — rendered as chips below
-  // the input so the user can see their wiring without reading the raw
-  // string. Deduplicated so "a={{x}}&b={{x}}" shows one chip, not two.
+  // Extract tokens present in the current value — must run unconditionally (Rules of Hooks).
   const activeTokens = React.useMemo(() => {
     const flat = flattenVariables(availableVariables);
     const out = new Map<string, { key: string; label: string }>();
-    // Array-ified to avoid the --downlevelIteration requirement on the
-    // RegExpStringIterator returned by matchAll on older TS lib targets.
     const matches = Array.from(stringValue.matchAll(TOKEN_RE));
     for (const match of matches) {
       const k = match[1];
@@ -171,6 +152,21 @@ export function MapToggleWrapper({
     }
     return Array.from(out.values());
   }, [stringValue, availableVariables]);
+
+  // Hidden completely when either the manifest hasn't opted in or the host
+  // hasn't supplied variables — zero visual change for every existing form.
+  if (!field.mappable || !hasVariables) {
+    return <>{children}</>;
+  }
+
+  const insertVariable = (variableKey: string) => {
+    const token = `{{${variableKey}}}`;
+    // If the current value is empty, just drop the token in. Otherwise
+    // append with a single space so "Hello " + {{name}} reads naturally.
+    const sep =
+      stringValue.length === 0 || /\s$/.test(stringValue) ? "" : " ";
+    onChange(`${stringValue}${sep}${token}`);
+  };
 
   const clearToken = (tokenKey: string) => {
     const tokenRe = new RegExp(`\\s*\\{\\{\\s*${tokenKey}\\s*\\}\\}`, "g");
