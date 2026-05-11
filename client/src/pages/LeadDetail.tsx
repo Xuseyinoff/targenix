@@ -124,7 +124,6 @@ function MarketingRow({ label, value }: { label: string; value?: string | null }
 
 function IntegrationIcon({ type }: { type: string | null }) {
   if (type === "TELEGRAM") return <MessageSquare className="h-4 w-4 text-blue-500" />;
-  if (type === "AFFILIATE") return <Link2 className="h-4 w-4 text-purple-500" />;
   if (type === "LEAD_ROUTING") return <Send className="h-4 w-4 text-orange-500" />;
   return <Zap className="h-4 w-4 text-muted-foreground" />;
 }

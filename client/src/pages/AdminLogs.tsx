@@ -40,8 +40,7 @@ type LogCategory =
   | "SYSTEM"
   | "HTTP"
   | "FACEBOOK"
-  | "TELEGRAM"
-  | "AFFILIATE";
+  | "TELEGRAM";
 type LogType = "USER" | "SYSTEM";
 
 const PAGE_SIZE = 50;
@@ -73,7 +72,6 @@ const CATEGORY_COLORS: Record<LogCategory, string> = {
   HTTP: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300",
   FACEBOOK: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
   TELEGRAM: "bg-sky-100 text-sky-700 dark:bg-sky-900/30 dark:text-sky-300",
-  AFFILIATE: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300",
 };
 
 const EVENT_TYPE_COLORS: Record<string, string> = {
@@ -314,7 +312,6 @@ export default function AdminLogs() {
               <SelectItem value="HTTP">HTTP</SelectItem>
               <SelectItem value="FACEBOOK">FACEBOOK</SelectItem>
               <SelectItem value="TELEGRAM">TELEGRAM</SelectItem>
-              <SelectItem value="AFFILIATE">AFFILIATE</SelectItem>
               <SelectItem value="SYSTEM">SYSTEM</SelectItem>
             </SelectContent>
           </Select>
