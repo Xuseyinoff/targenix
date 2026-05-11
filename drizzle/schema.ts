@@ -1122,3 +1122,101 @@ export const workflowStepExecutions = mysqlTable("workflow_step_executions", {
 
 export type WorkflowStepExecution       = typeof workflowStepExecutions.$inferSelect;
 export type InsertWorkflowStepExecution = typeof workflowStepExecutions.$inferInsert;
+
+// ─── Integration Health (Circuit Breaker state) ──────────────────────────────
+// Per-destination circuit breaker state. Keyed on (integrationId, destinationId)
+// so multi-destination fan-out integrations can have independent breakers — one
+// flaky destination does not block its siblings.
+//
+// State machine: CLOSED → OPEN (cooldown) → HALF_OPEN (limited probes) → CLOSED.
+// `cooldownLevel` indexes into `CIRCUIT_POLICY[errorType].cooldownLadder` for
+// exponential back-off after repeated re-opens.
+//
+// destinationId=0 means "whole integration" (legacy / non-fan-out orders).
+// Phase 0 = shadow mode — written on every delivery outcome but not yet
+// enforced in the scheduler claim.
+export const integrationHealth = mysqlTable("integration_health", {
+  id:             int("id").autoincrement().primaryKey(),
+  integrationId:  int("integrationId").notNull(),
+  /** 0 = whole integration (legacy / single-dest). >0 = specific integration_destinations row. */
+  destinationId:  int("destinationId").default(0).notNull(),
+  /** CLOSED | OPEN | HALF_OPEN */
+  state:          mysqlEnum("state", ["CLOSED", "OPEN", "HALF_OPEN"]).default("CLOSED").notNull(),
+
+  /** Tumbling-window counters. Reset whenever now - windowStartedAt > policy.windowMs. */
+  windowStartedAt: timestamp("windowStartedAt"),
+  windowFailures:  int("windowFailures").default(0).notNull(),
+  windowSuccesses: int("windowSuccesses").default(0).notNull(),
+
+  /** Streak counters for fast-trip on consecutive failures. */
+  consecutiveFailures:  int("consecutiveFailures").default(0).notNull(),
+  consecutiveSuccesses: int("consecutiveSuccesses").default(0).notNull(),
+
+  /** OPEN-state bookkeeping. */
+  openedAt:       timestamp("openedAt"),
+  cooldownUntil:  timestamp("cooldownUntil"),
+  /** Index into CIRCUIT_POLICY[errorType].cooldownLadder. Increments on re-open. */
+  cooldownLevel:  int("cooldownLevel").default(0).notNull(),
+
+  /** Diagnostics for the most recent trip. */
+  lastErrorType:    varchar("lastErrorType", { length: 32 }),
+  lastErrorMessage: varchar("lastErrorMessage", { length: 500 }),
+  /** "consecutive" | "rate_limited" | "auth_persistent" | "manual" | … */
+  lastTripReason:   varchar("lastTripReason", { length: 64 }),
+
+  /** HALF_OPEN budget tracking. */
+  halfOpenAttempts:  int("halfOpenAttempts").default(0).notNull(),
+  halfOpenSuccesses: int("halfOpenSuccesses").default(0).notNull(),
+
+  /** Admin override — 'OPEN' (force-pause) | 'CLOSED' (force-bypass) | null. */
+  manualLock:        mysqlEnum("manualLock", ["OPEN", "CLOSED"]),
+  manualLockSetBy:   varchar("manualLockSetBy", { length: 128 }),
+  manualLockReason:  text("manualLockReason"),
+  manualLockSetAt:   timestamp("manualLockSetAt"),
+
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  /** One row per (integration, destination) — upsert target. */
+  uqDest:   uniqueIndex("uq_integration_health_dest").on(t.integrationId, t.destinationId),
+  /** Scheduler claim JOIN — filter by state + cooldown expiry. */
+  idxState: index("idx_integration_health_state").on(t.state, t.cooldownUntil),
+}));
+
+export type IntegrationHealth       = typeof integrationHealth.$inferSelect;
+export type InsertIntegrationHealth = typeof integrationHealth.$inferInsert;
+
+// ─── Integration Health Events (immutable audit log) ─────────────────────────
+// Append-only history of every CB state transition + probe outcome. Powers
+// the "why did this destination open 3h ago?" admin view and post-incident
+// forensics. Survives parent row deletion (audit must outlive entity).
+export const integrationHealthEvents = mysqlTable("integration_health_events", {
+  id:             int("id").autoincrement().primaryKey(),
+  integrationId:  int("integrationId").notNull(),
+  destinationId:  int("destinationId").default(0).notNull(),
+  /**
+   * 'opened' | 'half_opened' | 'closed' | 'probe_sent' | 'probe_succeeded' |
+   * 'probe_failed' | 'manual_open' | 'manual_close' | 'manual_reset' |
+   * 'shadow_would_block' | 'shadow_would_allow'
+   *
+   * `shadow_*` events are Phase 0-only — emitted by the scheduler when CB
+   * would have made a different decision than the legacy retry path.
+   */
+  eventType:      varchar("eventType", { length: 32 }).notNull(),
+  fromState:      varchar("fromState", { length: 16 }),
+  toState:        varchar("toState", { length: 16 }),
+  /** Short human-readable cause: "5 consecutive network errors", "manual unblock by admin#3" */
+  reason:         varchar("reason", { length: 256 }),
+  errorType:      varchar("errorType", { length: 32 }),
+  /** Free-form structured context (window counters, retry-after header, order id, etc.) */
+  metadata:       json("metadata"),
+  createdAt:      timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  /** Per-destination timeline — primary access pattern (admin history view). */
+  idxDestTime:  index("idx_ih_events_dest_time").on(t.integrationId, t.destinationId, t.createdAt),
+  /** Event-type filter for cross-destination ops queries ("all opens in last 24h"). */
+  idxTypeTime:  index("idx_ih_events_type_time").on(t.eventType, t.createdAt),
+}));
+
+export type IntegrationHealthEvent       = typeof integrationHealthEvents.$inferSelect;
+export type InsertIntegrationHealthEvent = typeof integrationHealthEvents.$inferInsert;

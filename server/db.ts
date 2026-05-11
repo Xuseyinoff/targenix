@@ -52,11 +52,32 @@ export async function getDb() {
       try {
         // Force UTF-8 end-to-end to avoid mojibake when storing non-Latin lead fields.
         // MySQL server defaults (and some dumps) can fall back to latin1 unless explicitly set.
+        //
+        // `timezone: 'Z'` pins the client to UTC: JS Dates are serialized as
+        // UTC wall-clock strings, and TIMESTAMP columns are parsed back as
+        // UTC. Without this, mysql2's default 'local' setting combined with a
+        // server session TZ of UTC (Railway's MySQL default + most local
+        // installs) produces a shift equal to the host's UTC offset on every
+        // write — silently corrupting any code that does `cooldownUntil <=
+        // NOW()`-style server-side comparisons (see circuitBreaker.ts).
+        // Internally MySQL stores TIMESTAMPs as UTC ms regardless of session
+        // TZ, so this change preserves the absolute moment of existing data.
         _pool = mysql.createPool({
           uri: url,
           charset: "utf8mb4",
+          timezone: "Z",
           // Keep behavior predictable across environments.
           decimalNumbers: true,
+        });
+        // Pin every pooled connection's MySQL SESSION timezone to UTC. Without
+        // this, `SET time_zone='SYSTEM'` lets the server interpret the UTC
+        // wall-clock strings we send (because of `timezone: 'Z'` above) as
+        // local-system-TZ — silently shifting stored TIMESTAMPs by the host's
+        // offset. Setting it once per connection keeps client + server
+        // aligned, which is the only configuration where server-side
+        // expressions like `cooldownUntil <= NOW()` are reliable.
+        _pool.on("connection", (connection: { query: (sql: string) => void }) => {
+          connection.query("SET time_zone='+00:00'");
         });
         _db = drizzle(_pool);
         // Verify the pool actually reaches the server — createPool/drizzle are lazy.

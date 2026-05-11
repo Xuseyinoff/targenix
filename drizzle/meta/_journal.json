@@ -442,6 +442,13 @@
       "when": 1778889600000,
       "tag": "0066_drop_google_oauth_states",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "5",
+      "when": 1778947200000,
+      "tag": "0067_circuit_breaker",
+      "breakpoints": true
     }
   ]
 }
