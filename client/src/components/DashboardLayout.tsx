@@ -29,9 +29,9 @@ import {
   BarChart3,
   Bell,
   ChevronDown,
-  Facebook,
   Globe,
   LayoutDashboard,
+  Link2,
   LogOut,
   MonitorCheck,
   Moon,
@@ -80,7 +80,7 @@ function buildNavGroups(t: (k: string) => string, isAdmin = false): NavGroup[] {
     {
       label: t("nav.facebook"),
       items: [
-        { icon: Facebook, label: t("nav.connections"), path: "/connections" },
+        { icon: Link2, label: t("nav.connections"), path: "/connections" },
         { icon: Plug, label: t("nav.integrations"), path: "/integrations" },
       ],
     },
