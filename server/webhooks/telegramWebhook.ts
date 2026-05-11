@@ -17,7 +17,57 @@ import { log } from "../services/appLogger";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET ?? "";
 
-/** Send a Telegram message via Bot API */
+// ─── Rate limiting ─────────────────────────────────────────────────────────
+//
+// Telegram's documented limits:
+//   - Per chat: 1 message/sec sustained (bursts of 1)
+//   - Per bot:  ~30 messages/sec
+//   - Group chats: relaxed slightly but still ~20 msg/min for sustained
+//
+// Without local enforcement we hit 429 and the bot library has no built-in
+// backoff — the Railway logs show "retry after 41" loops happening every
+// few seconds. With these buckets we self-regulate before Telegram has to.
+//
+// Implementation: simple lazy token buckets keyed by chatId + a global one
+// for the bot. Each send waits until both buckets have a token. On 429 we
+// also respect Telegram's `retry_after` field (a one-shot retry after the
+// suggested wait).
+
+const PER_CHAT_REFILL_INTERVAL_MS = 1_000;  // 1 token/sec per chat
+const GLOBAL_REFILL_INTERVAL_MS = Math.floor(1_000 / 25);  // ~25/sec global (under Telegram's 30 cap)
+const MAX_RETRY_AFTER_MS = 60_000;  // hard cap: never wait > 1 minute for a single send
+const MAX_429_RETRIES = 1;          // one one-shot retry; if Telegram still says no, give up
+
+const chatBuckets = new Map<string, { availableAt: number }>();
+let globalAvailableAt = 0;
+
+async function waitForTokens(chatKey: string): Promise<void> {
+  const now = Date.now();
+  const chatBucket = chatBuckets.get(chatKey) ?? { availableAt: 0 };
+  const chatWait = Math.max(0, chatBucket.availableAt - now);
+  const globalWait = Math.max(0, globalAvailableAt - now);
+  const wait = Math.max(chatWait, globalWait);
+
+  if (wait > 0) {
+    await new Promise((r) => setTimeout(r, wait));
+  }
+
+  const after = Date.now();
+  chatBuckets.set(chatKey, { availableAt: after + PER_CHAT_REFILL_INTERVAL_MS });
+  globalAvailableAt = after + GLOBAL_REFILL_INTERVAL_MS;
+
+  // Naive eviction: when the map gets large, drop entries whose availableAt
+  // is well in the past (no longer rate-limit-bound). Keeps memory bounded
+  // when the bot talks to many chats over a long-running process.
+  if (chatBuckets.size > 500) {
+    const cutoff = after - 60_000;
+    for (const [k, v] of Array.from(chatBuckets.entries())) {
+      if (v.availableAt < cutoff) chatBuckets.delete(k);
+    }
+  }
+}
+
+/** Send a Telegram message via Bot API, respecting per-chat + global rate limits. */
 export async function sendTelegramMessage(
   chatId: string | number,
   text: string,
@@ -27,22 +77,57 @@ export async function sendTelegramMessage(
     await log.warn("TELEGRAM", "TELEGRAM_BOT_TOKEN not set — skipping message", { chatId });
     return false;
   }
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: parseMode }),
-    });
-    const data = (await res.json()) as { ok: boolean; description?: string };
-    if (!data.ok) {
+
+  const chatKey = String(chatId);
+  for (let attempt = 0; attempt <= MAX_429_RETRIES; attempt++) {
+    await waitForTokens(chatKey);
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text, parse_mode: parseMode }),
+      });
+      const data = (await res.json()) as {
+        ok: boolean;
+        description?: string;
+        parameters?: { retry_after?: number };
+      };
+      if (data.ok) return true;
+
+      // Telegram puts the suggested cooldown in `parameters.retry_after`
+      // (seconds). We respect it once — burning a 41-sec wait beats the
+      // alternative of retrying every couple of seconds and being told the
+      // same thing 10 times in a row (which is what the logs were showing).
+      const retryAfterSec = data.parameters?.retry_after;
+      if (retryAfterSec != null && attempt < MAX_429_RETRIES) {
+        const waitMs = Math.min(retryAfterSec * 1000, MAX_RETRY_AFTER_MS);
+        await log.warn(
+          "TELEGRAM",
+          `sendMessage 429 — waiting ${Math.round(waitMs / 1000)}s before retry`,
+          { chatId, retryAfterSec },
+        );
+        // Park BOTH buckets for the cooldown so concurrent sends don't pile on.
+        const parkUntil = Date.now() + waitMs;
+        chatBuckets.set(chatKey, { availableAt: parkUntil });
+        globalAvailableAt = Math.max(globalAvailableAt, parkUntil);
+        await new Promise((r) => setTimeout(r, waitMs));
+        continue;
+      }
+
       await log.error("TELEGRAM", `sendMessage failed: ${data.description}`, { chatId });
       return false;
+    } catch (err) {
+      await log.error("TELEGRAM", "sendMessage threw", { chatId, error: String(err) });
+      return false;
     }
-    return true;
-  } catch (err) {
-    await log.error("TELEGRAM", "sendMessage threw", { chatId, error: String(err) });
-    return false;
   }
+  return false;
+}
+
+// Exposed for tests + ops debugging.
+export function _resetTelegramBuckets(): void {
+  chatBuckets.clear();
+  globalAvailableAt = 0;
 }
 
 /** Register the Telegram bot webhook URL with Telegram servers */

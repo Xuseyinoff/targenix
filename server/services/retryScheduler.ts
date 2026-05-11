@@ -163,37 +163,89 @@ function msUntilNextHour(): number {
   return next.getTime() - now.getTime();
 }
 
-let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
+let hourlyTimer: ReturnType<typeof setTimeout> | null = null;
+let orderTickTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Per-minute tick cadence for the order-delivery retry loop. */
+const ORDER_TICK_INTERVAL_MS = 60 * 1000;
+/**
+ * Cap on orders processed per minute tick. Picked so a 1k-order queue
+ * drains in ~30 minutes and steady-state load on partner APIs stays well
+ * below burst limits. Override via env when ramping up.
+ */
+const ORDER_TICK_BATCH = Math.max(
+  1,
+  Math.floor(Number(process.env.RETRY_ORDER_TICK_BATCH ?? 30)),
+);
 
 /**
- * Start the hourly scheduler (top of each hour). Safe to call once at process boot.
+ * Start the retry scheduler. Two cadences:
+ *
+ *   1. **Per-minute** order tick — drains the `orders.nextRetryAt <= NOW()`
+ *      queue in small batches. Smooth pressure on partner APIs (no
+ *      top-of-hour spike) and the CB gate gets fast feedback when a
+ *      destination flips from OPEN to HALF_OPEN.
+ *
+ *   2. **Hourly** lead-pipeline tick — Graph error re-enrichment + stuck
+ *      PENDING leads. Low-volume and OK to batch, so we keep the old
+ *      cadence for these.
+ *
+ * Safe to call once at process boot.
  */
 export function startRetryScheduler(): void {
-  if (schedulerTimer !== null) return;
+  if (orderTickTimer !== null) return;
 
-  const scheduleNext = () => {
+  // 1. Order retry tick (per-minute, small batch)
+  console.log(
+    `[RetryScheduler] Starting per-minute order tick (batch=${ORDER_TICK_BATCH})`,
+  );
+  orderTickTimer = setInterval(() => {
+    void retryDueFailedOrders({ limit: ORDER_TICK_BATCH }).catch((err: unknown) =>
+      console.error("[RetryScheduler] Order tick failed:", err),
+    );
+  }, ORDER_TICK_INTERVAL_MS);
+  (orderTickTimer as unknown as { unref?: () => void })?.unref?.();
+
+  // 2. Hourly lead-pipeline tick (graph + stuck pending)
+  const scheduleHourly = () => {
     const delay = msUntilNextHour();
     const nextRun = new Date(Date.now() + delay);
     console.log(
-      `[RetryScheduler] Next hourly job at ${nextRun.toISOString()} (in ${Math.round(delay / 60000)} min)`,
+      `[RetryScheduler] Next hourly lead-pipeline tick at ${nextRun.toISOString()} (in ${Math.round(delay / 60000)} min)`,
     );
 
-    schedulerTimer = setTimeout(() => {
-      void retryAllFailedLeads().catch((err: unknown) =>
-        console.error("[RetryScheduler] Hourly retry job failed:", err),
-      );
-      schedulerTimer = null;
-      scheduleNext();
+    hourlyTimer = setTimeout(() => {
+      void (async () => {
+        const graph = await retryGraphErrorLeads().catch((err: unknown) => {
+          console.error("[RetryScheduler] graph-error tick failed:", err);
+          return { retried: 0 };
+        });
+        const stuck = await retryStuckPendingLeads().catch((err: unknown) => {
+          console.error("[RetryScheduler] stuck-pending tick failed:", err);
+          return { retried: 0 };
+        });
+        if (graph.retried > 0 || stuck.retried > 0) {
+          console.log(
+            `[RetryScheduler] Hourly lead-pipeline summary — graph errors: ${graph.retried}, stuck pending: ${stuck.retried}`,
+          );
+        }
+      })();
+      hourlyTimer = null;
+      scheduleHourly();
     }, delay);
   };
 
-  scheduleNext();
+  scheduleHourly();
 }
 
 export function stopRetryScheduler(): void {
-  if (schedulerTimer !== null) {
-    clearTimeout(schedulerTimer);
-    schedulerTimer = null;
+  if (orderTickTimer !== null) {
+    clearInterval(orderTickTimer);
+    orderTickTimer = null;
+  }
+  if (hourlyTimer !== null) {
+    clearTimeout(hourlyTimer);
+    hourlyTimer = null;
   }
 }
 
