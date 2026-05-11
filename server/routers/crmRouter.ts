@@ -6,6 +6,7 @@ import {
   orders,
   leads,
   integrations,
+  integrationDestinations,
   targetWebsites,
   orderEvents,
   users,
@@ -926,6 +927,17 @@ export const crmRouter = router({
       const db = await getDb();
       if (!db) return { items: [], total: 0 };
 
+      // Resolve targetWebsiteId per order:
+      //   – Multi-destination orders carry `orders.destinationId` →
+      //     `integration_destinations.targetWebsiteId` (fan-out path).
+      //   – Legacy single-destination orders only have
+      //     `integrations.targetWebsiteId` (old path).
+      // COALESCE picks whichever is set. The INNER JOIN on target_websites
+      // then drops any order whose target_website was hard-deleted (visible
+      // as "orphan" in the diagnostic — these need a separate UI affordance
+      // if we ever want them shown, since their appKey is unknowable here).
+      const twJoinExpr = sql`${targetWebsites.id} = COALESCE(${integrationDestinations.targetWebsiteId}, ${integrations.targetWebsiteId})`;
+
       const where = and(
         eq(orders.status, "SENT"),
         isNotNull(orders.responseData),
@@ -957,8 +969,12 @@ export const crmRouter = router({
           })
           .from(orders)
           .innerJoin(leads, eq(orders.leadId, leads.id))
-          .innerJoin(integrations, eq(orders.integrationId, integrations.id))
-          .innerJoin(targetWebsites, eq(integrations.targetWebsiteId, targetWebsites.id))
+          .leftJoin(integrations, eq(orders.integrationId, integrations.id))
+          .leftJoin(
+            integrationDestinations,
+            eq(orders.destinationId, integrationDestinations.id),
+          )
+          .innerJoin(targetWebsites, twJoinExpr)
           .where(where)
           .orderBy(desc(orders.createdAt))
           .limit(input.limit)
@@ -966,8 +982,12 @@ export const crmRouter = router({
         db
           .select({ total: sql<number>`COUNT(*)` })
           .from(orders)
-          .innerJoin(integrations, eq(orders.integrationId, integrations.id))
-          .innerJoin(targetWebsites, eq(integrations.targetWebsiteId, targetWebsites.id))
+          .leftJoin(integrations, eq(orders.integrationId, integrations.id))
+          .leftJoin(
+            integrationDestinations,
+            eq(orders.destinationId, integrationDestinations.id),
+          )
+          .innerJoin(targetWebsites, twJoinExpr)
           .where(where),
       ]);
 
