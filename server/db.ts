@@ -75,6 +75,15 @@ export async function getDb() {
   return _db;
 }
 
+/** Close MySQL pool so CLI scripts exit immediately (pool keeps Node alive otherwise). */
+export async function closeDb(): Promise<void> {
+  if (_pool) {
+    await _pool.end();
+    _pool = null;
+    _db = null;
+  }
+}
+
 export type DbClient = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 
 // ─── Users ────────────────────────────────────────────────────────────────────
