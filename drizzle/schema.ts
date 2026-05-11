@@ -750,6 +750,13 @@ export const webhookEvents = mysqlTable("webhook_events", {
   id: int("id").autoincrement().primaryKey(),
   eventType: varchar("eventType", { length: 64 }).notNull(),
   payload: json("payload").notNull(),
+  /**
+   * Facebook X-Hub-Signature-256 header. Used as the idempotency key for
+   * webhook retries — Facebook signs each request uniquely (HMAC of body +
+   * app secret), so any retry of the same payload carries the same value.
+   * MySQL unique index permits multiple NULL rows, so unsigned events
+   * (test payloads, legacy rows) still insert freely.
+   */
   signature: varchar("signature", { length: 128 }),
   verified: boolean("verified").default(false).notNull(),
   processed: boolean("processed").default(false).notNull(),
@@ -758,6 +765,13 @@ export const webhookEvents = mysqlTable("webhook_events", {
 }, (t) => ({
   // Speeds up ORDER BY createdAt DESC LIMIT ? on Webhook Health page
   idxCreatedAt: index("idx_webhook_events_created_at").on(t.createdAt),
+  /**
+   * Idempotency guard — same Facebook retry hits ER_DUP_ENTRY and is
+   * silently treated as already-acknowledged in the webhook handler.
+   * NULL signatures still allowed (test events) — MySQL unique permits
+   * multiple NULLs.
+   */
+  uniqSignature: uniqueIndex("uniq_webhook_events_signature").on(t.signature),
 }));
 
 export type WebhookEvent = typeof webhookEvents.$inferSelect;

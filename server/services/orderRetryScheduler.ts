@@ -2,9 +2,16 @@
  * Order-level auto-retry: picks FAILED orders whose `nextRetryAt` is due and
  * re-sends without re-running Facebook Graph enrichment (see retryFailedOrderDelivery).
  * Retry spacing is set on each failed attempt in `persistOrderDeliveryAttemptResult`.
+ *
+ * Sprint 1 / Item 1.2 — multi-worker race safety:
+ *   The selector now claims rows inside a transaction with
+ *   `FOR UPDATE SKIP LOCKED`. Each worker takes a distinct slice, atomically
+ *   clears `nextRetryAt` so subsequent runs cannot re-claim, and only THEN
+ *   commits and dispatches deliveries. Two workers running the scheduler
+ *   concurrently will see disjoint batches; double-send is impossible.
  */
 
-import { and, eq, isNotNull, lt, lte } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 import { orders } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { ORDER_MAX_DELIVERY_ATTEMPTS } from "../lib/orderRetryPolicy";
@@ -141,18 +148,36 @@ export async function retryDueFailedOrders(options?: {
     await logMetricsSnapshot(db);
   }
 
-  const due = await db
-    .select({ id: orders.id })
-    .from(orders)
-    .where(
-      and(
-        eq(orders.status, "FAILED"),
-        lt(orders.attempts, ORDER_MAX_DELIVERY_ATTEMPTS),
-        isNotNull(orders.nextRetryAt),
-        lte(orders.nextRetryAt, now),
-      ),
-    )
-    .limit(limit);
+  // Atomically claim a batch of due retries: locks the rows with
+  // `FOR UPDATE SKIP LOCKED` (MySQL 8+), clears `nextRetryAt` so they
+  // can no longer satisfy the WHERE clause in a parallel run, then
+  // commits. Any concurrent scheduler hits the same query and walks
+  // past the locked rows, picking a different slice. The actual
+  // delivery work happens AFTER commit so we don't hold row locks
+  // across HTTP calls.
+  const due = await db.transaction(async (tx) => {
+    const lockedRows = await tx.execute(sql`
+      SELECT id FROM orders
+      WHERE status = 'FAILED'
+        AND attempts < ${ORDER_MAX_DELIVERY_ATTEMPTS}
+        AND nextRetryAt IS NOT NULL
+        AND nextRetryAt <= ${now}
+      ORDER BY nextRetryAt ASC
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    `);
+    const ids = ((lockedRows as unknown as [Array<{ id: number }>, unknown])[0] ?? [])
+      .map((r) => Number(r.id))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (ids.length === 0) return [];
+    // Claim by clearing nextRetryAt — matches `retryFailedOrderDelivery`'s
+    // own pre-attempt clear at line ~1209 so behaviour stays consistent.
+    await tx
+      .update(orders)
+      .set({ nextRetryAt: null })
+      .where(inArray(orders.id, ids));
+    return ids.map((id) => ({ id }));
+  });
 
   if (due.length === 0) {
     console.log("[OrderRetry] No orders due for auto-retry");

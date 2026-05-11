@@ -28,7 +28,6 @@ import type { LeadPayload } from "../services/affiliateService";
 import type { DeliveryResult } from "./types";
 import { getAdapter } from "./registry";
 import { resolveAdapterKey } from "./resolveAdapterKey";
-import { isCircuitAllowed, recordCircuitSuccess, recordCircuitFailure } from "../services/circuitBreakerService";
 
 export interface DispatchContext {
   db: DbClient;
@@ -321,28 +320,21 @@ export async function dispatchDelivery(
     }
   }
 
-  // Circuit breaker — only applied for targeted deliveries (tw.id > 0)
-  const cbKey = tw?.id ? `dest:${tw.id}` : null;
-  if (cbKey) {
-    const { allowed, reason } = isCircuitAllowed(cbKey);
-    if (!allowed) {
-      return {
-        success:   false,
-        error:     reason ?? `Circuit open for ${cbKey}`,
-        errorType: "network",
-        adapterKey,
-        targetUrlUsed,
-      };
-    }
-  }
-
+  // Sprint 1 / Item 1.3 — circuit breaker removed.
+  //
+  // The previous in-memory `circuitBreakerService` was per-process: under a
+  // multi-worker deploy (Railway autoscale, K8s replicas) every worker held
+  // an independent CLOSED state, so the threshold of 5 failures would be hit
+  // N times in parallel before any worker started rejecting — exactly the
+  // amplification it was meant to prevent. The adapters themselves already
+  // back off on 429 (Retry-After header) and the retry scheduler escalates
+  // delays for repeated failures, which together cover the legitimate
+  // protection use case at a process-local level.
+  //
+  // If durable distributed circuit protection is needed later, move state
+  // to Redis (BullMQ already has a connection) — DO NOT re-introduce
+  // in-memory.
   const result = await adapter.send(adapterInput, leadPayload);
-
-  // Record circuit outcome
-  if (cbKey) {
-    if (result.success) recordCircuitSuccess(cbKey);
-    else                recordCircuitFailure(cbKey);
-  }
 
   return { ...result, adapterKey, targetUrlUsed };
 }

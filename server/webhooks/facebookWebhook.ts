@@ -67,10 +67,21 @@ router.get("/facebook", async (req: Request, res: Response) => {
 });
 
 // ─── POST /api/webhooks/facebook — Receive lead events ───────────────────────
+//
+// Durability contract (Sprint 1 / Item 1.1):
+//   1. Compute signature verification (cheap, no I/O).
+//   2. Persist the raw payload in `webhook_events` — the durability boundary.
+//   3. Only THEN ack Facebook with HTTP 200.
+//   4. Process the lead in the background. If the process crashes here, the
+//      `webhook_events` row remains with processed=false and the replay
+//      tooling (tooling/replay-webhook-events.ts) re-runs it.
+//
+// Idempotency: `webhook_events.signature` carries a UNIQUE index. Facebook
+// retries the same payload with the same X-Hub-Signature-256 header → INSERT
+// fails with ER_DUP_ENTRY → we skip processing (the original delivery is
+// either already done or in flight). Test payloads with no signature still
+// flow through (MySQL unique permits multiple NULLs).
 router.post("/facebook", async (req: Request, res: Response) => {
-  // IMPORTANT: Return 200 immediately — Facebook requires a fast response
-  res.status(200).json({ status: "ok" });
-
   const appSecret = process.env.FACEBOOK_APP_SECRET || "";
   const signatureHeader = req.headers["x-hub-signature-256"] as string | undefined;
   const rawBody: Buffer = (req as any).rawBody;
@@ -82,25 +93,12 @@ router.post("/facebook", async (req: Request, res: Response) => {
   const payload = req.body;
   const timestamp = new Date().toISOString();
 
-  void log.info("HTTP", `POST /api/webhooks/facebook — verified=${verified}`, {
-    ip: req.ip,
-    verified,
-    payloadPreview: JSON.stringify(payload).slice(0, 400),
-  }, null, null, null, "lead_received", "facebook");
-
-  // Emit SSE event immediately so dashboard shows "incoming"
-  emitWebhookEvent({
-    type: "incoming",
-    verified,
-    pageId: payload?.entry?.[0]?.id || payload?.sample?.value?.page_id,
-    formId: payload?.entry?.[0]?.changes?.[0]?.value?.form_id || payload?.sample?.value?.form_id,
-    leadgenId: payload?.entry?.[0]?.changes?.[0]?.value?.leadgen_id || payload?.sample?.value?.leadgen_id,
-    timestamp,
-  });
-
-  // Log the webhook event
+  // ── STEP 1 — Durable insert BEFORE acking Facebook ───────────────────────
+  // If this fails, return 500 so Facebook retries (their retry window is
+  // limited, but it's the only chance we get).
   const db = await getDb();
   let savedEventId: number | undefined;
+  let isDuplicate = false;
   if (db) {
     try {
       const result = await db.insert(webhookEvents).values({
@@ -110,11 +108,58 @@ router.post("/facebook", async (req: Request, res: Response) => {
         verified,
         processed: false,
       });
-      savedEventId = (result as any)?.[0]?.insertId ?? (result as any)?.insertId;
+      const insertId = (result as any)?.[0]?.insertId ?? (result as any)?.insertId;
+      savedEventId = insertId && insertId > 0 ? insertId : undefined;
     } catch (err) {
-      console.error("[Webhook] Failed to log event:", err);
+      // ER_DUP_ENTRY (1062) → Facebook retry, we already have this. Ack 200
+      // and skip processing. Drizzle wraps the mysql2 error so we walk the
+      // .cause chain in case the duplicate marker is nested.
+      const isDupError = (e: unknown): boolean => {
+        if (!e || typeof e !== "object") return false;
+        const o = e as { code?: string; errno?: number; cause?: unknown };
+        if (o.code === "ER_DUP_ENTRY" || o.errno === 1062) return true;
+        if (o.cause) return isDupError(o.cause);
+        return false;
+      };
+      if (isDupError(err)) {
+        isDuplicate = true;
+        console.log("[Webhook] Duplicate signature — already received, ack only.");
+      } else {
+        console.error("[Webhook] CRITICAL: durable insert failed:", err);
+        // DB hiccup — best we can do is signal Facebook to retry. They will
+        // retry a couple of times before giving up.
+        res.status(500).json({ status: "error", message: "Database unavailable" });
+        return;
+      }
     }
+  } else {
+    // No DB at all — log and ack so Facebook stops retrying. Loss is
+    // unavoidable here and only happens in misconfigured environments.
+    console.error("[Webhook] CRITICAL: no DB connection — webhook NOT persisted.");
   }
+
+  // ── STEP 2 — Ack Facebook ────────────────────────────────────────────────
+  res.status(200).json({ status: "ok" });
+
+  // ── STEP 3 — Side-channel logging + SSE (best-effort, post-ack) ──────────
+  void log.info("HTTP", `POST /api/webhooks/facebook — verified=${verified}`, {
+    ip: req.ip,
+    verified,
+    duplicate: isDuplicate,
+    payloadPreview: JSON.stringify(payload).slice(0, 400),
+  }, null, null, null, "lead_received", "facebook");
+
+  emitWebhookEvent({
+    type: "incoming",
+    verified,
+    pageId: payload?.entry?.[0]?.id || payload?.sample?.value?.page_id,
+    formId: payload?.entry?.[0]?.changes?.[0]?.value?.form_id || payload?.sample?.value?.form_id,
+    leadgenId: payload?.entry?.[0]?.changes?.[0]?.value?.leadgen_id || payload?.sample?.value?.leadgen_id,
+    timestamp,
+  });
+
+  // ── STEP 4 — Skip processing on duplicate (original handler owns this) ───
+  if (isDuplicate) return;
 
   // When FACEBOOK_APP_SECRET is configured, REQUIRE valid HMAC on ALL payloads.
   // Facebook always sends X-Hub-Signature-256 — any unsigned request is forged.

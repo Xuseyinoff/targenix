@@ -23,7 +23,8 @@ import {
   getQueueStats,
   getIntegrationBreakdown,
 } from "../services/metricsService";
-import { listOpenCircuits, resetCircuit } from "../services/circuitBreakerService";
+// Circuit breaker procedures removed in Sprint 1 / Item 1.3 — see
+// server/integrations/dispatch.ts header for the rationale.
 
 const PERIOD_HOURS: Record<"24h" | "7d" | "30d", number> = {
   "24h": 24,
@@ -124,16 +125,4 @@ export const metricsRouter = router({
       return getIntegrationBreakdown(db, PERIOD_HOURS[input.period], input.userId ?? null, input.limit);
     }),
 
-  /** Live circuit breaker status (in-memory — resets on deploy). */
-  circuitBreakers: adminProcedure.query(() => {
-    return listOpenCircuits();
-  }),
-
-  /** Reset a stuck-open circuit (admin action). */
-  resetCircuit: adminProcedure
-    .input(z.object({ key: z.string().min(1).max(128) }))
-    .mutation(({ input }) => {
-      resetCircuit(input.key);
-      return { ok: true };
-    }),
 });

@@ -5,8 +5,8 @@ import {
 } from "recharts";
 import {
   Activity, CheckCircle2, XCircle, Clock, Inbox,
-  RefreshCw, AlertTriangle, Zap, RotateCcw, Loader2,
-  ShieldAlert, TrendingUp, Database,
+  RefreshCw, AlertTriangle, Zap, Loader2,
+  TrendingUp, Database,
 } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -71,87 +71,8 @@ function PeriodTabs({ value, onChange }: { value: Period; onChange: (p: Period) 
   );
 }
 
-// ─── Circuit breaker table ────────────────────────────────────────────────────
-
-function CircuitBreakerTable() {
-  const { data = [], refetch, isFetching } = trpc.metrics.circuitBreakers.useQuery(undefined, {
-    refetchInterval: 15_000,
-  });
-  const resetMut = trpc.metrics.resetCircuit.useMutation({
-    onSuccess: (_, vars) => {
-      toast.success(`Circuit '${vars.key}' reset.`);
-      void refetch();
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const STATE_COLOR: Record<string, string> = {
-    open:       "bg-red-100 text-red-700",
-    "half-open": "bg-amber-100 text-amber-700",
-    closed:     "bg-emerald-100 text-emerald-700",
-  };
-
-  if (data.length === 0) {
-    return (
-      <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
-        <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-        All circuits closed — no failures detected.
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b text-xs text-muted-foreground uppercase tracking-wide">
-            <th className="text-left py-2 pr-4 font-medium">Key</th>
-            <th className="text-left py-2 pr-4 font-medium">State</th>
-            <th className="text-right py-2 pr-4 font-medium">Failures</th>
-            <th className="text-right py-2 pr-4 font-medium">Cooldown</th>
-            <th className="text-right py-2 font-medium">Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((cb) => (
-            <tr key={cb.key} className="border-b last:border-0">
-              <td className="py-2 pr-4 font-mono">{cb.key}</td>
-              <td className="py-2 pr-4">
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${STATE_COLOR[cb.state] ?? ""}`}>
-                  {cb.state}
-                </span>
-              </td>
-              <td className="py-2 pr-4 text-right text-red-600 font-medium">{cb.failureCount}</td>
-              <td className="py-2 pr-4 text-right text-muted-foreground text-xs">
-                {cb.remainingCooldownMs != null
-                  ? `${Math.ceil(cb.remainingCooldownMs / 1000)}s`
-                  : "—"}
-              </td>
-              <td className="py-2 text-right">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs"
-                  onClick={() => resetMut.mutate({ key: cb.key })}
-                  disabled={resetMut.isPending}
-                >
-                  <RotateCcw className="h-3 w-3 mr-1" />
-                  Reset
-                </Button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="flex justify-end mt-2">
-        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => refetch()} disabled={isFetching}>
-          {isFetching ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-          <span className="ml-1">Refresh</span>
-        </Button>
-      </div>
-    </div>
-  );
-}
+// CircuitBreakerTable removed in Sprint 1 / Item 1.3 — see
+// server/integrations/dispatch.ts for the rationale.
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
@@ -336,19 +257,10 @@ export default function AdminMetrics() {
         </Card>
       </div>
 
-      {/* Circuit breaker status */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <ShieldAlert className="h-4 w-4 text-red-500" />
-            Circuit breakers
-            <Badge variant="outline" className="ml-auto text-xs font-normal">live · 15s refresh</Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <CircuitBreakerTable />
-        </CardContent>
-      </Card>
+      {/* Circuit breaker UI removed in Sprint 1 / Item 1.3 — the in-memory
+          breaker was per-process and gave no protection under multi-worker
+          deploys. Adapter-level 429 backoff + retry scheduler escalation
+          cover the protection path. */}
 
       {/* Queue stats */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
