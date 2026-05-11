@@ -422,6 +422,47 @@ export const connectionHealthLogs = mysqlTable("connection_health_logs", {
 
 export type ConnectionHealthLog = typeof connectionHealthLogs.$inferSelect;
 
+// ─── Connection Events ───────────────────────────────────────────────────────
+// Immutable audit log for connection lifecycle events. Mirrors the
+// `order_events` pattern: every state change (create, rename, disconnect,
+// expire, error, revoke) appends one row. Powers the connection-history UI
+// and supports security audits when a credential rotation needs forensic
+// "who touched what, when" detail.
+//
+// Sprint 2 / Item 2.4.
+export const connectionEvents = mysqlTable("connection_events", {
+  id:            int("id").autoincrement().primaryKey(),
+  /** Snapshot of the connection at event time — kept as int (not FK) so the
+   *  row survives the parent connection being deleted (audit must outlive
+   *  the entity it audits). */
+  connectionId:  int("connectionId").notNull(),
+  userId:        int("userId").notNull(),
+  /** What happened. New values appended over time; consumers must tolerate
+   *  unknown strings (forward compat with admin-introduced events). */
+  eventType:     varchar("eventType", { length: 32 }).notNull(),
+  /** Where the event originated:
+   *    'user'         — explicit user action (rename, disconnect)
+   *    'system'       — background process (expire, health probe)
+   *    'oauth'        — refresh / callback flow
+   *    'webhook'      — external trigger
+   *    'admin'        — admin override / impersonation
+   */
+  source:        varchar("source", { length: 16 }).notNull(),
+  /** Optional structured diff — e.g. `{ from: "old name", to: "new name" }`
+   *  for renames, `{ reason: "invalid_grant" }` for refresh failures. */
+  details:       json("details"),
+  createdAt:     timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  /** Per-connection timeline — primary access pattern (UI history panel). */
+  idxConnection: index("idx_connection_events_connection").on(t.connectionId, t.createdAt),
+  /** Per-user feed — drives "recent activity" digests and the security
+   *  dashboard ("show me all expiry events in the last 24h"). */
+  idxUserCreated: index("idx_connection_events_user_created").on(t.userId, t.createdAt),
+}));
+
+export type ConnectionEvent = typeof connectionEvents.$inferSelect;
+export type InsertConnectionEvent = typeof connectionEvents.$inferInsert;
+
 // ─── Target Websites ──────────────────────────────────────────────────────────
 // A list of affiliate/CRM websites that leads are routed to.
 //

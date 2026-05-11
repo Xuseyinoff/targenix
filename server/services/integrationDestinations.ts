@@ -226,8 +226,21 @@ async function readFromLegacyColumn(
     .limit(1);
   if (!row) return [];
   if (row.userId !== integration.userId) {
-    console.warn(
-      `[resolveDestinations] owner mismatch on integration=${integration.id} targetWebsite=${row.id}`,
+    // SECURITY: tenant boundary violation — see Sprint 2 / Item 2.3
+    const { log } = await import("./appLogger");
+    void log.error(
+      "SECURITY",
+      "Target website owner mismatch on legacy single-destination resolve",
+      {
+        integrationId: integration.id,
+        targetWebsiteId: row.id,
+        tenantExpected: integration.userId,
+        tenantActual: row.userId,
+      },
+      null,
+      null,
+      integration.userId,
+      "owner_mismatch",
     );
     return [];
   }
@@ -269,10 +282,24 @@ async function readFromNewTable(
   const resolved: ResolvedDestination[] = [];
   for (const r of rows) {
     if (r.tw.userId !== integration.userId) {
-      // This should be impossible in practice (dual-write enforces same
-      // owner) but a stray row would otherwise leak lead data cross-tenant.
-      console.warn(
-        `[resolveDestinations] owner mismatch on integration=${integration.id} mapping=${r.mapping.id} tw=${r.tw.id}`,
+      // SECURITY: tenant boundary violation — see Sprint 2 / Item 2.3.
+      // Should be impossible (dual-write enforces same owner) but a stray
+      // row would otherwise leak lead data across tenants — escalate loudly.
+      const { log } = await import("./appLogger");
+      void log.error(
+        "SECURITY",
+        "Target website owner mismatch on fan-out resolve",
+        {
+          integrationId: integration.id,
+          mappingId: r.mapping.id,
+          targetWebsiteId: r.tw.id,
+          tenantExpected: integration.userId,
+          tenantActual: r.tw.userId,
+        },
+        null,
+        null,
+        integration.userId,
+        "owner_mismatch",
       );
       continue;
     }

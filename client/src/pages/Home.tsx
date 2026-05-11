@@ -9,6 +9,7 @@ import {
   ArrowDown,
   ArrowUp,
   CheckCircle2,
+  ChevronRight,
   Clock,
   DollarSign,
   Info,
@@ -172,6 +173,12 @@ export default function Home() {
   const { data: webhookStats } = trpc.webhook.stats.useQuery(undefined, { ...fastOpts, enabled: isAdmin });
   const { data: integrationsList } = trpc.integrations.list.useQuery(undefined, fastOpts);
   const { data: leadsData } = trpc.leads.list.useQuery({ limit: 5, offset: 0 }, fastOpts);
+  // Sprint 2 / Item 2.2 — surface expired/error connections at the top of the
+  // dashboard so users notice before deliveries silently start failing.
+  const { data: attention } = trpc.connections.attentionCount.useQuery(undefined, {
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
 
   const [chartRange, setChartRange] = useState<RangeOption>("last_7d");
   const [sourcesRange, setSourcesRange] = useState<RangeOption>("last_7d");
@@ -229,6 +236,34 @@ export default function Home() {
           <h1 className="text-2xl font-bold tracking-tight">{t("home.title")}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t("home.subtitle")}</p>
         </div>
+
+        {/* Sprint 2 / Item 2.2 — connection attention banner.
+            Renders only when at least one connection is in a non-active state
+            (expired / revoked / error). One-click into /connections lets the
+            user fix it before deliveries start silently failing. */}
+        {attention && attention.total > 0 && (
+          <button
+            type="button"
+            onClick={() => setLocation("/connections")}
+            className="flex w-full items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left transition-colors hover:bg-amber-100 dark:border-amber-900/40 dark:bg-amber-950/30 dark:hover:bg-amber-950/50"
+          >
+            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                {attention.total} connection{attention.total === 1 ? "" : "s"} need attention
+              </div>
+              <div className="text-xs text-amber-800/80 dark:text-amber-300/80">
+                {[
+                  attention.expired > 0 && `${attention.expired} expired`,
+                  attention.revoked > 0 && `${attention.revoked} revoked`,
+                  attention.error > 0 && `${attention.error} in error`,
+                ].filter(Boolean).join(" · ")}
+                {" — click to review"}
+              </div>
+            </div>
+            <ChevronRight className="h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" />
+          </button>
+        )}
 
         {/* ── KPI Strip ── */}
         {/* "Today's Leads" reads from leads table (same source as chart) — not orders.

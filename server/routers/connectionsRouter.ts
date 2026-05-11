@@ -17,7 +17,7 @@
  * then calls `upsertGoogleConnection()`.
  */
 
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -46,6 +46,7 @@ import { sendTelegramRawMessage } from "../services/telegramService";
 import { log } from "../services/appLogger";
 import { listAppKeyOptionsForPicker } from "../integrations/listAppsSafe";
 import { validateConnectionType } from "../utils/validateConnectionType";
+import { appendConnectionEvent } from "../services/connectionEventsService";
 
 // ─── Types returned to the client ────────────────────────────────────────────
 
@@ -85,9 +86,90 @@ interface ListedConnection {
   } | null;
 }
 
+// ─── Credential scrub helper ─────────────────────────────────────────────────
+//
+// Used by `disconnect` to remove credential-shaped fields from
+// `targetWebsites.templateConfig` without nuking the non-secret
+// configuration. Names that look like credentials (api_key, secret,
+// token, password, *Encrypted, or the catch-all `secrets`/`credentials`
+// nested objects) drop out; everything else (spreadsheetId, sheetName,
+// chatId, mapping, url, method, …) stays so re-attaching a new connection
+// doesn't force the user to re-enter destination config.
+//
+// Keep the rule LIBERAL — false positives only inconvenience the user
+// (they re-enter a benign field); false negatives leak credentials.
+
+const SENSITIVE_KEY_PATTERNS = [
+  /api[_-]?key$/i,           // api_key, apiKey, api-key
+  /^secret/i,                // secret, secrets, secretKey
+  /token$/i,                 // accessToken, refreshToken, botToken
+  /^token/i,                 // token, tokenSecret
+  /password/i,               // password, passwordHash
+  /credentials/i,            // credentials, credentialsJson
+  /encrypted$/i,             // anythingEncrypted
+  /^auth$/i,                 // auth (whole bearer/basic blob)
+];
+
+function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_KEY_PATTERNS.some((p) => p.test(key));
+}
+
+export function scrubSecretsFromTemplateConfig(tc: unknown): {
+  scrubbed: Record<string, unknown>;
+  removed: number;
+} {
+  if (!tc || typeof tc !== "object" || Array.isArray(tc)) {
+    return { scrubbed: {}, removed: 0 };
+  }
+  const out: Record<string, unknown> = {};
+  let removed = 0;
+  for (const [k, v] of Object.entries(tc as Record<string, unknown>)) {
+    if (isSensitiveKey(k)) {
+      removed++;
+      continue;
+    }
+    out[k] = v;
+  }
+  return { scrubbed: out, removed };
+}
+
 // ─── Router ──────────────────────────────────────────────────────────────────
 
 export const connectionsRouter = router({
+  /**
+   * Lightweight count of "needs attention" connections for the current
+   * user. Drives the dashboard banner in /overview — keep it cheap (single
+   * grouped COUNT, no joins) so the home page is never blocked by it.
+   *
+   * Sprint 2 / Item 2.2.
+   */
+  attentionCount: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return { expired: 0, revoked: 0, error: 0, total: 0 };
+    const rows = await db
+      .select({
+        status: connections.status,
+        n: sql<number>`COUNT(*)`,
+      })
+      .from(connections)
+      .where(
+        and(
+          eq(connections.userId, ctx.user.id),
+          inArray(connections.status, ["expired", "revoked", "error"] as const),
+        ),
+      )
+      .groupBy(connections.status);
+    const out = { expired: 0, revoked: 0, error: 0, total: 0 };
+    for (const r of rows) {
+      const n = Number(r.n) || 0;
+      if (r.status === "expired") out.expired = n;
+      else if (r.status === "revoked") out.revoked = n;
+      else if (r.status === "error") out.error = n;
+      out.total += n;
+    }
+    return out;
+  }),
+
   /**
    * List the current user's connections, newest first. Optional `type`
    * filter is used by the ConnectionPicker on destination forms.
@@ -346,18 +428,38 @@ export const connectionsRouter = router({
         throw new TRPCError({ code: "NOT_FOUND", message: "Connection not found" });
       }
 
+      const newName = input.displayName.trim();
+      const oldName = row.displayName;
       await db
         .update(connections)
-        .set({ displayName: input.displayName.trim() })
+        .set({ displayName: newName })
         .where(eq(connections.id, input.id));
+
+      void appendConnectionEvent(db, {
+        connectionId: input.id,
+        userId,
+        eventType: "renamed",
+        source: "user",
+        details: { from: oldName, to: newName },
+      });
 
       return { success: true };
     }),
 
   /**
    * Remove the connection and clear every target_websites.connectionId that
-   * pointed at it. Adapters will fall back to templateConfig (legacy inline
-   * credentials) so delivery never breaks mid-flight.
+   * pointed at it. In addition to the FK clear we SCRUB credential-shaped
+   * keys from `targetWebsites.templateConfig` so disconnect = real
+   * disconnect, not "soft-disconnect with backup credential still on disk".
+   *
+   * Sprint 2 / Item 2.1 — the previous version left `templateConfig.secrets`
+   * intact ("adapters fall back to templateConfig") which was a credential
+   * retention hazard: when a user clicked Disconnect believing the credential
+   * was gone, adapters could still deliver using the inline copy. The new
+   * contract is: Disconnect erases both copies. Non-secret fields
+   * (spreadsheetId, sheetName, chatId, mapping, url, …) are preserved so
+   * the destination keeps its configuration shell and the user can re-attach
+   * a fresh connection without re-typing config.
    */
   disconnect: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
@@ -378,16 +480,33 @@ export const connectionsRouter = router({
 
       const usage = await countDestinationsUsingConnection(db, userId, input.id);
 
+      let scrubbedKeysCount = 0;
       await db.transaction(async (tx) => {
-        await tx
-          .update(targetWebsites)
-          .set({ connectionId: null })
+        // Per-row scrub: read each affected destination's templateConfig,
+        // strip credential-shaped keys, write back. Bulk UPDATE can't
+        // selectively edit JSON paths in MySQL 5.7-compatible way, and the
+        // set is tiny in practice (usually <10 rows per connection).
+        const affected = await tx
+          .select({
+            id: targetWebsites.id,
+            templateConfig: targetWebsites.templateConfig,
+          })
+          .from(targetWebsites)
           .where(
             and(
               eq(targetWebsites.userId, userId),
               eq(targetWebsites.connectionId, input.id),
             ),
           );
+
+        for (const tw of affected) {
+          const { scrubbed, removed } = scrubSecretsFromTemplateConfig(tw.templateConfig);
+          scrubbedKeysCount += removed;
+          await tx
+            .update(targetWebsites)
+            .set({ connectionId: null, templateConfig: scrubbed })
+            .where(eq(targetWebsites.id, tw.id));
+        }
 
         await tx
           .delete(connections)
@@ -396,11 +515,25 @@ export const connectionsRouter = router({
           );
       });
 
+      void appendConnectionEvent(db, {
+        connectionId: input.id,
+        userId,
+        eventType: "disconnected",
+        source: "user",
+        details: {
+          type: row.type,
+          displayName: row.displayName,
+          clearedDestinations: usage,
+          scrubbedSecretKeys: scrubbedKeysCount,
+        },
+      });
+
       await log.info("CONNECTIONS", "connection disconnected", {
         userId,
         connectionId: input.id,
         type: row.type,
         clearedDestinations: usage,
+        scrubbedSecretKeys: scrubbedKeysCount,
       });
 
       return { success: true, clearedDestinations: usage };
@@ -450,6 +583,14 @@ export const connectionsRouter = router({
         displayName: input.displayName,
         botTokenEncrypted: encrypt(input.botToken),
         chatId: input.chatId,
+      });
+
+      void appendConnectionEvent(db, {
+        connectionId: id,
+        userId: ctx.user.id,
+        eventType: "created",
+        source: "user",
+        details: { type: "telegram_bot", displayName: input.displayName },
       });
 
       await log.info("CONNECTIONS", "telegram connection created", {
@@ -539,6 +680,19 @@ export const connectionsRouter = router({
         templateId: tpl.id,
         displayName: input.displayName,
         secretsEncrypted,
+      });
+
+      void appendConnectionEvent(db, {
+        connectionId: id,
+        userId,
+        eventType: "created",
+        source: "user",
+        details: {
+          type: "api_key",
+          displayName: input.displayName,
+          templateId: tpl.id,
+          templateName: tpl.name,
+        },
       });
 
       await log.info("CONNECTIONS", "api_key connection created", {

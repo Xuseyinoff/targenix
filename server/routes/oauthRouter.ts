@@ -317,6 +317,17 @@ export function registerOAuthRoutes(app: Express): void {
             });
           }
 
+          if (connectionId) {
+            const { appendConnectionEvent } = await import("../services/connectionEventsService");
+            void appendConnectionEvent(db, {
+              connectionId,
+              userId: stateUserId,
+              eventType: "oauth_refreshed",
+              source: "oauth",
+              details: { provider: "google", email, oauthTokenId },
+            });
+          }
+
           await log.info("GOOGLE", "google integration connected (oauth_tokens)", {
             userId: stateUserId,
             email,
@@ -464,6 +475,17 @@ export function registerOAuthRoutes(app: Express): void {
           userId: stateUserId,
           oauthTokenId,
           error: String(err),
+        });
+      }
+
+      if (connectionId) {
+        const { appendConnectionEvent } = await import("../services/connectionEventsService");
+        void appendConnectionEvent(db, {
+          connectionId,
+          userId: stateUserId,
+          eventType: "oauth_refreshed",
+          source: "oauth",
+          details: { provider: providerName, appKey: spec.integrationAppKey, email, oauthTokenId },
         });
       }
 

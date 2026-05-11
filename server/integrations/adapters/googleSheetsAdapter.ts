@@ -45,8 +45,16 @@ async function tryResolveGoogleAccountIdFromConnection(
 
     if (!row) return null;
     if (row.userId !== userId) {
-      console.warn(
-        `[googleSheetsAdapter] connection ${connectionId} owner mismatch (userId=${row.userId}, expected=${userId}); falling back`,
+      // SECURITY: tenant boundary violation — see Sprint 2 / Item 2.3
+      const { log } = await import("../../services/appLogger");
+      void log.error(
+        "SECURITY",
+        "Google Sheets connection owner mismatch — refusing cross-tenant credential",
+        { connectionId, tenantExpected: userId, tenantActual: row.userId, adapter: "google-sheets" },
+        null,
+        null,
+        userId,
+        "owner_mismatch",
       );
       return null;
     }

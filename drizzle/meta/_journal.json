@@ -428,6 +428,13 @@
       "when": 1778451600000,
       "tag": "0064_webhook_events_signature_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "5",
+      "when": 1778538000000,
+      "tag": "0065_connection_events",
+      "breakpoints": true
     }
   ]
 }

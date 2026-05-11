@@ -1301,6 +1301,21 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
 
     // Ownership guard — must match integration owner to avoid cross-tenant dispatch.
     if (destRow.tw.userId !== order.userId) {
+      // SECURITY: tenant boundary violation — see Sprint 2 / Item 2.3
+      await log.error(
+        "SECURITY",
+        "Order retry owner mismatch — refusing cross-tenant delivery",
+        {
+          orderId: order.id,
+          targetWebsiteId: destRow.tw.id,
+          tenantExpected: order.userId,
+          tenantActual: destRow.tw.userId,
+        },
+        null,
+        null,
+        order.userId,
+        "owner_mismatch",
+      );
       await db.update(orders).set({ nextRetryAt: null }).where(eq(orders.id, order.id));
       return { outcome: "skipped" };
     }

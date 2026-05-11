@@ -26,7 +26,14 @@ export type LogCategory =
   | "AFFILIATE"
   | "GOOGLE"
   | "OAUTH"
-  | "CONNECTIONS";
+  | "CONNECTIONS"
+  /**
+   * Multi-tenant security violations (owner mismatches, cross-tenant
+   * credential exposure attempts, etc.). Always paired with log.error so
+   * the AdminLogs page and any future SIEM / pager integration fires
+   * loudly — silent fallbacks are how breaches get missed.
+   */
+  | "SECURITY";
 
 export type LogType = "USER" | "SYSTEM";
 

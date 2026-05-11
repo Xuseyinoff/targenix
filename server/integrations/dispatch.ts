@@ -85,13 +85,22 @@ export async function loadConnectionForDelivery(
       .limit(1);
     if (!row) return null;
     if (row.userId !== userId) {
-      // Must never happen in practice (FK + ownership checks at write
-      // time) but treating it as "no connection" is safer than throwing
-      // — the adapter will fall back to templateConfig.secrets and log
-      // an explicit ownership-mismatch warning.
-      console.warn(
-        "[dispatch] connection ownership mismatch — falling back to templateConfig.secrets",
+      // Sprint 2 / Item 2.3 — owner mismatch is a TENANT BOUNDARY VIOLATION
+      // and must be visible in the AdminLogs page (and any downstream pager).
+      // The previous `console.warn` was invisible to anyone not tailing the
+      // process. We still return null (safer than throwing — the adapter
+      // falls back to templateConfig.secrets, never to the wrong tenant's
+      // credential), but the SECURITY-category log makes the breach
+      // attempt loud.
+      const { log } = await import("../services/appLogger");
+      void log.error(
+        "SECURITY",
+        "Connection owner mismatch in dispatch — refusing to use cross-tenant credential",
         { connectionId, tenantExpected: userId, tenantActual: row.userId },
+        null,
+        null,
+        userId,
+        "owner_mismatch",
       );
       return null;
     }

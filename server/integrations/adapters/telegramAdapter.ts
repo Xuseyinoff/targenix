@@ -51,8 +51,16 @@ async function tryResolveFromConnection(
 
     if (!row) return null;
     if (row.userId !== userId) {
-      console.warn(
-        `[telegramAdapter] connection ${connectionId} owner mismatch (userId=${row.userId}, expected=${userId}); falling back`,
+      // SECURITY: tenant boundary violation — see Sprint 2 / Item 2.3
+      const { log } = await import("../../services/appLogger");
+      void log.error(
+        "SECURITY",
+        "Telegram connection owner mismatch — refusing cross-tenant credential",
+        { connectionId, tenantExpected: userId, tenantActual: row.userId, adapter: "telegram" },
+        null,
+        null,
+        userId,
+        "owner_mismatch",
       );
       return null;
     }

@@ -87,6 +87,18 @@ export async function markGoogleSheetsConnectionsExpiredForOauthToken(
   oauthTokenId: number,
 ): Promise<void> {
   try {
+    // Pre-read the IDs so we can append per-connection audit events. The
+    // UPDATE itself is the source of truth; audit is best-effort on top.
+    const affected = await db
+      .select({ id: connections.id })
+      .from(connections)
+      .where(
+        and(
+          eq(connections.userId, userId),
+          eq(connections.type, validateConnectionType("google_sheets")),
+          eq(connections.oauthTokenId, oauthTokenId),
+        ),
+      );
     await db
       .update(connections)
       .set({ status: "expired" })
@@ -97,6 +109,18 @@ export async function markGoogleSheetsConnectionsExpiredForOauthToken(
           eq(connections.oauthTokenId, oauthTokenId),
         ),
       );
+    if (affected.length > 0) {
+      const { appendConnectionEvent } = await import("./connectionEventsService");
+      for (const c of affected) {
+        void appendConnectionEvent(db, {
+          connectionId: c.id,
+          userId,
+          eventType: "status_changed",
+          source: "system",
+          details: { from: "active", to: "expired", reason: "google_oauth_token_expired", oauthTokenId },
+        });
+      }
+    }
   } catch {
     // ignore
   }
@@ -171,10 +195,26 @@ export async function markOAuthConnectionExpired(
   oauthTokenId: number,
 ): Promise<void> {
   try {
+    const affected = await db
+      .select({ id: connections.id, userId: connections.userId })
+      .from(connections)
+      .where(eq(connections.oauthTokenId, oauthTokenId));
     await db
       .update(connections)
       .set({ status: "expired" })
       .where(eq(connections.oauthTokenId, oauthTokenId));
+    if (affected.length > 0) {
+      const { appendConnectionEvent } = await import("./connectionEventsService");
+      for (const c of affected) {
+        void appendConnectionEvent(db, {
+          connectionId: c.id,
+          userId: c.userId,
+          eventType: "oauth_refresh_failed",
+          source: "oauth",
+          details: { from: "active", to: "expired", oauthTokenId },
+        });
+      }
+    }
   } catch {
     // ignore
   }
