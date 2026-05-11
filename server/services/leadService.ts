@@ -4,7 +4,6 @@ import { getDb, type DbClient } from "../db";
 import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
-import { affiliateAdapter } from "../integrations/adapters/affiliateAdapter";
 import { dispatchDelivery } from "../integrations/dispatch";
 import { resolveIntegrationDestinations, type ResolvedDestination } from "./integrationDestinations";
 import { isMultiDestinationsEnabled } from "./featureFlags";
@@ -630,43 +629,7 @@ async function runOrderIntegrationSend(params: {
 
   let result: IntegrationDeliveryResult;
 
-  if (integration.type === "AFFILIATE") {
-    const _t0Affiliate = Date.now();
-    result = await affiliateAdapter.send(integration.config, leadPayload);
-    result.durationMs = Date.now() - _t0Affiliate;
-    await log[result.success ? "info" : "warn"](
-      "AFFILIATE",
-      result.success ? `Affiliate order sent for leadId=${lead.id}` : `Affiliate order failed for leadId=${lead.id}`,
-      { integrationId: integration.id, error: result.error },
-      lead.id,
-      leadPayload.pageId,
-      userId,
-      "sent_to_affiliate",
-      "facebook",
-      result.durationMs,
-    );
-    await sendLeadTelegramNotification({
-      integration: {
-        userId: integration.userId,
-        telegramChatId: integration.telegramChatId,
-        name: integration.name,
-        type: integration.type,
-      },
-      userId,
-      lead: {
-        fullName: leadPayload.fullName,
-        phone: leadPayload.phone,
-        email: leadPayload.email,
-        pageId: leadPayload.pageId,
-        formId: leadPayload.formId,
-        leadgenId: leadPayload.leadgenId,
-      },
-      result,
-      isAdmin: isAdmin ?? false,
-      deliverySource,
-      deliveryAttempt: deliverySource === "auto_retry" ? params.deliveryAttempt : undefined,
-    });
-  } else if (integration.type === "LEAD_ROUTING") {
+  if (integration.type === "LEAD_ROUTING") {
     const config = integration.config as Record<string, unknown>;
     const _t0Routing = Date.now();
     let targetUrlUsed: string | undefined;
@@ -792,9 +755,9 @@ async function runOrderIntegrationSend(params: {
  *   4. Dispatch via `runOrderIntegrationSend`.
  *   5. Persist the attempt result.
  *
- * `destinationId` is 0 for AFFILIATE integrations and for the legacy
- * single-destination LEAD_ROUTING path (flag off). It equals the
- * `integration_destinations.id` for the fan-out path (flag on, N > 1).
+ * `destinationId` is 0 for the legacy single-destination LEAD_ROUTING
+ * path (flag off). It equals the `integration_destinations.id` for the
+ * fan-out path (flag on, N > 1).
  *
  * `preResolvedDestination` is forwarded to `runOrderIntegrationSend` so the
  * dispatcher doesn't re-query the destination. Pass `undefined` for the
@@ -1143,7 +1106,7 @@ export async function processLead(params: {
       if (intPageId !== params.pageId || intFormId !== params.formId) continue;
     }
 
-    if (integration.type !== "AFFILIATE" && integration.type !== "LEAD_ROUTING") {
+    if (integration.type !== "LEAD_ROUTING") {
       continue;
     }
 
@@ -1202,9 +1165,9 @@ export async function processLead(params: {
       // will call the resolver again internally and handle the "no target" case.
     }
 
-    // ── Legacy / AFFILIATE single-destination path ──────────────────────────
+    // ── Legacy single-destination path ──────────────────────────────────────
     // destinationId = 0 (the schema default). Preserves exact existing
-    // behaviour for all non-flagged users and AFFILIATE integrations.
+    // behaviour for users without the multi-destination flag.
     await deliverOneDestination({
       db,
       integration,
@@ -1305,7 +1268,7 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
     if (intPageId !== lead.pageId || intFormId !== lead.formId) return { outcome: "skipped" };
   }
 
-  if (integration.type !== "AFFILIATE" && integration.type !== "LEAD_ROUTING") {
+  if (integration.type !== "LEAD_ROUTING") {
     return { outcome: "skipped" };
   }
 
