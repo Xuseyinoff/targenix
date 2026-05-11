@@ -474,7 +474,7 @@ function warnIfLegacyWizardShape(
 
 export async function createIntegration(data: {
   userId: number;
-  type: "AFFILIATE" | "LEAD_ROUTING";
+  type: "LEAD_ROUTING";
   name: string;
   config: unknown;
   telegramChatId?: string | null;

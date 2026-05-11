@@ -494,13 +494,18 @@ export type InsertTargetWebsite = typeof targetWebsites.$inferInsert;
 
 // ─── Integrations ─────────────────────────────────────────────────────────────
 // LEAD_ROUTING: full pipeline — FB account → page → form → field map → target website
-// AFFILIATE: POST lead to an external HTTP endpoint
 export const integrations = mysqlTable("integrations", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
-  type: mysqlEnum("type", ["AFFILIATE", "LEAD_ROUTING"]).notNull(),
+  // DB enum still allows the historical "AFFILIATE" value for backward compat
+  // — 0 production rows use it (audit 2026-05-12). The TS union is narrowed
+  // here so new inserts/reads are type-checked against "LEAD_ROUTING" only.
+  // If drizzle-kit ever proposes an ALTER … MODIFY COLUMN to drop the enum
+  // value, discard it: the schema parity matters less than the risk of a
+  // table-rewrite migration on a hot table.
+  type: mysqlEnum("type", ["LEAD_ROUTING"]).notNull(),
   /**
-   * JSON config shape by type:
+   * JSON config shape:
    *   LEAD_ROUTING: {
    *     facebookAccountId: number,   // facebookAccounts.id
    *     // pageId, pageName, formId, formName → dedicated columns (migrated out of JSON)
@@ -510,7 +515,6 @@ export const integrations = mysqlTable("integrations", {
    *     flow: string,
    *     offerId: string,
    *   }
-   *   AFFILIATE: { url: string, headers: Record<string,string> }
    */
   config: json("config").notNull(),
   name: varchar("name", { length: 255 }).notNull(),
@@ -521,7 +525,6 @@ export const integrations = mysqlTable("integrations", {
   /**
    * Dedicated columns extracted from config JSON for efficient indexing.
    * Nullable during migration — backfilled by migrate-integrations-pageform.mjs.
-   * For LEAD_ROUTING integrations only; NULL for TELEGRAM / AFFILIATE.
    */
   pageId: varchar("pageId", { length: 128 }),
   formId: varchar("formId", { length: 128 }),
@@ -530,8 +533,7 @@ export const integrations = mysqlTable("integrations", {
   /** Dedicated FK column extracted from config.targetWebsiteId for efficient JOIN and index. */
   targetWebsiteId: int("targetWebsiteId"),
   /** Dedicated FK column extracted from config.facebookAccountId for efficient disconnect cleanup.
-   *  Nullable — populated by backfill for existing rows; always set on new LEAD_ROUTING integrations.
-   *  NULL for TELEGRAM / AFFILIATE types. */
+   *  Nullable — populated by backfill for existing rows; always set on new LEAD_ROUTING integrations. */
   facebookAccountId: int("facebookAccountId"),
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
