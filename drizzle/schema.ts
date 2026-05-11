@@ -180,31 +180,6 @@ export const facebookForms = mysqlTable("facebook_forms", {
 export type FacebookForm = typeof facebookForms.$inferSelect;
 export type InsertFacebookForm = typeof facebookForms.$inferInsert;
 
-// ─── Google OAuth States (CSRF protection) ────────────────────────────────────
-// Short-lived tokens stored during the OAuth authorization_code flow.
-// Verified on callback to prevent CSRF attacks; deleted immediately after use.
-export const googleOauthStates = mysqlTable("google_oauth_states", {
-  id: int("id").autoincrement().primaryKey(),
-  /** Cryptographically random 64-hex-char state token */
-  state: varchar("state", { length: 128 }).notNull(),
-  /** Platform user who initiated the flow. 0 = login flow (user not yet authenticated). */
-  userId: int("userId").notNull(),
-  /**
-   * "login"       — flow started from Login / Register page (no session required).
-   * "integration" — flow started from Connections page (session required, userId > 0).
-   */
-  type: mysqlEnum("type", ["login", "integration"]).default("login").notNull(),
-  /** 10-minute TTL */
-  expiresAt: timestamp("expiresAt").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-}, (t) => ({
-  uqState: uniqueIndex("uq_google_oauth_states_state").on(t.state),
-  idxUserId: index("idx_google_oauth_states_user_id").on(t.userId),
-}));
-
-export type GoogleOauthState = typeof googleOauthStates.$inferSelect;
-export type InsertGoogleOauthState = typeof googleOauthStates.$inferInsert;
-
 // ─── Universal OAuth (migration 0055) ─────────────────────────────────────────
 export const oauthStates = mysqlTable(
   "oauth_states",

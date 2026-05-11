@@ -1,0 +1,22 @@
+-- Migration 0066 — Drop zombie google_oauth_states table
+--
+-- Background:
+--   Migration 0040 created `google_oauth_states` for Google OAuth CSRF state.
+--   Migration 0055 introduced the universal `oauth_states` table.
+--   Commit 91848e5 ("feat(oauth): universal /api/oauth routes, oauth_tokens,
+--   remove legacy googleOAuth") migrated all read/write paths to the universal
+--   table. Since then `google_oauth_states` has been a zombie — no application
+--   code reads from or writes to it.
+--
+-- Preconditions (verified by repo audit at HEAD):
+--   1) No application code references `google_oauth_states` or `googleOauthStates`
+--      (grep returned only the schema declaration and historical SQL files).
+--   2) No FK references this table:
+--        SELECT * FROM information_schema.KEY_COLUMN_USAGE
+--         WHERE TABLE_SCHEMA=DATABASE() AND REFERENCED_TABLE_NAME='google_oauth_states';
+--   3) Stored rows have a 10-minute TTL — any in-flight OAuth flow either
+--      already wrote to `oauth_states` (current code path) or the row is stale.
+--      No human-meaningful data is lost.
+
+--> statement-breakpoint
+DROP TABLE IF EXISTS `google_oauth_states`;
