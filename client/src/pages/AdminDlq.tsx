@@ -107,16 +107,42 @@ export default function AdminDlq() {
   const handleRetry = async (orderId: number) => {
     setRetryingId(orderId);
     try {
-      await retryOrder.mutateAsync({ orderId });
+      const result = await retryOrder.mutateAsync({ orderId });
+      if (result.ok === false && result.outcome === "cb_blocked") {
+        // Destination breaker is OPEN — offer a one-tap force.
+        const cooldown = result.cooldownUntil
+          ? new Date(result.cooldownUntil).toLocaleTimeString()
+          : "?";
+        const proceed = window.confirm(
+          `Destinatsiya offline (${result.state}, cooldown until ${cooldown}).\n` +
+            `Sababi: ${result.reason}\n\nForce retry qilamizmi?`,
+        );
+        if (proceed) {
+          await retryOrder.mutateAsync({ orderId, force: true });
+        }
+      }
     } finally {
       setRetryingId(null);
     }
   };
 
+  // Default = healthy_only (skip orders whose destination breaker is OPEN).
+  // Admin can flip to force via the confirm prompt below.
   const handleRetryAll = async () => {
     setRetryingAll(true);
     try {
-      await retryAll.mutateAsync();
+      const r = await retryAll.mutateAsync({ mode: "healthy_only" });
+      const summary =
+        `${r.queued} order navbatga olindi.` +
+        (r.skipped > 0
+          ? `\n${r.skipped} ta order chetlatildi (destinatsiya offline).\n\nO'shalarni ham majburan urinish kerakmi?`
+          : "");
+      if (r.skipped > 0) {
+        const proceedForce = window.confirm(summary);
+        if (proceedForce) {
+          await retryAll.mutateAsync({ mode: "force" });
+        }
+      }
     } finally {
       setRetryingAll(false);
     }

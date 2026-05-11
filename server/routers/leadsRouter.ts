@@ -25,6 +25,7 @@ import {
 import { dispatchLeadProcessing } from "../services/leadDispatch";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
+import { previewLeadCBState, previewBulkRetryCBState } from "../services/circuitBreaker";
 
 export const leadsRouter = router({
   list: protectedProcedure
@@ -137,9 +138,34 @@ export const leadsRouter = router({
     return { leads: leadStats, orders: orderStats, todayIntegrationLeads };
   }),
 
-  // ── Retry a single FAILED lead ──────────────────────────────────────────────
-  retryLead: protectedProcedure
+  // ── Preview: what would happen if we retried this lead? ────────────────────
+  // Read-only. Used by the UI to show CB-state warnings BEFORE the user
+  // commits to retrying a lead whose destinations are unhealthy.
+  retryLeadPreview: protectedProcedure
     .input(z.object({ id: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+
+      const [lead] = await db
+        .select({ id: leads.id })
+        .from(leads)
+        .where(and(eq(leads.id, input.id), eq(leads.userId, userId)))
+        .limit(1);
+      if (!lead) throw new Error("Lead not found");
+
+      return await previewLeadCBState(db, input.id);
+    }),
+
+  // ── Retry a single FAILED lead ──────────────────────────────────────────────
+  //
+  // Behaviour change (Phase 1A): if the lead's destinations are all OPEN on
+  // the circuit breaker and `force=false`, refuse with a structured response
+  // so the UI can show the user "destination X is offline until 17:35, force
+  // anyway?". Passing `force=true` bypasses the breaker and audits the act.
+  retryLead: protectedProcedure
+    .input(z.object({ id: z.number(), force: z.boolean().optional().default(false) }))
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user.id;
       const db = await getDb();
@@ -158,6 +184,19 @@ export const leadsRouter = router({
         lead.deliveryStatus === "PARTIAL";
       if (!retryable) throw new Error("Only leads with Graph errors or failed/partial delivery can be retried");
 
+      // CB pre-check — only refuse when EVERY destination is blocked. If a
+      // lead has 3 destinations and 1 is healthy, retrying still delivers
+      // useful work to that one; surface the warning but don't block.
+      const preview = await previewLeadCBState(db, input.id);
+      if (preview.allBlocked && !input.force && preview.destinations.length > 0) {
+        return {
+          ok: false as const,
+          leadId: lead.id,
+          reason: "cb_all_destinations_blocked" as const,
+          preview,
+        };
+      }
+
       await db
         .update(leads)
         .set({ dataStatus: "PENDING", deliveryStatus: "PENDING", dataError: null })
@@ -172,15 +211,50 @@ export const leadsRouter = router({
         userId: lead.userId,
       }).catch((err) => console.error(`[RetryLead] lead ${lead.id} error:`, err));
 
-      return { ok: true, leadId: lead.id };
+      return {
+        ok: true as const,
+        leadId: lead.id,
+        forced: input.force && preview.anyBlocked,
+        preview,
+      };
     }),
 
-  // ── Retry all FAILED leads for this user ─────────────────────────────────
-  retryAllFailed: protectedProcedure
-    .mutation(async ({ ctx }) => {
+  // ── Preview: what would retrying all this user's failed leads do? ─────────
+  // Returns a per-destination breakdown so the UI can offer "Retry healthy
+  // destinations only" vs "Force-retry everything" instead of dumping the
+  // whole queue at a dead affiliate.
+  retryAllFailedPreview: protectedProcedure
+    .query(async ({ ctx }) => {
       const userId = ctx.user.id;
       const db = await getDb();
       if (!db) throw new Error("Database not available");
+
+      return await previewBulkRetryCBState(db, { userId, minAttempts: 1 });
+    }),
+
+  // ── Retry all FAILED leads for this user ─────────────────────────────────
+  //
+  // Phase 1A: `mode='healthy_only'` (default) skips leads whose ALL
+  // destinations are blocked on the breaker — the queue is no longer
+  // saturated by a single dead destination. `mode='force'` reverts to the
+  // legacy behaviour and audits a `manual_force` event per skipped check.
+  //
+  // Dispatch is paced via the same rate-limited runner the scheduler uses
+  // (default RETRY_RATE_PER_SEC=20, concurrency=10) so a 1k-lead button
+  // press no longer torpedoes BullMQ with 1k simultaneous jobs.
+  retryAllFailed: protectedProcedure
+    .input(
+      z
+        .object({
+          mode: z.enum(["healthy_only", "force"]).default("healthy_only"),
+        })
+        .default({ mode: "healthy_only" }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) throw new Error("Database not available");
+      const mode = input.mode;
 
       const failedLeads = await db
         .select()
@@ -196,35 +270,61 @@ export const leadsRouter = router({
           )
         );
 
-      if (failedLeads.length === 0) return { retried: 0 };
+      if (failedLeads.length === 0) return { retried: 0, skipped: 0, mode };
 
+      // Per-lead CB pre-check: in healthy_only mode we drop leads where every
+      // destination is currently OPEN. Cheaper than dispatching and failing.
+      const toRetry: typeof failedLeads = [];
+      let skipped = 0;
+      if (mode === "healthy_only") {
+        for (const lead of failedLeads) {
+          const preview = await previewLeadCBState(db, lead.id);
+          if (preview.destinations.length > 0 && preview.allBlocked) {
+            skipped += 1;
+            continue;
+          }
+          toRetry.push(lead);
+        }
+      } else {
+        toRetry.push(...failedLeads);
+      }
+
+      if (toRetry.length === 0) {
+        return { retried: 0, skipped, mode };
+      }
+
+      const retryIds = toRetry.map((l) => l.id);
       await db
         .update(leads)
         .set({ dataStatus: "PENDING", deliveryStatus: "PENDING", dataError: null })
-        .where(
-          and(
-            eq(leads.userId, userId),
-            or(
-              eq(leads.dataStatus, "ERROR"),
-              inArray(leads.deliveryStatus, ["FAILED", "PARTIAL"])
-            ),
-            sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
-          )
-        );
+        .where(inArray(leads.id, retryIds));
 
-      // Re-process each lead via queue
-      for (const lead of failedLeads) {
-        void dispatchLeadProcessing({
-          leadId: lead.id,
-          leadgenId: lead.leadgenId,
-          pageId: lead.pageId,
-          formId: lead.formId,
-          userId: lead.userId,
-        }).catch((err) => console.error(`[RetryAllFailed] lead ${lead.id} error:`, err));
+      // Rate-limited dispatch: same primitives as the hourly scheduler so we
+      // can't accidentally drown BullMQ in a button press. Stagger across
+      // 50ms windows — at 20/s default, a 1k-lead retry takes ~50s wall time.
+      const concurrency = Math.max(1, Math.floor(Number(process.env.RETRY_CONCURRENCY ?? 10)));
+      const ratePerSec = Math.max(1, Math.floor(Number(process.env.RETRY_RATE_PER_SEC ?? 20)));
+      const intervalMs = Math.max(1, Math.floor(1000 / ratePerSec));
+
+      let i = 0;
+      for (const lead of toRetry) {
+        const delayMs = Math.floor(i / concurrency) * intervalMs;
+        setTimeout(() => {
+          void dispatchLeadProcessing({
+            leadId: lead.id,
+            leadgenId: lead.leadgenId,
+            pageId: lead.pageId,
+            formId: lead.formId,
+            userId: lead.userId,
+          }).catch((err) => console.error(`[RetryAllFailed] lead ${lead.id} error:`, err));
+        }, delayMs);
+        i += 1;
       }
 
-      console.log(`[RetryAllFailed] Retrying ${failedLeads.length} failed leads for user ${userId}`);
-      return { retried: failedLeads.length };
+      console.log(
+        `[RetryAllFailed] user=${userId} mode=${mode} retried=${toRetry.length} skipped=${skipped} concurrency=${concurrency} rate=${ratePerSec}/s`,
+      );
+      return { retried: toRetry.length, skipped, mode };
     }),
 
   // ── Get single lead with enriched orders ──────────────────────────────────

@@ -123,13 +123,31 @@ export default function Leads() {
 
   const retryLeadMutation = trpc.leads.retryLead.useMutation({
     onMutate: ({ id }) => setRetryingIds((prev) => new Set(prev).add(id)),
-    onSuccess: (_data, { id }) => {
+    onSuccess: (result, { id, force }) => {
       setRetryingIds((prev) => {
         const s = new Set(prev);
         s.delete(id);
         return s;
       });
-      toast.success(t("leads.retryQueued"));
+      // The mutation can succeed in two flavours: actually queued OR CB-blocked.
+      // Treat the latter as a soft refusal — offer Force as a one-tap follow-up
+      // via window.confirm() so the user doesn't have to find a separate UI.
+      if (result.ok === false && result.reason === "cb_all_destinations_blocked") {
+        const cooldown = result.preview.earliestRecoveryAt
+          ? new Date(result.preview.earliestRecoveryAt).toLocaleTimeString()
+          : "?";
+        const destNames = result.preview.destinations
+          .map((d) => d.integrationName ?? `#${d.integrationId}`)
+          .join(", ");
+        const proceed = window.confirm(
+          t("leads.retryBlockedConfirm", { destNames, cooldown }),
+        );
+        if (proceed) {
+          retryLeadMutation.mutate({ id, force: true });
+        }
+        return;
+      }
+      toast.success(force ? t("leads.retryForcedQueued") : t("leads.retryQueued"));
       refetch();
     },
     onError: (err, { id }) => {
@@ -144,10 +162,12 @@ export default function Leads() {
 
   const retryAllMutation = trpc.leads.retryAllFailed.useMutation({
     onSuccess: (result) => {
+      const skippedNote =
+        result.skipped > 0 ? ` ${t("leads.retryAllSkipped", { count: result.skipped })}` : "";
       toast.success(
         result.retried > 0
-          ? t("leads.retryAllQueued", { count: result.retried })
-          : t("leads.noFailedLeads")
+          ? t("leads.retryAllQueued", { count: result.retried }) + skippedNote
+          : t("leads.noFailedLeads"),
       );
       refetch();
     },

@@ -5,6 +5,7 @@ import { integrations, leads, orders, targetWebsites, users } from "../../drizzl
 import { and, count, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { ORDER_MAX_DELIVERY_ATTEMPTS } from "../lib/orderRetryPolicy";
 import { retryFailedOrderDelivery } from "../services/leadService";
+import { evaluateClaim, evaluateAndMaybeBlock, previewBulkRetryCBState } from "../services/circuitBreaker";
 
 export const adminDlqRouter = router({
   // ─── Delivery metrics overview ──────────────────────────────────────────────
@@ -181,22 +182,71 @@ export const adminDlqRouter = router({
       return { items, total };
     }),
 
-  // ─── Force-retry a single permanently failed order ──────────────────────────
-  retryOrder: adminProcedure
+  // ─── Pre-check the CB state for a single order before forcing retry ────────
+  // Read-only. Used by the AdminDlq UI to render a "destination is OFFLINE
+  // until X — Force anyway?" prompt before the destructive `retryOrder`
+  // mutation runs.
+  retryOrderPreview: adminProcedure
     .input(z.object({ orderId: z.number() }))
+    .query(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+      const [order] = await db
+        .select({ id: orders.id, integrationId: orders.integrationId, destinationId: orders.destinationId })
+        .from(orders)
+        .where(eq(orders.id, input.orderId))
+        .limit(1);
+      if (!order) throw new Error("Order topilmadi");
+      const ev = await evaluateClaim(db, {
+        integrationId: order.integrationId,
+        destinationId: order.destinationId ?? 0,
+      });
+      return { orderId: order.id, ...ev };
+    }),
+
+  // ─── Force-retry a single permanently failed order ──────────────────────────
+  //
+  // Phase 1A: respects CB by default. Passing `force=true` bypasses an OPEN
+  // destination and audits a `manual_force` event so we can spot a
+  // destination that keeps getting bypassed.
+  retryOrder: adminProcedure
+    .input(z.object({ orderId: z.number(), force: z.boolean().optional().default(false) }))
     .mutation(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new Error("DB unavailable");
 
       // Verify it is permanently failed
       const [order] = await db
-        .select({ id: orders.id, attempts: orders.attempts, status: orders.status })
+        .select({
+          id: orders.id,
+          attempts: orders.attempts,
+          status: orders.status,
+          integrationId: orders.integrationId,
+          destinationId: orders.destinationId,
+        })
         .from(orders)
         .where(eq(orders.id, input.orderId))
         .limit(1);
 
       if (!order) throw new Error("Order topilmadi");
       if (order.status !== "FAILED") throw new Error("Order FAILED statusda emas");
+
+      // CB gate (Phase 1A — admin path enforces unless force=true)
+      const guard = await evaluateAndMaybeBlock(db, {
+        integrationId: order.integrationId,
+        destinationId: order.destinationId ?? 0,
+        options: { caller: "admin", force: input.force },
+        metadata: { orderId: order.id, source: "adminDlq.retryOrder" },
+      });
+      if (guard.shouldBlock) {
+        return {
+          ok: false as const,
+          outcome: "cb_blocked" as const,
+          reason: guard.reason,
+          state: guard.state,
+          cooldownUntil: guard.cooldownUntil,
+        };
+      }
 
       // Reset to retryable state: attempts=0, nextRetryAt=now (due immediately)
       await db
@@ -206,27 +256,83 @@ export const adminDlqRouter = router({
 
       // Immediately attempt delivery
       const result = await retryFailedOrderDelivery(input.orderId);
-      return { outcome: result.outcome };
+      return { ok: true as const, outcome: result.outcome, forced: guard.forced };
     }),
 
-  // ─── Force-retry ALL permanently failed orders (batch reset) ────────────────
-  retryAll: adminProcedure.mutation(async () => {
+  // ─── Preview: what would retryAll touch? ───────────────────────────────────
+  retryAllPreview: adminProcedure.query(async () => {
     const db = await getDb();
     if (!db) throw new Error("DB unavailable");
+    return await previewBulkRetryCBState(db, { minAttempts: ORDER_MAX_DELIVERY_ATTEMPTS });
+  }),
 
-    const result = await db
-      .update(orders)
-      .set({ attempts: 0, nextRetryAt: new Date() })
-      .where(
-        and(
-          eq(orders.status, "FAILED"),
-          gte(orders.attempts, ORDER_MAX_DELIVERY_ATTEMPTS),
-        ),
+  // ─── Force-retry ALL permanently failed orders (batch reset) ────────────────
+  //
+  // Phase 1A: `mode='healthy_only'` (default) only resets orders whose
+  // destination is NOT currently OPEN — the rest stay parked until the
+  // breaker recovers. `mode='force'` reverts to legacy "reset everything"
+  // and audits the override.
+  retryAll: adminProcedure
+    .input(
+      z
+        .object({
+          mode: z.enum(["healthy_only", "force"]).default("healthy_only"),
+        })
+        .default({ mode: "healthy_only" }),
+    )
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+      const mode = input.mode;
+
+      const baseWhere = and(
+        eq(orders.status, "FAILED"),
+        gte(orders.attempts, ORDER_MAX_DELIVERY_ATTEMPTS),
       );
 
-    const affected = (result as unknown as { rowsAffected?: number }[])
-      ?.at(0)?.rowsAffected ?? 0;
+      if (mode === "force") {
+        const result = await db
+          .update(orders)
+          .set({ attempts: 0, nextRetryAt: new Date() })
+          .where(baseWhere);
+        const affected =
+          (result as unknown as { rowsAffected?: number }[])?.at(0)?.rowsAffected ?? 0;
+        return { queued: affected, skipped: 0, mode };
+      }
 
-    return { queued: affected };
-  }),
+      // healthy_only: enumerate destinations, drop the OPEN ones, reset only
+      // the orders that hit healthy destinations.
+      const preview = await previewBulkRetryCBState(db, {
+        minAttempts: ORDER_MAX_DELIVERY_ATTEMPTS,
+      });
+      const healthyDests = preview.byDestination.filter((d) => d.decision !== "block");
+      const blockedDests = preview.byDestination.filter((d) => d.decision === "block");
+      const skipped = blockedDests.reduce((acc, d) => acc + d.orderCount, 0);
+
+      if (healthyDests.length === 0) {
+        return { queued: 0, skipped, mode };
+      }
+
+      // One UPDATE per destination — small N (typically <20 distinct
+      // destinations) keeps this cheap; alternative WHERE-IN over millions
+      // of order ids would balloon the query.
+      let totalQueued = 0;
+      for (const d of healthyDests) {
+        const result = await db
+          .update(orders)
+          .set({ attempts: 0, nextRetryAt: new Date() })
+          .where(
+            and(
+              baseWhere,
+              eq(orders.integrationId, d.integrationId),
+              eq(orders.destinationId, d.destinationId),
+            ),
+          );
+        const affected =
+          (result as unknown as { rowsAffected?: number }[])?.at(0)?.rowsAffected ?? 0;
+        totalQueued += affected;
+      }
+
+      return { queued: totalQueued, skipped, mode };
+    }),
 });

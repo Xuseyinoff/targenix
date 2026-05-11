@@ -345,6 +345,119 @@ const HAS_DB = Boolean(
     expect(ev.reason).toBe("manual_lock_closed");
   });
 
+  // ─── Phase 1A enforcement helpers ──────────────────────────────────────────
+
+  it("evaluateAndMaybeBlock returns shouldBlock=false in shadow mode (default)", async () => {
+    const { evaluateAndMaybeBlock } = await import("./circuitBreaker");
+    // Trip the breaker
+    for (let i = 0; i < 5; i++) {
+      await recordOutcome(db, {
+        integrationId: TEST_INTEGRATION_ID,
+        destinationId: TEST_DESTINATION_ID,
+        success: false,
+        errorType: "network",
+      });
+    }
+    // With CB_ENFORCEMENT unset (= disabled), shouldBlock stays false
+    delete process.env.CB_ENFORCEMENT;
+    const r = await evaluateAndMaybeBlock(db, {
+      integrationId: TEST_INTEGRATION_ID,
+      destinationId: TEST_DESTINATION_ID,
+      options: { caller: "admin" },
+    });
+    expect(r.shouldBlock).toBe(false);
+    expect(r.enforced).toBe(false);
+    expect(r.decision).toBe("block"); // raw CB decision still reported
+  });
+
+  it("evaluateAndMaybeBlock blocks admin caller when CB_ENFORCEMENT=admin_only", async () => {
+    const { evaluateAndMaybeBlock } = await import("./circuitBreaker");
+    for (let i = 0; i < 5; i++) {
+      await recordOutcome(db, {
+        integrationId: TEST_INTEGRATION_ID,
+        destinationId: TEST_DESTINATION_ID,
+        success: false,
+        errorType: "network",
+      });
+    }
+    process.env.CB_ENFORCEMENT = "admin_only";
+    try {
+      const r = await evaluateAndMaybeBlock(db, {
+        integrationId: TEST_INTEGRATION_ID,
+        destinationId: TEST_DESTINATION_ID,
+        options: { caller: "admin" },
+      });
+      expect(r.shouldBlock).toBe(true);
+      expect(r.enforced).toBe(true);
+    } finally {
+      delete process.env.CB_ENFORCEMENT;
+    }
+  });
+
+  it("evaluateAndMaybeBlock does NOT block scheduler caller when scope=admin_only", async () => {
+    const { evaluateAndMaybeBlock } = await import("./circuitBreaker");
+    for (let i = 0; i < 5; i++) {
+      await recordOutcome(db, {
+        integrationId: TEST_INTEGRATION_ID,
+        destinationId: TEST_DESTINATION_ID,
+        success: false,
+        errorType: "network",
+      });
+    }
+    process.env.CB_ENFORCEMENT = "admin_only";
+    try {
+      const r = await evaluateAndMaybeBlock(db, {
+        integrationId: TEST_INTEGRATION_ID,
+        destinationId: TEST_DESTINATION_ID,
+        options: { caller: "scheduler" },
+      });
+      expect(r.shouldBlock).toBe(false);
+      expect(r.enforced).toBe(false);
+    } finally {
+      delete process.env.CB_ENFORCEMENT;
+    }
+  });
+
+  it("evaluateAndMaybeBlock force=true bypasses and appends manual_force audit event", async () => {
+    const { evaluateAndMaybeBlock } = await import("./circuitBreaker");
+    for (let i = 0; i < 5; i++) {
+      await recordOutcome(db, {
+        integrationId: TEST_INTEGRATION_ID,
+        destinationId: TEST_DESTINATION_ID,
+        success: false,
+        errorType: "network",
+      });
+    }
+    process.env.CB_ENFORCEMENT = "admin_only";
+    try {
+      const r = await evaluateAndMaybeBlock(db, {
+        integrationId: TEST_INTEGRATION_ID,
+        destinationId: TEST_DESTINATION_ID,
+        options: { caller: "admin", force: true },
+      });
+      expect(r.shouldBlock).toBe(false);
+      expect(r.forced).toBe(true);
+    } finally {
+      delete process.env.CB_ENFORCEMENT;
+    }
+    const [events] = (await db.execute(sql`
+      SELECT eventType FROM integration_health_events
+      WHERE integrationId = ${TEST_INTEGRATION_ID} AND eventType = 'manual_force'
+    `)) as any;
+    expect(events.length).toBeGreaterThan(0);
+  });
+
+  it("previewBulkRetryCBState groups orders by destination + reports CB state", async () => {
+    const { previewBulkRetryCBState } = await import("./circuitBreaker");
+    // Just verify the shape — the test DB rarely has matching orders for
+    // our synthetic integrationId so the result may be empty, but it should
+    // still return a valid shape without throwing.
+    const r = await previewBulkRetryCBState(db, { minAttempts: 0 });
+    expect(r).toHaveProperty("totalOrders");
+    expect(r).toHaveProperty("totalLeads");
+    expect(Array.isArray(r.byDestination)).toBe(true);
+  });
+
   it("appends an 'opened' event to integration_health_events on each trip", async () => {
     for (let i = 0; i < 5; i++) {
       await recordOutcome(db, {

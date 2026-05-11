@@ -778,6 +778,337 @@ export async function recordShadowDecision(
   });
 }
 
+// ─── Enforcement (Phase 1A — admin path only by default) ───────────────────
+
+/**
+ * Where CB enforcement applies. Controlled by `CB_ENFORCEMENT` env var so we
+ * can roll it out path-by-path without code changes:
+ *
+ *   - `disabled`    (default)        → no path enforces; everyone runs in
+ *                                       shadow mode (Phase 0 behaviour).
+ *   - `admin_only`  (Phase 1A)       → admin retry endpoints enforce; the
+ *                                       hourly scheduler stays in shadow until
+ *                                       we've validated thresholds.
+ *   - `all`         (Phase 1B)       → scheduler enforces too.
+ *
+ * Per-call `force: true` always bypasses the breaker (with an audit row).
+ * Per-call `enforce: true` opts a non-admin caller in even when the global
+ * scope is `admin_only` (rarely needed).
+ */
+export type EnforcementScope = "disabled" | "admin_only" | "all";
+
+export function getEnforcementScope(): EnforcementScope {
+  const raw = process.env.CB_ENFORCEMENT?.trim().toLowerCase();
+  if (raw === "admin_only" || raw === "all" || raw === "disabled") return raw;
+  return "disabled";
+}
+
+export type EvaluateOptions = {
+  /** The retry path doing the check. Determines whether the global scope applies. */
+  caller: "scheduler" | "admin" | "system";
+  /**
+   * Admin override — proceed even if breaker would block. Audited as
+   * `manual_force` so we can spot a destination that keeps getting forced
+   * through (signal that the breaker is wrong, the destination is genuinely
+   * broken, or someone is fighting the system).
+   */
+  force?: boolean;
+  /**
+   * Force enforcement for this single call regardless of `CB_ENFORCEMENT`.
+   * Lets a caller opt in (or out) explicitly — e.g. a "preview" endpoint
+   * that wants the breaker's verdict even when global scope is `disabled`.
+   */
+  enforce?: boolean;
+};
+
+export type GuardResult = {
+  /** Final decision once scope + force + manualLock are folded in. */
+  shouldBlock: boolean;
+  /** Raw CB decision (allow / block / probe) for telemetry. */
+  decision: Decision;
+  state: CircuitState;
+  reason: string;
+  cooldownUntil: Date | null;
+  manualLock: "OPEN" | "CLOSED" | null;
+  /** True when the caller asked us to skip enforcement here. */
+  enforced: boolean;
+  /** True when `force` flipped a `block` to `allow`. Audited separately. */
+  forced: boolean;
+};
+
+/**
+ * One-stop guard for callers that need to ASK the breaker before dispatching.
+ * Combines:
+ *   - `evaluateClaim` (the state-machine decision)
+ *   - the global `CB_ENFORCEMENT` scope
+ *   - the per-call `force` / `enforce` overrides
+ *   - audit-log side effect on `force` (so we can spot abuse)
+ *
+ * Returns `shouldBlock = true` iff the caller MUST NOT dispatch.
+ * Returns `shouldBlock = false` for: shadow mode, allowed state, half-open
+ * probe (caller treats success as recovery signal), or admin force.
+ */
+export async function evaluateAndMaybeBlock(
+  db: DbClient,
+  params: {
+    integrationId: number;
+    destinationId: number;
+    options: EvaluateOptions;
+    /** Free-form context attached to any `manual_force` audit row. */
+    metadata?: Record<string, unknown>;
+  },
+): Promise<GuardResult> {
+  const scope = getEnforcementScope();
+  const enforced =
+    params.options.enforce ??
+    (scope === "all" ||
+      (scope === "admin_only" && params.options.caller === "admin"));
+
+  const ev = await evaluateClaim(db, {
+    integrationId: params.integrationId,
+    destinationId: params.destinationId,
+  });
+
+  // Not enforcing this call: tell caller to proceed; record nothing (shadow
+  // logs are the scheduler's responsibility — admin/non-enforced calls don't
+  // duplicate them).
+  if (!enforced) {
+    return {
+      shouldBlock: false,
+      decision: ev.decision,
+      state: ev.state,
+      reason: `${ev.reason} (enforcement=off)`,
+      cooldownUntil: ev.cooldownUntil,
+      manualLock: ev.manualLock,
+      enforced: false,
+      forced: false,
+    };
+  }
+
+  const wouldBlock = ev.decision === "block";
+
+  // Force override: log it so we can spot a destination that keeps getting
+  // bypassed (admin fighting an OPEN breaker → either the breaker is too
+  // aggressive or the destination really is permanently broken).
+  if (wouldBlock && params.options.force) {
+    await appendEvent(db, {
+      integrationId: params.integrationId,
+      destinationId: params.destinationId,
+      eventType: "manual_force",
+      fromState: ev.state,
+      toState: ev.state,
+      reason: `force-bypass by ${params.options.caller}: ${ev.reason}`,
+      metadata: params.metadata ?? null,
+    });
+    return {
+      shouldBlock: false,
+      decision: ev.decision,
+      state: ev.state,
+      reason: `force-bypassed: ${ev.reason}`,
+      cooldownUntil: ev.cooldownUntil,
+      manualLock: ev.manualLock,
+      enforced: true,
+      forced: true,
+    };
+  }
+
+  return {
+    shouldBlock: wouldBlock,
+    decision: ev.decision,
+    state: ev.state,
+    reason: ev.reason,
+    cooldownUntil: ev.cooldownUntil,
+    manualLock: ev.manualLock,
+    enforced: true,
+    forced: false,
+  };
+}
+
+// ─── Admin pre-check helpers (Phase 1A UI) ─────────────────────────────────
+
+export type DestinationCBSnapshot = {
+  integrationId: number;
+  destinationId: number;
+  integrationName: string | null;
+  decision: Decision;
+  state: CircuitState;
+  cooldownUntil: Date | null;
+  manualLock: "OPEN" | "CLOSED" | null;
+  /** Order rows on this lead/destination that are currently retryable. */
+  orderIds: number[];
+};
+
+export type LeadCBPreview = {
+  leadId: number;
+  /** Distinct destinations this lead has touched (from existing orders). */
+  destinations: DestinationCBSnapshot[];
+  /** Convenience flags for UI. */
+  allBlocked: boolean;
+  anyBlocked: boolean;
+  earliestRecoveryAt: Date | null;
+};
+
+/**
+ * What would the breaker say for each of a single lead's destinations? Used by
+ * `leads.retryLead` to render a warning before dispatching. We key on the
+ * order rows (lead has already been delivered at least once for retry to be
+ * meaningful), so the answer is grounded in real prior dispatches rather
+ * than re-running the routing logic.
+ *
+ * Read-only — has no side effects on the breaker state.
+ */
+export async function previewLeadCBState(
+  db: DbClient,
+  leadId: number,
+): Promise<LeadCBPreview> {
+  // Inline raw SELECT so we can return integrationName in one round-trip
+  // without importing the integrations / orders tables into this file's
+  // type surface (keeps the CB module decoupled from order schema details).
+  const rowsRes = (await db.execute(sql`
+    SELECT
+      o.integrationId,
+      o.destinationId,
+      i.name AS integrationName,
+      JSON_ARRAYAGG(o.id) AS orderIds
+    FROM orders o
+    LEFT JOIN integrations i ON i.id = o.integrationId
+    WHERE o.leadId = ${leadId}
+    GROUP BY o.integrationId, o.destinationId, i.name
+  `)) as unknown as [Array<{
+    integrationId: number;
+    destinationId: number;
+    integrationName: string | null;
+    orderIds: number[] | string | null;
+  }>, unknown];
+
+  const rows = rowsRes[0] ?? [];
+  if (rows.length === 0) {
+    return { leadId, destinations: [], allBlocked: false, anyBlocked: false, earliestRecoveryAt: null };
+  }
+
+  const destinations: DestinationCBSnapshot[] = [];
+  for (const r of rows) {
+    const ev = await evaluateClaim(db, {
+      integrationId: Number(r.integrationId),
+      destinationId: Number(r.destinationId ?? 0),
+    });
+    const parsedIds = Array.isArray(r.orderIds)
+      ? r.orderIds.map(Number).filter((n) => Number.isFinite(n))
+      : typeof r.orderIds === "string"
+        ? (JSON.parse(r.orderIds) as number[])
+        : [];
+    destinations.push({
+      integrationId: Number(r.integrationId),
+      destinationId: Number(r.destinationId ?? 0),
+      integrationName: r.integrationName,
+      decision: ev.decision,
+      state: ev.state,
+      cooldownUntil: ev.cooldownUntil,
+      manualLock: ev.manualLock,
+      orderIds: parsedIds,
+    });
+  }
+
+  const allBlocked = destinations.every((d) => d.decision === "block");
+  const anyBlocked = destinations.some((d) => d.decision === "block");
+  const cooldowns = destinations
+    .map((d) => d.cooldownUntil?.getTime())
+    .filter((t): t is number => typeof t === "number");
+  const earliestRecoveryAt = cooldowns.length > 0 ? new Date(Math.min(...cooldowns)) : null;
+
+  return { leadId, destinations, allBlocked, anyBlocked, earliestRecoveryAt };
+}
+
+/**
+ * Bulk preview for the "Retry All Failed Leads" button. Groups all
+ * dispatchable failed orders by `(integrationId, destinationId)` and returns
+ * how many would be retried per destination, alongside the breaker state.
+ *
+ * The UI uses this to render the "523 OK destinations, 1289 OPEN — proceed
+ * with which?" modal.
+ */
+export type BulkCBPreview = {
+  totalOrders: number;
+  totalLeads: number;
+  byDestination: Array<DestinationCBSnapshot & { orderCount: number; leadCount: number }>;
+};
+
+export async function previewBulkRetryCBState(
+  db: DbClient,
+  params: {
+    /** Filter: only orders for this user. Omit to scan everything (admin DLQ). */
+    userId?: number;
+    /** Filter: only orders with `attempts >= minAttempts`. Default 0 (any). */
+    minAttempts?: number;
+    /** Filter: only orders with `attempts < maxAttempts`. Use ORDER_MAX_DELIVERY_ATTEMPTS for retryable; omit for exhausted (DLQ). */
+    maxAttempts?: number;
+    onlyFailed?: boolean;
+  },
+): Promise<BulkCBPreview> {
+  const whereParts: string[] = [];
+  if (params.onlyFailed !== false) whereParts.push("o.status = 'FAILED'");
+  if (params.userId != null) whereParts.push(`o.userId = ${Number(params.userId)}`);
+  if (params.minAttempts != null) whereParts.push(`o.attempts >= ${Number(params.minAttempts)}`);
+  if (params.maxAttempts != null) whereParts.push(`o.attempts < ${Number(params.maxAttempts)}`);
+  const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : "";
+
+  const rowsRes = (await db.execute(sql.raw(`
+    SELECT
+      o.integrationId,
+      o.destinationId,
+      i.name AS integrationName,
+      COUNT(*) AS orderCount,
+      COUNT(DISTINCT o.leadId) AS leadCount
+    FROM orders o
+    LEFT JOIN integrations i ON i.id = o.integrationId
+    ${whereClause}
+    GROUP BY o.integrationId, o.destinationId, i.name
+    ORDER BY orderCount DESC
+  `))) as unknown as [Array<{
+    integrationId: number;
+    destinationId: number;
+    integrationName: string | null;
+    orderCount: number;
+    leadCount: number;
+  }>, unknown];
+
+  const rows = rowsRes[0] ?? [];
+  let totalOrders = 0;
+  const leadIds = new Set<number>();
+  const byDestination: Array<DestinationCBSnapshot & { orderCount: number; leadCount: number }> = [];
+
+  for (const r of rows) {
+    const orderCount = Number(r.orderCount);
+    totalOrders += orderCount;
+    const ev = await evaluateClaim(db, {
+      integrationId: Number(r.integrationId),
+      destinationId: Number(r.destinationId ?? 0),
+    });
+    byDestination.push({
+      integrationId: Number(r.integrationId),
+      destinationId: Number(r.destinationId ?? 0),
+      integrationName: r.integrationName,
+      decision: ev.decision,
+      state: ev.state,
+      cooldownUntil: ev.cooldownUntil,
+      manualLock: ev.manualLock,
+      orderIds: [], // populated lazily by callers that need them
+      orderCount,
+      leadCount: Number(r.leadCount),
+    });
+  }
+
+  // For totalLeads we do one more pass — JOIN-aware COUNT DISTINCT would be
+  // wrong because the same lead can appear under multiple destinations.
+  const distinctRes = (await db.execute(sql.raw(`
+    SELECT COUNT(DISTINCT o.leadId) AS n FROM orders o
+    ${whereClause}
+  `))) as unknown as [Array<{ n: number }>, unknown];
+  const totalLeads = Number(distinctRes[0]?.[0]?.n ?? 0);
+
+  return { totalOrders, totalLeads, byDestination };
+}
+
 // Re-export the policy table for callers that want to introspect without
 // re-importing from lib/.
 export { CIRCUIT_POLICY };
