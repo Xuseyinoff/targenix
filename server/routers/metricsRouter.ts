@@ -125,4 +125,39 @@ export const metricsRouter = router({
       return getIntegrationBreakdown(db, PERIOD_HOURS[input.period], input.userId ?? null, input.limit);
     }),
 
+  /**
+   * Sprint 5 / Item 5.4 — most recent SECURITY-category log entries.
+   * Owner-mismatch attempts and other tenant-boundary violations land here
+   * via Sprint 2.3. Surfaces on AdminMetrics so we notice cross-tenant
+   * activity in near-real-time rather than tail-watching production logs.
+   */
+  securityFeed: adminProcedure
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(100).default(20),
+        sinceHours: z.number().int().min(1).max(720).default(168), // 7d default
+      }),
+    )
+    .query(async ({ input }) => {
+      const db = await requireDb();
+      const { appLogs } = await import("../../drizzle/schema");
+      const { gte, desc, eq, and } = await import("drizzle-orm");
+      const since = new Date(Date.now() - input.sinceHours * 60 * 60 * 1000);
+      const rows = await db
+        .select({
+          id: appLogs.id,
+          level: appLogs.level,
+          message: appLogs.message,
+          eventType: appLogs.eventType,
+          userId: appLogs.userId,
+          meta: appLogs.meta,
+          createdAt: appLogs.createdAt,
+        })
+        .from(appLogs)
+        .where(and(eq(appLogs.category, "SECURITY"), gte(appLogs.createdAt, since)))
+        .orderBy(desc(appLogs.createdAt))
+        .limit(input.limit);
+      return rows;
+    }),
+
 });

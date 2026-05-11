@@ -42,6 +42,10 @@ export interface AdapterStat {
   failed:       number;
   successRate:  number;
   avgDurationMs: number | null;
+  /** Sprint 5 / Item 5.4 — latency percentiles for capacity planning. */
+  p50DurationMs: number | null;
+  p95DurationMs: number | null;
+  p99DurationMs: number | null;
 }
 
 export interface ErrorTypeStat {
@@ -196,16 +200,27 @@ export async function getAdapterBreakdown(
     if (r.duration != null)    s.durations.push(r.duration);
   }
 
-  return Array.from(map.entries()).map(([key, s]) => ({
-    adapterKey: key,
-    total: s.sent + s.failed,
-    sent: s.sent,
-    failed: s.failed,
-    successRate: safePct(s.sent, s.sent + s.failed),
-    avgDurationMs: s.durations.length > 0
-      ? Math.round(s.durations.reduce((a, b) => a + b, 0) / s.durations.length)
-      : null,
-  })).sort((a, b) => b.total - a.total);
+  return Array.from(map.entries()).map(([key, s]) => {
+    const ds = s.durations.length > 0 ? [...s.durations].sort((a, b) => a - b) : [];
+    const pct = (p: number): number | null => {
+      if (ds.length === 0) return null;
+      const idx = Math.max(0, Math.ceil(ds.length * p) - 1);
+      return ds[idx] ?? null;
+    };
+    return {
+      adapterKey: key,
+      total: s.sent + s.failed,
+      sent: s.sent,
+      failed: s.failed,
+      successRate: safePct(s.sent, s.sent + s.failed),
+      avgDurationMs: ds.length > 0
+        ? Math.round(ds.reduce((a, b) => a + b, 0) / ds.length)
+        : null,
+      p50DurationMs: pct(0.5),
+      p95DurationMs: pct(0.95),
+      p99DurationMs: pct(0.99),
+    };
+  }).sort((a, b) => b.total - a.total);
 }
 
 // ─── Error type distribution ──────────────────────────────────────────────────

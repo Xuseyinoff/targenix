@@ -105,6 +105,12 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
 }
 
 async function startServer() {
+  // Sprint 5 / Item 5.1 — initialize Sentry as early as possible so any
+  // boot-time exception flows to telemetry. No-op when SENTRY_DSN is unset
+  // (local dev + pre-DSN production keep working unchanged).
+  const { initSentry } = await import("../monitoring/sentry");
+  await initSentry();
+
   // Stage 1 — admin template contract check. Runs BEFORE express is
   // constructed so that a drifting DB/code pair aborts the deploy
   // instead of serving traffic with silently broken templates.
@@ -295,6 +301,12 @@ async function startServer() {
     serveStatic(app);
   }
 
+  // Sprint 5 / Item 5.1 — Sentry Express error handler. Must wire AFTER all
+  // route handlers so unhandled exceptions are captured. No-op when
+  // SENTRY_DSN is unset.
+  const { attachSentryExpressErrorHandler } = await import("../monitoring/sentry");
+  attachSentryExpressErrorHandler(app);
+
   const preferredPort = parseInt(process.env.PORT || "3000");
   const port = await findAvailablePort(preferredPort);
 
@@ -322,6 +334,7 @@ async function startServer() {
     const { startFormsRefreshScheduler } = await import("../services/formsRefreshScheduler");
     const { startAdsSyncScheduler } = await import("../services/adsSyncScheduler");
     const { startCrmSyncScheduler } = await import("../services/crmSyncScheduler");
+    const { startConnectionHealthScheduler } = await import("../services/connectionHealthScheduler");
     const { startLeadPollingScheduler } = await import("../services/leadPollingService");
     startLeadWorker();
     startRetryScheduler();
@@ -329,6 +342,7 @@ async function startServer() {
     startFormsRefreshScheduler();
     startAdsSyncScheduler();
     startCrmSyncScheduler();
+    startConnectionHealthScheduler();
     startLeadPollingScheduler();
     console.log("[Server] Embedded worker + schedulers started.");
   }

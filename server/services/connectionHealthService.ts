@@ -61,12 +61,13 @@ export async function verifyConnectionHealth(
 
   // Persist result
   const newStatus = result.ok ? "active" : result.newStatus;
+  const prevStatus = conn.status;
   await db
     .update(connections)
     .set({ status: newStatus, lastVerifiedAt: new Date() })
     .where(eq(connections.id, connectionId));
 
-  // Write audit log
+  // Write audit log (granular per-check)
   try {
     await db.insert(connectionHealthLogs).values({
       connectionId,
@@ -78,6 +79,28 @@ export async function verifyConnectionHealth(
   } catch (e) {
     // non-blocking — don't fail the check just because the log write failed
     void log.warn("CONNECTIONS", "health log write failed", { connectionId, err: String(e) });
+  }
+
+  // Sprint 5 / Item 5.3 — emit a `connection_events` row only when the
+  // status TRANSITIONS. Per-check rows live in `connection_health_logs`;
+  // the events table is reserved for state changes the UI cares about
+  // (banner, history timeline). Skipping no-op events keeps the audit
+  // signal-to-noise high.
+  if (newStatus !== prevStatus) {
+    const { appendConnectionEvent } = await import("./connectionEventsService");
+    void appendConnectionEvent(db, {
+      connectionId,
+      userId,
+      eventType: result.ok ? "status_changed" : "health_check_failed",
+      source: "system",
+      details: {
+        from: prevStatus,
+        to: newStatus,
+        latencyMs: result.latencyMs,
+        error: result.error?.slice(0, 500) ?? null,
+        tokenRefreshed: result.tokenRefreshed ?? false,
+      },
+    });
   }
 
   return { ...result, newStatus };

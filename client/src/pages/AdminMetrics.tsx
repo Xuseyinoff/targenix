@@ -74,6 +74,92 @@ function PeriodTabs({ value, onChange }: { value: Period; onChange: (p: Period) 
 // CircuitBreakerTable removed in Sprint 1 / Item 1.3 — see
 // server/integrations/dispatch.ts for the rationale.
 
+// ─── Security feed card ──────────────────────────────────────────────────────
+// Sprint 5 / Item 5.4 — renders recent SECURITY-category log entries
+// (owner mismatch, cross-tenant credential attempts, etc. — see Sprint 2.3).
+// Empty state is the happy path. A non-empty list is the only signal an
+// admin should ever need to investigate; the user/meta columns make
+// pivoting into a deeper query easy.
+
+function SecurityFeedCard() {
+  const { data = [], isFetching, refetch } = trpc.metrics.securityFeed.useQuery(
+    { limit: 25, sinceHours: 168 },
+    { refetchInterval: 30_000 },
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <AlertTriangle className="h-4 w-4 text-red-500" />
+          Security feed
+          <Badge variant="outline" className="ml-2 text-xs font-normal">
+            last 7d · 30s refresh
+          </Badge>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs ml-auto"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+          >
+            {isFetching ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+            <span className="ml-1">Refresh</span>
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {isFetching && data.length === 0 ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : data.length === 0 ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
+            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+            No security events in the last 7 days.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-xs text-muted-foreground uppercase tracking-wide">
+                  <th className="text-left py-2 pr-3 font-medium">Time</th>
+                  <th className="text-left py-2 pr-3 font-medium">Event</th>
+                  <th className="text-left py-2 pr-3 font-medium">User</th>
+                  <th className="text-left py-2 font-medium">Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.map((r) => (
+                  <tr key={r.id} className="border-b last:border-0 align-top">
+                    <td className="py-2 pr-3 text-muted-foreground text-xs whitespace-nowrap">
+                      {new Date(r.createdAt).toLocaleString()}
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-xs">
+                      {r.eventType ?? "—"}
+                    </td>
+                    <td className="py-2 pr-3 text-muted-foreground text-xs">
+                      {r.userId ?? "—"}
+                    </td>
+                    <td className="py-2 text-xs">
+                      <div className="font-medium">{r.message}</div>
+                      {r.meta != null && (
+                        <pre className="mt-1 text-[10px] text-muted-foreground bg-muted/30 px-2 py-1 rounded max-w-md overflow-x-auto whitespace-pre-wrap break-all">
+                          {JSON.stringify(r.meta).slice(0, 240)}
+                        </pre>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Main page ────────────────────────────────────────────────────────────────
 
 export default function AdminMetrics() {
@@ -183,7 +269,10 @@ export default function AdminMetrics() {
                     <th className="text-left py-2 pr-3 font-medium">Adapter</th>
                     <th className="text-right py-2 pr-3 font-medium">Total</th>
                     <th className="text-right py-2 pr-3 font-medium">Rate</th>
-                    <th className="text-right py-2 font-medium">Avg ms</th>
+                    <th className="text-right py-2 pr-3 font-medium">Avg</th>
+                    <th className="text-right py-2 pr-3 font-medium">p50</th>
+                    <th className="text-right py-2 pr-3 font-medium">p95</th>
+                    <th className="text-right py-2 font-medium">p99</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -196,8 +285,17 @@ export default function AdminMetrics() {
                           {a.successRate}%
                         </span>
                       </td>
-                      <td className="py-2 text-right text-muted-foreground text-xs">
+                      <td className="py-2 pr-3 text-right text-muted-foreground text-xs">
                         {a.avgDurationMs != null ? `${a.avgDurationMs}` : "—"}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-muted-foreground text-xs">
+                        {a.p50DurationMs != null ? `${a.p50DurationMs}` : "—"}
+                      </td>
+                      <td className="py-2 pr-3 text-right text-muted-foreground text-xs">
+                        {a.p95DurationMs != null ? `${a.p95DurationMs}` : "—"}
+                      </td>
+                      <td className="py-2 text-right text-muted-foreground text-xs">
+                        {a.p99DurationMs != null ? `${a.p99DurationMs}` : "—"}
                       </td>
                     </tr>
                   ))}
@@ -289,6 +387,12 @@ export default function AdminMetrics() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Sprint 5 / Item 5.4 — SECURITY feed. Surfaces owner-mismatch and
+          other tenant-boundary violation logs (Sprint 2.3) in near-real-time
+          so we notice cross-tenant access attempts without tail-watching
+          production. */}
+      <SecurityFeedCard />
 
       {/* Integration breakdown */}
       <Card>

@@ -126,6 +126,17 @@ router.post("/facebook", async (req: Request, res: Response) => {
         console.log("[Webhook] Duplicate signature — already received, ack only.");
       } else {
         console.error("[Webhook] CRITICAL: durable insert failed:", err);
+        // Sprint 5 / Item 5.1 — escalate to Sentry. This is the one path
+        // where a process crash could lose leads (Facebook retries the
+        // webhook with limited attempts), so we want a page-able alert.
+        const { captureCritical } = await import("../monitoring/sentry");
+        captureCritical(err, {
+          tags: { category: "WEBHOOK", durability: "lost" },
+          extra: {
+            signaturePresent: Boolean(signatureHeader),
+            payloadKeys: payload ? Object.keys(payload).slice(0, 10) : [],
+          },
+        });
         // DB hiccup — best we can do is signal Facebook to retry. They will
         // retry a couple of times before giving up.
         res.status(500).json({ status: "error", message: "Database unavailable" });

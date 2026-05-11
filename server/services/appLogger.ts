@@ -129,6 +129,23 @@ export async function logEvent(params: LogEventParams): Promise<void> {
   } catch {
     // Silently swallow DB errors so logging never breaks the main flow
   }
+
+  // Sprint 5 / Item 5.1 — escalate SECURITY logs to Sentry. Tenant-boundary
+  // violations (Sprint 2.3) must page operators, not just sit in the
+  // AdminLogs feed. ERROR-level SECURITY rows are the only ones promoted
+  // — INFO / WARN under SECURITY stay local (audit-only).
+  if (category === "SECURITY" && level === "ERROR") {
+    try {
+      const { captureSecurityEvent } = await import("../monitoring/sentry");
+      captureSecurityEvent(message, {
+        tags: { eventType: eventType ?? "unknown" },
+        user: userId != null ? { id: userId } : undefined,
+        extra: { meta, leadId, pageId },
+      });
+    } catch {
+      // ignore — telemetry never breaks the main flow
+    }
+  }
 }
 
 /**

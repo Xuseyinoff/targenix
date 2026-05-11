@@ -19,6 +19,7 @@ import { startLogRetentionScheduler } from "../services/logRetentionScheduler";
 import { startFormsRefreshScheduler } from "../services/formsRefreshScheduler";
 import { startAdsSyncScheduler } from "../services/adsSyncScheduler";
 import { startCrmSyncScheduler } from "../services/crmSyncScheduler";
+import { startConnectionHealthScheduler } from "../services/connectionHealthScheduler";
 import { startLeadPollingScheduler } from "../services/leadPollingService";
 import { startTriggerScheduler } from "../services/triggerScheduler";
 import { getDb } from "../db";
@@ -57,6 +58,10 @@ async function boot() {
   startFormsRefreshScheduler();
   startAdsSyncScheduler();
   startCrmSyncScheduler();
+  // Sprint 5 / Item 5.3 — re-probes stale connections every 10 min so
+  // expired/error states surface in the dashboard banner before deliveries
+  // start failing.
+  startConnectionHealthScheduler();
   // Zapier-style polling fallback: harmless no-op unless ENABLE_LEAD_POLLING=true.
   // When enabled, every 10 min it reconciles each active (user, page, form)
   // against Facebook and saves + dispatches any leadgen the webhook missed.
