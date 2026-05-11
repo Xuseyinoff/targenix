@@ -185,13 +185,6 @@ export interface CustomConfig {
 
 export type TemplateConfig = SotuvchiConfig | HundredKConfig | CustomConfig;
 
-// Legacy config (for old AFFILIATE integrations without templateType)
-export interface AffiliateConfig {
-  url: string;
-  headers?: Record<string, string>;
-  fieldMap?: Record<string, string>;
-}
-
 // ─── Built-in variable map ────────────────────────────────────────────────────
 /**
  * Build the variable context from a lead payload.
@@ -982,18 +975,3 @@ export async function sendLeadViaTemplate(
   }
 }
 
-// ─── Legacy sendAffiliateOrder (kept for backward compat) ───────────────────
-export async function sendAffiliateOrder(
-  config: AffiliateConfig,
-  lead: LeadPayload
-): Promise<AffiliateResult> {
-  const customConfig: CustomConfig = {
-    url: config.url,
-    method: "POST",
-    headers: config.headers,
-    fieldMap: config.fieldMap,
-    contentType: "json",
-    successCondition: "http_2xx",
-  };
-  return sendAffiliateOrderByTemplate("custom", customConfig, lead, {});
-}
