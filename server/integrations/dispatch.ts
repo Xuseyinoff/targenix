@@ -10,7 +10,7 @@
  * SAFETY: this file is an *additive* helper. It reproduces the exact same branch
  * selection and adapter arguments as the legacy inline dispatcher, so behaviour
  * is byte-for-byte identical for every currently supported destination type
- * (affiliate, dynamic-template, telegram, google-sheets, legacy-template,
+ * (dynamic-template, telegram, google-sheets, http-api-key, http-oauth2,
  * plain-url). For `dynamic-template` only, a single optional SELECT on
  * `destination_templates` may run when `target_websites.url` is empty — used
  * solely to populate `targetUrlUsed` for ORDER logs; delivery path unchanged.
@@ -32,8 +32,8 @@ import { resolveAdapterKey } from "./resolveAdapterKey";
 export interface DispatchContext {
   db: DbClient;
   userId: number;
-  /** "AFFILIATE" goes to affiliateAdapter; "LEAD_ROUTING" resolves via targetWebsite. */
-  integrationType: "AFFILIATE" | "LEAD_ROUTING";
+  /** Only LEAD_ROUTING remains — the standalone AFFILIATE type was retired. */
+  integrationType: "LEAD_ROUTING";
   /** Raw integrations.config JSON (targetUrl, variableFields, offerId, flow, …). */
   integrationConfig: Record<string, unknown>;
   /** Destination row. null → plain-url fallback (legacy behaviour). */
@@ -151,16 +151,14 @@ export async function dispatchDelivery(
   const leadRow = ctx.leadRow ?? {};
 
   // Stage 2 — eagerly load the linked connection row ONLY for adapters
-  // that actually consume secrets from it. Today that is `legacy-template`
-  // and `dynamic-template`; the `telegram` / `google-sheets` adapters
-  // already resolve their own credentials via `connectionId`, and
-  // `affiliate` / `plain-url` don't use the `connections` store at all,
-  // so we skip the DB round-trip for them. If `tw.connectionId` is not
-  // set the loader is never called → zero added cost for legacy
-  // destinations.
+  // that actually consume secrets from it. Today that is `dynamic-template`;
+  // the `telegram` / `google-sheets` adapters already resolve their own
+  // credentials via `connectionId`, and `plain-url` doesn't use the
+  // `connections` store at all, so we skip the DB round-trip for them.
+  // If `tw.connectionId` is not set the loader is never called → zero
+  // added cost for legacy destinations.
   const needsConnection =
-    (adapterKey === "legacy-template" || adapterKey === "dynamic-template") &&
-    tw?.connectionId != null;
+    adapterKey === "dynamic-template" && tw?.connectionId != null;
   const connection: Connection | null = needsConnection
     ? await loadConnectionForDelivery(ctx.db, tw!.connectionId!, ctx.userId)
     : null;
@@ -169,11 +167,6 @@ export async function dispatchDelivery(
   let targetUrlUsed: string | undefined;
 
   switch (adapterKey) {
-    case "affiliate": {
-      adapterInput = cfg;
-      break;
-    }
-
     case "dynamic-template": {
       // Sprint 4 / Item 4.4 — MISROUTED_ADAPTER_GUARD removed.
       //
@@ -272,20 +265,6 @@ export async function dispatchDelivery(
         leadRow,
         db: ctx.db,
         connectionId: tw?.connectionId ?? null,
-      };
-      break;
-    }
-
-    case "legacy-template": {
-      targetUrlUsed = (tw?.url as string | null | undefined) ?? undefined;
-      adapterInput = {
-        db: ctx.db,
-        templateType: tw?.templateType,
-        templateConfig: tw?.templateConfig,
-        variableFields,
-        url: tw?.url,
-        connection,
-        userId: ctx.userId,
       };
       break;
     }

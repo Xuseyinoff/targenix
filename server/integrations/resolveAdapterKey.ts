@@ -40,14 +40,17 @@ const HTTP_OAUTH2_APP_KEYS = new Set([
 ]);
 
 export function resolveAdapterKey(
-  integrationType: string,
+  integrationType: "LEAD_ROUTING",
   tw?: {
     templateId?: number | null;
     templateType?: string | null;
     appKey?: string | null;
   } | null,
 ): string {
-  if (integrationType === "AFFILIATE") return "affiliate";
+  // `integrationType` is kept in the signature for call-site parity; the
+  // standalone AFFILIATE integration type was retired (see audit
+  // 2026-05-12: 0 production rows). Only LEAD_ROUTING reaches this fn now.
+  void integrationType;
 
   if (!tw) return "plain-url";
 
@@ -76,11 +79,11 @@ export function resolveAdapterKey(
     if (HTTP_API_KEY_APP_KEYS.has(effectiveKey)) return "http-api-key";
     // Phase 12 — OAuth2 CRM apps (token fetched via getValidAccessToken).
     if (HTTP_OAUTH2_APP_KEYS.has(effectiveKey)) return "http-oauth2";
-    // No templateId → appKey was copied from legacy templateType column during the NOT NULL
-    // backfill (sotuvchi, 100k, albato, custom, …). Route to legacy-template so the
-    // legacyTemplateAdapter continues to use tw.templateType for delivery, exactly as before.
-    if (!tw.templateId) return "legacy-template";
-    // Has both appKey and templateId → a proper DB-catalogue affiliate destination.
+    // Any other appKey → dynamic-template. The legacy-template fallback
+    // (templateId IS NULL + non-first-party appKey) was removed after
+    // confirming 0 production rows match (audit 2026-05-12); migrations
+    // 0051/0052 + the destination_templates catalogue make every
+    // affiliate destination a proper templateId-backed row.
     return "dynamic-template";
   }
 

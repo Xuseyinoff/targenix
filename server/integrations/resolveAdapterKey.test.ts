@@ -9,12 +9,6 @@ describe("resolveAdapterKey — Stage 2 appKey", () => {
     else process.env.STAGE2_ADAPTER_LOG = orig;
   });
 
-  it("AFFILIATE returns affiliate regardless of tw", () => {
-    expect(
-      resolveAdapterKey("AFFILIATE", { templateId: 1, templateType: "custom", appKey: "mgoods" }),
-    ).toBe("affiliate");
-  });
-
   it("LEAD no tw -> plain-url", () => {
     expect(resolveAdapterKey("LEAD_ROUTING", null)).toBe("plain-url");
   });
@@ -23,6 +17,21 @@ describe("resolveAdapterKey — Stage 2 appKey", () => {
     expect(
       resolveAdapterKey("LEAD_ROUTING", {
         templateId: 5,
+        templateType: "custom",
+        appKey: "mgoods",
+      }),
+    ).toBe("dynamic-template");
+  });
+
+  it("LEAD: non-first-party appKey without templateId -> dynamic-template (post legacy-template sunset)", () => {
+    // Previously this case routed to "legacy-template". After the
+    // 2026-05-12 audit (0 production rows match) the legacy-template
+    // fallback was removed; any non-first-party appKey now lands on
+    // dynamic-template, which will surface a structured validation
+    // error if no template can be loaded.
+    expect(
+      resolveAdapterKey("LEAD_ROUTING", {
+        templateId: null,
         templateType: "custom",
         appKey: "mgoods",
       }),
