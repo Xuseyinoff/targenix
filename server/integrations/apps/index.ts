@@ -19,8 +19,6 @@ import { telegramApp } from "./telegram";
 import { googleSheetsApp } from "./googleSheets";
 import { httpWebhookApp } from "./httpWebhook";
 import { dynamicTemplateApp } from "./dynamicTemplate";
-import { legacyTemplateApp } from "./legacyTemplate";
-import { affiliateApp } from "./affiliate";
 // Phase 9 — http-api-key apps
 import { eskizSmsApp } from "./eskizSms";
 import { playmobileSmsApp } from "./playmobileSms";
@@ -38,8 +36,6 @@ registerApp(telegramApp);
 registerApp(googleSheetsApp);
 registerApp(httpWebhookApp);
 registerApp(dynamicTemplateApp);
-registerApp(legacyTemplateApp);
-registerApp(affiliateApp);
 // Phase 9
 registerApp(eskizSmsApp);
 registerApp(playmobileSmsApp);

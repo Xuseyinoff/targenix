@@ -24,10 +24,8 @@ describe("app registry (Phase 2 manifests)", () => {
     expect(keys).toEqual(
       [
         // Core
-        "affiliate",
         "dynamic-template",
         "google-sheets",
-        "legacy-template",
         "plain-url",
         "telegram",
         // Phase 9 — manifest-driven HTTP API-key apps
@@ -46,16 +44,14 @@ describe("app registry (Phase 2 manifests)", () => {
     );
   });
 
-  it("listApps() hides internal apps by default", () => {
+  it("listApps() hides the internal dynamic-template app by default", () => {
     const publicKeys = listApps().map((a) => a.key);
-    expect(publicKeys).not.toContain("affiliate");
-    expect(publicKeys).not.toContain("legacy-template");
+    expect(publicKeys).not.toContain("dynamic-template");
   });
 
   it("listApps() can include internal apps on request", () => {
     const all = listApps({ includeInternal: true }).map((a) => a.key);
-    expect(all).toContain("affiliate");
-    expect(all).toContain("legacy-template");
+    expect(all).toContain("dynamic-template");
   });
 
   it("public apps expose expected connection types", () => {
