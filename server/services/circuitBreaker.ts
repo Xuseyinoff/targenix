@@ -987,6 +987,54 @@ export async function evaluateAndMaybeBlock(
   };
 }
 
+// ─── Auto-promotion (Phase 2C fix) ─────────────────────────────────────────
+
+/**
+ * Promote every OPEN row whose cooldownUntil has elapsed to HALF_OPEN.
+ *
+ * Why this exists: `evaluateClaim` auto-promotes opportunistically when it's
+ * called for a destination. But promotion only fires if SOMETHING drives a
+ * call — typically a scheduler-claimed order. If a destination has no
+ * scheduled retries (all its FAILED orders are validation orphans with
+ * nextRetryAt=NULL, for instance), the row stays OPEN forever and the next
+ * initial dispatch from the webhook keeps padding `consecutiveFailures` on
+ * an already-OPEN row without ever giving the partner a recovery probe.
+ *
+ * This helper short-circuits that: a single UPDATE per scheduler tick
+ * promotes any OPEN row with an expired cooldown, so the NEXT outgoing
+ * delivery (initial dispatch or retry) hits HALF_OPEN and runs probe
+ * semantics — closing the breaker on success.
+ *
+ * Returns the number of rows promoted.
+ */
+export async function autoPromoteExpiredCooldowns(db: DbClient): Promise<number> {
+  const result = (await db.execute(sql`
+    UPDATE integration_health
+    SET state = 'HALF_OPEN', halfOpenAttempts = 0, halfOpenSuccesses = 0
+    WHERE state = 'OPEN'
+      AND cooldownUntil IS NOT NULL
+      AND cooldownUntil <= NOW()
+      AND COALESCE(manualLock, '') != 'OPEN'
+  `)) as unknown as Array<{ affectedRows?: number }>;
+  const promoted = result?.[0]?.affectedRows ?? 0;
+
+  // Audit one event per promotion so the timeline shows the half-open
+  // transition. Single bulk INSERT…SELECT keeps it cheap.
+  if (promoted > 0) {
+    await db.execute(sql`
+      INSERT INTO integration_health_events
+        (integrationId, destinationId, eventType, fromState, toState, reason, createdAt)
+      SELECT integrationId, destinationId, 'half_opened', 'OPEN', 'HALF_OPEN',
+             'auto_promoted_cooldown_expired', NOW()
+      FROM integration_health
+      WHERE state = 'HALF_OPEN' AND halfOpenAttempts = 0
+        AND updatedAt >= NOW() - INTERVAL 5 SECOND
+    `);
+  }
+
+  return promoted;
+}
+
 // ─── Admin pre-check helpers (Phase 1A UI) ─────────────────────────────────
 
 export type DestinationCBSnapshot = {

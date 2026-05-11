@@ -16,6 +16,7 @@ import { getDb } from "../db";
 import { leads } from "../../drizzle/schema";
 import { dispatchLeadProcessing } from "./leadDispatch";
 import { retryDueFailedOrders } from "./orderRetryScheduler";
+import { autoPromoteExpiredCooldowns } from "./circuitBreaker";
 
 /** How often to run (ms). Default: every hour, aligned to top-of-hour. */
 const RETRY_INTERVAL_MS = 60 * 60 * 1000;
@@ -200,9 +201,30 @@ export function startRetryScheduler(): void {
     `[RetryScheduler] Starting per-minute order tick (batch=${ORDER_TICK_BATCH})`,
   );
   orderTickTimer = setInterval(() => {
-    void retryDueFailedOrders({ limit: ORDER_TICK_BATCH }).catch((err: unknown) =>
-      console.error("[RetryScheduler] Order tick failed:", err),
-    );
+    void (async () => {
+      // Promote any OPEN destinations whose cooldown has elapsed BEFORE
+      // claiming retries, so the next delivery (initial or retry) sees
+      // HALF_OPEN and runs a probe instead of getting filed under another
+      // consecutiveFailure on an already-open row. Without this step the
+      // breaker can deadlock — see autoPromoteExpiredCooldowns comment.
+      try {
+        const db = await getDb();
+        if (db) {
+          const promoted = await autoPromoteExpiredCooldowns(db);
+          if (promoted > 0) {
+            console.log(`[RetryScheduler] CB auto-promoted ${promoted} OPEN→HALF_OPEN`);
+          }
+        }
+      } catch (err) {
+        console.error("[RetryScheduler] CB auto-promote tick failed:", err);
+      }
+
+      try {
+        await retryDueFailedOrders({ limit: ORDER_TICK_BATCH });
+      } catch (err) {
+        console.error("[RetryScheduler] Order tick failed:", err);
+      }
+    })();
   }, ORDER_TICK_INTERVAL_MS);
   (orderTickTimer as unknown as { unref?: () => void })?.unref?.();
 
