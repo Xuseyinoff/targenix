@@ -422,6 +422,35 @@ async function safeSyncLegacyDestination(
   }
 }
 
+/**
+ * Observability for Sprint A Step 5b — detect callers that omit the top-level
+ * dedicated fields and only embed them inside `config`. Such callers are
+ * stale browser tabs running the pre-c4c7302 wizard build. When telemetry
+ * shows zero hits for an extended window, the JSON fallbacks in
+ * `createIntegration` / `updateIntegration` can be dropped.
+ */
+const LEGACY_WIZARD_FIELDS = ["pageId", "formId", "pageName", "formName", "facebookAccountId", "targetWebsiteId"] as const;
+function warnIfLegacyWizardShape(
+  caller: "createIntegration" | "updateIntegration",
+  topLevel: Partial<Record<(typeof LEGACY_WIZARD_FIELDS)[number], unknown>>,
+  cfg: Record<string, unknown> | null,
+  extra: Record<string, unknown> = {},
+): void {
+  const fallbackFields: string[] = [];
+  for (const k of LEGACY_WIZARD_FIELDS) {
+    if (topLevel[k] === undefined && cfg?.[k] !== undefined) fallbackFields.push(k);
+  }
+  if (topLevel.facebookAccountId === undefined && cfg?.accountId !== undefined && !fallbackFields.includes("facebookAccountId")) {
+    fallbackFields.push("facebookAccountId(via accountId alias)");
+  }
+  if (fallbackFields.length > 0) {
+    console.warn(`[${caller}] legacy wizard shape — top-level missing, fell back to config:`, {
+      fields: fallbackFields,
+      ...extra,
+    });
+  }
+}
+
 export async function createIntegration(data: {
   userId: number;
   type: "AFFILIATE" | "LEAD_ROUTING";
@@ -453,6 +482,7 @@ export async function createIntegration(data: {
   // keys for older callers that still embed them in the JSON.
   const cfg = data.config as Record<string, unknown> | null;
   const isLR = data.type === "LEAD_ROUTING";
+  if (isLR) warnIfLegacyWizardShape("createIntegration", data, cfg);
   const pageId = isLR ? (data.pageId ?? (String(cfg?.pageId ?? "") || null)) : null;
   const formId = isLR ? (data.formId ?? (String(cfg?.formId ?? "") || null)) : null;
   const pageName = isLR ? (data.pageName ?? (String(cfg?.pageName ?? "") || null)) : null;
@@ -566,6 +596,14 @@ export async function updateIntegration(
     topTwId !== undefined
   ) {
     const cfg = (dbFields.config ?? null) as Record<string, unknown> | null;
+    warnIfLegacyWizardShape("updateIntegration", {
+      pageId: topPageId,
+      formId: topFormId,
+      pageName: topPageName,
+      formName: topFormName,
+      facebookAccountId: topFbAccountId,
+      targetWebsiteId: topTwId,
+    }, cfg, { id });
     updateData.pageId = topPageId ?? (String(cfg?.pageId ?? "") || null);
     updateData.formId = topFormId ?? (String(cfg?.formId ?? "") || null);
     updateData.pageName = topPageName ?? (String(cfg?.pageName ?? "") || null);

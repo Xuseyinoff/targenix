@@ -278,18 +278,14 @@ export const leadsRouter = router({
           let targetWebsiteName: string | null = null;
           let targetWebsiteUrl: string | null = null;
 
-          if (intg) {
-            const cfg = intg.config as Record<string, unknown>;
-            const twId = intg.targetWebsiteId ?? (cfg.targetWebsiteId ? Number(cfg.targetWebsiteId) : null);
-            if (twId) {
-              const [tw] = await db
-                .select({ name: targetWebsites.name, url: targetWebsites.url })
-                .from(targetWebsites)
-                .where(eq(targetWebsites.id, twId))
-                .limit(1);
-              targetWebsiteName = tw?.name ?? null;
-              targetWebsiteUrl = tw?.url ?? null;
-            }
+          if (intg?.targetWebsiteId) {
+            const [tw] = await db
+              .select({ name: targetWebsites.name, url: targetWebsites.url })
+              .from(targetWebsites)
+              .where(eq(targetWebsites.id, intg.targetWebsiteId))
+              .limit(1);
+            targetWebsiteName = tw?.name ?? null;
+            targetWebsiteUrl = tw?.url ?? null;
           }
 
           return {

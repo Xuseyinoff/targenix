@@ -45,27 +45,26 @@ export const adminBackfillRouter = router({
       const enriched = await Promise.all(
         rows.map(async (intg) => {
           const cfg = intg.config as Record<string, unknown>;
-          const twId = intg.targetWebsiteId ?? (cfg.targetWebsiteId ? Number(cfg.targetWebsiteId) : null);
-          let targetWebsiteName: string | null = cfg.targetWebsiteName as string ?? null;
+          // `targetWebsiteName` has no dedicated column — JSON is still the source.
+          let targetWebsiteName: string | null = (cfg.targetWebsiteName as string) ?? null;
           let targetWebsiteUrl: string | null = null;
 
-          if (twId) {
+          if (intg.targetWebsiteId) {
             const [tw] = await db
               .select({ name: targetWebsites.name, url: targetWebsites.url })
               .from(targetWebsites)
-              .where(eq(targetWebsites.id, twId))
+              .where(eq(targetWebsites.id, intg.targetWebsiteId))
               .limit(1);
             if (tw) { targetWebsiteName = tw.name; targetWebsiteUrl = tw.url; }
           }
 
-          // Resolve account name
-          const accountId = (cfg.facebookAccountId ?? cfg.accountId) as number | undefined;
+          // Resolve account name from dedicated column
           let accountName: string | null = null;
-          if (accountId) {
+          if (intg.facebookAccountId) {
             const [acct] = await db
               .select({ fbUserName: facebookAccounts.fbUserName })
               .from(facebookAccounts)
-              .where(eq(facebookAccounts.id, accountId))
+              .where(eq(facebookAccounts.id, intg.facebookAccountId))
               .limit(1);
             accountName = acct?.fbUserName ?? null;
           }
@@ -75,8 +74,8 @@ export const adminBackfillRouter = router({
             name: intg.name,
             pageId: intg.pageId,
             formId: intg.formId,
-            pageName: cfg.pageName as string ?? null,
-            formName: intg.formName ?? cfg.formName as string ?? null,
+            pageName: intg.pageName,
+            formName: intg.formName,
             accountName,
             targetWebsiteName,
             targetWebsiteUrl,
@@ -115,9 +114,11 @@ export const adminBackfillRouter = router({
 
       if (!intg) throw new Error("Integration not found");
 
-      const cfg = intg.config as Record<string, unknown>;
-      const pageId = intg.pageId ?? (cfg.pageId as string);
-      const formId = intg.formId ?? (cfg.formId as string);
+      const pageId = intg.pageId;
+      const formId = intg.formId;
+      if (!pageId || !formId) {
+        throw new Error("Integration is missing pageId/formId on its dedicated columns");
+      }
       const createdAt = intg.createdAt;
 
       // IMPORTANT: scope all lead queries to intg.userId so admin only previews
@@ -156,8 +157,8 @@ export const adminBackfillRouter = router({
           name: intg.name,
           pageId,
           formId,
-          pageName: cfg.pageName as string ?? null,
-          formName: intg.formName ?? cfg.formName as string ?? null,
+          pageName: intg.pageName,
+          formName: intg.formName,
           createdAt,
         },
         leads: rows,
@@ -187,9 +188,11 @@ export const adminBackfillRouter = router({
 
       if (!intg) throw new Error("Integration not found");
 
-      const cfg = intg.config as Record<string, unknown>;
-      const pageId = intg.pageId ?? (cfg.pageId as string);
-      const formId = intg.formId ?? (cfg.formId as string);
+      const pageId = intg.pageId;
+      const formId = intg.formId;
+      if (!pageId || !formId) {
+        throw new Error("Integration is missing pageId/formId on its dedicated columns");
+      }
       const userId = intg.userId;
 
       // Fetch the leads — scope to userId so admin only processes the integration

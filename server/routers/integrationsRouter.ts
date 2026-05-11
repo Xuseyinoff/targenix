@@ -30,13 +30,15 @@ export const integrationsRouter = router({
     return Promise.all(
       list.map(async (integration) => {
         if (integration.type !== "LEAD_ROUTING") return integration;
-        const cfg = integration.config as Record<string, unknown>;
-        const twId = integration.targetWebsiteId ?? (cfg?.targetWebsiteId ? Number(cfg.targetWebsiteId) : null);
-        if (!twId) return integration;
+        const cfg = integration.config as Record<string, unknown> | null;
+        if (!integration.targetWebsiteId) return integration;
         const [tw] = await db
           .select({ id: targetWebsites.id, name: targetWebsites.name })
           .from(targetWebsites)
-          .where(and(eq(targetWebsites.id, twId), eq(targetWebsites.userId, ctx.user.id)))
+          .where(and(
+            eq(targetWebsites.id, integration.targetWebsiteId),
+            eq(targetWebsites.userId, ctx.user.id),
+          ))
           .limit(1);
         // Also enrich with ordered destinationIds from integration_destinations
         const destRows = await db
@@ -50,6 +52,8 @@ export const integrationsRouter = router({
         const destinationIds = destRows.map((r) => r.targetWebsiteId);
         return {
           ...integration,
+          // `targetWebsiteName` has no dedicated column — falls back to JSON
+          // for legacy rows where the target_websites row was deleted.
           targetWebsiteName: tw?.name ?? (cfg?.targetWebsiteName as string | undefined) ?? null,
           destinationIds,
         };

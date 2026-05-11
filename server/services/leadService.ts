@@ -135,13 +135,12 @@ async function resolvePageAccessToken(
 
   for (const integration of allIntegrations) {
     if (integration.type !== "LEAD_ROUTING") continue;
-    const config = integration.config as Record<string, unknown>;
     // Use dedicated columns (indexed)
     const intPageId = integration.pageId ?? "";
     const intFormId = integration.formId ?? "";
     if (intPageId === pageId && intFormId === formId) {
       // Use the account token — MUST verify userId to prevent cross-user token access
-      const accountId = (config.facebookAccountId ?? config.accountId) as number | undefined;
+      const accountId = integration.facebookAccountId ?? undefined;
       if (accountId) {
         const [account] = await db
           .select()
@@ -396,13 +395,11 @@ export async function sendLeadTelegramNotification(params: {
         eq(integrations.pageId, params.lead.pageId), eq(integrations.formId, params.lead.formId)));
     for (const intg of allIntegrations) {
       if (intg.type !== "LEAD_ROUTING") continue;
-      const cfg = intg.config as Record<string, unknown>;
       const intPageId = intg.pageId ?? "";
       const intFormId = intg.formId ?? "";
       if (intPageId === params.lead.pageId && intFormId === params.lead.formId) {
-        formName = intg.formName ?? (cfg.formName as string | undefined) ?? null;
-        // config uses 'facebookAccountId' (not 'accountId')
-        const accountId = (cfg.facebookAccountId ?? cfg.accountId) as number | undefined;
+        formName = intg.formName ?? null;
+        const accountId = intg.facebookAccountId ?? undefined;
         if (accountId) {
           const [acct] = await db
             .select({ fbUserName: facebookAccounts.fbUserName })
@@ -412,7 +409,7 @@ export async function sendLeadTelegramNotification(params: {
           accountName = acct?.fbUserName ?? null;
         }
         // Resolve targetWebsiteName from dedicated column (indexed)
-        const twId = intg.targetWebsiteId ?? (cfg.targetWebsiteId ? Number(cfg.targetWebsiteId) : null);
+        const twId = intg.targetWebsiteId;
         if (twId) {
           const [tw] = await db
             .select({ name: targetWebsites.name })
@@ -644,9 +641,7 @@ async function runOrderIntegrationSend(params: {
     // resolver already filters mismatches out (empty list + console warn),
     // so here we only need to distinguish "no destination configured"
     // from "one was configured but had a mismatch".
-    const hadConfiguredTarget =
-      integration.targetWebsiteId != null ||
-      (integration.config as Record<string, unknown> | null)?.targetWebsiteId != null;
+    const hadConfiguredTarget = integration.targetWebsiteId != null;
     if (!tw && hadConfiguredTarget) {
       result = { success: false, error: "Target website owner mismatch", errorType: "validation" };
     } else {
