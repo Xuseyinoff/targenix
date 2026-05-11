@@ -16,6 +16,7 @@ import { targetWebsites, integrationDestinations, type TargetWebsite } from "../
 import { eq, and } from "drizzle-orm";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getAdapter } from "../integrations";
+import { loadConnectionForDelivery } from "../integrations/dispatch";
 import { resolveIntegrationDestinations } from "../services/integrationDestinations";
 import type { DbClient } from "../db";
 import type { FilterRule } from "../services/filterEngine";
@@ -459,10 +460,17 @@ async function sendTestLeadToDestination(args: {
 
   if (tw.templateId) {
     // Admin template-based destination → dynamicTemplateAdapter (resolves template from DB).
+    // Mirror the production dispatch path: when the destination is linked to a
+    // connection, eagerly load it so `resolveSecretsForDelivery` can read
+    // `credentialsJson.secretsEncrypted` instead of throwing CONNECTION_REQUIRED.
     const adapter = getAdapter("dynamic-template");
     if (!adapter) throw new Error("Adapter not found: dynamic-template");
+    const connection =
+      tw.connectionId != null
+        ? await loadConnectionForDelivery(db, tw.connectionId, userId)
+        : null;
     return adapter.send(
-      { db, targetWebsite: tw, variableFields },
+      { db, targetWebsite: tw, variableFields, connection, userId },
       testLead,
     );
   }
@@ -514,14 +522,25 @@ async function sendTestLeadToDestination(args: {
   }
 
   // Legacy custom/sotuvchi/100k destination → legacyTemplateAdapter.
+  // Same connection-loading pattern as the dynamic-template branch: production
+  // dispatch passes the linked connection; the test endpoint must mirror it,
+  // otherwise destinations with connection-backed secrets fail with
+  // CONNECTION_REQUIRED on test even though real lead delivery would succeed.
   const adapter = getAdapter("legacy-template");
   if (!adapter) throw new Error("Adapter not found: legacy-template");
+  const connection =
+    tw.connectionId != null
+      ? await loadConnectionForDelivery(db, tw.connectionId, userId)
+      : null;
   return adapter.send(
     {
+      db,
       templateType: tw.templateType,
       templateConfig: tw.templateConfig,
       variableFields,
       url: tw.url,
+      connection,
+      userId,
     },
     testLead,
   );
