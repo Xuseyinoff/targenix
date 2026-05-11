@@ -50,7 +50,6 @@ import {
   Webhook,
   Target,
   Plus,
-  ExternalLink,
   Loader2,
 } from "lucide-react";
 
@@ -386,17 +385,6 @@ export function AppPickerModal({
                   className="h-10 rounded-lg border-transparent bg-muted/40 pl-9 text-sm focus-visible:bg-background"
                 />
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  onOpenChange(false);
-                  setLocation("/destinations");
-                }}
-                className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:underline"
-              >
-                Browse all
-                <ExternalLink className="h-3 w-3" />
-              </button>
             </div>
 
             {/* Body */}

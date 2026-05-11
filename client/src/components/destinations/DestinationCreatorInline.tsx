@@ -108,7 +108,6 @@ export function DestinationCreatorInline({
   const [formErrors, setFormErrors] = React.useState<Record<string, string>>(
     {},
   );
-  const [nameError, setNameError] = React.useState<string | null>(null);
   const [pendingAppKey, setPendingAppKey] = React.useState<string | null>(
     initialAppKey ?? null,
   );
@@ -140,7 +139,6 @@ export function DestinationCreatorInline({
     setFormValues(seedInitialValues(fields, undefined));
     setFormErrors({});
     setDestName("");
-    setNameError(null);
     setStep("configure");
     setPendingAppKey(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -173,7 +171,6 @@ export function DestinationCreatorInline({
     setFormValues(seedInitialValues(fields, undefined));
     setFormErrors({});
     setDestName("");
-    setNameError(null);
     setStep("configure");
   };
 
@@ -182,20 +179,13 @@ export function DestinationCreatorInline({
     setSelectedApp(null);
     setFormValues({});
     setFormErrors({});
-    setNameError(null);
   };
 
   const handleSave = async () => {
     if (!selectedApp) return;
     const fields = selectedApp.modules[0]?.fields ?? [];
 
-    setNameError(null);
     setFormErrors({});
-
-    if (!destName.trim()) {
-      setNameError("Destination name is required.");
-      return;
-    }
 
     const { isValid, errors } = validateFields(fields, formValues);
     if (!isValid) {
@@ -203,9 +193,15 @@ export function DestinationCreatorInline({
       return;
     }
 
+    // Zapier-style: name is optional. If left blank, derive one from the
+    // primary config field (sheet name / chatId / URL host) so the user is
+    // never forced to invent a label for a single-destination integration.
+    const effectiveName =
+      destName.trim() || smartDefaultName(selectedApp.key, selectedApp.name, formValues);
+
     let payload: Parameters<typeof createMutation.mutateAsync>[0];
     try {
-      payload = buildCreatePayload(selectedApp.key, destName.trim(), formValues);
+      payload = buildCreatePayload(selectedApp.key, effectiveName, formValues);
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Could not build payload",
@@ -222,13 +218,13 @@ export function DestinationCreatorInline({
         return;
       }
       await utils.targetWebsites.list.invalidate();
-      toast.success(`Created "${result.name ?? destName.trim()}"`);
+      toast.success(`Created "${result.name ?? effectiveName}"`);
       const fallbackTemplateType = isSupportedAppKey(selectedApp.key)
         ? APP_KEY_TO_TEMPLATE_TYPE[selectedApp.key]
         : "custom";
       onCreated({
         id: result.id,
-        name: result.name ?? destName.trim(),
+        name: result.name ?? effectiveName,
         templateType: result.templateType ?? fallbackTemplateType,
         category: selectedApp.category,
       });
@@ -372,29 +368,24 @@ export function DestinationCreatorInline({
         </div>
       </div>
 
-      {/* Destination name */}
+      {/* Destination name — optional. When blank we auto-derive a sensible
+          default from the primary config field (sheet name, chat id, URL
+          host) so the user never has to invent a label just to proceed. */}
       <div className="space-y-1.5">
         <Label htmlFor="inline-dest-name" className="text-xs">
-          Destination name
-          <span className="text-destructive"> *</span>
+          Name <span className="text-muted-foreground font-normal">(optional)</span>
         </Label>
         <Input
           id="inline-dest-name"
           value={destName}
-          onChange={(e) => {
-            setDestName(e.target.value);
-            if (e.target.value.trim()) setNameError(null);
-          }}
-          placeholder={`My ${selectedApp.name}`}
+          onChange={(e) => setDestName(e.target.value)}
+          placeholder={smartDefaultName(selectedApp.key, selectedApp.name, formValues) || `My ${selectedApp.name}`}
           disabled={isSaving}
           maxLength={255}
         />
         <p className="text-[11px] text-muted-foreground">
-          Shown on your dashboard and in integration cards.
+          Shown on your dashboard. Auto-generated if left blank.
         </p>
-        {nameError && (
-          <p className="text-xs text-destructive">{nameError}</p>
-        )}
       </div>
 
       {/* Dynamic form fields.
@@ -435,7 +426,7 @@ export function DestinationCreatorInline({
         </Button>
         <Button size="sm" onClick={handleSave} disabled={isSaving}>
           {isSaving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-          Save destination
+          Save
         </Button>
       </div>
     </div>
@@ -497,6 +488,55 @@ function adapterVariableGroup(appKey: string): VariableGroup {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Derive a sensible default destination name from the form values when the
+ * user leaves the name field blank. The goal is to drop a recognisable label
+ * onto the dashboard ("Sheets · Leads March", "Telegram · @support") instead
+ * of an opaque "My Google Sheets" — which is what users were forced to type
+ * when name was required.
+ *
+ * Falls back to the bare app name when none of the recognised primary
+ * fields are present (e.g. user hasn't filled them yet, or this is a new
+ * app whose shape isn't listed below).
+ */
+function smartDefaultName(
+  appKey: string,
+  appName: string,
+  values: FieldValues,
+): string {
+  const v = values ?? {};
+  const trim = (raw: unknown): string =>
+    typeof raw === "string" ? raw.trim() : "";
+
+  switch (appKey) {
+    case "google-sheets": {
+      const sheet = trim(v.sheetName);
+      if (sheet) return `Sheets · ${sheet}`;
+      return appName;
+    }
+    case "telegram": {
+      const chat = trim(v.chatId);
+      if (chat) return `Telegram · ${chat}`;
+      return appName;
+    }
+    case "plain-url": {
+      const url = trim(v.url);
+      if (url) {
+        try {
+          const host = new URL(url).hostname.replace(/^www\./, "");
+          const method = trim(v.method) || "POST";
+          return `${method} · ${host}`;
+        } catch {
+          // malformed URL — fall through to app name
+        }
+      }
+      return appName;
+    }
+    default:
+      return appName;
+  }
+}
 
 function prettyCategory(cat: string): string {
   switch (cat) {
