@@ -17,6 +17,7 @@ import { getDb } from "../db";
 import { ORDER_MAX_DELIVERY_ATTEMPTS } from "../lib/orderRetryPolicy";
 import { retryFailedOrderDelivery } from "./leadService";
 import { getRetryQueueSize, logMetricsSnapshot } from "../monitoring/metrics";
+import { evaluateClaim, recordShadowDecision } from "./circuitBreaker";
 
 function envInt(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -157,7 +158,7 @@ export async function retryDueFailedOrders(options?: {
   // across HTTP calls.
   const due = await db.transaction(async (tx) => {
     const lockedRows = await tx.execute(sql`
-      SELECT id FROM orders
+      SELECT id, integrationId, destinationId FROM orders
       WHERE status = 'FAILED'
         AND attempts < ${ORDER_MAX_DELIVERY_ATTEMPTS}
         AND nextRetryAt IS NOT NULL
@@ -166,10 +167,14 @@ export async function retryDueFailedOrders(options?: {
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
     `);
-    const ids = ((lockedRows as unknown as [Array<{ id: number }>, unknown])[0] ?? [])
-      .map((r) => Number(r.id))
-      .filter((n) => Number.isFinite(n) && n > 0);
-    if (ids.length === 0) return [];
+    const rows = ((lockedRows as unknown as [Array<{ id: number; integrationId: number; destinationId: number }>, unknown])[0] ?? [])
+      .map((r) => ({
+        id: Number(r.id),
+        integrationId: Number(r.integrationId),
+        destinationId: Number(r.destinationId ?? 0),
+      }))
+      .filter((r) => Number.isFinite(r.id) && r.id > 0);
+    if (rows.length === 0) return [];
     // Claim by clearing nextRetryAt: future scheduler runs cannot re-claim
     // these rows because the WHERE clause requires `nextRetryAt IS NOT NULL`.
     // `retryFailedOrderDelivery` does NOT re-check nextRetryAt (the claim
@@ -177,8 +182,8 @@ export async function retryDueFailedOrders(options?: {
     await tx
       .update(orders)
       .set({ nextRetryAt: null })
-      .where(inArray(orders.id, ids));
-    return ids.map((id) => ({ id }));
+      .where(inArray(orders.id, rows.map((r) => r.id)));
+    return rows;
   });
 
   if (due.length === 0) {
@@ -187,11 +192,43 @@ export async function retryDueFailedOrders(options?: {
   }
 
   let retried = 0;
+  // Phase 0 — shadow mode counters. We always dispatch (legacy behaviour),
+  // but we record what the circuit breaker WOULD have done so we can verify
+  // its thresholds against real traffic before turning enforcement on.
+  let shadowBlocks = 0;
+  let shadowProbes = 0;
+  let shadowAllows = 0;
+
   const runner = createRateLimitedRunner({ concurrency, ratePerSecond });
   try {
     await Promise.all(
       due.map((row) =>
         runner.enqueue(async () => {
+          // ── Phase 0 shadow CB evaluation ────────────────────────────────
+          // Always proceed regardless of the decision; the audit row in
+          // integration_health_events lets us count would-have-blocked
+          // events offline and tune CIRCUIT_POLICY before enforcing.
+          try {
+            const ev = await evaluateClaim(db, {
+              integrationId: row.integrationId,
+              destinationId: row.destinationId,
+            });
+            if (ev.decision === "block") shadowBlocks++;
+            else if (ev.decision === "probe") shadowProbes++;
+            else shadowAllows++;
+            await recordShadowDecision(db, {
+              integrationId: row.integrationId,
+              destinationId: row.destinationId,
+              decision: ev.decision,
+              state: ev.state,
+              reason: ev.reason,
+              legacyDispatched: true,
+              metadata: { orderId: row.id },
+            });
+          } catch (err) {
+            console.error("[OrderRetry] CB shadow eval failed for order", row.id, err);
+          }
+
           try {
             const r = await retryFailedOrderDelivery(row.id);
             if (r.outcome === "sent" || r.outcome === "failed_exhausted" || r.outcome === "failed_will_retry") {
@@ -206,6 +243,12 @@ export async function retryDueFailedOrders(options?: {
     await runner.runAll();
   } finally {
     runner.stop();
+  }
+
+  if (shadowBlocks > 0 || shadowProbes > 0) {
+    console.log(
+      `[OrderRetry][CB-shadow] would-block=${shadowBlocks} would-probe=${shadowProbes} allow=${shadowAllows} (Phase 0 — no enforcement)`,
+    );
   }
 
   console.log(

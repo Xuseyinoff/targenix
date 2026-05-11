@@ -51,6 +51,7 @@ import {
   type CircuitPolicy,
 } from "../lib/circuitPolicy";
 import type { DeliveryErrorType } from "../lib/orderRetryPolicy";
+import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 
 export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
@@ -154,6 +155,82 @@ async function loadRow(
   };
 }
 
+// ── Throttled Telegram alerts ──────────────────────────────────────────────
+// Optional: set CB_ALERT_TELEGRAM_CHAT_ID to a chat id (or @channelname) to
+// receive a DM each time a circuit-breaker transitions. Unset = silent (the
+// audit log in integration_health_events is still kept).
+//
+// In-memory dedup: at most one alert per (integrationId, destinationId,
+// eventType) per ALERT_THROTTLE_MS. The map is bounded by tearing entries
+// older than the window on each insert.
+const ALERT_THROTTLE_MS = 5 * 60 * 1000;
+const lastAlertSentAt = new Map<string, number>();
+
+function shouldAlert(integrationId: number, destinationId: number, eventType: string): boolean {
+  const chat = process.env.CB_ALERT_TELEGRAM_CHAT_ID?.trim();
+  if (!chat) return false;
+  const key = `${integrationId}:${destinationId}:${eventType}`;
+  const now = Date.now();
+  // GC stale entries
+  if (lastAlertSentAt.size > 200) {
+    lastAlertSentAt.forEach((t, k) => {
+      if (now - t > ALERT_THROTTLE_MS) lastAlertSentAt.delete(k);
+    });
+  }
+  const last = lastAlertSentAt.get(key);
+  if (last != null && now - last < ALERT_THROTTLE_MS) return false;
+  lastAlertSentAt.set(key, now);
+  return true;
+}
+
+async function sendAlert(params: {
+  integrationId: number;
+  destinationId: number;
+  eventType: string;
+  fromState?: CircuitState | null;
+  toState?: CircuitState | null;
+  reason?: string | null;
+  errorType?: string | null;
+}): Promise<void> {
+  const chat = process.env.CB_ALERT_TELEGRAM_CHAT_ID?.trim();
+  if (!chat) return;
+  if (!shouldAlert(params.integrationId, params.destinationId, params.eventType)) return;
+
+  const emoji =
+    params.eventType === "opened"
+      ? "🚨"
+      : params.eventType === "half_opened"
+        ? "🟡"
+        : params.eventType === "closed"
+          ? "✅"
+          : params.eventType === "probe_failed"
+            ? "🔁"
+            : "ℹ️";
+  const lines = [
+    `${emoji} <b>Circuit Breaker — ${params.eventType}</b>`,
+    `Integration: <code>${params.integrationId}</code>` +
+      (params.destinationId ? ` · Destination: <code>${params.destinationId}</code>` : ""),
+    params.fromState && params.toState ? `State: ${params.fromState} → <b>${params.toState}</b>` : null,
+    params.errorType ? `Error type: <code>${params.errorType}</code>` : null,
+    params.reason ? `Reason: ${params.reason}` : null,
+  ].filter(Boolean);
+  try {
+    await sendTelegramMessage(chat, lines.join("\n"), "HTML");
+  } catch (err) {
+    console.error("[CircuitBreaker] alert send failed:", err);
+  }
+}
+
+// Events that warrant a Telegram alert (skip noisy shadow_* entries).
+const ALERT_EVENT_TYPES = new Set([
+  "opened",
+  "half_opened",
+  "closed",
+  "probe_failed",
+  "manual_open",
+  "manual_close",
+]);
+
 async function appendEvent(
   db: DbClient,
   params: {
@@ -181,6 +258,18 @@ async function appendEvent(
   } catch (err) {
     // Audit log failure must never break delivery — log & continue.
     console.error("[CircuitBreaker] failed to append event:", err);
+  }
+
+  if (ALERT_EVENT_TYPES.has(params.eventType)) {
+    void sendAlert({
+      integrationId: params.integrationId,
+      destinationId: params.destinationId,
+      eventType: params.eventType,
+      fromState: params.fromState ?? null,
+      toState: params.toState ?? null,
+      reason: params.reason ?? null,
+      errorType: params.errorType ?? null,
+    });
   }
 }
 

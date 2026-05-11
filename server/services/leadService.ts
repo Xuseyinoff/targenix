@@ -18,6 +18,7 @@ import {
 } from "../lib/orderRetryPolicy";
 import { incFailedOrders } from "../monitoring/metrics";
 import { executeWorkflow } from "./workflowExecutor";
+import { recordOutcome } from "./circuitBreaker";
 
 // ─── Field extraction helpers ─────────────────────────────────────────────────
 
@@ -462,9 +463,22 @@ type IntegrationDeliveryResult = {
 
 async function persistOrderDeliveryAttemptResult(
   db: DbClient,
-  params: { orderId: number; prevAttempts: number; result: IntegrationDeliveryResult },
+  params: {
+    orderId: number;
+    prevAttempts: number;
+    result: IntegrationDeliveryResult;
+    /**
+     * Optional CB-keying context. When provided, the breaker records this
+     * outcome so future scheduler claims can see the destination's health.
+     * Both callers (initial dispatch + retry) have these in scope; omitted
+     * paths (e.g. admin one-off manual retry that bypasses the queue) are
+     * still safe — the breaker simply doesn't observe that attempt.
+     */
+    integrationId?: number;
+    destinationId?: number;
+  },
 ): Promise<boolean> {
-  const { orderId, prevAttempts, result } = params;
+  const { orderId, prevAttempts, result, integrationId, destinationId } = params;
   const now = new Date();
   const newAttempts = prevAttempts + 1;
   const nextRetry = computeNextRetryAt({
@@ -520,6 +534,26 @@ async function persistOrderDeliveryAttemptResult(
   if (n === 1 && !result.success) {
     incFailedOrders(1);
   }
+
+  // Phase 0 — record this outcome on the circuit breaker so future
+  // scheduler claims (Phase 1) can see destination health. Best-effort:
+  // a CB failure must never break delivery, so we swallow and log.
+  if (n === 1 && integrationId != null) {
+    try {
+      await recordOutcome(db, {
+        integrationId,
+        destinationId: destinationId ?? 0,
+        success: result.success,
+        errorType: (result.errorType ?? null) as DeliveryErrorType | null,
+        errorMessage: result.error ?? null,
+        metadata: { orderId, attempts: newAttempts, adapterKey: result.adapterKey ?? null },
+        now,
+      });
+    } catch (err) {
+      console.error("[CircuitBreaker] recordOutcome failed for order", orderId, err);
+    }
+  }
+
   return n === 1;
 }
 
@@ -821,7 +855,13 @@ async function deliverOneDestination(params: {
     preResolvedDestination: params.preResolvedDestination,
   });
 
-  const persisted = await persistOrderDeliveryAttemptResult(db, { orderId, prevAttempts, result });
+  const persisted = await persistOrderDeliveryAttemptResult(db, {
+    orderId,
+    prevAttempts,
+    result,
+    integrationId: integration.id,
+    destinationId,
+  });
   if (!persisted) {
     await log.warn(
       "ORDER",
@@ -1344,7 +1384,13 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
     preResolvedDestination,
   });
 
-  const persisted = await persistOrderDeliveryAttemptResult(db, { orderId: order.id, prevAttempts, result });
+  const persisted = await persistOrderDeliveryAttemptResult(db, {
+    orderId: order.id,
+    prevAttempts,
+    result,
+    integrationId: integration.id,
+    destinationId: order.destinationId,
+  });
   if (!persisted) return { outcome: "lost_race" };
 
   await recalculateLeadDeliveryStatus(lead.id);
