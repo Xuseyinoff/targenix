@@ -62,8 +62,9 @@ export const integrationsRouter = router({
   }),
 
   /**
-   * Lead Routing wizard only. Standalone Affiliate integrations were removed from the product UI;
-   * delivery code still supports legacy AFFILIATE rows in the database.
+   * Lead Routing wizard only. The standalone Affiliate integration type was
+   * removed from both the UI and the delivery code path (audit 2026-05-12:
+   * 0 production rows).
    */
   create: protectedProcedure
     .input(
@@ -525,27 +526,53 @@ async function sendTestLeadToDestination(args: {
     );
   }
 
-  // Legacy custom/sotuvchi/100k destination → legacyTemplateAdapter.
-  // Same connection-loading pattern as the dynamic-template branch: production
-  // dispatch passes the linked connection; the test endpoint must mirror it,
-  // otherwise destinations with connection-backed secrets fail with
-  // CONNECTION_REQUIRED on test even though real lead delivery would succeed.
-  const adapter = getAdapter("legacy-template");
-  if (!adapter) throw new Error("Adapter not found: legacy-template");
-  const connection =
-    tw.connectionId != null
-      ? await loadConnectionForDelivery(db, tw.connectionId, userId)
-      : null;
-  return adapter.send(
-    {
-      db,
-      templateType: tw.templateType,
-      templateConfig: tw.templateConfig,
-      variableFields,
-      url: tw.url,
-      connection,
-      userId,
-    },
-    testLead,
-  );
+  // Manifest-driven destinations (http-api-key / http-oauth2) for rows that
+  // have no templateId — e.g. hubspot OAuth rows where appKey alone steers
+  // delivery. Route by appKey to mirror resolveAdapterKey().
+  const apiKeyApps = new Set([
+    "eskiz-sms",
+    "playmobile-sms",
+    "openai",
+    "crm-generic",
+    "webhook-json",
+    "bitrix24",
+    "amocrm",
+  ]);
+  const oauth2Apps = new Set(["hubspot", "kommo", "pipedrive"]);
+  if (tw.appKey && apiKeyApps.has(tw.appKey)) {
+    const adapter = getAdapter("http-api-key");
+    if (!adapter) throw new Error("Adapter not found: http-api-key");
+    return adapter.send(
+      {
+        appKey: tw.appKey,
+        templateConfig: tw.templateConfig,
+        leadRow: { createdAt: testLeadTimestamp },
+        db,
+        userId,
+        connectionId: tw.connectionId ?? null,
+      },
+      testLead,
+    );
+  }
+  if (tw.appKey && oauth2Apps.has(tw.appKey)) {
+    const adapter = getAdapter("http-oauth2");
+    if (!adapter) throw new Error("Adapter not found: http-oauth2");
+    return adapter.send(
+      {
+        appKey: tw.appKey,
+        templateConfig: tw.templateConfig,
+        leadRow: { createdAt: testLeadTimestamp },
+        db,
+        userId,
+        connectionId: tw.connectionId ?? null,
+      },
+      testLead,
+    );
+  }
+
+  return {
+    success: false,
+    error:
+      "Destination has no template and an unsupported appKey — cannot dispatch a test lead.",
+  };
 }
