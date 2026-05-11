@@ -479,9 +479,11 @@ async function persistOrderDeliveryAttemptResult(
      */
     integrationId?: number;
     destinationId?: number;
+    /** target_websites.appKey — enables per-app sibling pooling (Phase 2B). */
+    appKey?: string | null;
   },
 ): Promise<boolean> {
-  const { orderId, prevAttempts, result, integrationId, destinationId } = params;
+  const { orderId, prevAttempts, result, integrationId, destinationId, appKey } = params;
   const now = new Date();
   const newAttempts = prevAttempts + 1;
   const nextRetry = computeNextRetryAt({
@@ -539,14 +541,16 @@ async function persistOrderDeliveryAttemptResult(
     incFailedOrders(1);
   }
 
-  // Phase 0 — record this outcome on the circuit breaker so future
-  // scheduler claims (Phase 1) can see destination health. Best-effort:
-  // a CB failure must never break delivery, so we swallow and log.
+  // Phase 0/2B — record this outcome on the circuit breaker so future
+  // scheduler claims (Phase 1) can see destination health, and so per-app
+  // sibling pooling has fresh data. Best-effort: a CB failure must never
+  // break delivery, so we swallow and log.
   if (n === 1 && integrationId != null) {
     try {
       await recordOutcome(db, {
         integrationId,
         destinationId: destinationId ?? 0,
+        appKey: appKey ?? null,
         success: result.success,
         errorType: (result.errorType ?? null) as DeliveryErrorType | null,
         errorMessage: result.error ?? null,
@@ -882,12 +886,20 @@ async function deliverOneDestination(params: {
     preResolvedDestination: params.preResolvedDestination,
   });
 
+  // Resolve appKey for the CB row (Phase 2B per-app pooling). Use the
+  // pre-resolved destination's target_websites.appKey when available;
+  // otherwise leave undefined and let the legacy per-destination flow
+  // continue without app-level coordination.
+  const cbAppKey =
+    params.preResolvedDestination?.targetWebsite?.appKey ?? null;
+
   const persisted = await persistOrderDeliveryAttemptResult(db, {
     orderId,
     prevAttempts,
     result,
     integrationId: integration.id,
     destinationId,
+    appKey: cbAppKey,
   });
   if (!persisted) {
     await log.warn(
@@ -1417,6 +1429,7 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
     result,
     integrationId: integration.id,
     destinationId: order.destinationId,
+    appKey: preResolvedDestination?.targetWebsite?.appKey ?? null,
   });
   if (!persisted) return { outcome: "lost_race" };
 

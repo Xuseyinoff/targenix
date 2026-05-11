@@ -1140,6 +1140,13 @@ export const integrationHealth = mysqlTable("integration_health", {
   integrationId:  int("integrationId").notNull(),
   /** 0 = whole integration (legacy / single-dest). >0 = specific integration_destinations row. */
   destinationId:  int("destinationId").default(0).notNull(),
+  /**
+   * Cached `target_websites.appKey` for this destination (set on first
+   * recordOutcome). Lets `evaluateClaim` answer "is any sibling of this
+   * destination's app currently OPEN?" without joining through
+   * `integration_destinations` and `target_websites` on every claim.
+   */
+  appKey:         varchar("appKey", { length: 64 }),
   /** CLOSED | OPEN | HALF_OPEN */
   state:          mysqlEnum("state", ["CLOSED", "OPEN", "HALF_OPEN"]).default("CLOSED").notNull(),
 
@@ -1178,9 +1185,11 @@ export const integrationHealth = mysqlTable("integration_health", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
   /** One row per (integration, destination) — upsert target. */
-  uqDest:   uniqueIndex("uq_integration_health_dest").on(t.integrationId, t.destinationId),
+  uqDest:    uniqueIndex("uq_integration_health_dest").on(t.integrationId, t.destinationId),
   /** Scheduler claim JOIN — filter by state + cooldown expiry. */
-  idxState: index("idx_integration_health_state").on(t.state, t.cooldownUntil),
+  idxState:  index("idx_integration_health_state").on(t.state, t.cooldownUntil),
+  /** Per-app sibling lookup ("any 100k.uz destination currently OPEN?"). */
+  idxAppKey: index("idx_integration_health_appkey_state").on(t.appKey, t.state),
 }));
 
 export type IntegrationHealth       = typeof integrationHealth.$inferSelect;

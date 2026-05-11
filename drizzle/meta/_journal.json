@@ -449,6 +449,13 @@
       "when": 1778947200000,
       "tag": "0067_circuit_breaker",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "5",
+      "when": 1779033600000,
+      "tag": "0068_integration_health_appkey",
+      "breakpoints": true
     }
   ]
 }

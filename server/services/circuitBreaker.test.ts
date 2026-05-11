@@ -458,6 +458,96 @@ const HAS_DB = Boolean(
     expect(Array.isArray(r.byDestination)).toBe(true);
   });
 
+  // ─── Phase 2B per-app sibling pooling ──────────────────────────────────────
+
+  it("evaluateClaim blocks a CLOSED destination when a sibling of the same app is OPEN", async () => {
+    const { evaluateClaim } = await import("./circuitBreaker");
+    const SIBLING_INT = 998_001;
+    const SIBLING_DEST = 998_001;
+
+    // Cleanup any prior siblings
+    await db.execute(sql`DELETE FROM integration_health WHERE appKey = '100k_test'`);
+
+    // Trip one destination of app '100k_test' to OPEN
+    for (let i = 0; i < 5; i++) {
+      await recordOutcome(db, {
+        integrationId: TEST_INTEGRATION_ID,
+        destinationId: TEST_DESTINATION_ID,
+        appKey: "100k_test",
+        success: false,
+        errorType: "network",
+      });
+    }
+
+    // Now evaluate a fresh sibling — should block because of OPEN sibling
+    const ev = await evaluateClaim(db, {
+      integrationId: SIBLING_INT,
+      destinationId: SIBLING_DEST,
+      appKey: "100k_test",
+    });
+    expect(ev.decision).toBe("block");
+    expect(ev.reason).toContain("app_sibling_open");
+
+    // Cleanup
+    await db.execute(sql`DELETE FROM integration_health WHERE appKey = '100k_test'`);
+  });
+
+  it("evaluateClaim allows when no sibling of the app is OPEN", async () => {
+    const { evaluateClaim } = await import("./circuitBreaker");
+    await db.execute(sql`DELETE FROM integration_health WHERE appKey = 'solo_test'`);
+
+    // Healthy outcome only — no trips
+    await recordOutcome(db, {
+      integrationId: TEST_INTEGRATION_ID,
+      destinationId: TEST_DESTINATION_ID,
+      appKey: "solo_test",
+      success: true,
+    });
+
+    const ev = await evaluateClaim(db, {
+      integrationId: 998_002,
+      destinationId: 998_002,
+      appKey: "solo_test",
+    });
+    expect(ev.decision).toBe("allow");
+    expect(ev.reason).not.toContain("app_sibling_open");
+
+    await db.execute(sql`DELETE FROM integration_health WHERE appKey = 'solo_test'`);
+  });
+
+  it("evaluateClaim ignores siblings whose cooldown has expired", async () => {
+    const { evaluateClaim } = await import("./circuitBreaker");
+    await db.execute(sql`DELETE FROM integration_health WHERE appKey = 'expired_test'`);
+
+    // Trip one destination
+    for (let i = 0; i < 5; i++) {
+      await recordOutcome(db, {
+        integrationId: TEST_INTEGRATION_ID,
+        destinationId: TEST_DESTINATION_ID,
+        appKey: "expired_test",
+        success: false,
+        errorType: "network",
+      });
+    }
+    // Force cooldown into the past
+    await db.execute(sql`
+      UPDATE integration_health
+      SET cooldownUntil = DATE_SUB(NOW(), INTERVAL 1 HOUR)
+      WHERE integrationId = ${TEST_INTEGRATION_ID}
+    `);
+
+    const ev = await evaluateClaim(db, {
+      integrationId: 998_003,
+      destinationId: 998_003,
+      appKey: "expired_test",
+    });
+    // The sibling row's cooldown has expired; it counts as not currently OPEN
+    // for sibling-pooling purposes, so the new destination is allowed.
+    expect(ev.decision).toBe("allow");
+
+    await db.execute(sql`DELETE FROM integration_health WHERE appKey = 'expired_test'`);
+  });
+
   it("appends an 'opened' event to integration_health_events on each trip", async () => {
     for (let i = 0; i < 5; i++) {
       await recordOutcome(db, {

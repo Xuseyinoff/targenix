@@ -60,6 +60,14 @@ export type Decision = "allow" | "block" | "probe";
 export type RecordOutcomeParams = {
   integrationId: number;
   destinationId: number;
+  /**
+   * `target_websites.appKey` for this destination. When provided we cache it
+   * on the row so `evaluateClaim` can answer "any sibling of this app
+   * currently OPEN?" without joining through integration_destinations and
+   * target_websites on every claim. Safe to omit — callers without the
+   * value just skip per-app pooling for this outcome.
+   */
+  appKey?: string | null;
   success: boolean;
   errorType?: DeliveryErrorType | null;
   errorMessage?: string | null;
@@ -79,6 +87,12 @@ export type RecordOutcomeResult = {
 export type EvaluateClaimParams = {
   integrationId: number;
   destinationId: number;
+  /**
+   * Optional appKey override. When omitted, evaluateClaim reads it from the
+   * row's cached `appKey` column. Callers can pass it explicitly to override
+   * (e.g. for newly-created destinations whose row doesn't exist yet).
+   */
+  appKey?: string | null;
   now?: Date;
 };
 
@@ -115,7 +129,7 @@ async function loadRow(
 ): Promise<HealthRow | null> {
   const rows = (await db.execute(sql`
     SELECT
-      id, integrationId, destinationId, state,
+      id, integrationId, destinationId, appKey, state,
       windowStartedAt, windowFailures, windowSuccesses,
       consecutiveFailures, consecutiveSuccesses,
       openedAt, cooldownUntil, cooldownLevel,
@@ -370,6 +384,7 @@ export async function recordOutcome(
         .values({
           integrationId,
           destinationId,
+          appKey: params.appKey ?? null,
           state: "OPEN",
           windowStartedAt: now,
           windowFailures: 1,
@@ -402,6 +417,7 @@ export async function recordOutcome(
       .values({
         integrationId,
         destinationId,
+        appKey: params.appKey ?? null,
         state: "CLOSED",
         windowStartedAt: now,
         windowFailures: failureDelta,
@@ -634,8 +650,30 @@ export async function evaluateClaim(
   const now = params.now ?? new Date();
   const row = await loadRow(db, params.integrationId, params.destinationId);
 
-  // Never seen this destination — definitely allow.
+  // Never seen this destination — fall back to per-app sibling check when
+  // the caller supplied an appKey (otherwise we have nothing to compare).
+  // Without this branch a brand-new destination of an already-rate-limited
+  // app would freely fire on first contact and only get its own CB row
+  // after taking a 429 to the face.
   if (!row) {
+    if (params.appKey) {
+      const sibRes = (await db.execute(sql`
+        SELECT COUNT(*) AS n FROM integration_health
+        WHERE appKey = ${params.appKey}
+          AND state = 'OPEN'
+          AND (cooldownUntil IS NULL OR cooldownUntil > NOW())
+      `)) as unknown as [Array<{ n: number }>, unknown];
+      const openSiblings = Number(sibRes[0]?.[0]?.n ?? 0);
+      if (openSiblings > 0) {
+        return {
+          decision: "block",
+          state: "CLOSED",
+          reason: `app_sibling_open (${openSiblings} sibling${openSiblings > 1 ? "s" : ""} of '${params.appKey}' OPEN)`,
+          cooldownUntil: null,
+          manualLock: null,
+        };
+      }
+    }
     return {
       decision: "allow",
       state: "CLOSED",
@@ -668,6 +706,31 @@ export async function evaluateClaim(
   const state = row.state as CircuitState;
 
   if (state === "CLOSED") {
+    // Per-app sibling check (Phase 2B): if any sibling destination of the
+    // same app is currently OPEN, treat THIS destination as blocked too.
+    // Prevents a partner-wide rate limit (e.g. 100k.uz returning 429) from
+    // being discovered one destination at a time — once any sibling is
+    // OPEN, the rest back off without taking turns failing.
+    const effectiveAppKey = params.appKey ?? row.appKey ?? null;
+    if (effectiveAppKey) {
+      const sibRes = (await db.execute(sql`
+        SELECT COUNT(*) AS n FROM integration_health
+        WHERE appKey = ${effectiveAppKey}
+          AND state = 'OPEN'
+          AND (cooldownUntil IS NULL OR cooldownUntil > NOW())
+          AND NOT (integrationId = ${params.integrationId} AND destinationId = ${params.destinationId})
+      `)) as unknown as [Array<{ n: number }>, unknown];
+      const openSiblings = Number(sibRes[0]?.[0]?.n ?? 0);
+      if (openSiblings > 0) {
+        return {
+          decision: "block",
+          state,
+          reason: `app_sibling_open (${openSiblings} sibling${openSiblings > 1 ? "s" : ""} of '${effectiveAppKey}' OPEN)`,
+          cooldownUntil: null,
+          manualLock: null,
+        };
+      }
+    }
     return {
       decision: "allow",
       state,
