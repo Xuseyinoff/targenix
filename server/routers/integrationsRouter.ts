@@ -78,6 +78,19 @@ export const integrationsRouter = router({
          * prevents accidentally passing a large array.
          */
         destinationIds: z.array(z.number().int().positive()).max(20).optional(),
+        /**
+         * Top-level dedicated fields (preferred source for the corresponding
+         * dedicated columns). Server prefers these and falls back to the
+         * matching keys inside `config` for older callers that still embed
+         * them in the JSON. Once all callers send top-level, the config
+         * fallback can be removed.
+         */
+        pageId: z.string().max(128).optional(),
+        formId: z.string().max(128).optional(),
+        pageName: z.string().max(255).optional(),
+        formName: z.string().max(255).optional(),
+        facebookAccountId: z.number().int().positive().optional(),
+        targetWebsiteId: z.number().int().positive().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -108,6 +121,12 @@ export const integrationsRouter = router({
         config: input.config,
         telegramChatId: input.telegramChatId ?? null,
         destinationIds: safeDestinationIds,
+        pageId: input.pageId,
+        formId: input.formId,
+        pageName: input.pageName,
+        formName: input.formName,
+        facebookAccountId: input.facebookAccountId,
+        targetWebsiteId: input.targetWebsiteId,
       });
       return { success: true };
     }),
@@ -133,6 +152,16 @@ export const integrationsRouter = router({
          * on `create`, prevents accidental large arrays.
          */
         destinationIds: z.array(z.number().int().positive()).max(20).optional(),
+        /**
+         * Top-level dedicated fields — see `create` above. Preferred over
+         * the matching keys inside `config` when present.
+         */
+        pageId: z.string().max(128).optional(),
+        formId: z.string().max(128).optional(),
+        pageName: z.string().max(255).optional(),
+        formName: z.string().max(255).optional(),
+        facebookAccountId: z.number().int().positive().optional(),
+        targetWebsiteId: z.number().int().positive().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {

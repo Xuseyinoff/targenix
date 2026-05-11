@@ -6,10 +6,15 @@
  * Old URLs `/integrations/new-routing` and `/integrations/edit-routing/:id`
  * redirect here (see App.tsx).
  *
- * The wizard persists the integration.config shape expected by lead delivery:
- *   { facebookAccountId, pageId, pageName, formId, formName, nameField,
- *     phoneField, extraFields, targetWebsiteId, targetWebsiteName,
- *     targetTemplateType, variableFields }
+ * The wizard persists two surfaces on each save:
+ *   1. Top-level dedicated fields (preferred by the server for the matching
+ *      columns): pageId, formId, pageName, formName, facebookAccountId,
+ *      targetWebsiteId.
+ *   2. integration.config JSON — fields that don't have dedicated columns:
+ *      { fieldMappings, nameField, phoneField, targetWebsiteName,
+ *        targetTemplateType, variableFields }
+ *   The 6 dedicated keys are intentionally NOT echoed inside config, so the
+ *   JSON stays free of duplicates and there is a single source of truth.
  *
  * 5b scope (this commit):
  *   - Trigger card: Facebook account / page / form
@@ -1100,22 +1105,29 @@ export default function IntegrationWizardV2() {
       if (typeof value === "string") variableFields[key] = value;
     }
 
+    // Dedicated-column fields are passed at top level — server prefers them
+    // over the matching keys inside `config`. We deliberately stop embedding
+    // pageId / formId / pageName / formName / facebookAccountId / targetWebsiteId
+    // inside the JSON to keep the source of truth in one place. `targetWebsiteName`
+    // and `targetTemplateType` stay in `config` until their display fallbacks
+    // are migrated off the JSON.
     const config = {
-      facebookAccountId: state.accountId,
-      pageId: state.pageId,
-      pageName: state.pageName,
-      formId: state.formId,
-      formName: state.formName,
       fieldMappings,
-      // Legacy compat
       nameField: nameMapping?.from ?? "",
       phoneField: phoneMapping?.from ?? "",
-      targetWebsiteId: primaryDestId,
       targetWebsiteName: primaryDestName,
       targetTemplateType: primaryDestType,
       variableFields,
     };
     const destinationIds = state.destinations.map((d) => d.id);
+    const dedicatedFields = {
+      pageId: state.pageId || undefined,
+      formId: state.formId || undefined,
+      pageName: state.pageName || undefined,
+      formName: state.formName || undefined,
+      facebookAccountId: state.accountId || undefined,
+      targetWebsiteId: primaryDestId || undefined,
+    };
     try {
       if (isEditMode) {
         await updateMutation.mutateAsync({
@@ -1123,6 +1135,7 @@ export default function IntegrationWizardV2() {
           name: state.integrationName.trim(),
           config,
           destinationIds,
+          ...dedicatedFields,
         });
       } else {
         if (state.accountId && state.pageId) {
@@ -1136,6 +1149,7 @@ export default function IntegrationWizardV2() {
           name: state.integrationName.trim(),
           config,
           destinationIds,
+          ...dedicatedFields,
         });
       }
     } catch (err) {

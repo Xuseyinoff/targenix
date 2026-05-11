@@ -435,22 +435,34 @@ export async function createIntegration(data: {
    * from `config.targetWebsiteId` is used (single-destination path).
    */
   destinationIds?: number[];
+  /**
+   * Top-level dedicated fields (preferred). When provided, these win over
+   * the matching keys in `config`. The config fallback remains for older
+   * callers that still embed these values inside the JSON.
+   */
+  pageId?: string;
+  formId?: string;
+  pageName?: string;
+  formName?: string;
+  facebookAccountId?: number;
+  targetWebsiteId?: number;
 }): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  // Populate dedicated columns from config (source of truth during creation)
+  // Populate dedicated columns: prefer top-level fields, fall back to config
+  // keys for older callers that still embed them in the JSON.
   const cfg = data.config as Record<string, unknown> | null;
   const isLR = data.type === "LEAD_ROUTING";
-  const pageId = isLR ? (String(cfg?.pageId ?? "") || null) : null;
-  const formId = isLR ? (String(cfg?.formId ?? "") || null) : null;
-  const pageName = isLR ? (String(cfg?.pageName ?? "") || null) : null;
-  const formName = isLR ? (String(cfg?.formName ?? "") || null) : null;
-  const rawFbId = isLR ? (cfg?.facebookAccountId ?? cfg?.accountId) : undefined;
+  const pageId = isLR ? (data.pageId ?? (String(cfg?.pageId ?? "") || null)) : null;
+  const formId = isLR ? (data.formId ?? (String(cfg?.formId ?? "") || null)) : null;
+  const pageName = isLR ? (data.pageName ?? (String(cfg?.pageName ?? "") || null)) : null;
+  const formName = isLR ? (data.formName ?? (String(cfg?.formName ?? "") || null)) : null;
+  const rawFbId = isLR ? (data.facebookAccountId ?? cfg?.facebookAccountId ?? cfg?.accountId) : undefined;
   const facebookAccountId = typeof rawFbId === "number" && rawFbId > 0 ? rawFbId : null;
-  // Extract the primary destination id from config at creation time so the
-  // legacy dispatch path and the dual-write mirror below share one source
-  // of truth.
-  const targetWebsiteId = isLR ? extractTargetWebsiteId(cfg) : null;
+  // Extract the primary destination id: prefer top-level, fall back to JSON.
+  const targetWebsiteId = isLR
+    ? (data.targetWebsiteId ?? extractTargetWebsiteId(cfg))
+    : null;
 
   const [result] = await db.insert(integrations).values({
     userId: data.userId,
@@ -513,6 +525,16 @@ export async function updateIntegration(
      * the guard below.
      */
     destinationIds: number[];
+    /**
+     * Top-level dedicated fields — preferred over the matching keys in
+     * `config` when present. See `createIntegration` doc above.
+     */
+    pageId: string;
+    formId: string;
+    pageName: string;
+    formName: string;
+    facebookAccountId: number;
+    targetWebsiteId: number;
   }>,
 ): Promise<void> {
   const db = await getDb();
@@ -520,19 +542,38 @@ export async function updateIntegration(
   // Keep dedicated columns in sync when config is updated.
   // `destinationIds` is handled separately below — strip it before the
   // plain SQL UPDATE so it doesn't land as a bogus column value.
-  const { destinationIds, ...dbFields } = data;
+  // Top-level dedicated fields also bypass the UPDATE statement directly —
+  // they're applied to `updateData` further down.
+  const {
+    destinationIds,
+    pageId: topPageId,
+    formId: topFormId,
+    pageName: topPageName,
+    formName: topFormName,
+    facebookAccountId: topFbAccountId,
+    targetWebsiteId: topTwId,
+    ...dbFields
+  } = data;
   const updateData: Record<string, unknown> = { ...dbFields };
   let twIdForSync: number | null | undefined;
-  if (dbFields.config !== undefined) {
-    const cfg = dbFields.config as Record<string, unknown> | null;
-    updateData.pageId = String(cfg?.pageId ?? "") || null;
-    updateData.formId = String(cfg?.formId ?? "") || null;
-    updateData.pageName = String(cfg?.pageName ?? "") || null;
-    updateData.formName = String(cfg?.formName ?? "") || null;
-    const rawFbId = cfg?.facebookAccountId ?? cfg?.accountId;
+  if (
+    dbFields.config !== undefined ||
+    topPageId !== undefined ||
+    topFormId !== undefined ||
+    topPageName !== undefined ||
+    topFormName !== undefined ||
+    topFbAccountId !== undefined ||
+    topTwId !== undefined
+  ) {
+    const cfg = (dbFields.config ?? null) as Record<string, unknown> | null;
+    updateData.pageId = topPageId ?? (String(cfg?.pageId ?? "") || null);
+    updateData.formId = topFormId ?? (String(cfg?.formId ?? "") || null);
+    updateData.pageName = topPageName ?? (String(cfg?.pageName ?? "") || null);
+    updateData.formName = topFormName ?? (String(cfg?.formName ?? "") || null);
+    const rawFbId = topFbAccountId ?? cfg?.facebookAccountId ?? cfg?.accountId;
     updateData.facebookAccountId = typeof rawFbId === "number" && rawFbId > 0 ? rawFbId : null;
     // Keep the dedicated column and the destination table in sync together.
-    twIdForSync = extractTargetWebsiteId(cfg);
+    twIdForSync = topTwId ?? extractTargetWebsiteId(cfg);
     updateData.targetWebsiteId = twIdForSync;
   }
 
