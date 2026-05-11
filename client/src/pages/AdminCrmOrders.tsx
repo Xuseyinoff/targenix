@@ -20,7 +20,12 @@ const PAGE_SIZE = 50;
 const PLATFORM_LABELS: Record<string, string> = {
   sotuvchi: "Sotuvchi.com",
   "100k": "100k.uz",
+  alijahon: "Alijahon.uz",
+  inbaza: "Inbaza.uz",
+  mgoods: "MGoods",
 };
+const PLATFORM_KEYS = ["sotuvchi", "100k", "alijahon", "inbaza", "mgoods"] as const;
+type PlatformKey = (typeof PLATFORM_KEYS)[number];
 
 // Badge colors match Sotuvchi.com frontend labels exactly
 const STATUS_META: Record<string, { label: string; cls: string }> = {
@@ -188,7 +193,7 @@ export default function AdminCrmOrders() {
   }, [user, setLocation]);
 
   const [page, setPage] = useState(0);
-  const [platformFilter, setPlatformFilter] = useState<"sotuvchi" | "100k" | "">("");
+  const [platformFilter, setPlatformFilter] = useState<PlatformKey | "">("");
   const [statusFilter, setStatusFilter] = useState("");
   const [userFilter, setUserFilter] = useState<number | "">("");
 
@@ -248,13 +253,16 @@ export default function AdminCrmOrders() {
             className="border rounded-md px-3 py-1.5 text-sm bg-background"
             value={platformFilter}
             onChange={(e) => {
-              setPlatformFilter(e.target.value as "sotuvchi" | "100k" | "");
+              setPlatformFilter(e.target.value as PlatformKey | "");
               setPage(0);
             }}
           >
             <option value="">Barcha platformalar</option>
-            <option value="sotuvchi">Sotuvchi.com</option>
-            <option value="100k">100k.uz</option>
+            {PLATFORM_KEYS.map((k) => (
+              <option key={k} value={k}>
+                {PLATFORM_LABELS[k]}
+              </option>
+            ))}
           </select>
           <select
             className="border rounded-md px-3 py-1.5 text-sm bg-background"

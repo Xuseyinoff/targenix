@@ -10,7 +10,7 @@ import {
   orderEvents,
   users,
 } from "../../drizzle/schema";
-import { and, asc, desc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { encrypt, decrypt } from "../encryption";
 import {
   crmLogin,
@@ -26,6 +26,14 @@ import {
   mapSotuvchiRawToNormalized,
   mapHundredKRawToNormalized,
 } from "../../shared/crmStatuses";
+
+/**
+ * Affiliate platformalar — /admin/crm/orders filterida ishlatiladi.
+ * Yangi platforma qo'shilsa shu ro'yxatga qo'shing. crmStatus polling
+ * faqat sotuvchi + 100k uchun ulangan; qolganlari ko'rinishida null/raw
+ * sifatida ko'rsatiladi (sync hozircha yo'q).
+ */
+const AFFILIATE_APP_KEYS = ["sotuvchi", "100k", "alijahon", "inbaza", "mgoods"] as const;
 
 // ─── Background sync state (single-instance safe) ─────────────────────────────
 interface SyncResult {
@@ -909,7 +917,7 @@ export const crmRouter = router({
       z.object({
         limit: z.number().min(1).max(200).default(50),
         offset: z.number().min(0).default(0),
-        platform: z.enum(["sotuvchi", "100k"]).optional(),
+        platform: z.enum(AFFILIATE_APP_KEYS).optional(),
         crmStatus: z.string().optional(),
         userId: z.number().int().positive().optional(),
       }),
@@ -924,7 +932,7 @@ export const crmRouter = router({
         input.userId ? eq(orders.userId, input.userId) : undefined,
         input.platform
           ? eq(targetWebsites.appKey, input.platform)
-          : or(eq(targetWebsites.appKey, "sotuvchi"), eq(targetWebsites.appKey, "100k")),
+          : inArray(targetWebsites.appKey, AFFILIATE_APP_KEYS),
         input.crmStatus
           ? eq(orders.crmStatus, input.crmStatus)
           : undefined,
