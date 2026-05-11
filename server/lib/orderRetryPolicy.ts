@@ -61,8 +61,15 @@ export function inferDeliveryErrorType(input: {
  * - If `errorType` is set:
  *   - validation → never retry
  *   - auth → at most one follow-up (no schedule once `newAttempts >= 2`)
- *   - rate_limit → exponential steps with a floor of 15 minutes
+ *   - rate_limit → exponential steps with a floor of 15 minutes (unless
+ *     the provider gave us an explicit `retryAfterMs`)
  *   - network → exponential steps (5m, 15m, 60m)
+ *
+ * `retryAfterMs` overrides the policy ladder when the provider explicitly
+ * told us how long to wait (`Retry-After` / `X-RateLimit-Reset`). We respect
+ * the partner's instruction rather than re-deriving it — partners love
+ * clients that honour their rate-limit headers, and it stops us from
+ * burning the IP reputation by guessing wrong.
  */
 export function computeNextRetryAt(params: {
   now: Date;
@@ -70,11 +77,20 @@ export function computeNextRetryAt(params: {
   maxAttempts: number;
   success: boolean;
   errorType?: DeliveryErrorType;
+  /** Provider-suggested cooldown in ms (e.g. parsed from `Retry-After`). */
+  retryAfterMs?: number;
 }): Date | null {
-  const { now, newAttempts, maxAttempts, success, errorType } = params;
+  const { now, newAttempts, maxAttempts, success, errorType, retryAfterMs } = params;
   if (success || newAttempts >= maxAttempts) return null;
   if (errorType === "validation") return null;
   if (errorType === "auth" && newAttempts >= 2) return null;
+
+  // Provider gave us a Retry-After: honour it (clamped to a sane window so a
+  // misbehaving partner can't park the order for a week).
+  if (typeof retryAfterMs === "number" && retryAfterMs > 0) {
+    const clamped = Math.min(Math.max(retryAfterMs, 1_000), 6 * 60 * 60 * 1000); // 1s–6h
+    return new Date(now.getTime() + clamped);
+  }
 
   if (errorType === undefined) {
     return new Date(now.getTime() + ORDER_RETRY_INTERVAL_MS);
@@ -86,4 +102,58 @@ export function computeNextRetryAt(params: {
     delayMs = Math.max(delayMs, 15 * 60 * 1000);
   }
   return new Date(now.getTime() + delayMs);
+}
+
+/**
+ * Parse `Retry-After` and `X-RateLimit-Reset` headers from a Fetch Response
+ * into milliseconds. Returns `undefined` when no usable signal is present.
+ *
+ * Header semantics:
+ *   - `Retry-After: 41`              — seconds (delta)
+ *   - `Retry-After: <HTTP-date>`     — absolute time
+ *   - `X-RateLimit-Reset: 1779000`   — unix epoch seconds
+ *   - `X-RateLimit-Reset: 41`        — some APIs use seconds-delta (we
+ *     disambiguate by checking magnitude: < 10^10 ⇒ delta, else epoch)
+ *
+ * All values clamped to non-negative.
+ */
+export function parseRetryAfterHeader(headers: Headers | Record<string, string | null | undefined>): number | undefined {
+  const read = (name: string): string | null => {
+    if (headers instanceof Headers) return headers.get(name);
+    const v = (headers as Record<string, string | null | undefined>)[name]
+      ?? (headers as Record<string, string | null | undefined>)[name.toLowerCase()];
+    return v ?? null;
+  };
+
+  const retryAfter = read("Retry-After") ?? read("retry-after");
+  if (retryAfter) {
+    const asNumber = Number(retryAfter.trim());
+    if (Number.isFinite(asNumber) && asNumber >= 0) {
+      return Math.round(asNumber * 1000);
+    }
+    const asDate = Date.parse(retryAfter);
+    if (Number.isFinite(asDate)) {
+      const deltaMs = asDate - Date.now();
+      return deltaMs > 0 ? deltaMs : 0;
+    }
+  }
+
+  const rlReset = read("X-RateLimit-Reset") ?? read("x-ratelimit-reset");
+  if (rlReset) {
+    const n = Number(rlReset.trim());
+    if (Number.isFinite(n) && n >= 0) {
+      // Heuristic: > 10^10 ⇒ epoch milliseconds; > 10^9 ⇒ epoch seconds;
+      // anything smaller is a seconds-delta. The thresholds avoid mistaking
+      // a 60-second delta for an epoch value.
+      if (n > 1e10) {
+        return Math.max(0, n - Date.now());
+      }
+      if (n > 1e9) {
+        return Math.max(0, n * 1000 - Date.now());
+      }
+      return Math.round(n * 1000);
+    }
+  }
+
+  return undefined;
 }

@@ -19,6 +19,7 @@ import type { DbClient } from "../../db";
 import type { DeliveryResult } from "../types";
 import { getApp } from "../appRegistry";
 import type { AppExecutionEndpoint } from "../manifest";
+import { inferDeliveryErrorType, parseRetryAfterHeader } from "../../lib/orderRetryPolicy";
 
 // ─── Config shape (injected by dispatchDelivery) ──────────────────────────────
 
@@ -196,12 +197,21 @@ export const httpApiKeyAdapter = {
           ? JSON.stringify(responseBody).slice(0, 300)
           : `HTTP ${res.status}`;
 
+      // Classify by status + message so 429s become rate_limit (not
+      // misfiled as validation under the old 4xx-blanket rule). Falls back
+      // to network for 5xx and validation for plain 4xx.
+      const inferred = inferDeliveryErrorType({ httpStatus: res.status, message: errMsg });
+      const errorType =
+        inferred ?? (res.status >= 400 && res.status < 500 ? "validation" : "network");
+      const retryAfterMs = res.status === 429 ? parseRetryAfterHeader(res.headers) : undefined;
+
       return {
         success: false,
         error: errMsg,
-        errorType: res.status >= 400 && res.status < 500 ? "validation" : "network",
+        errorType,
         responseData: responseBody,
         durationMs: latencyMs,
+        retryAfterMs,
       };
     } catch (err) {
       return {

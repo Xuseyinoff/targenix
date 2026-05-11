@@ -19,6 +19,7 @@ import {
 import { incFailedOrders } from "../monitoring/metrics";
 import { executeWorkflow } from "./workflowExecutor";
 import { recordOutcome } from "./circuitBreaker";
+import { checkPhone, syntheticInvalidPhoneResult } from "../lib/phoneValidation";
 
 // ─── Field extraction helpers ─────────────────────────────────────────────────
 
@@ -459,6 +460,8 @@ type IntegrationDeliveryResult = {
   errorType?: DeliveryErrorType;
   /** Phase 10 — which adapter handled this delivery. */
   adapterKey?: string;
+  /** Provider-supplied cooldown (ms) parsed from `Retry-After` / `X-RateLimit-Reset`. */
+  retryAfterMs?: number;
 };
 
 async function persistOrderDeliveryAttemptResult(
@@ -487,6 +490,7 @@ async function persistOrderDeliveryAttemptResult(
     maxAttempts: ORDER_MAX_DELIVERY_ATTEMPTS,
     success: result.success,
     errorType: result.errorType,
+    retryAfterMs: result.retryAfterMs,
   });
 
   let merged: Record<string, unknown>;
@@ -598,6 +602,28 @@ async function runOrderIntegrationSend(params: {
 }): Promise<IntegrationDeliveryResult> {
   const { db, integration, lead, leadPayload, userId, isAdmin } = params;
   const deliverySource = params.deliverySource ?? "initial";
+
+  // ── Pre-validation: catch obviously broken phones before the round-trip.
+  // Real prod 422 patterns we hit on partner APIs: `+9992023509168874` (17
+  // digits), empty strings, missing country codes, etc. The partner classifies
+  // these as validation errors anyway, but pre-checking saves the network hop
+  // and keeps our reputation with their rate limiter cleaner.
+  const phoneCheck = checkPhone(leadPayload.phone);
+  if (!phoneCheck.valid) {
+    const synthetic = syntheticInvalidPhoneResult(phoneCheck.reason);
+    await log.warn(
+      "ORDER",
+      `Skipping dispatch — phone pre-check failed for leadId=${lead.id} (${phoneCheck.reason})`,
+      { integrationId: integration.id, phone: leadPayload.phone, reason: phoneCheck.reason },
+      lead.id,
+      leadPayload.pageId,
+      userId,
+      "phone_pre_check_failed",
+      "system",
+    );
+    return synthetic;
+  }
+
   let result: IntegrationDeliveryResult;
 
   if (integration.type === "AFFILIATE") {
@@ -700,6 +726,7 @@ async function runOrderIntegrationSend(params: {
         errorType:    dispatched.errorType,
         durationMs:   dispatched.durationMs,
         adapterKey:   dispatched.adapterKey,
+        retryAfterMs: dispatched.retryAfterMs,
       };
     }
     result.durationMs = Date.now() - _t0Routing;

@@ -21,6 +21,7 @@ import type { DbClient } from "../../db";
 import type { DeliveryResult } from "../types";
 import { getApp } from "../appRegistry";
 import type { AppExecutionEndpoint } from "../manifest";
+import { inferDeliveryErrorType, parseRetryAfterHeader } from "../../lib/orderRetryPolicy";
 
 // ─── Config shape ─────────────────────────────────────────────────────────────
 
@@ -241,12 +242,18 @@ export const httpOAuth2Adapter = {
           ? JSON.stringify(responseBody).slice(0, 300)
           : `HTTP ${res.status}`;
 
+      const inferred = inferDeliveryErrorType({ httpStatus: res.status, message: errMsg });
+      const errorType =
+        inferred ?? (res.status >= 400 && res.status < 500 ? "validation" : "network");
+      const retryAfterMs = res.status === 429 ? parseRetryAfterHeader(res.headers) : undefined;
+
       return {
         success: false,
         error: errMsg,
-        errorType: res.status >= 400 && res.status < 500 ? "validation" : "network",
+        errorType,
         responseData: responseBody,
         durationMs: latencyMs,
+        retryAfterMs,
       };
     } catch (err) {
       return {

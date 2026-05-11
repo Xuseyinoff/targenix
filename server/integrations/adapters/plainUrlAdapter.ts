@@ -1,5 +1,5 @@
 import { assertSafeOutboundUrl } from "../../lib/urlSafety";
-import { inferDeliveryErrorType } from "../../lib/orderRetryPolicy";
+import { inferDeliveryErrorType, parseRetryAfterHeader } from "../../lib/orderRetryPolicy";
 import type { LeadPayload } from "../../services/affiliateService";
 import type { DeliveryAdapter, DeliveryResult } from "../types";
 
@@ -60,6 +60,7 @@ export const plainUrlAdapter: DeliveryAdapter = {
           error: errMsg,
           responseData,
           errorType: inferDeliveryErrorType({ httpStatus: res.status, message: errMsg }),
+          retryAfterMs: res.status === 429 ? parseRetryAfterHeader(res.headers) : undefined,
         };
       }
       return { success: true, responseData };
