@@ -47,46 +47,43 @@ describe("resolveAdapterKey — Stage 2 appKey", () => {
     ).toBe("google-sheets");
   });
 
-  it("LEAD LEGACY: no appKey, templateId set -> dynamic-template", () => {
+  // ── Sprint 4 / Item 4.3: templateType-first legacy fallback sunset ──────
+  //
+  // The block below previously implemented "if appKey is missing, route by
+  // templateType". That fallback was removed after auditing both local and
+  // production target_websites tables (audit-appkey-coverage.ts) and
+  // confirming 0 rows had a null or 'unknown' appKey. Tests now document
+  // the post-sunset behaviour: appKey is mandatory, anything without one
+  // (or with the `unknown` backfill sentinel) falls into the safe
+  // plain-url default.
+  it("LEAD: missing appKey → plain-url default (4.3 sunset)", () => {
     expect(
       resolveAdapterKey("LEAD_ROUTING", { templateId: 7, templateType: "custom", appKey: null }),
-    ).toBe("dynamic-template");
+    ).toBe("plain-url");
   });
 
-  it("LEAD LEGACY: no appKey, sotuvchi no templateId -> legacy-template", () => {
+  it("LEAD: missing appKey + no templateId → plain-url (4.3 sunset)", () => {
     expect(
       resolveAdapterKey("LEAD_ROUTING", { templateId: null, templateType: "sotuvchi", appKey: null }),
-    ).toBe("legacy-template");
+    ).toBe("plain-url");
   });
 
-  it("NOT NULL backfill: appKey unknown → same routing as missing (legacy path by templateType)", () => {
+  it("LEAD: appKey='unknown' sentinel → plain-url (4.3 sunset)", () => {
     expect(
       resolveAdapterKey("LEAD_ROUTING", {
         templateId: null,
         templateType: "sotuvchi",
         appKey: "unknown",
       }),
-    ).toBe("legacy-template");
+    ).toBe("plain-url");
   });
 
-  it("LEAD LEGACY: no appKey, templateType telegram", () => {
+  it("LEAD: templateType=telegram without appKey → plain-url (4.3 sunset)", () => {
+    // templateType is no longer a routing signal. Setting the appKey is
+    // mandatory for any destination type the system knows about.
     expect(
       resolveAdapterKey("LEAD_ROUTING", { templateId: null, templateType: "telegram", appKey: null }),
-    ).toBe("telegram");
-  });
-
-  // Regression guard: telegram/sheets with BOTH templateType AND templateId set must NOT go to dynamic-template.
-  // Before the fix the templateId check fired first, silently misrouting messaging destinations.
-  it("REGRESSION: telegram + templateId set → still telegram (not dynamic-template)", () => {
-    expect(
-      resolveAdapterKey("LEAD_ROUTING", { templateId: 99, templateType: "telegram", appKey: null }),
-    ).toBe("telegram");
-  });
-
-  it("REGRESSION: google-sheets + templateId set → still google-sheets (not dynamic-template)", () => {
-    expect(
-      resolveAdapterKey("LEAD_ROUTING", { templateId: 99, templateType: "google-sheets", appKey: null }),
-    ).toBe("google-sheets");
+    ).toBe("plain-url");
   });
 
   it("STAGE2_ADAPTER_LOG logs when set", () => {

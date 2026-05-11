@@ -14,18 +14,34 @@ describe("app registry (Phase 2 manifests)", () => {
     expect(problems).toEqual([]);
   });
 
-  it("registers all six built-in apps", () => {
+  it("registers every built-in app (core + http-api-key + http-oauth2)", () => {
+    // Keep this list in sync with server/integrations/apps/index.ts. The
+    // assertion is intentionally a strict equality so adding a new manifest
+    // file without registering it (or vice-versa) fails CI loudly.
     const keys = listApps({ includeInternal: true })
       .map((a) => a.key)
       .sort();
     expect(keys).toEqual(
       [
+        // Core
         "affiliate",
         "dynamic-template",
         "google-sheets",
         "legacy-template",
         "plain-url",
         "telegram",
+        // Phase 9 — manifest-driven HTTP API-key apps
+        "amocrm",
+        "bitrix24",
+        "crm-generic",
+        "eskiz-sms",
+        "openai",
+        "playmobile-sms",
+        "webhook-json",
+        // Phase 12 — OAuth2 CRM apps
+        "hubspot",
+        "kommo",
+        "pipedrive",
       ].sort(),
     );
   });

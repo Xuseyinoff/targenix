@@ -84,22 +84,29 @@ export function resolveAdapterKey(
     return "dynamic-template";
   }
 
+  // Sprint 4 / Item 4.3 — templateType-first legacy fallback removed.
+  //
+  // Pre-condition verified before sunset: 0 target_websites rows had
+  // appKey IS NULL or 'unknown' on either local or Railway production
+  // (audit-appkey-coverage.ts, 2026-05-11). The NOT NULL backfill in
+  // migrations 0051/0052 already eliminated the case this block was
+  // covering; keeping it perpetuated dual-mode routing complexity that
+  // wasn't load-bearing.
+  //
+  // If a future code path inserts a row without an appKey (it
+  // shouldn't — every destination creator path computes one), the
+  // delivery falls into the safest default: plain-url with the
+  // integration's config-supplied URL. No silent misroute, no
+  // credential leak.
   if (process.env.STAGE2_ADAPTER_LOG === "1" || process.env.STAGE2_ADAPTER_LOG === "true") {
     console.log({
       stage: "adapter_resolution",
-      path: "LEGACY" as const,
+      path: "LEGACY_DEFAULT" as const,
       appKey: tw.appKey ?? null,
       templateType: tw.templateType,
       templateId: tw.templateId,
+      note: "appKey missing — falling through to plain-url default",
     });
   }
-
-  // telegram / google-sheets must be identified by templateType BEFORE
-  // checking templateId — a destination can have both fields set (e.g. data
-  // migration artefact) and templateId must NOT silently override intent.
-  if (tw.templateType === "telegram") return "telegram";
-  if (tw.templateType === "google-sheets") return "google-sheets";
-  if (tw.templateId) return "dynamic-template";
-  if (tw.templateType) return "legacy-template";
   return "plain-url";
 }

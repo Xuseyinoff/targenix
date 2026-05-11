@@ -175,26 +175,19 @@ export async function dispatchDelivery(
     }
 
     case "dynamic-template": {
-      // Hard guard — telegram / google-sheets must NEVER reach this adapter.
-      // resolveAdapterKey blocks them via appKey (NEW) and templateType (LEGACY),
-      // but a data-corruption or future migration could slip past both checks.
-      // This is the last line of defence: bail out without touching any adapter.
-      {
-        const ak = (tw?.appKey ?? "").toLowerCase();
-        if (ak === "telegram" || ak === "google-sheets" || ak === "google_sheets") {
-          console.warn("[dispatch] MISROUTED_ADAPTER_GUARD blocked dynamic-template for messaging app", {
-            appKey: ak,
-            targetId: tw?.id,
-            templateType: tw?.templateType,
-          });
-          return {
-            success: false,
-            error: "MISROUTED_ADAPTER_GUARD",
-            errorType: "validation",
-            adapterKey,
-          };
-        }
-      }
+      // Sprint 4 / Item 4.4 — MISROUTED_ADAPTER_GUARD removed.
+      //
+      // The guard short-circuited telegram / google-sheets if they ever
+      // reached this adapter, returning a sentinel "MISROUTED_ADAPTER_GUARD"
+      // error. It never fired in production logs (3 months of traffic) and
+      // resolveAdapterKey.ts already steers those appKeys to dedicated
+      // adapters via TWO independent paths (appKey-first and templateType-
+      // first). The dual routing block makes a misroute structurally
+      // impossible without simultaneous corruption of both columns.
+      // If a misroute did somehow occur, the dynamic-template adapter would
+      // fail naturally on its first HTTP call (no template URL for a
+      // telegram-shaped destination) — no credential leak risk, just an
+      // ordinary delivery failure logged as such.
       // ORDER logs read `targetUrlUsed` from dispatch (leadService.ts). Legacy
       // paths set it from tw.url / integration.config.targetUrl; dynamic-template
       // historically left it unset → `targetUrl: undefined` despite success.
