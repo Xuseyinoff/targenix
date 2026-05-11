@@ -15,6 +15,7 @@ import type { Express, Request, Response } from "express";
 import axios from "axios";
 import { getDb } from "../db";
 import { users, facebookAccounts, facebookOauthStates } from "../../drizzle/schema";
+import { insertOAuthState } from "../oauth/stateService";
 import { eq, and, lt } from "drizzle-orm";
 import { log } from "../services/appLogger";
 import { exchangeCodeForToken } from "../services/facebookGraphService";
@@ -68,6 +69,21 @@ export function registerFacebookLoginRoutes(app: Express): void {
 
       const state = generateState();
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+      // Sprint B Step 1 — dual-write to universal oauth_states. Best-effort:
+      // if the universal write errors, the legacy write below still runs and
+      // the login flow stays functional. Step 2 flips the read path.
+      try {
+        await insertOAuthState(db, {
+          state,
+          userId: 0,
+          provider: "facebook",
+          mode: "login",
+          appKey: null,
+        });
+      } catch (err) {
+        console.warn("[fbLoginOAuth] dual-write to oauth_states failed (login):", err);
+      }
 
       // userId=0 indicates this is a login flow (user not yet authenticated)
       await db.insert(facebookOauthStates).values({ state, userId: 0, expiresAt });

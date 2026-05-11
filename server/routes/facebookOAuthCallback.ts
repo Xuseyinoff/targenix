@@ -12,6 +12,7 @@
 import type { Express, Request, Response } from "express";
 import { getDb } from "../db";
 import { facebookOauthStates, facebookAccounts, facebookConnections } from "../../drizzle/schema";
+import { insertOAuthState } from "../oauth/stateService";
 import { eq, and, lt } from "drizzle-orm";
 import { encrypt } from "../encryption";
 import { log } from "../services/appLogger";
@@ -172,6 +173,21 @@ export function registerFacebookOAuthRoutes(app: Express): void {
       // Generate CSRF state token
       const state = generateState();
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+
+      // Sprint B Step 1 — dual-write to universal oauth_states. Best-effort:
+      // if the universal write errors, the legacy write below still runs and
+      // the integration flow stays functional. Step 2 flips the read path.
+      try {
+        await insertOAuthState(db, {
+          state,
+          userId: user.id,
+          provider: "facebook",
+          mode: "integration",
+          appKey: null,
+        });
+      } catch (err) {
+        console.warn("[fbOAuthCallback] dual-write to oauth_states failed:", err);
+      }
 
       // Save state to DB linked to this user
       await db.insert(facebookOauthStates).values({

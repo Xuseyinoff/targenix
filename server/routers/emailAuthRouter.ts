@@ -25,6 +25,7 @@ import {
   facebookConnections,
   facebookForms,
   facebookOauthStates,
+  oauthStates,
   targetWebsites,
   integrations,
   leads,
@@ -430,6 +431,9 @@ export const authRouter = router({
     await db.delete(facebookConnections).where(eq(facebookConnections.userId, userId));
     await db.delete(facebookAccounts).where(eq(facebookAccounts.userId, userId));
     await db.delete(facebookOauthStates).where(eq(facebookOauthStates.userId, userId));
+    // Sprint B Step 1 — also clear any in-flight OAuth states this user
+    // initiated in the universal table (FB / Google / future providers).
+    await db.delete(oauthStates).where(eq(oauthStates.userId, userId));
     await db.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, userId));
     await db.delete(appLogs).where(eq(appLogs.userId, userId));
     await db.delete(users).where(eq(users.id, userId));
