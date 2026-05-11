@@ -259,21 +259,25 @@ export function WizardActionPickerModal({
     return out;
   }, [connList, templateById]);
 
-  // Ids of templates already represented in TOP APPS — used to hide them
-  // from POPULAR so users don't see "Sotuvchi" in both columns once they've
-  // connected it. Destinations with multiple keys still surface each key
-  // because the top iteration runs per connection.
-  const templateIdsWithConnection = useMemo(() => {
-    const s = new Set<number>();
+  // Connection-count per template — used to set the right subtitle and
+  // ensure templates the user already connected still appear in POPULAR
+  // (so they can add another key or browse saved ones via the dialog).
+  const connectionCountByTemplate = useMemo(() => {
+    const m = new Map<number, number>();
     for (const c of connList) {
-      if (c.type === "api_key" && c.apiKey) s.add(c.apiKey.templateId);
+      if (c.type === "api_key" && c.apiKey) {
+        m.set(c.apiKey.templateId, (m.get(c.apiKey.templateId) ?? 0) + 1);
+      }
     }
-    return s;
+    return m;
   }, [connList]);
 
   // Build POPULAR APPS = manifest apps (sheets/telegram/custom) + admin
-  // templates the user has not yet connected. Custom HTTP webhook always
-  // stays here (it's a degenerate "app" with no connection concept).
+  // templates. Templates with existing connections still appear here —
+  // clicking opens ApiKeyConnectDialog in picker mode so the user can
+  // browse saved keys OR add a new one. The previous filter hid that
+  // path, leaving users with no way to add a second key without going
+  // to /connections.
   const popularEntries = useMemo<Entry[]>(() => {
     const out: Entry[] = [];
     for (const a of apps) {
@@ -293,17 +297,20 @@ export function WizardActionPickerModal({
       });
     }
     for (const t of templates) {
-      if (templateIdsWithConnection.has(t.id)) continue;
       const tpl = t as {
         category?: string;
         userVisibleFields?: string[] | null;
         appKey?: string | null;
       };
+      const connCount = connectionCountByTemplate.get(t.id) ?? 0;
       out.push({
         kind: "template",
         id: `tpl-${t.id}`,
         name: t.name,
-        subtitle: "Admin-managed affiliate",
+        subtitle:
+          connCount > 0
+            ? `${connCount} saved key${connCount === 1 ? "" : "s"} · add another`
+            : "Admin-managed affiliate",
         category: normalizeTemplateCategory(tpl.category ?? null),
         color: t.color,
         iconName: iconUrlForTemplateAppKey(tpl.appKey ?? null),
@@ -314,7 +321,7 @@ export function WizardActionPickerModal({
     }
     out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
-  }, [apps, templates, templateIdsWithConnection]);
+  }, [apps, templates, connectionCountByTemplate]);
 
   // Apply sidebar + search filters over both columns together.
   const filterEntry = (e: Entry) => {

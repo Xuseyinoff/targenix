@@ -84,6 +84,39 @@ function AdminBusinessGate({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * Legacy /destinations management page: admin-only.
+ *
+ * The Make-style wizard at /integrations/new-v2 auto-creates target_websites
+ * inline, so a regular user never needs the standalone management screen.
+ * Non-admins arriving via an old bookmark are redirected to /integrations
+ * where the wizard lives — friendlier than dumping them on /overview.
+ */
+function AdminDestinationsGate({ children }: { children: ReactNode }) {
+  const { user, loading } = useAuth();
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user) {
+      setLocation("/login");
+      return;
+    }
+    if (user.role !== "admin") {
+      setLocation("/integrations");
+    }
+  }, [loading, user, setLocation]);
+
+  if (loading || !user || user.role !== "admin") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
 function businessToolsPage(Page: ComponentType) {
   return function BusinessToolsRoute() {
     return (
@@ -187,8 +220,26 @@ function Router() {
       {/* Legacy redirects kept for any bookmarks */}
       <Route path="/facebook" component={Connections} />
       <Route path="/facebook-accounts" component={Connections} />
-      <Route path="/destinations" component={TargetWebsites} />
-      <Route path="/target-websites" component={TargetWebsites} />
+      {/* Legacy destinations-management UI — kept admin-only since the
+          integration wizard auto-creates target_websites behind the scenes.
+          Regular users land here only via deep links; we redirect them to
+          /integrations where the user-facing creation flow lives. */}
+      <Route
+        path="/destinations"
+        component={() => (
+          <AdminDestinationsGate>
+            <TargetWebsites />
+          </AdminDestinationsGate>
+        )}
+      />
+      <Route
+        path="/target-websites"
+        component={() => (
+          <AdminDestinationsGate>
+            <TargetWebsites />
+          </AdminDestinationsGate>
+        )}
+      />
       <Route path="/activity" component={LegacyLogsRedirect} />
       <Route path="/logs" component={LegacyLogsRedirect} />
       <Route path="/admin/logs" component={AdminLogs} />

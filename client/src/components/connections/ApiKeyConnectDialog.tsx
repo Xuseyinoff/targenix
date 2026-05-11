@@ -26,7 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, Eye, EyeOff, KeyRound } from "lucide-react";
+import { Loader2, Eye, EyeOff, KeyRound, Plus, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -96,6 +96,29 @@ export function ApiKeyConnectDialog({
   const [revealed, setRevealed] = React.useState<Record<string, boolean>>({});
   const [error, setError] = React.useState<string | null>(null);
 
+  // Two modes:
+  //   "picker" — show saved connections for this template (default when ≥1 exists)
+  //   "new"    — show the credentials form (default when 0 exist)
+  // The user can toggle between the two; we re-derive the default whenever
+  // the dialog opens with a different template.
+  const [mode, setMode] = React.useState<"picker" | "new">("new");
+  const [pickedConnectionId, setPickedConnectionId] = React.useState<number | null>(null);
+
+  // Fetch existing api_key connections so the dialog can offer "Use a saved
+  // key" without making the user round-trip through /connections. The query
+  // is keyed on `open` so we don't keep it warm when the dialog is hidden.
+  const { data: connList = [] } = trpc.connections.list.useQuery(
+    { type: "api_key" },
+    { enabled: open, staleTime: 30 * 1000 },
+  );
+  const existing = React.useMemo(
+    () =>
+      template
+        ? connList.filter((c) => c.type === "api_key" && c.apiKey?.templateId === template.id)
+        : [],
+    [connList, template],
+  );
+
   // Re-seed the form whenever the user picks a different template. Keeps the
   // previously-entered values from leaking across apps.
   React.useEffect(() => {
@@ -106,7 +129,12 @@ export function ApiKeyConnectDialog({
     setValues(next);
     setRevealed({});
     setError(null);
-  }, [open, template]);
+    setPickedConnectionId(null);
+    // Default to picker when the user already has at least one saved key
+    // for this template; otherwise jump straight to the form.
+    setMode(existing.length > 0 ? "picker" : "new");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, template?.id, existing.length]);
 
   const createMutation = trpc.connections.createApiKey.useMutation({
     onSuccess: (res) => {
@@ -126,7 +154,24 @@ export function ApiKeyConnectDialog({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (incomplete || createMutation.isPending) return;
+    if (createMutation.isPending) return;
+
+    if (mode === "picker") {
+      if (!pickedConnectionId) {
+        setError("Please pick a saved key or switch to “Add new”.");
+        return;
+      }
+      const picked = existing.find((c) => c.id === pickedConnectionId);
+      if (!picked) {
+        setError("Saved key not found — try again.");
+        return;
+      }
+      onCreated?.(picked.id, picked.displayName);
+      onOpenChange(false);
+      return;
+    }
+
+    if (incomplete) return;
     createMutation.mutate({
       templateId: template.id,
       displayName: displayName.trim(),
@@ -137,6 +182,8 @@ export function ApiKeyConnectDialog({
   };
 
   const accent = template.color ?? "#3B82F6";
+
+  const isPickerMode = mode === "picker";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -151,16 +198,94 @@ export function ApiKeyConnectDialog({
                 <KeyRound className="h-4 w-4" strokeWidth={2.2} />
               </span>
               <DialogTitle className="text-base">
-                Connect {template.name}
+                {isPickerMode
+                  ? `Choose a ${template.name} key`
+                  : `Connect ${template.name}`}
               </DialogTitle>
             </div>
             <DialogDescription>
-              Paste your {template.name} credentials. They're encrypted at
-              rest and reusable across every integration.
+              {isPickerMode
+                ? `Pick one of your saved ${template.name} keys, or add a new one.`
+                : `Paste your ${template.name} credentials. They're encrypted at rest and reusable across every integration.`}
             </DialogDescription>
           </DialogHeader>
 
+          {/* ── Picker mode: existing api_key connections ─────────────── */}
+          {isPickerMode ? (
+            <div className="mt-4 space-y-2">
+              <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                {existing.map((c) => {
+                  const isSelected = pickedConnectionId === c.id;
+                  return (
+                    <button
+                      type="button"
+                      key={c.id}
+                      onClick={() => {
+                        setPickedConnectionId(c.id);
+                        setError(null);
+                      }}
+                      className={cn(
+                        "flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                        isSelected
+                          ? "border-primary bg-primary/5"
+                          : "border-border bg-background hover:bg-muted/40",
+                      )}
+                    >
+                      <span
+                        className="flex h-8 w-8 items-center justify-center rounded-md"
+                        style={{ backgroundColor: `${accent}1A`, color: accent }}
+                      >
+                        <KeyRound className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">
+                          {c.displayName}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          Saved key · status {c.status}
+                        </div>
+                      </div>
+                      {isSelected && (
+                        <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("new");
+                  setPickedConnectionId(null);
+                  setError(null);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg border border-dashed border-border/70 px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-foreground"
+              >
+                <Plus className="h-4 w-4" />
+                Add a new {template.name} key
+              </button>
+
+              {error && (
+                <p className="rounded-md bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
+                  {error}
+                </p>
+              )}
+            </div>
+          ) : (
           <div className="mt-4 space-y-3">
+            {existing.length > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("picker");
+                  setError(null);
+                }}
+                className="text-[11px] font-medium text-primary hover:underline"
+              >
+                ← Pick a saved key instead
+              </button>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="apikey-display-name" className="text-xs">
                 Connection name
@@ -237,6 +362,7 @@ export function ApiKeyConnectDialog({
               </p>
             )}
           </div>
+          )}
 
           <DialogFooter className="mt-5 gap-2 sm:gap-2">
             <Button
@@ -249,13 +375,18 @@ export function ApiKeyConnectDialog({
             </Button>
             <Button
               type="submit"
-              disabled={incomplete || createMutation.isPending}
+              disabled={
+                createMutation.isPending ||
+                (isPickerMode ? !pickedConnectionId : incomplete)
+              }
             >
               {createMutation.isPending ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Saving…
                 </>
+              ) : isPickerMode ? (
+                "Use this key"
               ) : (
                 "Save connection"
               )}
