@@ -170,8 +170,10 @@ export async function retryDueFailedOrders(options?: {
       .map((r) => Number(r.id))
       .filter((n) => Number.isFinite(n) && n > 0);
     if (ids.length === 0) return [];
-    // Claim by clearing nextRetryAt — matches `retryFailedOrderDelivery`'s
-    // own pre-attempt clear at line ~1209 so behaviour stays consistent.
+    // Claim by clearing nextRetryAt: future scheduler runs cannot re-claim
+    // these rows because the WHERE clause requires `nextRetryAt IS NOT NULL`.
+    // `retryFailedOrderDelivery` does NOT re-check nextRetryAt (the claim
+    // makes that impossible) — it trusts that the caller validated due-ness.
     await tx
       .update(orders)
       .set({ nextRetryAt: null })

@@ -1,4 +1,4 @@
-import { and, desc, eq, isNotNull, lt, lte } from "drizzle-orm";
+import { and, desc, eq, lt } from "drizzle-orm";
 import { facebookConnections, facebookAccounts, facebookForms, integrationDestinations, leads, orders, integrations, users, targetWebsites, workflows } from "../../drizzle/schema";
 import { getDb, type DbClient } from "../db";
 import { decrypt } from "../encryption";
@@ -1162,16 +1162,23 @@ export async function processLead(params: {
 }
 
 /**
- * Re-deliver a single FAILED order whose nextRetryAt is due (Graph already ENRICHED).
- * Does not call Facebook Graph or processLead — routing only.
- * Uses optimistic locking on orders.attempts to avoid duplicate sends under concurrency.
+ * Re-deliver a single FAILED order (Graph already ENRICHED). Routing only —
+ * does not call Facebook Graph or processLead.
+ *
+ * **Due-ness is the caller's responsibility.** The scheduler claims rows by
+ * clearing `nextRetryAt` (see `retryDueFailedOrders`) BEFORE invoking this
+ * function, so we cannot re-check `nextRetryAt <= NOW` here — the column will
+ * already be NULL by the time we run. The admin manual-retry path force-sets
+ * `nextRetryAt = NOW` then calls this, which is equivalent.
+ *
+ * Uses optimistic locking on `orders.attempts` to avoid duplicate sends under
+ * concurrency.
  */
 export async function retryFailedOrderDelivery(orderId: number): Promise<{
   outcome: "sent" | "failed_exhausted" | "failed_will_retry" | "skipped" | "lost_race";
 }> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  const now = new Date();
 
   const [order] = await db
     .select()
@@ -1181,8 +1188,6 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
         eq(orders.id, orderId),
         eq(orders.status, "FAILED"),
         lt(orders.attempts, ORDER_MAX_DELIVERY_ATTEMPTS),
-        isNotNull(orders.nextRetryAt),
-        lte(orders.nextRetryAt, now),
       ),
     )
     .limit(1);
