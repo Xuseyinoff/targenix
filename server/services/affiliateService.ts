@@ -720,7 +720,7 @@ export async function sendAffiliateOrderByTemplate(
   templateConfig: unknown,
   lead: LeadPayload,
   variableFields: Record<string, string> = {},
-  /** URL from the target_websites.url DB column (for custom templates) */
+  /** URL from the destinations.url DB column (for custom templates) */
   siteUrl?: string,
   /** Active connection whose `credentialsJson.secretsEncrypted` is the secret source. */
   connection?: Connection | null,
@@ -733,7 +733,7 @@ export async function sendAffiliateOrderByTemplate(
 
   try {
     // ── custom ────────────────────────────────────────────────────────────────
-    // URL priority: cfg.url (legacy) → siteUrl (from target_websites.url column)
+    // URL priority: cfg.url (legacy) → siteUrl (from destinations.url column)
     const url = (cfg.url as string) || siteUrl || "";
     if (!url) {
       return { success: false, error: "No URL configured for custom template", errorType: "validation" };

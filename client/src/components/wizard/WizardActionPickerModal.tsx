@@ -21,7 +21,7 @@
  * Click handling:
  *   TOP APPS row (always api_key connection, by design — see note below):
  *     → `trpc.destinations.createFromConnection` → emits the fresh
- *       target_websites row back to the parent. One-click.
+ *       destinations row back to the parent. One-click.
  *
  *   POPULAR APPS row (manifest — Sheets / Telegram / Custom HTTP):
  *     → `onPickManifestApp(appKey)` — wizard opens DestinationCreatorInline

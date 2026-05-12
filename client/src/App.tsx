@@ -88,7 +88,7 @@ function AdminBusinessGate({ children }: { children: ReactNode }) {
 /**
  * Legacy /destinations management page: admin-only.
  *
- * The Make-style wizard at /integrations/new-v2 auto-creates target_websites
+ * The Make-style wizard at /integrations/new-v2 auto-creates destinations
  * inline, so a regular user never needs the standalone management screen.
  * Non-admins arriving via an old bookmark are redirected to /integrations
  * where the wizard lives — friendlier than dumping them on /overview.
@@ -228,7 +228,7 @@ function Router() {
       <Route path="/facebook" component={Connections} />
       <Route path="/facebook-accounts" component={Connections} />
       {/* Legacy destinations-management UI — kept admin-only since the
-          integration wizard auto-creates target_websites behind the scenes.
+          integration wizard auto-creates destinations behind the scenes.
           Regular users land here only via deep links; we redirect them to
           /integrations where the user-facing creation flow lives. */}
       <Route

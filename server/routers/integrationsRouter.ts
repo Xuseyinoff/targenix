@@ -40,7 +40,7 @@ export const integrationsRouter = router({
             eq(destinations.userId, ctx.user.id),
           ))
           .limit(1);
-        // Also enrich with ordered destinationIds from integration_destinations
+        // Also enrich with ordered destinationIds from integration_routes
         const destRows = await db
           .select({ destinationId: integrationRoutes.destinationId })
           .from(integrationRoutes)
@@ -53,7 +53,7 @@ export const integrationsRouter = router({
         return {
           ...integration,
           // `targetWebsiteName` has no dedicated column — falls back to JSON
-          // for legacy rows where the target_websites row was deleted.
+          // for legacy rows where the destinations row was deleted.
           targetWebsiteName: tw?.name ?? (cfg?.targetWebsiteName as string | undefined) ?? null,
           destinationIds,
         };
@@ -75,7 +75,7 @@ export const integrationsRouter = router({
         telegramChatId: z.string().max(64).optional(),
         /**
          * Ordered list of destination IDs to fan-out to (Commit 6c).
-         * When provided, `integration_destinations` is populated with the
+         * When provided, `integration_routes` is populated with the
          * full list instead of only the single id embedded in config.
          * The first entry also sets `integrations.destinationId` for
          * legacy compat (dispatch falls back to that column when the flag
@@ -145,7 +145,7 @@ export const integrationsRouter = router({
         config: z.record(z.string(), z.any()).optional(),
         isActive: z.boolean().optional(),
         /**
-         * Stage B opt-in: when provided, `integration_destinations` is
+         * Stage B opt-in: when provided, `integration_routes` is
          * rewritten to this exact ordered list and the legacy
          * `integrations.destinationId` is set to the first id.
          *

@@ -169,7 +169,7 @@ export const appsRouter = router({
     .input(
       z.object({
         appKey: z.string().min(1).max(64),
-        /** templateConfig values (same shape as target_websites.templateConfig). */
+        /** templateConfig values (same shape as destinations.templateConfig). */
         templateConfig: z.record(z.string(), z.unknown()),
         /** Override connectionId — takes precedence over templateConfig.connectionId. */
         connectionId: z.number().int().positive().nullable().optional(),

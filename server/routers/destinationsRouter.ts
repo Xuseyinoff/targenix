@@ -789,7 +789,7 @@ export const destinationsRouter = router({
         }
 
         // NOTE: We used to always write the updated encrypted secrets back into
-        // target_websites.templateConfig as well as the linked connection (two DB writes).
+        // destinations.templateConfig as well as the linked connection (two DB writes).
         //
         // For zero-downtime + backward compatibility, we now prefer a single
         // source of truth when a connection is linked: the connection row.
@@ -842,7 +842,7 @@ export const destinationsRouter = router({
 
           // Double-write fix:
           // - If this Save only changed secrets, we already persisted them into
-          //   the linked connection. Avoid a second write to target_websites.
+          //   the linked connection. Avoid a second write to destinations.
           // - If the Save also changed name/isActive, we still need that write.
           const nonSecretUpdates: Record<string, unknown> = {};
           if (input.name !== undefined) nonSecretUpdates.name = input.name;
@@ -958,7 +958,7 @@ export const destinationsRouter = router({
     }),
 
   /**
-   * Create a target_websites row from an EXISTING api_key connection —
+   * Create a destinations row from an EXISTING api_key connection —
    * Make.com/Zapier's "reuse an app I've already connected" shortcut used by
    * the wizard's Action picker.
    *
@@ -1036,7 +1036,7 @@ export const destinationsRouter = router({
       // — the whole point of having it is that the user should not need a
       // separate destination row per integration. Before this guard landed,
       // the wizard's "Use my 100k.uz connection" one-click button created a
-      // brand new target_websites row every time, so users who wired the
+      // brand new destinations row every time, so users who wired the
       // same affiliate into three integrations ended up with "100k.uz (1)",
       // "100k.uz (2)", "100k.uz (3)" cluttering the destination list.
       //
@@ -1099,7 +1099,7 @@ export const destinationsRouter = router({
         me?.mode === "ALL" && me.defaultChatId ? String(me.defaultChatId) : null;
 
       // Stage 3 Phase 2 — STOP COPYING SECRETS into
-      // `target_websites.templateConfig.secrets`. The linked
+      // `destinations.templateConfig.secrets`. The linked
       // `connectionId` below is the single source of truth from now on;
       // `resolveSecretsForDelivery` at runtime reads
       // `connections.credentialsJson.secretsEncrypted` on every

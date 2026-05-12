@@ -190,7 +190,7 @@ describe("listIntegrationRoutes", () => {
 
 // ─── resolveIntegrationRoutes ────────────────────────────────────────
 //
-// Reads from integration_destinations joined with target_websites and
+// Reads from integration_routes joined with destinations and
 // filters by ownership. We stub the DB chain loosely; the point is to
 // verify the resolver logic, not drizzle's SQL generation.
 
@@ -211,7 +211,7 @@ function makeNewTableDb(state: NewDbState): DbClient {
 }
 
 describe("resolveIntegrationRoutes", () => {
-  it("returns rows from integration_destinations ordered by position", async () => {
+  it("returns rows from integration_routes ordered by position", async () => {
     const db = makeNewTableDb({
       joinRows: [
         {

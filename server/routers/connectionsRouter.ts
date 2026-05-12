@@ -7,7 +7,7 @@
  *   • get                — single row detail (used by the destination forms)
  *   • rename             — update displayName only
  *   • disconnect         — delete a connection and NULL-out every
- *                          target_websites.connectionId that pointed at it
+ *                          destinations.connectionId that pointed at it
  *   • listUsage          — which destinations reference this connection
  *   • createTelegramBot  — user-supplied bot_token + chat_id. Validates the
  *                          bot has the chat before storing.
@@ -447,7 +447,7 @@ export const connectionsRouter = router({
     }),
 
   /**
-   * Remove the connection and clear every target_websites.connectionId that
+   * Remove the connection and clear every destinations.connectionId that
    * pointed at it. In addition to the FK clear we SCRUB credential-shaped
    * keys from `destinations.templateConfig` so disconnect = real
    * disconnect, not "soft-disconnect with backup credential still on disk".

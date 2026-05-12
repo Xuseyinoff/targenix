@@ -6,7 +6,7 @@
  *                                when a user connects their Google account
  *   • connectionsRouter        — CRUD entry point for the frontend
  *   • destination save path    — normalises connectionId before writing
- *                                target_websites.connectionId
+ *                                destinations.connectionId
  *
  * Guiding rules:
  *   1. Never throws on missing rows — callers decide how to react.
@@ -322,7 +322,7 @@ export async function findConnectionForUser(
 }
 
 /**
- * Count target_websites referencing this connection.
+ * Count destinations referencing this connection.
  * Used by:
  *   • list → show "used by N destinations"
  *   • delete → refuse vs confirm flow on the client

@@ -50,7 +50,7 @@ export interface AppExecutionEndpoint {
 /**
  * How this app acquires credentials.
  *   "none"          — inline credentials stored per-destination in
- *                     target_websites.templateConfig (legacy path).
+ *                     destinations.templateConfig (legacy path).
  *   "oauth2_google" — resolves googleAccountId via the unified connections
  *                     table (Phase 3) or templateConfig fallback.
  *   "telegram_bot"  — resolves bot token + chatId via connections table or

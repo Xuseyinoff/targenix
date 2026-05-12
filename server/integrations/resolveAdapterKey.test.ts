@@ -60,7 +60,7 @@ describe("resolveAdapterKey — Stage 2 appKey", () => {
   //
   // The block below previously implemented "if appKey is missing, route by
   // templateType". That fallback was removed after auditing both local and
-  // production target_websites tables (audit-appkey-coverage.ts) and
+  // production destinations tables (audit-appkey-coverage.ts) and
   // confirming 0 rows had a null or 'unknown' appKey. Tests now document
   // the post-sunset behaviour: appKey is mandatory, anything without one
   // (or with the `unknown` backfill sentinel) falls into the safe

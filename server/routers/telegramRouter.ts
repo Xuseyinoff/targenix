@@ -230,7 +230,7 @@ export const telegramRouter = router({
       .orderBy(desc(telegramChats.connectedAt));
   }),
 
-  /** List destinations (target_websites) with template info + mapped delivery chat (if any) */
+  /** List destinations (destinations) with template info + mapped delivery chat (if any) */
   listDestinationMappings: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error("DB unavailable");
@@ -350,7 +350,7 @@ export const telegramRouter = router({
       return { success: true };
     }),
 
-  /** Set destination → delivery chat mapping (stored on target_websites.telegramChatId) */
+  /** Set destination → delivery chat mapping (stored on destinations.telegramChatId) */
   setDestinationChat: protectedProcedure
     .input(z.object({ destinationId: z.number(), telegramChatId: z.string().trim().min(1).nullable() }))
     .mutation(async ({ ctx, input }) => {

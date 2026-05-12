@@ -1,7 +1,7 @@
 /**
  * Integration → destination mapping layer (authoritative N:1 join).
  *
- * Owns reads and writes of `integration_destinations`, the table that
+ * Owns reads and writes of `integration_routes`, the table that
  * drives live fan-out dispatch. The legacy `integrations.destinationId`
  * column is kept in parallel via dual-write for rollback safety and as a
  * fallback read source for environments where the multi-destination flag
@@ -42,13 +42,13 @@ export type IntegrationRouteRow = typeof integrationRoutes.$inferSelect;
  * status) can reference it by id.
  */
 export interface ResolvedDestination {
-  /** Row in integration_destinations when reading from the new path; null on the legacy path. */
+  /** Row in integration_routes when reading from the new path; null on the legacy path. */
   mappingId: number | null;
   /** Serial number within the integration (0-based). Today always 0. */
   position: number;
   /** Whether this destination is currently enabled (legacy path: always true). */
   enabled: boolean;
-  /** Full target_websites row — the dispatcher needs the whole thing. */
+  /** Full destinations row — the dispatcher needs the whole thing. */
   targetWebsite: Destination;
   /** Per-destination filter rule. null = no filter (always deliver). */
   filterJson: FilterRule | null;
@@ -122,7 +122,7 @@ export async function syncLegacyDestination(
 }
 
 /**
- * Count the current rows in integration_destinations for ONE integration.
+ * Count the current rows in integration_routes for ONE integration.
  *
  * Used by `updateIntegration` (Stage B data-loss guard): if a caller updates
  * an integration that already has MORE than one destination wired up, we
@@ -197,7 +197,7 @@ export async function resolveIntegrationRoutes(
   // signature on a future refactor that touches every caller.
   integration: Pick<Integration, "id" | "userId" | "destinationId" | "config">,
 ): Promise<ResolvedDestination[]> {
-  // Single query with a JOIN so we fetch target_websites in one round-trip.
+  // Single query with a JOIN so we fetch destinations in one round-trip.
   // Sort is done client-side below to keep the SQL dialect-agnostic (the
   // unit tests stub a minimal chain).
   const rows = await db

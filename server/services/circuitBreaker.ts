@@ -61,10 +61,10 @@ export type RecordOutcomeParams = {
   integrationId: number;
   destinationId: number;
   /**
-   * `target_websites.appKey` for this destination. When provided we cache it
+   * `destinations.appKey` for this destination. When provided we cache it
    * on the row so `evaluateClaim` can answer "any sibling of this app
-   * currently OPEN?" without joining through integration_destinations and
-   * target_websites on every claim. Safe to omit — callers without the
+   * currently OPEN?" without joining through integration_routes and
+   * destinations on every claim. Safe to omit — callers without the
    * value just skip per-app pooling for this outcome.
    */
   appKey?: string | null;

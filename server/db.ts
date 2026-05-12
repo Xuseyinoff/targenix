@@ -417,7 +417,7 @@ function extractDestinationIdFromConfig(cfg: Record<string, unknown> | null | un
 }
 
 /**
- * Strict dual-write into integration_destinations.
+ * Strict dual-write into integration_routes.
  *
  * Mirrors the single-destination integration shape into the N:1 join table
  * — the ONLY path the delivery resolver reads from since the legacy
@@ -442,7 +442,7 @@ async function strictSyncLegacyDestination(
     // rollback path itself trips. Then rethrow so the caller can clean
     // up the parent integration row.
     console.error(
-      `[dual-write] integration_destinations sync FAILED for integrationId=${integrationId} — ` +
+      `[dual-write] integration_routes sync FAILED for integrationId=${integrationId} — ` +
         `the parent integration row will be removed to keep state consistent.`,
       err instanceof Error ? err.message : String(err),
     );
@@ -487,7 +487,7 @@ export async function createIntegration(data: {
   telegramChatId?: string | null;
   /**
    * Ordered destination IDs for multi-destination fan-out.
-   * When provided, `integration_destinations` is populated with the full
+   * When provided, `integration_routes` is populated with the full
    * list (preserving array order as `position`). Otherwise the single id
    * from `config.destinationId` is used (single-destination path).
    */
@@ -539,7 +539,7 @@ export async function createIntegration(data: {
 
   // Strict dual-write into the new join table. Since the legacy fallback
   // was retired (see services/integrationRoutes.ts:resolve…), the
-  // delivery resolver ONLY reads from integration_destinations — an
+  // delivery resolver ONLY reads from integration_routes — an
   // integration without rows here silently drops every lead. We treat a
   // failure as fatal and roll back the parent row so the user can retry
   // instead of being left with a broken integration they cannot diagnose.
@@ -574,7 +574,7 @@ export async function createIntegration(data: {
       }
       throw err instanceof Error
         ? err
-        : new Error(`integration_destinations write failed for new integration: ${String(err)}`);
+        : new Error(`integration_routes write failed for new integration: ${String(err)}`);
     }
   }
 }
@@ -589,7 +589,7 @@ export async function updateIntegration(
     /**
      * Optional ordered list of destination ids (Stage B opt-in write).
      *
-     * When provided, `integration_destinations` is authoritatively rewritten
+     * When provided, `integration_routes` is authoritatively rewritten
      * to this exact list AND the legacy `integrations.destinationId`
      * column is set to the first entry (or null for an empty list).
      * Callers must have already verified ownership of each id — this helper
@@ -724,7 +724,7 @@ export async function updateIntegration(
 export async function deleteIntegration(id: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  // The FK on integration_destinations.integrationId CASCADEs, so the
+  // The FK on integration_routes.integrationId CASCADEs, so the
   // delete below implicitly wipes the mapping rows. Explicit safeSync with
   // an empty list would only duplicate that work — we let the DB handle it.
   await db.delete(integrations).where(eq(integrations.id, id));

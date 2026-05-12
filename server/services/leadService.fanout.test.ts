@@ -84,7 +84,7 @@ describe("aggregateLeadDeliveryFromOrderStatuses — multi-order scenarios", () 
 
 describe("destinationId isolation invariant", () => {
   it("mappingId from the new table path is the destinationId stored in orders", () => {
-    // Simulate two integration_destinations rows:
+    // Simulate two integration_routes rows:
     const dest1 = { mappingId: 15, position: 0, enabled: true, targetWebsite: { id: 301 } as never };
     const dest2 = { mappingId: 22, position: 1, enabled: true, targetWebsite: { id: 302 } as never };
 
@@ -106,7 +106,7 @@ describe("destinationId isolation invariant", () => {
   it("legacy path destinationId = 0 does not collide with fan-out ids > 0", () => {
     const fanOutIds = [15, 22];
     expect(fanOutIds.every((id) => id !== 0)).toBe(true);
-    // As long as integration_destinations.id is AUTO_INCREMENT starting at 1,
+    // As long as integration_routes.id is AUTO_INCREMENT starting at 1,
     // there can never be a collision with the legacy sentinel 0.
   });
 });

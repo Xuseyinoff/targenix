@@ -341,7 +341,7 @@ interface WizardState {
   // Destinations — ordered list (Commit 6c). The first entry is the
   // "primary" destination: it drives field mapping + variable resolution
   // and is written to `integrations.destinationId` for legacy compat.
-  // Additional entries fan-out via `integration_destinations`.
+  // Additional entries fan-out via `integration_routes`.
   destinations: DestinationEntry[];
   // Meta
   integrationName: string;

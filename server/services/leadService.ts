@@ -477,7 +477,7 @@ async function persistOrderDeliveryAttemptResult(
      */
     integrationId?: number;
     destinationId?: number;
-    /** target_websites.appKey — enables per-app sibling pooling (Phase 2B). */
+    /** destinations.appKey — enables per-app sibling pooling (Phase 2B). */
     appKey?: string | null;
   },
 ): Promise<boolean> {
@@ -759,7 +759,7 @@ async function runOrderIntegrationSend(params: {
  *   5. Persist the attempt result.
  *
  * `destinationId` is 0 for the legacy single-destination LEAD_ROUTING
- * path (flag off). It equals the `integration_destinations.id` for the
+ * path (flag off). It equals the `integration_routes.id` for the
  * fan-out path (flag on, N > 1).
  *
  * `preResolvedDestination` is forwarded to `runOrderIntegrationSend` so the
@@ -853,7 +853,7 @@ async function deliverOneDestination(params: {
   });
 
   // Resolve appKey for the CB row (Phase 2B per-app pooling). Use the
-  // pre-resolved destination's target_websites.appKey when available;
+  // pre-resolved destination's destinations.appKey when available;
   // otherwise leave undefined and let the legacy per-destination flow
   // continue without app-level coordination.
   const cbAppKey =
@@ -1169,7 +1169,7 @@ export async function processLead(params: {
     // The `MULTI_DEST_ALL` feature flag has been globally ON in production
     // since rollout; the legacy single-destination fall-through was removed
     // on 2026-05-12 after a coverage audit confirmed 226/227 active
-    // LEAD_ROUTING integrations have valid integration_destinations rows
+    // LEAD_ROUTING integrations have valid integration_routes rows
     // (the 1 outlier references a deleted target_website and is broken
     // independently of which code path runs).
     const destinations = await resolveIntegrationRoutes(db, {
@@ -1214,7 +1214,7 @@ export async function processLead(params: {
       await deliverOneDestination({
         db,
         integration,
-        // `mappingId` is the integration_destinations.id — used as
+        // `mappingId` is the integration_routes.id — used as
         // destinationId so each destination has its own order row.
         destinationId: dest.mappingId ?? 0,
         preResolvedDestination: dest,
@@ -1335,7 +1335,7 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
 
   // When the order was created by the multi-destination fan-out path, it
   // carries `destinationId > 0` pointing to the specific
-  // `integration_destinations` row it was dispatched to. On retry we must
+  // `integration_routes` row it was dispatched to. On retry we must
   // re-dispatch to the SAME destination, not let the resolver pick a
   // potentially different one.
   //

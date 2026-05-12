@@ -107,7 +107,7 @@ function toTrpcError(err: unknown): TRPCError {
 //
 // destination_templates is the authoritative table for writes/ids, but
 // dispatchDelivery's dynamicTemplateAdapter reads app_actions FIRST when
-// a target_websites row references it by actionId (Stage 2 mirror,
+// a destinations row references it by actionId (Stage 2 mirror,
 // 2026-04-12). Before this helper existed, editing a template in the
 // admin UI silently left the mirror stale — a fix to a Sotuvchi URL
 // would show up in the admin list but never reach the live delivery

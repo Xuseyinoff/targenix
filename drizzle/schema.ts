@@ -331,7 +331,7 @@ export type InsertDestinationTemplate = typeof destinationTemplates.$inferInsert
 // ─── Connections (unified credential store) ──────────────────────────────────
 // A per-user library of reusable connections (Google Sheets accounts, Telegram
 // bots, future API keys). Replaces scattered credential storage inside
-// target_websites.templateConfig. Step 1 scaffold — additive only; delivery
+// destinations.templateConfig. Step 1 scaffold — additive only; delivery
 // code still reads from templateConfig until adapters migrate to connectionId.
 //
 // Credentials storage by type:
@@ -448,7 +448,7 @@ export type InsertConnectionEvent = typeof connectionEvents.$inferInsert;
 //   dynamic: { secrets: { api_key: "encrypted:..." }, variables: {} }
 //   telegram: { botTokenEncrypted, chatId, messageTemplate }
 // 2026-05-12: SQL table renamed to `destinations` via migration 0069.
-// The legacy name `target_websites` still resolves at the DB level via a
+// The legacy name `destinations` still resolves at the DB level via a
 // backward-compat VIEW, so hand-written SQL outside Drizzle keeps working
 // during the transition. The VIEW will be dropped in a follow-up migration
 // once every caller has settled on the new name.
@@ -524,7 +524,7 @@ export const integrations = mysqlTable("integrations", {
    *     // pageId, pageName, formId, formName → dedicated columns (migrated out of JSON)
    *     nameField: string,           // FB form field key for full name
    *     phoneField: string,          // FB form field key for phone
-   *     targetWebsiteId: number,     // targetWebsites.id
+   *     destinationId: number,     // targetWebsites.id
    *     flow: string,
    *     offerId: string,
    *   }
@@ -543,9 +543,9 @@ export const integrations = mysqlTable("integrations", {
   formId: varchar("formId", { length: 128 }),
   pageName: varchar("pageName", { length: 255 }),
   formName: varchar("formName", { length: 255 }),
-  /** Dedicated FK column to `destinations.id` (legacy config.targetWebsiteId
+  /** Dedicated FK column to `destinations.id` (legacy config.destinationId
    *  remains as a JSON fallback for old rows — see extractDestinationIdFromConfig).
-   *  Migration 0071 renamed this SQL column from `targetWebsiteId` to `destinationId`. */
+   *  Migration 0071 renamed this SQL column from `destinationId` to `destinationId`. */
   destinationId: int("destinationId"),
   /** Dedicated FK column extracted from config.facebookAccountId for efficient disconnect cleanup.
    *  Nullable — populated by backfill for existing rows; always set on new LEAD_ROUTING integrations. */
@@ -565,15 +565,15 @@ export type Integration = typeof integrations.$inferSelect;
 export type InsertIntegration = typeof integrations.$inferInsert;
 
 // ─── Integration Destinations ─────────────────────────────────────────────────
-// Fan-out join between ONE integration and N target_websites (migration 0044).
+// Fan-out join between ONE integration and N destinations (migration 0044).
 //
 // This is the Make.com-style multi-destination scaffold. Until Commit 5 wires
-// the feature-flagged dual-read, the legacy `integrations.targetWebsiteId`
+// the feature-flagged dual-read, the legacy `integrations.destinationId`
 // column remains the dispatch source of truth. This table is kept in sync by
 // dual-write in server/db.ts so both shapes stay correct during the rollout.
 //
 // Invariants:
-//   - (integrationId, targetWebsiteId) is UNIQUE.
+//   - (integrationId, destinationId) is UNIQUE.
 //   - Both FKs CASCADE: deleting an integration or a target website removes
 //     the mapping automatically — no orphans, no dangling dispatch attempts.
 //   - `position` drives fan-out order (all zero today; reorderable later).
@@ -581,7 +581,7 @@ export type InsertIntegration = typeof integrations.$inferInsert;
 //   - `filterJson` is reserved for per-destination Make.com-style filters
 //     (Phase 5+). NULL and unread at this commit.
 // 2026-05-12: SQL table renamed to `integration_routes` via migration 0069.
-// The legacy name `integration_destinations` still resolves at the DB level
+// The legacy name `integration_routes` still resolves at the DB level
 // via a backward-compat VIEW. The VIEW will be dropped in a follow-up
 // migration once every caller has settled on the new name.
 export const integrationRoutes = mysqlTable(
@@ -692,7 +692,7 @@ export const orders = mysqlTable("orders", {
   userId: int("userId").notNull(),
   integrationId: int("integrationId").notNull(),
   /**
-   * Which `integration_destinations` row this order is delivering to.
+   * Which `integration_routes` row this order is delivering to.
    *
    * - `0` = legacy single-destination path: an order aggregates delivery
    *   for the whole integration (there is only one destination so there's
@@ -1159,13 +1159,13 @@ export type InsertWorkflowStepExecution = typeof workflowStepExecutions.$inferIn
 export const integrationHealth = mysqlTable("integration_health", {
   id:             int("id").autoincrement().primaryKey(),
   integrationId:  int("integrationId").notNull(),
-  /** 0 = whole integration (legacy / single-dest). >0 = specific integration_destinations row. */
+  /** 0 = whole integration (legacy / single-dest). >0 = specific integration_routes row. */
   destinationId:  int("destinationId").default(0).notNull(),
   /**
-   * Cached `target_websites.appKey` for this destination (set on first
+   * Cached `destinations.appKey` for this destination (set on first
    * recordOutcome). Lets `evaluateClaim` answer "is any sibling of this
    * destination's app currently OPEN?" without joining through
-   * `integration_destinations` and `target_websites` on every claim.
+   * `integration_routes` and `destinations` on every claim.
    */
   appKey:         varchar("appKey", { length: 64 }),
   /** CLOSED | OPEN | HALF_OPEN */

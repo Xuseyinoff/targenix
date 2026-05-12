@@ -72,7 +72,7 @@ export function appActionToDestinationTemplate(
 }
 
 /**
- * By `target_websites.actionId` (preferred), else `destination_templates`.
+ * By `destinations.actionId` (preferred), else `destination_templates`.
  */
 export async function loadDynamicExecutionTemplate(
   db: DbClient,
@@ -240,7 +240,7 @@ export async function fetchDestinationTemplatesWithOverlayByIds(
   return out;
 }
 
-/** Denormalized `target_websites.url` on create — match delivery (`app_actions` first). */
+/** Denormalized `destinations.url` on create — match delivery (`app_actions` first). */
 export async function preferAppActionEndpointUrl(
   db: DbClient,
   templateEndpoint: string,

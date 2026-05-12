@@ -12,7 +12,7 @@
  * is byte-for-byte identical for every currently supported destination type
  * (dynamic-template, telegram, google-sheets, http-api-key, http-oauth2,
  * plain-url). For `dynamic-template` only, a single optional SELECT on
- * `destination_templates` may run when `target_websites.url` is empty — used
+ * `destination_templates` may run when `destinations.url` is empty — used
  * solely to populate `targetUrlUsed` for ORDER logs; delivery path unchanged.
  */
 
@@ -55,7 +55,7 @@ export type DispatchOutcome = DeliveryResult & {
  * Stage 2 — just-in-time connection loader for the delivery hot path.
  *
  * Returns the `connections` row linked to a destination (via
- * `target_websites.connectionId`) when one exists, or `null` when no
+ * `destinations.connectionId`) when one exists, or `null` when no
  * connection is bound. Failure to load the row (not found, DB error)
  * degrades gracefully: we log and return `null`, letting the caller
  * fall through to `templateConfig.secrets` — the pre-Stage-2 path —
@@ -184,7 +184,7 @@ export async function dispatchDelivery(
       // ORDER logs read `targetUrlUsed` from dispatch (leadService.ts). Legacy
       // paths set it from tw.url / integration.config.targetUrl; dynamic-template
       // historically left it unset → `targetUrl: undefined` despite success.
-      // Source: denormalized target_websites.url (written from template.endpointUrl
+      // Source: denormalized destinations.url (written from template.endpointUrl
       // at create), else one lightweight lookup of destination_templates.endpointUrl.
       {
         const denorm =

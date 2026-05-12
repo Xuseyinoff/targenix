@@ -1,5 +1,5 @@
 /**
- * Picks a delivery `adapterKey` from integration type + `target_websites` row.
+ * Picks a delivery `adapterKey` from integration type + `destinations` row.
  *
  * Stage 2: when `appKey` is set (backfill 0049 / new creates), map by `appKey`
  * first. Otherwise preserve legacy `templateId` + `templateType` behaviour.
@@ -89,7 +89,7 @@ export function resolveAdapterKey(
 
   // Sprint 4 / Item 4.3 — templateType-first legacy fallback removed.
   //
-  // Pre-condition verified before sunset: 0 target_websites rows had
+  // Pre-condition verified before sunset: 0 destinations rows had
   // appKey IS NULL or 'unknown' on either local or Railway production
   // (audit-appkey-coverage.ts, 2026-05-11). The NOT NULL backfill in
   // migrations 0051/0052 already eliminated the case this block was
