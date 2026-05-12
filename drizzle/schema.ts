@@ -447,7 +447,13 @@ export type InsertConnectionEvent = typeof connectionEvents.$inferInsert;
 //   legacy:  { apiKeyEncrypted, ... }
 //   dynamic: { secrets: { api_key: "encrypted:..." }, variables: {} }
 //   telegram: { botTokenEncrypted, chatId, messageTemplate }
-export const targetWebsites = mysqlTable("target_websites", {
+// Note: SQL table name renamed to `destinations` via migration 0069
+// (2026-05-12). The legacy name `target_websites` still resolves at the
+// DB level via a backward-compat VIEW, so old hand-written SQL outside
+// Drizzle continues to work during the transition. The TS export
+// `targetWebsites` is kept as an alias of `destinations` further down,
+// so existing code paths compile + query identically.
+export const targetWebsites = mysqlTable("destinations", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
   name: varchar("name", { length: 255 }).notNull(),
@@ -583,8 +589,13 @@ export type InsertIntegration = typeof integrations.$inferInsert;
 //   - `enabled` lets a user pause ONE destination without deleting the row.
 //   - `filterJson` is reserved for per-destination Make.com-style filters
 //     (Phase 5+). NULL and unread at this commit.
+// Note: SQL table name renamed to `integration_routes` via migration 0069
+// (2026-05-12). The legacy name `integration_destinations` still resolves
+// at the DB level via a backward-compat VIEW. The TS export
+// `integrationDestinations` is kept as an alias of `integrationRoutes`,
+// so existing code paths compile + query identically.
 export const integrationDestinations = mysqlTable(
-  "integration_destinations",
+  "integration_routes",
   {
     id: int("id").autoincrement().primaryKey(),
     integrationId: int("integrationId").notNull(),
