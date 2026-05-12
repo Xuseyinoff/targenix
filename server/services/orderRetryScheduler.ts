@@ -276,7 +276,7 @@ export async function retryDueFailedOrders(options?: {
             else cbAllowed++;
 
             // Shadow-mode breadcrumb so we can compare enforcement on/off
-            // outcomes in `integration_health_events`.
+            // outcomes in `circuit_breaker_events`.
             await recordShadowDecision(db, {
               integrationId: row.integrationId,
               destinationId: row.destinationId,

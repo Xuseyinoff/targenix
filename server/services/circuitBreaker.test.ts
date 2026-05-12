@@ -112,8 +112,8 @@ const HAS_DB = Boolean(
   });
 
   beforeEach(async () => {
-    await db.execute(sql`DELETE FROM integration_health WHERE integrationId = ${TEST_INTEGRATION_ID}`);
-    await db.execute(sql`DELETE FROM integration_health_events WHERE integrationId = ${TEST_INTEGRATION_ID}`);
+    await db.execute(sql`DELETE FROM circuit_breakers WHERE integrationId = ${TEST_INTEGRATION_ID}`);
+    await db.execute(sql`DELETE FROM circuit_breaker_events WHERE integrationId = ${TEST_INTEGRATION_ID}`);
   });
 
   it("first outcome on a never-seen destination creates a CLOSED row", async () => {
@@ -227,7 +227,7 @@ const HAS_DB = Boolean(
     // Fast-forward: manually expire the cooldown (set it well in the past to
     // dodge any DB-vs-JS clock skew at sub-second resolution).
     await db.execute(sql`
-      UPDATE integration_health
+      UPDATE circuit_breakers
       SET cooldownUntil = DATE_SUB(NOW(), INTERVAL 1 HOUR)
       WHERE integrationId = ${TEST_INTEGRATION_ID}
     `);
@@ -251,7 +251,7 @@ const HAS_DB = Boolean(
     }
     // Expire cooldown + promote to HALF_OPEN
     await db.execute(sql`
-      UPDATE integration_health
+      UPDATE circuit_breakers
       SET cooldownUntil = DATE_SUB(NOW(), INTERVAL 1 SECOND)
       WHERE integrationId = ${TEST_INTEGRATION_ID}
     `);
@@ -270,7 +270,7 @@ const HAS_DB = Boolean(
     expect(r.transitioned).toBe(true);
 
     const [row] = (await db.execute(sql`
-      SELECT cooldownLevel FROM integration_health WHERE integrationId = ${TEST_INTEGRATION_ID}
+      SELECT cooldownLevel FROM circuit_breakers WHERE integrationId = ${TEST_INTEGRATION_ID}
     `)) as any;
     expect(Number(row[0].cooldownLevel)).toBe(0);
   });
@@ -287,7 +287,7 @@ const HAS_DB = Boolean(
     }
     // Promote
     await db.execute(sql`
-      UPDATE integration_health
+      UPDATE circuit_breakers
       SET cooldownUntil = DATE_SUB(NOW(), INTERVAL 1 SECOND)
       WHERE integrationId = ${TEST_INTEGRATION_ID}
     `);
@@ -306,14 +306,14 @@ const HAS_DB = Boolean(
     expect(r.toState).toBe("OPEN");
 
     const [row] = (await db.execute(sql`
-      SELECT cooldownLevel FROM integration_health WHERE integrationId = ${TEST_INTEGRATION_ID}
+      SELECT cooldownLevel FROM circuit_breakers WHERE integrationId = ${TEST_INTEGRATION_ID}
     `)) as any;
     expect(Number(row[0].cooldownLevel)).toBe(1);
   });
 
   it("manualLock='OPEN' forces block regardless of state", async () => {
     await db.execute(sql`
-      INSERT INTO integration_health (integrationId, destinationId, state, manualLock)
+      INSERT INTO circuit_breakers (integrationId, destinationId, state, manualLock)
       VALUES (${TEST_INTEGRATION_ID}, ${TEST_DESTINATION_ID}, 'CLOSED', 'OPEN')
     `);
     const ev = await evaluateClaim(db, {
@@ -334,7 +334,7 @@ const HAS_DB = Boolean(
       });
     }
     await db.execute(sql`
-      UPDATE integration_health SET manualLock='CLOSED'
+      UPDATE circuit_breakers SET manualLock='CLOSED'
       WHERE integrationId = ${TEST_INTEGRATION_ID}
     `);
     const ev = await evaluateClaim(db, {
@@ -441,7 +441,7 @@ const HAS_DB = Boolean(
       delete process.env.CB_ENFORCEMENT;
     }
     const [events] = (await db.execute(sql`
-      SELECT eventType FROM integration_health_events
+      SELECT eventType FROM circuit_breaker_events
       WHERE integrationId = ${TEST_INTEGRATION_ID} AND eventType = 'manual_force'
     `)) as any;
     expect(events.length).toBeGreaterThan(0);
@@ -466,7 +466,7 @@ const HAS_DB = Boolean(
     const SIBLING_DEST = 998_001;
 
     // Cleanup any prior siblings
-    await db.execute(sql`DELETE FROM integration_health WHERE appKey = '100k_test'`);
+    await db.execute(sql`DELETE FROM circuit_breakers WHERE appKey = '100k_test'`);
 
     // Trip one destination of app '100k_test' to OPEN
     for (let i = 0; i < 5; i++) {
@@ -489,12 +489,12 @@ const HAS_DB = Boolean(
     expect(ev.reason).toContain("app_sibling_open");
 
     // Cleanup
-    await db.execute(sql`DELETE FROM integration_health WHERE appKey = '100k_test'`);
+    await db.execute(sql`DELETE FROM circuit_breakers WHERE appKey = '100k_test'`);
   });
 
   it("evaluateClaim allows when no sibling of the app is OPEN", async () => {
     const { evaluateClaim } = await import("./circuitBreaker");
-    await db.execute(sql`DELETE FROM integration_health WHERE appKey = 'solo_test'`);
+    await db.execute(sql`DELETE FROM circuit_breakers WHERE appKey = 'solo_test'`);
 
     // Healthy outcome only — no trips
     await recordOutcome(db, {
@@ -512,12 +512,12 @@ const HAS_DB = Boolean(
     expect(ev.decision).toBe("allow");
     expect(ev.reason).not.toContain("app_sibling_open");
 
-    await db.execute(sql`DELETE FROM integration_health WHERE appKey = 'solo_test'`);
+    await db.execute(sql`DELETE FROM circuit_breakers WHERE appKey = 'solo_test'`);
   });
 
   it("evaluateClaim ignores siblings whose cooldown has expired", async () => {
     const { evaluateClaim } = await import("./circuitBreaker");
-    await db.execute(sql`DELETE FROM integration_health WHERE appKey = 'expired_test'`);
+    await db.execute(sql`DELETE FROM circuit_breakers WHERE appKey = 'expired_test'`);
 
     // Trip one destination
     for (let i = 0; i < 5; i++) {
@@ -531,7 +531,7 @@ const HAS_DB = Boolean(
     }
     // Force cooldown into the past
     await db.execute(sql`
-      UPDATE integration_health
+      UPDATE circuit_breakers
       SET cooldownUntil = DATE_SUB(NOW(), INTERVAL 1 HOUR)
       WHERE integrationId = ${TEST_INTEGRATION_ID}
     `);
@@ -545,10 +545,10 @@ const HAS_DB = Boolean(
     // for sibling-pooling purposes, so the new destination is allowed.
     expect(ev.decision).toBe("allow");
 
-    await db.execute(sql`DELETE FROM integration_health WHERE appKey = 'expired_test'`);
+    await db.execute(sql`DELETE FROM circuit_breakers WHERE appKey = 'expired_test'`);
   });
 
-  it("appends an 'opened' event to integration_health_events on each trip", async () => {
+  it("appends an 'opened' event to circuit_breaker_events on each trip", async () => {
     for (let i = 0; i < 5; i++) {
       await recordOutcome(db, {
         integrationId: TEST_INTEGRATION_ID,
@@ -559,7 +559,7 @@ const HAS_DB = Boolean(
     }
     const [events] = (await db.execute(sql`
       SELECT eventType, fromState, toState
-      FROM integration_health_events
+      FROM circuit_breaker_events
       WHERE integrationId = ${TEST_INTEGRATION_ID}
       ORDER BY id DESC LIMIT 1
     `)) as any;

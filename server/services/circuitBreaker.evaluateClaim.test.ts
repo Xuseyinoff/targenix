@@ -65,13 +65,13 @@ const TEST_APP_KEY = "test-sibling-app";
   });
 
   beforeEach(async () => {
-    await db.execute(sql`DELETE FROM integration_health WHERE integrationId = ${TEST_INTEGRATION_ID}`);
-    await db.execute(sql`DELETE FROM integration_health_events WHERE integrationId = ${TEST_INTEGRATION_ID}`);
+    await db.execute(sql`DELETE FROM circuit_breakers WHERE integrationId = ${TEST_INTEGRATION_ID}`);
+    await db.execute(sql`DELETE FROM circuit_breaker_events WHERE integrationId = ${TEST_INTEGRATION_ID}`);
   });
 
   // ─── 1. Never-seen destination → allow ───────────────────────────────────
 
-  it("returns allow when no integration_health row exists for the destination", async () => {
+  it("returns allow when no circuit_breakers row exists for the destination", async () => {
     const r = await evaluateClaim(db, {
       integrationId: TEST_INTEGRATION_ID,
       destinationId: TEST_DESTINATION_ID_A,
@@ -130,7 +130,7 @@ const TEST_APP_KEY = "test-sibling-app";
     });
     // Force the cooldown to be in the past so evaluateClaim treats it as expired.
     await db.execute(
-      sql`UPDATE integration_health
+      sql`UPDATE circuit_breakers
             SET cooldownUntil = NOW() - INTERVAL 60 SECOND
           WHERE integrationId = ${TEST_INTEGRATION_ID}
             AND destinationId = ${TEST_DESTINATION_ID_A}`,
@@ -145,7 +145,7 @@ const TEST_APP_KEY = "test-sibling-app";
 
     // Confirm the row was actually mutated, not just reported as HALF_OPEN.
     const after = (await db.execute(
-      sql`SELECT state, halfOpenAttempts FROM integration_health
+      sql`SELECT state, halfOpenAttempts FROM circuit_breakers
             WHERE integrationId = ${TEST_INTEGRATION_ID}
               AND destinationId = ${TEST_DESTINATION_ID_A}`,
     )) as unknown as [Array<{ state: string; halfOpenAttempts: number }>, unknown];
@@ -164,7 +164,7 @@ const TEST_APP_KEY = "test-sibling-app";
       errorType: "rate_limit",
     });
     await db.execute(
-      sql`UPDATE integration_health
+      sql`UPDATE circuit_breakers
             SET state = 'HALF_OPEN', halfOpenAttempts = 0, halfOpenSuccesses = 0
           WHERE integrationId = ${TEST_INTEGRATION_ID}
             AND destinationId = ${TEST_DESTINATION_ID_A}`,
@@ -190,7 +190,7 @@ const TEST_APP_KEY = "test-sibling-app";
     });
     // Probe budget for rate_limit is small (typically 1); set attempts high.
     await db.execute(
-      sql`UPDATE integration_health
+      sql`UPDATE circuit_breakers
             SET state = 'HALF_OPEN', halfOpenAttempts = 99, halfOpenSuccesses = 0
           WHERE integrationId = ${TEST_INTEGRATION_ID}
             AND destinationId = ${TEST_DESTINATION_ID_A}`,
@@ -214,7 +214,7 @@ const TEST_APP_KEY = "test-sibling-app";
       success: true,
     });
     await db.execute(
-      sql`UPDATE integration_health
+      sql`UPDATE circuit_breakers
             SET manualLock = 'OPEN'
           WHERE integrationId = ${TEST_INTEGRATION_ID}
             AND destinationId = ${TEST_DESTINATION_ID_A}`,
@@ -239,7 +239,7 @@ const TEST_APP_KEY = "test-sibling-app";
       errorType: "rate_limit",
     });
     await db.execute(
-      sql`UPDATE integration_health
+      sql`UPDATE circuit_breakers
             SET manualLock = 'CLOSED'
           WHERE integrationId = ${TEST_INTEGRATION_ID}
             AND destinationId = ${TEST_DESTINATION_ID_A}`,
@@ -293,7 +293,7 @@ const TEST_APP_KEY = "test-sibling-app";
       errorType: "rate_limit",
     });
     await db.execute(
-      sql`UPDATE integration_health
+      sql`UPDATE circuit_breakers
             SET cooldownUntil = NOW() - INTERVAL 60 SECOND
           WHERE integrationId = ${TEST_INTEGRATION_ID}`,
     );
@@ -302,7 +302,7 @@ const TEST_APP_KEY = "test-sibling-app";
     expect(promoted).toBeGreaterThanOrEqual(2);
 
     const rows = (await db.execute(
-      sql`SELECT destinationId, state FROM integration_health
+      sql`SELECT destinationId, state FROM circuit_breakers
             WHERE integrationId = ${TEST_INTEGRATION_ID}`,
     )) as unknown as [Array<{ destinationId: number; state: string }>, unknown];
     for (const row of rows[0]) {
@@ -320,7 +320,7 @@ const TEST_APP_KEY = "test-sibling-app";
       errorType: "rate_limit",
     });
     await db.execute(
-      sql`UPDATE integration_health
+      sql`UPDATE circuit_breakers
             SET cooldownUntil = NOW() - INTERVAL 60 SECOND,
                 manualLock = 'OPEN'
           WHERE integrationId = ${TEST_INTEGRATION_ID}
@@ -330,7 +330,7 @@ const TEST_APP_KEY = "test-sibling-app";
     await autoPromoteExpiredCooldowns(db);
 
     const after = (await db.execute(
-      sql`SELECT state FROM integration_health
+      sql`SELECT state FROM circuit_breakers
             WHERE integrationId = ${TEST_INTEGRATION_ID}
               AND destinationId = ${TEST_DESTINATION_ID_A}`,
     )) as unknown as [Array<{ state: string }>, unknown];
@@ -347,7 +347,7 @@ const TEST_APP_KEY = "test-sibling-app";
       errorType: "rate_limit",
     });
     await db.execute(
-      sql`UPDATE integration_health
+      sql`UPDATE circuit_breakers
             SET state = 'HALF_OPEN', halfOpenAttempts = 0, halfOpenSuccesses = 0
           WHERE integrationId = ${TEST_INTEGRATION_ID}
             AND destinationId = ${TEST_DESTINATION_ID_A}`,
@@ -373,7 +373,7 @@ const TEST_APP_KEY = "test-sibling-app";
       errorType: "rate_limit",
     });
     await db.execute(
-      sql`UPDATE integration_health
+      sql`UPDATE circuit_breakers
             SET state = 'HALF_OPEN', halfOpenAttempts = 0, halfOpenSuccesses = 0,
                 cooldownLevel = 0
           WHERE integrationId = ${TEST_INTEGRATION_ID}
@@ -392,7 +392,7 @@ const TEST_APP_KEY = "test-sibling-app";
     expect(result.transitioned).toBe(true);
 
     const after = (await db.execute(
-      sql`SELECT cooldownLevel FROM integration_health
+      sql`SELECT cooldownLevel FROM circuit_breakers
             WHERE integrationId = ${TEST_INTEGRATION_ID}
               AND destinationId = ${TEST_DESTINATION_ID_A}`,
     )) as unknown as [Array<{ cooldownLevel: number }>, unknown];

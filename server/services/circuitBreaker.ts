@@ -138,7 +138,7 @@ async function loadRow(
       manualLock, manualLockSetBy, manualLockReason, manualLockSetAt,
       createdAt, updatedAt,
       (cooldownUntil IS NOT NULL AND cooldownUntil <= NOW()) AS cooldownExpired
-    FROM integration_health
+    FROM circuit_breakers
     WHERE integrationId = ${integrationId} AND destinationId = ${destinationId}
     LIMIT 1
   `)) as unknown as [Array<Record<string, unknown>>, unknown];
@@ -172,7 +172,7 @@ async function loadRow(
 // ── Throttled Telegram alerts ──────────────────────────────────────────────
 // Optional: set CB_ALERT_TELEGRAM_CHAT_ID to a chat id (or @channelname) to
 // receive a DM each time a circuit-breaker transitions. Unset = silent (the
-// audit log in integration_health_events is still kept).
+// audit log in circuit_breaker_events is still kept).
 //
 // In-memory dedup: at most one alert per (integrationId, destinationId,
 // eventType) per ALERT_THROTTLE_MS. The map is bounded by tearing entries
@@ -658,7 +658,7 @@ export async function evaluateClaim(
   if (!row) {
     if (params.appKey) {
       const sibRes = (await db.execute(sql`
-        SELECT COUNT(*) AS n FROM integration_health
+        SELECT COUNT(*) AS n FROM circuit_breakers
         WHERE appKey = ${params.appKey}
           AND state = 'OPEN'
           AND (cooldownUntil IS NULL OR cooldownUntil > NOW())
@@ -714,7 +714,7 @@ export async function evaluateClaim(
     const effectiveAppKey = params.appKey ?? row.appKey ?? null;
     if (effectiveAppKey) {
       const sibRes = (await db.execute(sql`
-        SELECT COUNT(*) AS n FROM integration_health
+        SELECT COUNT(*) AS n FROM circuit_breakers
         WHERE appKey = ${effectiveAppKey}
           AND state = 'OPEN'
           AND (cooldownUntil IS NULL OR cooldownUntil > NOW())
@@ -1009,7 +1009,7 @@ export async function evaluateAndMaybeBlock(
  */
 export async function autoPromoteExpiredCooldowns(db: DbClient): Promise<number> {
   const result = (await db.execute(sql`
-    UPDATE integration_health
+    UPDATE circuit_breakers
     SET state = 'HALF_OPEN', halfOpenAttempts = 0, halfOpenSuccesses = 0
     WHERE state = 'OPEN'
       AND cooldownUntil IS NOT NULL
@@ -1022,11 +1022,11 @@ export async function autoPromoteExpiredCooldowns(db: DbClient): Promise<number>
   // transition. Single bulk INSERT…SELECT keeps it cheap.
   if (promoted > 0) {
     await db.execute(sql`
-      INSERT INTO integration_health_events
+      INSERT INTO circuit_breaker_events
         (integrationId, destinationId, eventType, fromState, toState, reason, createdAt)
       SELECT integrationId, destinationId, 'half_opened', 'OPEN', 'HALF_OPEN',
              'auto_promoted_cooldown_expired', NOW()
-      FROM integration_health
+      FROM circuit_breakers
       WHERE state = 'HALF_OPEN' AND halfOpenAttempts = 0
         AND updatedAt >= NOW() - INTERVAL 5 SECOND
     `);
