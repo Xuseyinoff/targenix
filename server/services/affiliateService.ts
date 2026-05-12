@@ -130,7 +130,7 @@ export class ConnectionRequiredError extends Error {
 export type TemplateType = "custom";
 
 /**
- * Config stored in targetWebsites.templateConfig per template.
+ * Config stored in destinations.templateConfig per template.
  * apiKey is stored encrypted as apiKeyEncrypted; never stored plain.
  */
 export interface SotuvchiConfig {
@@ -711,7 +711,7 @@ import { assertSafeOutboundUrl } from "../lib/urlSafety";
  * Send a lead to a target website using its template config.
  *
  * @param templateType  The template type (custom)
- * @param templateConfig  The stored config from targetWebsites.templateConfig (may contain apiKeyEncrypted)
+ * @param templateConfig  The stored config from destinations.templateConfig (may contain apiKeyEncrypted)
  * @param lead  The lead payload
  * @param variableFields  Per-routing variable fields (offer_id, stream, stream_id, custom vars, etc.)
  */

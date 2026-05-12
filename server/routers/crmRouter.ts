@@ -6,8 +6,8 @@ import {
   orders,
   leads,
   integrations,
-  integrationDestinations,
-  targetWebsites,
+  integrationRoutes,
+  destinations,
   orderEvents,
   users,
 } from "../../drizzle/schema";
@@ -116,11 +116,11 @@ export async function performCrmSync(
       responseData: orders.responseData,
       crmSyncedAt: orders.crmSyncedAt,
       crmStatus: orders.crmStatus,
-      appKey: targetWebsites.appKey,
+      appKey: destinations.appKey,
     })
     .from(orders)
     .innerJoin(integrations, eq(orders.integrationId, integrations.id))
-    .innerJoin(targetWebsites, eq(integrations.targetWebsiteId, targetWebsites.id))
+    .innerJoin(destinations, eq(integrations.targetWebsiteId, destinations.id))
     .where(
       and(
         eq(orders.status, "SENT"),
@@ -130,8 +130,8 @@ export async function performCrmSync(
         sql`(${activeDue} OR ${midDue})`,
         sql`${orders.createdAt} >= ${thirtyDaysAgo}`,
         platform
-          ? eq(targetWebsites.appKey, platform)
-          : or(eq(targetWebsites.appKey, "sotuvchi"), eq(targetWebsites.appKey, "100k")),
+          ? eq(destinations.appKey, platform)
+          : or(eq(destinations.appKey, "sotuvchi"), eq(destinations.appKey, "100k")),
       ),
     )
     .orderBy(asc(orders.crmSyncedAt))   // oldest-synced first (NULLs first in MySQL ASC)
@@ -390,13 +390,13 @@ export async function performPaginationSync(): Promise<SyncResult> {
     .select({ createdAt: orders.createdAt })
     .from(orders)
     .innerJoin(integrations, eq(orders.integrationId, integrations.id))
-    .innerJoin(targetWebsites, eq(integrations.targetWebsiteId, targetWebsites.id))
+    .innerJoin(destinations, eq(integrations.targetWebsiteId, destinations.id))
     .where(
       and(
         eq(orders.status, "SENT"),
         eq(orders.isFinal, false),
         isNotNull(orders.responseData),
-        eq(targetWebsites.appKey, "sotuvchi"),
+        eq(destinations.appKey, "sotuvchi"),
       ),
     )
     .orderBy(asc(orders.createdAt))
@@ -574,13 +574,13 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
     .select({ createdAt: orders.createdAt })
     .from(orders)
     .innerJoin(integrations, eq(orders.integrationId, integrations.id))
-    .innerJoin(targetWebsites, eq(integrations.targetWebsiteId, targetWebsites.id))
+    .innerJoin(destinations, eq(integrations.targetWebsiteId, destinations.id))
     .where(
       and(
         eq(orders.status, "SENT"),
         eq(orders.isFinal, false),
         isNotNull(orders.responseData),
-        eq(targetWebsites.appKey, "100k"),
+        eq(destinations.appKey, "100k"),
       ),
     )
     .orderBy(asc(orders.createdAt))
@@ -721,10 +721,10 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
         })
         .from(orders)
         .innerJoin(integrations, eq(orders.integrationId, integrations.id))
-        .innerJoin(targetWebsites, eq(integrations.targetWebsiteId, targetWebsites.id))
+        .innerJoin(destinations, eq(integrations.targetWebsiteId, destinations.id))
         .where(
           and(
-            eq(targetWebsites.appKey, "100k"),
+            eq(destinations.appKey, "100k"),
             eq(orders.isFinal, false),
             isNotNull(orders.responseData),
             sql`${externalIdExpr} IN (${sql.join(
@@ -936,15 +936,15 @@ export const crmRouter = router({
       // then drops any order whose target_website was hard-deleted (visible
       // as "orphan" in the diagnostic — these need a separate UI affordance
       // if we ever want them shown, since their appKey is unknowable here).
-      const twJoinExpr = sql`${targetWebsites.id} = COALESCE(${integrationDestinations.targetWebsiteId}, ${integrations.targetWebsiteId})`;
+      const twJoinExpr = sql`${destinations.id} = COALESCE(${integrationRoutes.targetWebsiteId}, ${integrations.targetWebsiteId})`;
 
       const where = and(
         eq(orders.status, "SENT"),
         isNotNull(orders.responseData),
         input.userId ? eq(orders.userId, input.userId) : undefined,
         input.platform
-          ? eq(targetWebsites.appKey, input.platform)
-          : inArray(targetWebsites.appKey, AFFILIATE_APP_KEYS),
+          ? eq(destinations.appKey, input.platform)
+          : inArray(destinations.appKey, AFFILIATE_APP_KEYS),
         input.crmStatus
           ? eq(orders.crmStatus, input.crmStatus)
           : undefined,
@@ -965,16 +965,16 @@ export const crmRouter = router({
             leadName: leads.fullName,
             leadPhone: leads.phone,
             integrationName: integrations.name,
-            appKey: targetWebsites.appKey,
+            appKey: destinations.appKey,
           })
           .from(orders)
           .innerJoin(leads, eq(orders.leadId, leads.id))
           .leftJoin(integrations, eq(orders.integrationId, integrations.id))
           .leftJoin(
-            integrationDestinations,
-            eq(orders.destinationId, integrationDestinations.id),
+            integrationRoutes,
+            eq(orders.destinationId, integrationRoutes.id),
           )
-          .innerJoin(targetWebsites, twJoinExpr)
+          .innerJoin(destinations, twJoinExpr)
           .where(where)
           .orderBy(desc(orders.createdAt))
           .limit(input.limit)
@@ -984,10 +984,10 @@ export const crmRouter = router({
           .from(orders)
           .leftJoin(integrations, eq(orders.integrationId, integrations.id))
           .leftJoin(
-            integrationDestinations,
-            eq(orders.destinationId, integrationDestinations.id),
+            integrationRoutes,
+            eq(orders.destinationId, integrationRoutes.id),
           )
-          .innerJoin(targetWebsites, twJoinExpr)
+          .innerJoin(destinations, twJoinExpr)
           .where(where),
       ]);
 

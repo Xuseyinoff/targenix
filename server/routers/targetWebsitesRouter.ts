@@ -17,7 +17,7 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { targetWebsites, destinationTemplates, users, integrations, orders, connections } from "../../drizzle/schema";
+import { destinations, destinationTemplates, users, integrations, orders, connections } from "../../drizzle/schema";
 import { eq, desc, and, sql, gte, lt } from "drizzle-orm";
 import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
 import { encrypt, decrypt } from "../encryption";
@@ -138,7 +138,7 @@ function maskConfig(config: unknown): unknown {
   return c;
 }
 
-/** Allowed values for `targetWebsites.list` → `category` (matches `destination_templates.category`). */
+/** Allowed values for `destinations.list` → `category` (matches `destination_templates.category`). */
 const DESTINATION_LIST_CATEGORIES = ["messaging", "data", "webhooks", "affiliate", "crm"] as const;
 type DestinationListCategory = (typeof DESTINATION_LIST_CATEGORIES)[number];
 
@@ -200,9 +200,9 @@ export const targetWebsitesRouter = router({
     if (!db) return [];
     const rows = await db
       .select()
-      .from(targetWebsites)
-      .where(eq(targetWebsites.userId, ctx.user.id))
-      .orderBy(desc(targetWebsites.createdAt));
+      .from(destinations)
+      .where(eq(destinations.userId, ctx.user.id))
+      .orderBy(desc(destinations.createdAt));
 
     // Enrich with template metadata for dynamic-template destinations.
     const templateIds = Array.from(
@@ -386,7 +386,7 @@ export const targetWebsitesRouter = router({
           config.chatId = input.chatId.trim();
           config.messageTemplate = input.messageTemplate?.trim() || defaultTemplate;
         }
-        const [inserted] = await db.insert(targetWebsites).values({
+        const [inserted] = await db.insert(destinations).values({
           userId: ctx.user.id,
           name: input.name,
           url: null,
@@ -413,7 +413,7 @@ export const targetWebsitesRouter = router({
         };
         config.sheetHeaders = input.sheetHeaders ?? [];
         config.mapping = input.mapping ?? {};
-        const [inserted] = await db.insert(targetWebsites).values({
+        const [inserted] = await db.insert(destinations).values({
           userId: ctx.user.id,
           name: input.name,
           url: null,
@@ -434,7 +434,7 @@ export const targetWebsitesRouter = router({
       // we only need to store appKey + templateConfig + connectionId.
       if (input.templateType === "http-api-key") {
         if (!input.appKey?.trim()) throw new Error("appKey is required for app destinations");
-        const [inserted] = await db.insert(targetWebsites).values({
+        const [inserted] = await db.insert(destinations).values({
           userId:         ctx.user.id,
           name:           input.name,
           url:            null,
@@ -481,7 +481,7 @@ export const targetWebsitesRouter = router({
         if (input.variableFields) config.variableFields = input.variableFields;
       }
 
-      const [inserted] = await db.insert(targetWebsites).values({
+      const [inserted] = await db.insert(destinations).values({
         userId: ctx.user.id,
         name: input.name,
         url,
@@ -541,8 +541,8 @@ export const targetWebsitesRouter = router({
 
       const [site] = await db
         .select()
-        .from(targetWebsites)
-        .where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)))
+        .from(destinations)
+        .where(and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)))
         .limit(1);
       if (!site) throw new Error("Website not found");
 
@@ -654,7 +654,7 @@ export const targetWebsitesRouter = router({
         }
       }
 
-      await db.update(targetWebsites).set(updates).where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)));
+      await db.update(destinations).set(updates).where(and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)));
       return { success: true };
     }),
 
@@ -665,8 +665,8 @@ export const targetWebsitesRouter = router({
       const db = await getDb();
       if (!db) throw new Error("DB not available");
       await db
-        .delete(targetWebsites)
-        .where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)));
+        .delete(destinations)
+        .where(and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)));
       return { success: true };
     }),
 
@@ -692,8 +692,8 @@ export const targetWebsitesRouter = router({
       if (!db) return [];
       const [site] = await db
         .select()
-        .from(targetWebsites)
-        .where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)))
+        .from(destinations)
+        .where(and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)))
         .limit(1);
       if (!site || site.templateType !== "custom") return [];
       const cfg = (site.templateConfig ?? {}) as Record<string, unknown>;
@@ -759,8 +759,8 @@ export const targetWebsitesRouter = router({
       // Multi-tenant: verify ownership
       const [site] = await db
         .select()
-        .from(targetWebsites)
-        .where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)))
+        .from(destinations)
+        .where(and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)))
         .limit(1);
       if (!site) throw new Error("Website not found");
       if (!site.templateId) throw new Error("Not a template-based destination");
@@ -851,19 +851,19 @@ export const targetWebsitesRouter = router({
           const hasNonSecretUpdates = Object.keys(nonSecretUpdates).length > 0;
           if (hasNonSecretUpdates) {
             await tx
-              .update(targetWebsites)
+              .update(destinations)
               .set(nonSecretUpdates)
               .where(
-                and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)),
+                and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)),
               );
           }
         });
       } else {
         // Legacy path: no linked connection, so we store secrets in templateConfig.
         await db
-          .update(targetWebsites)
+          .update(destinations)
           .set(updates)
-          .where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)));
+          .where(and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)));
       }
 
       return { success: true };
@@ -938,7 +938,7 @@ export const targetWebsitesRouter = router({
         secretsEncrypted: encryptedSecrets,
       });
 
-      await db.insert(targetWebsites).values({
+      await db.insert(destinations).values({
         userId: ctx.user.id,
         name: input.name,
         url: initialUrl,
@@ -966,10 +966,10 @@ export const targetWebsitesRouter = router({
    * `createFromTemplate`:
    *   • The user never retypes the secret. We copy the already-encrypted
    *     secret bytes straight from `connections.credentialsJson.secretsEncrypted`
-   *     into `targetWebsites.templateConfig.secrets`, so the same ciphertext
+   *     into `destinations.templateConfig.secrets`, so the same ciphertext
    *     is addressable from the delivery path (`buildBody`) without any
    *     additional decrypt/re-encrypt round-trip.
-   *   • We link `targetWebsites.connectionId` so future phases can migrate
+   *   • We link `destinations.connectionId` so future phases can migrate
    *     delivery to read secrets straight off the connection row (Phase 4).
    *   • The destination name defaults to the template name with a
    *     " (n)" suffix if one already exists — matches the wizard's "Sotuvchi.com (1)"
@@ -1049,14 +1049,14 @@ export const targetWebsitesRouter = router({
       // regression for the common case).
       if (!input.name) {
         const [reusable] = await db
-          .select({ id: targetWebsites.id, name: targetWebsites.name })
-          .from(targetWebsites)
+          .select({ id: destinations.id, name: destinations.name })
+          .from(destinations)
           .where(
             and(
-              eq(targetWebsites.userId, ctx.user.id),
-              eq(targetWebsites.connectionId, conn.id),
-              eq(targetWebsites.templateId, template.id),
-              eq(targetWebsites.isActive, true),
+              eq(destinations.userId, ctx.user.id),
+              eq(destinations.connectionId, conn.id),
+              eq(destinations.templateId, template.id),
+              eq(destinations.isActive, true),
             ),
           )
           .limit(1);
@@ -1074,9 +1074,9 @@ export const targetWebsitesRouter = router({
       // avoiding duplicates that would confuse the "pick from existing" list.
       const baseName = input.name?.trim() || template.name;
       const existing = await db
-        .select({ name: targetWebsites.name })
-        .from(targetWebsites)
-        .where(eq(targetWebsites.userId, ctx.user.id));
+        .select({ name: destinations.name })
+        .from(destinations)
+        .where(eq(destinations.userId, ctx.user.id));
       let finalName = baseName;
       if (!input.name) {
         const used = new Set(existing.map((e) => e.name));
@@ -1123,7 +1123,7 @@ export const targetWebsitesRouter = router({
         (await findAppActionIdForTemplate(db, template.id, template.appKey)) ?? null;
       const initialUrl = await preferAppActionEndpointUrl(db, template.endpointUrl, actionId);
 
-      const [inserted] = await db.insert(targetWebsites).values({
+      const [inserted] = await db.insert(destinations).values({
         userId: ctx.user.id,
         name: finalName,
         url: initialUrl,
@@ -1196,8 +1196,8 @@ export const targetWebsitesRouter = router({
 
       const [site] = await db
         .select()
-        .from(targetWebsites)
-        .where(and(eq(targetWebsites.id, input.id), eq(targetWebsites.userId, ctx.user.id)))
+        .from(destinations)
+        .where(and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)))
         .limit(1);
       if (!site) throw new Error("Website not found");
 
@@ -1406,7 +1406,7 @@ export const targetWebsitesRouter = router({
     }),
 
   // ── Destination performance analytics ────────────────────────────────────
-  // Single aggregated query: targetWebsites → integrations → orders (LEFT JOIN)
+  // Single aggregated query: destinations → integrations → orders (LEFT JOIN)
   // Returns today / last_7d / last_30d counts per destination, all users' destinations.
   getDestinationStats: protectedProcedure
     .query(async ({ ctx }) => {
@@ -1420,12 +1420,12 @@ export const targetWebsitesRouter = router({
 
       const rows = await db
         .select({
-          destinationId: targetWebsites.id,
-          name:          targetWebsites.name,
-          templateType:  targetWebsites.templateType,
-          templateId:    targetWebsites.templateId,
-          color:         targetWebsites.color,
-          isActive:      targetWebsites.isActive,
+          destinationId: destinations.id,
+          name:          destinations.name,
+          templateType:  destinations.templateType,
+          templateId:    destinations.templateId,
+          color:         destinations.color,
+          isActive:      destinations.isActive,
           // today
           todayTotal:   sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${todayBounds.start} AND ${orders.createdAt} < ${todayBounds.end} THEN 1 ELSE 0 END), 0)`,
           todaySuccess: sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${todayBounds.start} AND ${orders.createdAt} < ${todayBounds.end} AND ${orders.status} = 'SENT' THEN 1 ELSE 0 END), 0)`,
@@ -1439,17 +1439,17 @@ export const targetWebsitesRouter = router({
           last30dSuccess: sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${last30dStart} AND ${orders.status} = 'SENT' THEN 1 ELSE 0 END), 0)`,
           last30dFailed:  sql<number>`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${last30dStart} AND ${orders.status} = 'FAILED' THEN 1 ELSE 0 END), 0)`,
         })
-        .from(targetWebsites)
+        .from(destinations)
         .leftJoin(
           integrations,
-          and(eq(integrations.targetWebsiteId, targetWebsites.id), eq(integrations.userId, userId)),
+          and(eq(integrations.targetWebsiteId, destinations.id), eq(integrations.userId, userId)),
         )
         .leftJoin(
           orders,
           and(eq(orders.integrationId, integrations.id), eq(orders.userId, userId)),
         )
-        .where(eq(targetWebsites.userId, userId))
-        .groupBy(targetWebsites.id)
+        .where(eq(destinations.userId, userId))
+        .groupBy(destinations.id)
         .orderBy(desc(sql`COALESCE(SUM(CASE WHEN ${orders.createdAt} >= ${last30dStart} THEN 1 ELSE 0 END), 0)`));
 
       return rows.map((r) => {
@@ -1484,9 +1484,9 @@ export const targetWebsitesRouter = router({
 
       // Ownership check
       const [dest] = await db
-        .select({ id: targetWebsites.id })
-        .from(targetWebsites)
-        .where(and(eq(targetWebsites.id, input.destinationId), eq(targetWebsites.userId, userId)))
+        .select({ id: destinations.id })
+        .from(destinations)
+        .where(and(eq(destinations.id, input.destinationId), eq(destinations.userId, userId)))
         .limit(1);
       if (!dest) return { points: [] };
 

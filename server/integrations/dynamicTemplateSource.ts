@@ -5,7 +5,7 @@
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { appActions, destinationTemplates } from "../../drizzle/schema";
 import type { AppActionRow, DestinationTemplate } from "../../drizzle/schema";
-import type { targetWebsites } from "../../drizzle/schema";
+import type { destinations } from "../../drizzle/schema";
 import type { DbClient } from "../db";
 
 const log =
@@ -76,7 +76,7 @@ export function appActionToDestinationTemplate(
  */
 export async function loadDynamicExecutionTemplate(
   db: DbClient,
-  tw: typeof targetWebsites.$inferSelect,
+  tw: typeof destinations.$inferSelect,
 ): Promise<{ template: DestinationTemplate; source: "app_actions" | "destination_templates" } | null> {
   if (tw.templateId == null) return null;
 
@@ -186,7 +186,7 @@ export async function listActiveDestinationTemplatesForPicker(db: DbClient): Pro
  * `destination_templates`.
  */
 /**
- * Same overlay as list, but only for `ids` (for targetWebsites.list enrichment).
+ * Same overlay as list, but only for `ids` (for destinations.list enrichment).
  */
 export async function fetchDestinationTemplatesWithOverlayByIds(
   db: DbClient,

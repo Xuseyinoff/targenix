@@ -10,7 +10,7 @@
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { integrations, telegramChats, targetWebsites, users } from "../../drizzle/schema";
+import { integrations, telegramChats, destinations, users } from "../../drizzle/schema";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import crypto from "crypto";
 
@@ -147,7 +147,7 @@ export const telegramRouter = router({
     await db.transaction(async (tx) => {
       // Clear mappings first (leads must stop delivering)
       await tx.update(integrations).set({ telegramChatId: null }).where(eq(integrations.userId, ctx.user.id));
-      await tx.update(targetWebsites).set({ telegramChatId: null }).where(eq(targetWebsites.userId, ctx.user.id));
+      await tx.update(destinations).set({ telegramChatId: null }).where(eq(destinations.userId, ctx.user.id));
 
       // Remove all delivery chats owned by the user
       await tx.delete(telegramChats).where(eq(telegramChats.userId, ctx.user.id));
@@ -237,18 +237,18 @@ export const telegramRouter = router({
 
     const tws = await db
       .select({
-        id: targetWebsites.id,
-        name: targetWebsites.name,
-        url: targetWebsites.url,
-        templateType: targetWebsites.templateType,
-        templateId: targetWebsites.templateId,
-        telegramChatId: targetWebsites.telegramChatId,
-        isActive: targetWebsites.isActive,
-        createdAt: targetWebsites.createdAt,
+        id: destinations.id,
+        name: destinations.name,
+        url: destinations.url,
+        templateType: destinations.templateType,
+        templateId: destinations.templateId,
+        telegramChatId: destinations.telegramChatId,
+        isActive: destinations.isActive,
+        createdAt: destinations.createdAt,
       })
-      .from(targetWebsites)
-      .where(eq(targetWebsites.userId, ctx.user.id))
-      .orderBy(desc(targetWebsites.createdAt));
+      .from(destinations)
+      .where(eq(destinations.userId, ctx.user.id))
+      .orderBy(desc(destinations.createdAt));
 
     const chatIds = Array.from(new Set(tws.map((t) => t.telegramChatId).filter((x): x is string => !!x)));
     const chats = chatIds.length
@@ -330,9 +330,9 @@ export const telegramRouter = router({
 
           // Bulk-apply mapping to all destinations/templates for this user
           await tx
-            .update(targetWebsites)
+            .update(destinations)
             .set({ telegramChatId: chatId })
-            .where(eq(targetWebsites.userId, ctx.user.id));
+            .where(eq(destinations.userId, ctx.user.id));
         });
 
         return { success: true };
@@ -358,14 +358,14 @@ export const telegramRouter = router({
       if (!db) throw new Error("DB unavailable");
 
       const [tw] = await db
-        .select({ id: targetWebsites.id, userId: targetWebsites.userId })
-        .from(targetWebsites)
-        .where(eq(targetWebsites.id, input.targetWebsiteId))
+        .select({ id: destinations.id, userId: destinations.userId })
+        .from(destinations)
+        .where(eq(destinations.id, input.targetWebsiteId))
         .limit(1);
       if (!tw || tw.userId !== ctx.user.id) throw new Error("Destination not found");
 
       if (input.telegramChatId == null) {
-        await db.update(targetWebsites).set({ telegramChatId: null }).where(eq(targetWebsites.id, input.targetWebsiteId));
+        await db.update(destinations).set({ telegramChatId: null }).where(eq(destinations.id, input.targetWebsiteId));
         return { success: true };
       }
 
@@ -377,7 +377,7 @@ export const telegramRouter = router({
         .limit(1);
       if (!chat || chat.userId !== ctx.user.id || chat.type !== "DELIVERY") throw new Error("Chat not found");
 
-      await db.update(targetWebsites).set({ telegramChatId: chat.chatId }).where(eq(targetWebsites.id, input.targetWebsiteId));
+      await db.update(destinations).set({ telegramChatId: chat.chatId }).where(eq(destinations.id, input.targetWebsiteId));
       return { success: true };
     }),
 });

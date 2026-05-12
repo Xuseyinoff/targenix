@@ -1,6 +1,6 @@
 /**
  * createPayload — pure helpers that translate `DynamicForm` values into the
- * shape expected by the `targetWebsites.create` tRPC mutation.
+ * shape expected by the `destinations.create` tRPC mutation.
  *
  * Extracted from `DestinationCreatorDrawer.tsx` so the mapping logic is:
  *   1. Unit-testable in isolation (no React / tRPC / toast dependencies).
@@ -17,7 +17,7 @@ import type { FieldValues } from "@/components/dynamic-form";
 // ─── Supported app keys ──────────────────────────────────────────────────────
 
 /**
- * Manifest `app.key` → `targetWebsites.create` templateType. Apps not in
+ * Manifest `app.key` → `destinations.create` templateType. Apps not in
  * this map are rejected by `buildCreatePayload`.
  *
  * "http-api-key" entries use the generic handler below — no per-app branch
@@ -51,7 +51,7 @@ export function isSupportedAppKey(key: string): key is SupportedAppKey {
 // ─── Payload shape ───────────────────────────────────────────────────────────
 
 /**
- * Typed union describing what `targetWebsites.create` accepts per template
+ * Typed union describing what `destinations.create` accepts per template
  * type. Kept narrow so the call site gets compile-time help when the server
  * contract changes.
  */
@@ -95,7 +95,7 @@ export type CreatePayload =
 // ─── Builder ─────────────────────────────────────────────────────────────────
 
 /**
- * Convert dynamic-form values into a `targetWebsites.create` payload.
+ * Convert dynamic-form values into a `destinations.create` payload.
  * Throws with a user-facing message when a required field is missing or a
  * complex field (e.g. headers JSON) fails to parse.
  */
@@ -159,7 +159,7 @@ export function buildCreatePayload(
     // contract identical we accept BOTH shapes:
     //   • Array<{ name, value }>  (new row-builder output)
     //   • string (legacy raw JSON) (persisted templates, unit tests)
-    // and always emit Record<string, string> to targetWebsites.create.
+    // and always emit Record<string, string> to destinations.create.
     const headers = Array.isArray(v.headers)
       ? collectHeadersArray(v.headers as Array<Record<string, unknown>>)
       : parseHeadersJson(asString(v.headers));

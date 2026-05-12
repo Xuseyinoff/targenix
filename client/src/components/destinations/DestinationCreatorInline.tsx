@@ -116,7 +116,7 @@ export function DestinationCreatorInline({
   const { data: apps = [], isLoading: loadingApps } =
     trpc.apps.list.useQuery();
 
-  const createMutation = trpc.targetWebsites.create.useMutation();
+  const createMutation = trpc.destinations.create.useMutation();
 
   const supportedApps = React.useMemo(
     () =>
@@ -217,7 +217,7 @@ export function DestinationCreatorInline({
         );
         return;
       }
-      await utils.targetWebsites.list.invalidate();
+      await utils.destinations.list.invalidate();
       toast.success(`Created "${result.name ?? effectiveName}"`);
       const fallbackTemplateType = isSupportedAppKey(selectedApp.key)
         ? APP_KEY_TO_TEMPLATE_TYPE[selectedApp.key]

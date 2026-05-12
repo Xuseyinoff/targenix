@@ -434,7 +434,7 @@ async function strictSyncLegacyDestination(
   integrationId: number,
   targetWebsiteId: number | null,
 ): Promise<void> {
-  const { syncLegacyDestination } = await import("./services/integrationDestinations");
+  const { syncLegacyDestination } = await import("./services/integrationRoutes");
   try {
     await syncLegacyDestination(db, integrationId, targetWebsiteId);
   } catch (err) {
@@ -538,7 +538,7 @@ export async function createIntegration(data: {
   });
 
   // Strict dual-write into the new join table. Since the legacy fallback
-  // was retired (see services/integrationDestinations.ts:resolve…), the
+  // was retired (see services/integrationRoutes.ts:resolve…), the
   // delivery resolver ONLY reads from integration_destinations — an
   // integration without rows here silently drops every lead. We treat a
   // failure as fatal and roll back the parent row so the user can retry
@@ -551,7 +551,7 @@ export async function createIntegration(data: {
         // Multi-destination path: write all ids in order.
         // `setIntegrationDestinations` runs inside its own transaction so
         // the mapping is consistent even if the process crashes mid-way.
-        const { setIntegrationDestinations } = await import("./services/integrationDestinations");
+        const { setIntegrationDestinations } = await import("./services/integrationRoutes");
         await setIntegrationDestinations(db, insertedId, destIds);
       } else {
         // Single-destination path: mirror the column id.
@@ -697,12 +697,12 @@ export async function updateIntegration(
   //     mutation fail forces the caller to retry until consistent.
   if (destinationIds !== undefined) {
     const { setIntegrationDestinations } = await import(
-      "./services/integrationDestinations"
+      "./services/integrationRoutes"
     );
     await setIntegrationDestinations(db, id, destinationIds);
   } else if (twIdForSync !== undefined) {
     const { countIntegrationDestinations } = await import(
-      "./services/integrationDestinations"
+      "./services/integrationRoutes"
     );
     const existingCount = await countIntegrationDestinations(db, id);
 

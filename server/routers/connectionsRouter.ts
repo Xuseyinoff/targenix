@@ -27,7 +27,7 @@ import {
   connections,
   destinationTemplates,
   oauthTokens,
-  targetWebsites,
+  destinations,
 } from "../../drizzle/schema";
 import { encrypt } from "../encryption";
 import {
@@ -89,7 +89,7 @@ interface ListedConnection {
 // ─── Credential scrub helper ─────────────────────────────────────────────────
 //
 // Used by `disconnect` to remove credential-shaped fields from
-// `targetWebsites.templateConfig` without nuking the non-secret
+// `destinations.templateConfig` without nuking the non-secret
 // configuration. Names that look like credentials (api_key, secret,
 // token, password, *Encrypted, or the catch-all `secrets`/`credentials`
 // nested objects) drop out; everything else (spreadsheetId, sheetName,
@@ -390,19 +390,19 @@ export const connectionsRouter = router({
 
       return db
         .select({
-          id: targetWebsites.id,
-          name: targetWebsites.name,
-          templateType: targetWebsites.templateType,
-          isActive: targetWebsites.isActive,
+          id: destinations.id,
+          name: destinations.name,
+          templateType: destinations.templateType,
+          isActive: destinations.isActive,
         })
-        .from(targetWebsites)
+        .from(destinations)
         .where(
           and(
-            eq(targetWebsites.userId, userId),
-            eq(targetWebsites.connectionId, input.id),
+            eq(destinations.userId, userId),
+            eq(destinations.connectionId, input.id),
           ),
         )
-        .orderBy(desc(targetWebsites.createdAt));
+        .orderBy(desc(destinations.createdAt));
     }),
 
   /** Rename a connection — only the displayName is touched. */
@@ -449,7 +449,7 @@ export const connectionsRouter = router({
   /**
    * Remove the connection and clear every target_websites.connectionId that
    * pointed at it. In addition to the FK clear we SCRUB credential-shaped
-   * keys from `targetWebsites.templateConfig` so disconnect = real
+   * keys from `destinations.templateConfig` so disconnect = real
    * disconnect, not "soft-disconnect with backup credential still on disk".
    *
    * Sprint 2 / Item 2.1 — the previous version left `templateConfig.secrets`
@@ -488,14 +488,14 @@ export const connectionsRouter = router({
         // set is tiny in practice (usually <10 rows per connection).
         const affected = await tx
           .select({
-            id: targetWebsites.id,
-            templateConfig: targetWebsites.templateConfig,
+            id: destinations.id,
+            templateConfig: destinations.templateConfig,
           })
-          .from(targetWebsites)
+          .from(destinations)
           .where(
             and(
-              eq(targetWebsites.userId, userId),
-              eq(targetWebsites.connectionId, input.id),
+              eq(destinations.userId, userId),
+              eq(destinations.connectionId, input.id),
             ),
           );
 
@@ -503,9 +503,9 @@ export const connectionsRouter = router({
           const { scrubbed, removed } = scrubSecretsFromTemplateConfig(tw.templateConfig);
           scrubbedKeysCount += removed;
           await tx
-            .update(targetWebsites)
+            .update(destinations)
             .set({ connectionId: null, templateConfig: scrubbed })
-            .where(eq(targetWebsites.id, tw.id));
+            .where(eq(destinations.id, tw.id));
         }
 
         await tx

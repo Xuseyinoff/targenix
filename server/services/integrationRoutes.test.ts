@@ -20,7 +20,7 @@ import {
   resolveIntegrationDestinations,
   setIntegrationDestinations,
   syncLegacyDestination,
-} from "./integrationDestinations";
+} from "./integrationRoutes";
 import type { DbClient } from "../db";
 
 // ─── test doubles ──────────────────────────────────────────────────────────

@@ -12,8 +12,8 @@
  *
  * Data sources:
  *   • `trpc.apps.list` — code-registered manifests (Telegram, Sheets, HTTP)
- *   • `trpc.targetWebsites.getTemplates` — admin-managed UZ-CPA affiliates
- *   • `trpc.targetWebsites.list` — used only to derive the "top apps" bucket
+ *   • `trpc.destinations.getTemplates` — admin-managed UZ-CPA affiliates
+ *   • `trpc.destinations.list` — used only to derive the "top apps" bucket
  *
  * Click behaviour (intentionally non-destructive for this iteration):
  *   • manifest apps Google/Telegram → close modal, scroll to their section
@@ -188,11 +188,11 @@ export function AppPickerModal({
     staleTime: 5 * 60 * 1000,
     enabled: open,
   });
-  const { data: templates = [] } = trpc.targetWebsites.getTemplates.useQuery(undefined, {
+  const { data: templates = [] } = trpc.destinations.getTemplates.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
     enabled: open,
   });
-  const { data: existingDests = [] } = trpc.targetWebsites.list.useQuery(undefined, {
+  const { data: existingDests = [] } = trpc.destinations.list.useQuery(undefined, {
     staleTime: 60 * 1000,
     enabled: open,
   });

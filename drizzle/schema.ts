@@ -447,13 +447,12 @@ export type InsertConnectionEvent = typeof connectionEvents.$inferInsert;
 //   legacy:  { apiKeyEncrypted, ... }
 //   dynamic: { secrets: { api_key: "encrypted:..." }, variables: {} }
 //   telegram: { botTokenEncrypted, chatId, messageTemplate }
-// Note: SQL table name renamed to `destinations` via migration 0069
-// (2026-05-12). The legacy name `target_websites` still resolves at the
-// DB level via a backward-compat VIEW, so old hand-written SQL outside
-// Drizzle continues to work during the transition. The TS export
-// `targetWebsites` is kept as an alias of `destinations` further down,
-// so existing code paths compile + query identically.
-export const targetWebsites = mysqlTable("destinations", {
+// 2026-05-12: SQL table renamed to `destinations` via migration 0069.
+// The legacy name `target_websites` still resolves at the DB level via a
+// backward-compat VIEW, so hand-written SQL outside Drizzle keeps working
+// during the transition. The VIEW will be dropped in a follow-up migration
+// once every caller has settled on the new name.
+export const destinations = mysqlTable("destinations", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
   name: varchar("name", { length: 255 }).notNull(),
@@ -503,18 +502,8 @@ export const targetWebsites = mysqlTable("destinations", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 
-export type TargetWebsite = typeof targetWebsites.$inferSelect;
-export type InsertTargetWebsite = typeof targetWebsites.$inferInsert;
-
-// ─── Modern industry-standard aliases (Segment / Mixpanel / Make.com) ────────
-// New code should prefer `Destination` over the legacy `TargetWebsite` name.
-// The DB table stays `target_websites` for now — renaming columns/tables is a
-// separate, riskier migration. Adding type aliases is additive: every existing
-// caller using `TargetWebsite` continues to compile unchanged.
-export type Destination = TargetWebsite;
-export type InsertDestination = InsertTargetWebsite;
-/** Convenience alias for the live runtime table object. */
-export const destinations = targetWebsites;
+export type Destination = typeof destinations.$inferSelect;
+export type InsertDestination = typeof destinations.$inferInsert;
 
 // ─── Integrations ─────────────────────────────────────────────────────────────
 // LEAD_ROUTING: full pipeline — FB account → page → form → field map → target website
@@ -589,12 +578,11 @@ export type InsertIntegration = typeof integrations.$inferInsert;
 //   - `enabled` lets a user pause ONE destination without deleting the row.
 //   - `filterJson` is reserved for per-destination Make.com-style filters
 //     (Phase 5+). NULL and unread at this commit.
-// Note: SQL table name renamed to `integration_routes` via migration 0069
-// (2026-05-12). The legacy name `integration_destinations` still resolves
-// at the DB level via a backward-compat VIEW. The TS export
-// `integrationDestinations` is kept as an alias of `integrationRoutes`,
-// so existing code paths compile + query identically.
-export const integrationDestinations = mysqlTable(
+// 2026-05-12: SQL table renamed to `integration_routes` via migration 0069.
+// The legacy name `integration_destinations` still resolves at the DB level
+// via a backward-compat VIEW. The VIEW will be dropped in a follow-up
+// migration once every caller has settled on the new name.
+export const integrationRoutes = mysqlTable(
   "integration_routes",
   {
     id: int("id").autoincrement().primaryKey(),
@@ -627,18 +615,8 @@ export const integrationDestinations = mysqlTable(
   }),
 );
 
-export type IntegrationDestination = typeof integrationDestinations.$inferSelect;
-export type InsertIntegrationDestination = typeof integrationDestinations.$inferInsert;
-
-// ─── Modern industry-standard aliases ───────────────────────────────────────
-// `IntegrationRoute` is the Segment/HubSpot-style name for this join table:
-// one Integration → N Routes → each Route points at one Destination. The DB
-// table stays `integration_destinations` for now; aliases let new code use
-// the clearer name without a migration.
-export type IntegrationRoute = IntegrationDestination;
-export type InsertIntegrationRoute = InsertIntegrationDestination;
-/** Convenience alias for the live runtime table object. */
-export const integrationRoutes = integrationDestinations;
+export type IntegrationRoute = typeof integrationRoutes.$inferSelect;
+export type InsertIntegrationRoute = typeof integrationRoutes.$inferInsert;
 
 // ─── Leads ────────────────────────────────────────────────────────────────────
 export const leads = mysqlTable("leads", {

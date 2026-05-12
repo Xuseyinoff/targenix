@@ -1,7 +1,7 @@
 import type { DeliveryErrorType } from "../lib/orderRetryPolicy";
 import type { LeadPayload } from "../services/affiliateService";
 import type { DbClient } from "../db";
-import type { leads, targetWebsites, destinationTemplates } from "../../drizzle/schema";
+import type { leads, destinations, destinationTemplates } from "../../drizzle/schema";
 
 export type DeliveryResult = {
   success: boolean;
@@ -27,7 +27,7 @@ export interface DeliveryContext {
   db: DbClient;
   userId: number;
   lead?: typeof leads.$inferSelect;
-  targetWebsite?: typeof targetWebsites.$inferSelect;
+  targetWebsite?: typeof destinations.$inferSelect;
   destinationTemplate?: typeof destinationTemplates.$inferSelect;
   variableFields?: Record<string, string>;
 }

@@ -26,7 +26,7 @@ import {
   facebookForms,
   facebookOauthStates,
   oauthStates,
-  targetWebsites,
+  destinations,
   integrations,
   leads,
   orders,
@@ -431,7 +431,7 @@ export const authRouter = router({
     await db.delete(orders).where(eq(orders.userId, userId));
     await db.delete(leads).where(eq(leads.userId, userId));
     await db.delete(integrations).where(eq(integrations.userId, userId));
-    await db.delete(targetWebsites).where(eq(targetWebsites.userId, userId));
+    await db.delete(destinations).where(eq(destinations.userId, userId));
     await db.delete(facebookForms).where(eq(facebookForms.userId, userId));
     await db.delete(facebookConnections).where(eq(facebookConnections.userId, userId));
     await db.delete(facebookAccounts).where(eq(facebookAccounts.userId, userId));

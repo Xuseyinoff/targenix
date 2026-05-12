@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { adminProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { integrations, leads, orders, targetWebsites, users } from "../../drizzle/schema";
+import { integrations, leads, orders, destinations, users } from "../../drizzle/schema";
 import { and, count, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { retryAllFailedLeads, retryStuckPendingLeads } from "../services/retryScheduler";
 import { batchResolvePageFormDisplayNames, leadSourcePairKey } from "../services/facebookFormsService";
@@ -176,9 +176,9 @@ export const adminLeadsRouter = router({
     const uniqueTwIds = Array.from(new Set(targetWebsiteIds));
     if (uniqueTwIds.length) {
       const tws = await db
-        .select({ id: targetWebsites.id, name: targetWebsites.name })
-        .from(targetWebsites)
-        .where(inArray(targetWebsites.id, uniqueTwIds));
+        .select({ id: destinations.id, name: destinations.name })
+        .from(destinations)
+        .where(inArray(destinations.id, uniqueTwIds));
       for (const tw of tws) targetWebsiteById.set(tw.id, { name: tw.name });
     }
 

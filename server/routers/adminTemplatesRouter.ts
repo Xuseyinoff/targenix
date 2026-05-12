@@ -353,7 +353,7 @@ export const adminTemplatesRouter = router({
       // Snapshot the appKey BEFORE deleting so we know which mirror row to
       // remove. Mirror sync is best-effort: if the delete succeeds but the
       // mirror removal fails, we log and move on — the template is gone so
-      // the orphan app_actions row is inert (no targetWebsites reference it).
+      // the orphan app_actions row is inert (no destinations reference it).
       const [snapshot] = await db
         .select({ appKey: destinationTemplates.appKey })
         .from(destinationTemplates)

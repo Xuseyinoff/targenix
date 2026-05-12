@@ -8,7 +8,7 @@ import type { AppManifest } from "../manifest";
  *
  * Marked `internal: true` so it's filtered out of user-facing app pickers.
  * The admin templates surface is exposed through a separate route —
- * `targetWebsites.getTemplates` — which returns the actual affiliate rows.
+ * `destinations.getTemplates` — which returns the actual affiliate rows.
  */
 export const dynamicTemplateApp: AppManifest = {
   key: "dynamic-template",

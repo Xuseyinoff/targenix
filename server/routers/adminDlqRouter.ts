@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { adminProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { integrations, leads, orders, targetWebsites, users } from "../../drizzle/schema";
+import { integrations, leads, orders, destinations, users } from "../../drizzle/schema";
 import { and, count, desc, eq, gte, lt, lte, sql } from "drizzle-orm";
 import { ORDER_MAX_DELIVERY_ATTEMPTS } from "../lib/orderRetryPolicy";
 import { retryFailedOrderDelivery } from "../services/leadService";
@@ -159,14 +159,14 @@ export const adminDlqRouter = router({
             leadName:        leads.fullName,
             leadPhone:       leads.phone,
             integrationName: integrations.name,
-            appKey:          targetWebsites.appKey,
+            appKey:          destinations.appKey,
             userName:        users.name,
             userEmail:       users.email,
           })
           .from(orders)
           .innerJoin(leads,          eq(orders.leadId,          leads.id))
           .innerJoin(integrations,   eq(orders.integrationId,   integrations.id))
-          .innerJoin(targetWebsites, eq(orders.destinationId,   targetWebsites.id))
+          .innerJoin(destinations, eq(orders.destinationId,   destinations.id))
           .innerJoin(users,          eq(orders.userId,          users.id))
           .where(where)
           .orderBy(desc(orders.lastAttemptAt))

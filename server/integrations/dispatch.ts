@@ -22,7 +22,7 @@ import "./apps/index";
 
 import { eq } from "drizzle-orm";
 import type { DbClient } from "../db";
-import type { Connection, leads, targetWebsites } from "../../drizzle/schema";
+import type { Connection, leads, destinations } from "../../drizzle/schema";
 import { connections as connectionsTable, appActions, destinationTemplates } from "../../drizzle/schema";
 import type { LeadPayload } from "../services/affiliateService";
 import type { DeliveryResult } from "./types";
@@ -37,7 +37,7 @@ export interface DispatchContext {
   /** Raw integrations.config JSON (targetUrl, variableFields, offerId, flow, …). */
   integrationConfig: Record<string, unknown>;
   /** Destination row. null → plain-url fallback (legacy behaviour). */
-  targetWebsite: typeof targetWebsites.$inferSelect | null;
+  targetWebsite: typeof destinations.$inferSelect | null;
   /** Lead row for Telegram/Sheets context (pageName, formName, createdAt). */
   leadRow?: Partial<typeof leads.$inferSelect>;
   /** Per-integration variable overrides merged from integrationConfig.variableFields. */

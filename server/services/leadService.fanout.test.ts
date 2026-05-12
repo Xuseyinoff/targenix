@@ -16,7 +16,7 @@
  *
  * We do NOT stub `processLead` here (too many dependencies). Integration
  * behaviour is covered by the existing end-to-end smoke runs in CI and the
- * existing `integrationDestinations.test.ts` unit suite.
+ * existing `integrationRoutes.test.ts` unit suite.
  */
 
 import { describe, it, expect, vi } from "vitest";

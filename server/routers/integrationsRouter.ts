@@ -12,12 +12,12 @@ import { injectVariables } from "../services/affiliateService";
 import { sendLeadTelegramNotification } from "../services/leadService";
 import { sendTelegramRawMessage } from "../services/telegramService";
 import { decrypt } from "../encryption";
-import { targetWebsites, integrationDestinations, type TargetWebsite } from "../../drizzle/schema";
+import { destinations, integrationRoutes, type Destination } from "../../drizzle/schema";
 import { eq, and } from "drizzle-orm";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getAdapter } from "../integrations";
 import { loadConnectionForDelivery } from "../integrations/dispatch";
-import { resolveIntegrationDestinations } from "../services/integrationDestinations";
+import { resolveIntegrationDestinations } from "../services/integrationRoutes";
 import type { DbClient } from "../db";
 import type { FilterRule } from "../services/filterEngine";
 
@@ -33,22 +33,22 @@ export const integrationsRouter = router({
         const cfg = integration.config as Record<string, unknown> | null;
         if (!integration.targetWebsiteId) return integration;
         const [tw] = await db
-          .select({ id: targetWebsites.id, name: targetWebsites.name })
-          .from(targetWebsites)
+          .select({ id: destinations.id, name: destinations.name })
+          .from(destinations)
           .where(and(
-            eq(targetWebsites.id, integration.targetWebsiteId),
-            eq(targetWebsites.userId, ctx.user.id),
+            eq(destinations.id, integration.targetWebsiteId),
+            eq(destinations.userId, ctx.user.id),
           ))
           .limit(1);
         // Also enrich with ordered destinationIds from integration_destinations
         const destRows = await db
-          .select({ targetWebsiteId: integrationDestinations.targetWebsiteId })
-          .from(integrationDestinations)
+          .select({ targetWebsiteId: integrationRoutes.targetWebsiteId })
+          .from(integrationRoutes)
           .where(and(
-            eq(integrationDestinations.integrationId, integration.id),
-            eq(integrationDestinations.enabled, true),
+            eq(integrationRoutes.integrationId, integration.id),
+            eq(integrationRoutes.enabled, true),
           ))
-          .orderBy(asc(integrationDestinations.position), asc(integrationDestinations.id));
+          .orderBy(asc(integrationRoutes.position), asc(integrationRoutes.id));
         const destinationIds = destRows.map((r) => r.targetWebsiteId);
         return {
           ...integration,
@@ -107,12 +107,12 @@ export const integrationsRouter = router({
       if (safeDestinationIds && safeDestinationIds.length > 0) {
         const db = await getDb();
         if (db) {
-          const { targetWebsites } = await import("../../drizzle/schema");
+          const { destinations } = await import("../../drizzle/schema");
           const owned = await db
-            .select({ id: targetWebsites.id })
-            .from(targetWebsites)
+            .select({ id: destinations.id })
+            .from(destinations)
             .where(
-              inArray(targetWebsites.id, safeDestinationIds),
+              inArray(destinations.id, safeDestinationIds),
             );
           const ownedSet = new Set(owned.map((r) => r.id));
           // Preserve original ordering; drop ids not owned by this user.
@@ -183,11 +183,11 @@ export const integrationsRouter = router({
       if (safeDestinationIds && safeDestinationIds.length > 0) {
         const db = await getDb();
         if (db) {
-          const { targetWebsites } = await import("../../drizzle/schema");
+          const { destinations } = await import("../../drizzle/schema");
           const ownedRows = await db
-            .select({ id: targetWebsites.id })
-            .from(targetWebsites)
-            .where(inArray(targetWebsites.id, safeDestinationIds));
+            .select({ id: destinations.id })
+            .from(destinations)
+            .where(inArray(destinations.id, safeDestinationIds));
           const ownedSet = new Set(ownedRows.map((r) => r.id));
           safeDestinationIds = safeDestinationIds.filter((id) =>
             ownedSet.has(id),
@@ -378,15 +378,15 @@ export const integrationsRouter = router({
 
       const rows = await db
         .select({
-          mappingId: integrationDestinations.id,
-          targetWebsiteId: integrationDestinations.targetWebsiteId,
-          filterJson: integrationDestinations.filterJson,
-          position: integrationDestinations.position,
-          enabled: integrationDestinations.enabled,
+          mappingId: integrationRoutes.id,
+          targetWebsiteId: integrationRoutes.targetWebsiteId,
+          filterJson: integrationRoutes.filterJson,
+          position: integrationRoutes.position,
+          enabled: integrationRoutes.enabled,
         })
-        .from(integrationDestinations)
-        .where(eq(integrationDestinations.integrationId, input.integrationId))
-        .orderBy(asc(integrationDestinations.position), asc(integrationDestinations.id));
+        .from(integrationRoutes)
+        .where(eq(integrationRoutes.integrationId, input.integrationId))
+        .orderBy(asc(integrationRoutes.position), asc(integrationRoutes.id));
 
       return rows.map((r) => ({
         ...r,
@@ -424,11 +424,11 @@ export const integrationsRouter = router({
       }
 
       await db
-        .update(integrationDestinations)
+        .update(integrationRoutes)
         .set({ filterJson: input.filter })
         .where(and(
-          eq(integrationDestinations.integrationId, input.integrationId),
-          eq(integrationDestinations.targetWebsiteId, input.targetWebsiteId),
+          eq(integrationRoutes.integrationId, input.integrationId),
+          eq(integrationRoutes.targetWebsiteId, input.targetWebsiteId),
         ));
 
       return { ok: true };
@@ -448,7 +448,7 @@ export const integrationsRouter = router({
  */
 async function sendTestLeadToDestination(args: {
   db: DbClient;
-  tw: TargetWebsite;
+  tw: Destination;
   testLead: {
     leadgenId: string;
     fullName: string;

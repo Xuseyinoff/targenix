@@ -1,4 +1,4 @@
-import type { Connection, targetWebsites } from "../../../drizzle/schema";
+import type { Connection, destinations } from "../../../drizzle/schema";
 import { sendLeadViaTemplate, type LeadPayload } from "../../services/affiliateService";
 import type { DbClient } from "../../db";
 import type { DeliveryResult } from "../types";
@@ -8,7 +8,7 @@ interface DynamicTemplateAdapterConfig {
   db: DbClient;
   /** Full row preferred — needs `actionId` for Stage 2 `app_actions` path. */
   targetWebsite: Pick<
-    typeof targetWebsites.$inferSelect,
+    typeof destinations.$inferSelect,
     "id" | "templateId" | "templateConfig" | "actionId" | "appKey"
   >;
   variableFields: Record<string, string>;
@@ -40,7 +40,7 @@ export const dynamicTemplateAdapter = {
 
     const loaded = await loadDynamicExecutionTemplate(
       db,
-      targetWebsite as typeof targetWebsites.$inferSelect,
+      targetWebsite as typeof destinations.$inferSelect,
     );
     if (!loaded) {
       return {

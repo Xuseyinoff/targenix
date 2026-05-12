@@ -1,11 +1,11 @@
 import { and, desc, eq, lt } from "drizzle-orm";
-import { facebookConnections, facebookAccounts, facebookForms, integrationDestinations, leads, orders, integrations, users, targetWebsites, workflows } from "../../drizzle/schema";
+import { facebookConnections, facebookAccounts, facebookForms, integrationRoutes, leads, orders, integrations, users, destinations, workflows } from "../../drizzle/schema";
 import { getDb, type DbClient } from "../db";
 import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 import { dispatchDelivery } from "../integrations/dispatch";
-import { resolveIntegrationDestinations, type ResolvedDestination } from "./integrationDestinations";
+import { resolveIntegrationDestinations, type ResolvedDestination } from "./integrationRoutes";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
 import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
@@ -412,9 +412,9 @@ export async function sendLeadTelegramNotification(params: {
         const twId = intg.targetWebsiteId;
         if (twId) {
           const [tw] = await db
-            .select({ name: targetWebsites.name })
-            .from(targetWebsites)
-            .where(eq(targetWebsites.id, twId))
+            .select({ name: destinations.name })
+            .from(destinations)
+            .where(eq(destinations.id, twId))
             .limit(1);
           targetWebsiteName = tw?.name ?? null;
         }
@@ -1345,16 +1345,16 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
   let preResolvedDestination: ResolvedDestination | undefined;
   if (order.destinationId > 0) {
     const [destRow] = await db
-      .select({ mapping: integrationDestinations, tw: targetWebsites })
-      .from(integrationDestinations)
+      .select({ mapping: integrationRoutes, tw: destinations })
+      .from(integrationRoutes)
       .innerJoin(
-        targetWebsites,
-        eq(integrationDestinations.targetWebsiteId, targetWebsites.id),
+        destinations,
+        eq(integrationRoutes.targetWebsiteId, destinations.id),
       )
       .where(
         and(
-          eq(integrationDestinations.id, order.destinationId),
-          eq(integrationDestinations.integrationId, integration.id),
+          eq(integrationRoutes.id, order.destinationId),
+          eq(integrationRoutes.integrationId, integration.id),
         ),
       )
       .limit(1);

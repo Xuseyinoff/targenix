@@ -25,15 +25,15 @@
 import { and, eq } from "drizzle-orm";
 import type { DbClient } from "../db";
 import {
-  integrationDestinations,
+  integrationRoutes,
   integrations,
-  targetWebsites,
+  destinations,
   type Integration,
-  type TargetWebsite,
+  type Destination,
 } from "../../drizzle/schema";
 import type { FilterRule } from "./filterEngine";
 
-export type IntegrationDestinationRow = typeof integrationDestinations.$inferSelect;
+export type IntegrationRouteRow = typeof integrationRoutes.$inferSelect;
 
 /**
  * Shape returned by resolveIntegrationDestinations() — each element is
@@ -49,7 +49,7 @@ export interface ResolvedDestination {
   /** Whether this destination is currently enabled (legacy path: always true). */
   enabled: boolean;
   /** Full target_websites row — the dispatcher needs the whole thing. */
-  targetWebsite: TargetWebsite;
+  targetWebsite: Destination;
   /** Per-destination filter rule. null = no filter (always deliver). */
   filterJson: FilterRule | null;
 }
@@ -86,8 +86,8 @@ export async function setIntegrationDestinations(
     //     code than a clean re-insert.
     //   - CASCADE from FK handles the parent delete; this handles edits.
     await tx
-      .delete(integrationDestinations)
-      .where(eq(integrationDestinations.integrationId, integrationId));
+      .delete(integrationRoutes)
+      .where(eq(integrationRoutes.integrationId, integrationId));
 
     if (ids.length === 0) return;
 
@@ -98,7 +98,7 @@ export async function setIntegrationDestinations(
       enabled: true,
     }));
 
-    await tx.insert(integrationDestinations).values(rows);
+    await tx.insert(integrationRoutes).values(rows);
   });
 }
 
@@ -139,9 +139,9 @@ export async function countIntegrationDestinations(
 ): Promise<number> {
   if (!Number.isFinite(integrationId) || integrationId <= 0) return 0;
   const rows = await db
-    .select({ id: integrationDestinations.id })
-    .from(integrationDestinations)
-    .where(eq(integrationDestinations.integrationId, integrationId));
+    .select({ id: integrationRoutes.id })
+    .from(integrationRoutes)
+    .where(eq(integrationRoutes.integrationId, integrationId));
   return rows.length;
 }
 
@@ -153,17 +153,17 @@ export async function listIntegrationDestinations(
   db: DbClient,
   integrationId: number,
   options: { onlyEnabled?: boolean } = {},
-): Promise<IntegrationDestinationRow[]> {
+): Promise<IntegrationRouteRow[]> {
   const where = options.onlyEnabled
     ? and(
-        eq(integrationDestinations.integrationId, integrationId),
-        eq(integrationDestinations.enabled, true),
+        eq(integrationRoutes.integrationId, integrationId),
+        eq(integrationRoutes.enabled, true),
       )
-    : eq(integrationDestinations.integrationId, integrationId);
+    : eq(integrationRoutes.integrationId, integrationId);
 
   const rows = await db
     .select()
-    .from(integrationDestinations)
+    .from(integrationRoutes)
     .where(where);
 
   // Stable position-then-id ordering. Drizzle MySQL doesn't compose
@@ -202,18 +202,18 @@ export async function resolveIntegrationDestinations(
   // unit tests stub a minimal chain).
   const rows = await db
     .select({
-      mapping: integrationDestinations,
-      tw: targetWebsites,
+      mapping: integrationRoutes,
+      tw: destinations,
     })
-    .from(integrationDestinations)
+    .from(integrationRoutes)
     .innerJoin(
-      targetWebsites,
-      eq(integrationDestinations.targetWebsiteId, targetWebsites.id),
+      destinations,
+      eq(integrationRoutes.targetWebsiteId, destinations.id),
     )
     .where(
       and(
-        eq(integrationDestinations.integrationId, integration.id),
-        eq(integrationDestinations.enabled, true),
+        eq(integrationRoutes.integrationId, integration.id),
+        eq(integrationRoutes.enabled, true),
       ),
     );
 
@@ -266,17 +266,3 @@ function dedupe(ids: number[]): number[] {
   return out;
 }
 
-// ─── Modern industry-standard aliases ───────────────────────────────────────
-//
-// `Route` is the Segment/HubSpot-style name for an integration→destination
-// mapping. Adding aliases lets new code adopt the clearer name without
-// touching the existing call sites — every old import keeps working.
-//
-// Migration: when a file is opened for unrelated work, prefer the new name
-// in any edits. No big-bang sweep needed.
-export const setIntegrationRoutes = setIntegrationDestinations;
-export const resolveIntegrationRoutes = resolveIntegrationDestinations;
-export const listIntegrationRoutes = listIntegrationDestinations;
-export const countIntegrationRoutes = countIntegrationDestinations;
-export type ResolvedRoute = ResolvedDestination;
-export type IntegrationRouteRow = IntegrationDestinationRow;

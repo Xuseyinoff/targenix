@@ -2,7 +2,7 @@
  * filterEngine.ts — Pure condition evaluator for lead routing filters.
  *
  * No external deps, no eval, no side effects.
- * A FilterRule is stored in integrationDestinations.filterJson.
+ * A FilterRule is stored in integrationRoutes.filterJson.
  * evaluateFilter(rule, lead) returns true = lead passes (should be delivered).
  */
 

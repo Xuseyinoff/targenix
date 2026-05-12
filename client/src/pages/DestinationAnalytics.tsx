@@ -148,7 +148,7 @@ function DrillDown({
   name: string;
 }) {
   const [range, setRange] = useState<DrillRange>("last_7d");
-  const { data, isLoading } = trpc.targetWebsites.getDestinationTimeSeries.useQuery(
+  const { data, isLoading } = trpc.destinations.getDestinationTimeSeries.useQuery(
     { destinationId, range },
     { refetchInterval: 60_000 },
   );
@@ -307,7 +307,7 @@ function DestinationCard({ dest }: { dest: DestStat }) {
 export default function DestinationAnalytics() {
   const [filter, setFilter] = useState<FilterType>("all");
 
-  const { data: destinations = [], isLoading, refetch } = trpc.targetWebsites.getDestinationStats.useQuery(
+  const { data: destinations = [], isLoading, refetch } = trpc.destinations.getDestinationStats.useQuery(
     undefined,
     { refetchInterval: 60_000 },
   );

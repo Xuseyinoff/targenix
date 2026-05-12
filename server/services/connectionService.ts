@@ -18,7 +18,7 @@
  */
 
 import { and, eq, sql } from "drizzle-orm";
-import { connections, oauthTokens, targetWebsites } from "../../drizzle/schema";
+import { connections, oauthTokens, destinations } from "../../drizzle/schema";
 import type { DbClient } from "../db";
 import { validateConnectionType } from "../utils/validateConnectionType";
 
@@ -333,12 +333,12 @@ export async function countDestinationsUsingConnection(
   connectionId: number,
 ): Promise<number> {
   const rows = await db
-    .select({ id: targetWebsites.id })
-    .from(targetWebsites)
+    .select({ id: destinations.id })
+    .from(destinations)
     .where(
       and(
-        eq(targetWebsites.userId, userId),
-        eq(targetWebsites.connectionId, connectionId),
+        eq(destinations.userId, userId),
+        eq(destinations.connectionId, connectionId),
       ),
     );
   return rows.length;
@@ -359,11 +359,11 @@ export async function mapConnectionUsage(
 
   const rows = await db
     .select({
-      connectionId: targetWebsites.connectionId,
-      id: targetWebsites.id,
+      connectionId: destinations.connectionId,
+      id: destinations.id,
     })
-    .from(targetWebsites)
-    .where(eq(targetWebsites.userId, userId));
+    .from(destinations)
+    .where(eq(destinations.userId, userId));
 
   for (const r of rows) {
     if (r.connectionId == null) continue;

@@ -444,9 +444,9 @@ export default function TargetWebsites() {
   const [sheetsLoadError, setSheetsLoadError] = useState<string | null>(null);
 
   const utils = trpc.useUtils();
-  const getSheetHeadersMutation = trpc.targetWebsites.getSheetHeaders.useMutation();
-  const { data: sites = [], isLoading } = trpc.targetWebsites.list.useQuery();
-  const { data: dynTemplates = [] } = trpc.targetWebsites.getTemplates.useQuery();
+  const getSheetHeadersMutation = trpc.destinations.getSheetHeaders.useMutation();
+  const { data: sites = [], isLoading } = trpc.destinations.list.useQuery();
+  const { data: dynTemplates = [] } = trpc.destinations.getTemplates.useQuery();
   const { data: googleIntegrationAccounts = [], isLoading: googleAccountsLoading } =
     trpc.googleAccounts.list.useQuery();
 
@@ -457,38 +457,38 @@ export default function TargetWebsites() {
     type: "google_sheets",
   });
 
-  const createMutation = trpc.targetWebsites.create.useMutation({
+  const createMutation = trpc.destinations.create.useMutation({
     onSuccess: () => {
-      utils.targetWebsites.list.invalidate();
+      utils.destinations.list.invalidate();
       setOpen(false);
       toast.success(t("destinations.toast.targetWebsiteSaved"));
     },
     onError: (e) => toast.error(e.message),
   });
 
-  const updateMutation = trpc.targetWebsites.update.useMutation({
+  const updateMutation = trpc.destinations.update.useMutation({
     onSuccess: () => {
-      utils.targetWebsites.list.invalidate();
+      utils.destinations.list.invalidate();
       setOpen(false);
       toast.success(t("destinations.toast.updated"));
     },
     onError: (e) => toast.error(e.message),
   });
 
-  const deleteMutation = trpc.targetWebsites.delete.useMutation({
+  const deleteMutation = trpc.destinations.delete.useMutation({
     onSuccess: () => {
-      utils.targetWebsites.list.invalidate();
+      utils.destinations.list.invalidate();
       toast.success(t("destinations.toast.deleted"));
     },
     onError: (e) => toast.error(e.message),
   });
 
-  const toggleMutation = trpc.targetWebsites.update.useMutation({
-    onSuccess: () => utils.targetWebsites.list.invalidate(),
+  const toggleMutation = trpc.destinations.update.useMutation({
+    onSuccess: () => utils.destinations.list.invalidate(),
     onError: (e) => toast.error(e.message),
   });
 
-  const testMutation = trpc.targetWebsites.testIntegration.useMutation({
+  const testMutation = trpc.destinations.testIntegration.useMutation({
     onSuccess: (data) => {
       setTestResult(data as TestResult);
       if (data.success) toast.success(t("destinations.toast.testConnected"));
@@ -496,18 +496,18 @@ export default function TargetWebsites() {
     onError: (e) => toast.error(t("destinations.toast.testFailed", { message: e.message })),
   });
 
-  const createFromTemplateMutation = trpc.targetWebsites.createFromTemplate.useMutation({
+  const createFromTemplateMutation = trpc.destinations.createFromTemplate.useMutation({
     onSuccess: () => {
-      utils.targetWebsites.list.invalidate();
+      utils.destinations.list.invalidate();
       setOpen(false);
       toast.success(t("destinations.toast.saved"));
     },
     onError: (e) => toast.error(e.message),
   });
 
-  const updateFromTemplateMutation = trpc.targetWebsites.updateFromTemplate.useMutation({
+  const updateFromTemplateMutation = trpc.destinations.updateFromTemplate.useMutation({
     onSuccess: () => {
-      utils.targetWebsites.list.invalidate();
+      utils.destinations.list.invalidate();
       setOpen(false);
       toast.success(t("destinations.toast.updated"));
     },

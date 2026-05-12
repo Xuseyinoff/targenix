@@ -108,7 +108,7 @@ type DestRecordLike = {
   variableFields?: unknown;
   /** List of keys backed by saved credentials (api_key, bot_token, …). */
   userVisibleFields?: unknown;
-  /** Already-masked view from targetWebsites.list — holds admin defaults + masked secrets. */
+  /** Already-masked view from destinations.list — holds admin defaults + masked secrets. */
   templateConfig?: unknown;
 };
 
@@ -629,8 +629,8 @@ export default function IntegrationWizardV2() {
       { enabled: !!state.accountId && !!state.pageId && !!state.formId },
     );
 
-  const { data: targetWebsites, isLoading: loadingTargets } =
-    trpc.targetWebsites.list.useQuery(undefined);
+  const { data: destinations, isLoading: loadingTargets } =
+    trpc.destinations.list.useQuery(undefined);
 
   const { data: appManifests = [] } = trpc.apps.list.useQuery(undefined, {
     staleTime: 5 * 60 * 1000,
@@ -643,7 +643,7 @@ export default function IntegrationWizardV2() {
   const primaryDestType = primaryDest?.templateType ?? "";
 
   const { data: customVarNames = [] } =
-    trpc.targetWebsites.getCustomVariables.useQuery(
+    trpc.destinations.getCustomVariables.useQuery(
       { id: primaryDestId ?? 0 },
       {
         enabled: !!primaryDestId && primaryDestType === "custom",
@@ -672,7 +672,7 @@ export default function IntegrationWizardV2() {
   // ─── Edit mode: populate wizard state from saved integration ──────────────
   useEffect(() => {
     if (!isEditMode || stateInitialized) return;
-    if (!editIntegration || !targetWebsites) return;
+    if (!editIntegration || !destinations) return;
 
     const cfg = editIntegration.config as Record<string, unknown>;
     const savedDestIds = (editIntegration as unknown as { destinationIds?: number[] }).destinationIds;
@@ -683,7 +683,7 @@ export default function IntegrationWizardV2() {
           ? [Number(cfg.targetWebsiteId)]
           : [];
 
-    const primaryTw = targetWebsites.find((t) => t.id === destIds[0]);
+    const primaryTw = destinations.find((t) => t.id === destIds[0]);
     const primaryType = primaryTw?.templateType ?? (cfg.targetTemplateType as string) ?? "custom";
     const hasTemplate = (primaryTw?.templateId ?? null) !== null;
     const isCustomDest = primaryType === "custom" && !hasTemplate;
@@ -708,8 +708,8 @@ export default function IntegrationWizardV2() {
 
     const savedStaticValues = (cfg.variableFields as Record<string, string>) ?? {};
 
-    const destinations: DestinationEntry[] = destIds.map((id, idx) => {
-      const tw = targetWebsites.find((t) => t.id === id);
+    const destEntries: DestinationEntry[] = destIds.map((id, idx) => {
+      const tw = destinations.find((t) => t.id === id);
       return {
         id,
         name: tw?.name ?? (idx === 0 ? (cfg.targetWebsiteName as string) ?? "" : ""),
@@ -727,13 +727,13 @@ export default function IntegrationWizardV2() {
       pageName: (cfg.pageName as string) ?? "",
       formId: (cfg.formId as string) ?? "",
       formName: (cfg.formName as string) ?? "",
-      destinations,
+      destinations: destEntries,
       integrationName: editIntegration.name,
       integrationNameTouched: true,
     });
     setActiveStep(2);
     setStateInitialized(true);
-  }, [isEditMode, editIntegration, targetWebsites, stateInitialized]);
+  }, [isEditMode, editIntegration, destinations, stateInitialized]);
 
   // ─── Auto-populate per-destination leadFields when form fields load ─────────
   // Runs after the FB form fields arrive (or the destination list updates with
@@ -744,10 +744,10 @@ export default function IntegrationWizardV2() {
   //      will be sent instead of an empty box.
   // Existing user edits are never overwritten — we only fill EMPTY keys.
   useEffect(() => {
-    if (!formFields?.length && !targetWebsites?.length) return;
+    if (!formFields?.length && !destinations?.length) return;
     setState((s) => {
       const updated = s.destinations.map((d) => {
-        const destRecord = targetWebsites?.find((t) => t.id === d.id);
+        const destRecord = destinations?.find((t) => t.id === d.id);
         const manifest = resolveDestManifest(destRecord, d.templateType, d.name, appManifests);
         if (!manifest?.leadFields.length) return d;
 
@@ -777,7 +777,7 @@ export default function IntegrationWizardV2() {
         ? { ...s, destinations: updated }
         : s;
     });
-  }, [formFields, targetWebsites]);
+  }, [formFields, destinations]);
 
   // ─── Trigger variable catalogue (for the Make.com-style Map toggle) ────────
   //
@@ -845,7 +845,7 @@ export default function IntegrationWizardV2() {
   const mappingFilled = useMemo(() => {
     if (!destinationFilled) return false;
     for (const dest of state.destinations) {
-      const destRecord = targetWebsites?.find((t) => t.id === dest.id);
+      const destRecord = destinations?.find((t) => t.id === dest.id);
       const manifest = resolveDestManifest(destRecord, dest.templateType, dest.name, appManifests);
       if (manifest && manifest.leadFields.length > 0) {
         for (const lf of manifest.leadFields) {
@@ -869,7 +869,7 @@ export default function IntegrationWizardV2() {
       }
     }
     return true;
-  }, [destinationFilled, state.destinations, targetWebsites]);
+  }, [destinationFilled, state.destinations, destinations]);
   const nameFilled = !!state.integrationName.trim();
 
   const canSave =
@@ -945,7 +945,7 @@ export default function IntegrationWizardV2() {
   const addDestination = (id: number, name: string, templateType: string) => {
     // Read destination record from already-fetched list (may be undefined if list
     // hasn't loaded yet — auto-populate effect will fill in once it does).
-    const destRecord = targetWebsites?.find((t) => t.id === id);
+    const destRecord = destinations?.find((t) => t.id === id);
     const manifest = resolveDestManifest(destRecord, templateType, name, appManifests);
     const fields = formFields ?? [];
 
@@ -1162,8 +1162,8 @@ export default function IntegrationWizardV2() {
 
   // ─── Derived: primary destination's DB record ──────────────────────────────
   const primaryDestRecord = useMemo(
-    () => targetWebsites?.find((t) => t.id === primaryDestId) ?? null,
-    [targetWebsites, primaryDestId],
+    () => destinations?.find((t) => t.id === primaryDestId) ?? null,
+    [destinations, primaryDestId],
   );
 
   // ─── Derived: primary manifest — DB template first, then server apps ──────
@@ -1197,13 +1197,13 @@ export default function IntegrationWizardV2() {
   // back to Zap when nothing is selected yet.
   const step2Icon = destinationFilled
     ? iconForCategory(
-        targetWebsites?.find((t) => t.id === primaryDestId)?.category ?? "",
+        destinations?.find((t) => t.id === primaryDestId)?.category ?? "",
       )
     : Zap;
   const step2IconColor = destinationFilled
     ? (
         CATEGORY_META[
-          (targetWebsites?.find((t) => t.id === primaryDestId)
+          (destinations?.find((t) => t.id === primaryDestId)
             ?.category ?? "") as DestinationCategory
         ]?.colorClass ?? "text-muted-foreground"
       )
@@ -1357,7 +1357,7 @@ export default function IntegrationWizardV2() {
                     Destination
                   </div>
                   <DestinationEditor
-                    destinations={targetWebsites ?? []}
+                    destinations={destinations ?? []}
                     loading={loadingTargets}
                     selectedIds={state.destinations.map((d) => d.id)}
                     onToggle={(id, name, templateType) => {

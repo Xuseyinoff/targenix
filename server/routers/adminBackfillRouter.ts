@@ -12,7 +12,7 @@
 import { z } from "zod";
 import { adminProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { users, integrations, leads, orders, facebookConnections, facebookAccounts, targetWebsites } from "../../drizzle/schema";
+import { users, integrations, leads, orders, facebookConnections, facebookAccounts, destinations } from "../../drizzle/schema";
 import { and, eq, lt, gte, desc, inArray } from "drizzle-orm";
 import { dispatchLeadProcessing } from "../services/leadDispatch";
 import { retryAllFailedLeads } from "../services/retryScheduler";
@@ -51,9 +51,9 @@ export const adminBackfillRouter = router({
 
           if (intg.targetWebsiteId) {
             const [tw] = await db
-              .select({ name: targetWebsites.name, url: targetWebsites.url })
-              .from(targetWebsites)
-              .where(eq(targetWebsites.id, intg.targetWebsiteId))
+              .select({ name: destinations.name, url: destinations.url })
+              .from(destinations)
+              .where(eq(destinations.id, intg.targetWebsiteId))
               .limit(1);
             if (tw) { targetWebsiteName = tw.name; targetWebsiteUrl = tw.url; }
           }

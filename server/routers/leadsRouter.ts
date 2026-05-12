@@ -11,7 +11,7 @@ import {
   getTodayIntegrationLeadStats,
   getDb,
 } from "../db";
-import { leads, orders, integrations, targetWebsites, facebookForms, facebookConnections } from "../../drizzle/schema";
+import { leads, orders, integrations, destinations, facebookForms, facebookConnections } from "../../drizzle/schema";
 import { batchResolvePageFormDisplayNames, getUserFormsIndex, leadSourcePairKey } from "../services/facebookFormsService";
 import { decrypt } from "../encryption";
 import {
@@ -393,9 +393,9 @@ export const leadsRouter = router({
 
           if (intg?.targetWebsiteId) {
             const [tw] = await db
-              .select({ name: targetWebsites.name, url: targetWebsites.url })
-              .from(targetWebsites)
-              .where(eq(targetWebsites.id, intg.targetWebsiteId))
+              .select({ name: destinations.name, url: destinations.url })
+              .from(destinations)
+              .where(eq(destinations.id, intg.targetWebsiteId))
               .limit(1);
             targetWebsiteName = tw?.name ?? null;
             targetWebsiteUrl = tw?.url ?? null;

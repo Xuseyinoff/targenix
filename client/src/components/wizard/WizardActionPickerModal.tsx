@@ -20,7 +20,7 @@
  *
  * Click handling:
  *   TOP APPS row (always api_key connection, by design — see note below):
- *     → `trpc.targetWebsites.createFromConnection` → emits the fresh
+ *     → `trpc.destinations.createFromConnection` → emits the fresh
  *       target_websites row back to the parent. One-click.
  *
  *   POPULAR APPS row (manifest — Sheets / Telegram / Custom HTTP):
@@ -203,7 +203,7 @@ export function WizardActionPickerModal({
     staleTime: 5 * 60 * 1000,
     enabled: open,
   });
-  const { data: templates = [] } = trpc.targetWebsites.getTemplates.useQuery(
+  const { data: templates = [] } = trpc.destinations.getTemplates.useQuery(
     undefined,
     { staleTime: 5 * 60 * 1000, enabled: open },
   );
@@ -213,7 +213,7 @@ export function WizardActionPickerModal({
   });
 
   const createFromConnection =
-    trpc.targetWebsites.createFromConnection.useMutation();
+    trpc.destinations.createFromConnection.useMutation();
 
   // Lookup: templateId → template metadata (icon / colour / name).
   const templateById = useMemo(() => {
@@ -356,10 +356,10 @@ export function WizardActionPickerModal({
     setBusyRow(rowId);
     try {
       const res = await createFromConnection.mutateAsync({ connectionId });
-      // Refetch (not just invalidate) so the wizard's targetWebsites list has
+      // Refetch (not just invalidate) so the wizard's destinations list has
       // the fresh row by the time addDestination() reads it — prevents a
       // frame where the mapping grid renders with an empty manifest.
-      await utils.targetWebsites.list.refetch();
+      await utils.destinations.list.refetch();
       onDestinationReady(res.id, res.name, "custom");
       onOpenChange(false);
       toast.success(`${nameHint} added`);
@@ -406,7 +406,7 @@ export function WizardActionPickerModal({
     setBusyRow(`tpl-${tpl.id}`);
     try {
       const res = await createFromConnection.mutateAsync({ connectionId });
-      await utils.targetWebsites.list.refetch();
+      await utils.destinations.list.refetch();
       await utils.connections.list.invalidate();
       onDestinationReady(res.id, res.name, "custom");
       onOpenChange(false);

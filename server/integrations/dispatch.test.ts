@@ -21,7 +21,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { DbClient } from "../db";
-import type { Connection, targetWebsites } from "../../drizzle/schema";
+import type { Connection, destinations } from "../../drizzle/schema";
 import type { DeliveryAdapter, DeliveryResult } from "./types";
 import { registerAdapter, getAdapter } from "./registry";
 import { dispatchDelivery, type DispatchContext } from "./dispatch";
@@ -79,8 +79,8 @@ const LEAD: LeadPayload = {
 };
 
 function makeTw(
-  overrides: Partial<typeof targetWebsites.$inferSelect> = {},
-): typeof targetWebsites.$inferSelect {
+  overrides: Partial<typeof destinations.$inferSelect> = {},
+): typeof destinations.$inferSelect {
   return {
     id: 1000,
     userId: 1,
@@ -99,7 +99,7 @@ function makeTw(
     createdAt: new Date(),
     updatedAt: new Date(),
     ...overrides,
-  } as unknown as typeof targetWebsites.$inferSelect;
+  } as unknown as typeof destinations.$inferSelect;
 }
 
 const STUB_DB = {} as DbClient;
