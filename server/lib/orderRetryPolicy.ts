@@ -1,15 +1,43 @@
+// Retry policy tunables — read from env at module load with safe defaults.
+// All values can be overridden per-deployment without touching code.
+
+function envInt(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (!raw) return fallback;
+  const n = Number(raw.trim());
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 /** Max completed delivery tries per order (initial try + timed retries). */
-export const ORDER_MAX_DELIVERY_ATTEMPTS = 3;
+export const ORDER_MAX_DELIVERY_ATTEMPTS = envInt("ORDER_MAX_DELIVERY_ATTEMPTS", 3);
 
-/** Legacy fixed delay when delivery did not set `errorType` (1 hour). */
-export const ORDER_RETRY_INTERVAL_MS = 60 * 60 * 1000;
+/** Legacy fixed delay when delivery did not set `errorType` (1 hour default). */
+export const ORDER_RETRY_INTERVAL_MS = envInt(
+  "ORDER_RETRY_INTERVAL_MS",
+  60 * 60 * 1000,
+);
 
-/** Milliseconds to wait after failure #N before scheduling the next retry (N is 1-based new `attempts`). */
-const RETRY_BACKOFF_AFTER_FAILURE_MS = [
-  5 * 60 * 1000, // after 1st failed attempt
-  15 * 60 * 1000, // after 2nd
-  60 * 60 * 1000, // after 3rd+ (only used if maxAttempts were raised)
-] as const;
+/**
+ * Milliseconds to wait after failure #N before scheduling the next retry
+ * (N is 1-based new `attempts`). Override the entire ladder by setting
+ * `ORDER_RETRY_BACKOFF_MS` to a comma-separated list, e.g.
+ * `ORDER_RETRY_BACKOFF_MS=60000,300000,1800000` for 1m/5m/30m.
+ */
+const RETRY_BACKOFF_AFTER_FAILURE_MS: readonly number[] = (() => {
+  const raw = process.env.ORDER_RETRY_BACKOFF_MS;
+  if (raw) {
+    const parts = raw
+      .split(",")
+      .map((s) => Number(s.trim()))
+      .filter((n) => Number.isFinite(n) && n > 0);
+    if (parts.length > 0) return parts;
+  }
+  return [
+    5 * 60 * 1000, // after 1st failed attempt
+    15 * 60 * 1000, // after 2nd
+    60 * 60 * 1000, // after 3rd+ (only used if maxAttempts were raised)
+  ];
+})();
 
 export type DeliveryErrorType = "network" | "auth" | "validation" | "rate_limit";
 

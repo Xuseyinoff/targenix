@@ -18,11 +18,27 @@ import { dispatchLeadProcessing } from "./leadDispatch";
 import { retryDueFailedOrders } from "./orderRetryScheduler";
 import { autoPromoteExpiredCooldowns } from "./circuitBreaker";
 
+function envInt(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (!raw) return fallback;
+  const n = Number(raw.trim());
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 /** How often to run (ms). Default: every hour, aligned to top-of-hour. */
-const RETRY_INTERVAL_MS = 60 * 60 * 1000;
+const RETRY_INTERVAL_MS = envInt("RETRY_INTERVAL_MS", 60 * 60 * 1000);
 
 /** Leads stuck in PENDING longer than this are considered lost (worker was down). */
-const STUCK_PENDING_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+const STUCK_PENDING_THRESHOLD_MS = envInt("STUCK_PENDING_THRESHOLD_MS", 10 * 60 * 1000);
+
+/** Max Graph-error leads re-queued per hourly tick (prevents thundering-herd on FB). */
+const GRAPH_ERROR_RETRY_CAP = envInt("GRAPH_ERROR_RETRY_CAP", 500);
+
+/** Lead-dispatch batch size for the staggered Graph-error retry tick. */
+const GRAPH_ERROR_BATCH_SIZE = envInt("GRAPH_ERROR_BATCH_SIZE", 10);
+
+/** Delay between successive Graph-error batches. */
+const GRAPH_ERROR_BATCH_DELAY_MS = envInt("GRAPH_ERROR_BATCH_DELAY_MS", 2000);
 
 /**
  * Re-queue leads that failed Facebook Graph enrichment (full pipeline).
@@ -42,9 +58,11 @@ export async function retryGraphErrorLeads(): Promise<{ retried: number }> {
     return { retried: 0 };
   }
 
-  const toRetry = graphErrorLeads.slice(0, 500);
-  if (graphErrorLeads.length > 500) {
-    console.warn(`[RetryScheduler] Graph-error backlog (${graphErrorLeads.length}), capping at 500`);
+  const toRetry = graphErrorLeads.slice(0, GRAPH_ERROR_RETRY_CAP);
+  if (graphErrorLeads.length > GRAPH_ERROR_RETRY_CAP) {
+    console.warn(
+      `[RetryScheduler] Graph-error backlog (${graphErrorLeads.length}), capping at ${GRAPH_ERROR_RETRY_CAP}`,
+    );
   }
 
   const ids = toRetry.map((l) => l.id);
@@ -55,12 +73,9 @@ export async function retryGraphErrorLeads(): Promise<{ retried: number }> {
       .where(eq(leads.id, id));
   }
 
-  const BATCH_SIZE = 10;
-  const BATCH_DELAY_MS = 2000;
-
-  for (let i = 0; i < toRetry.length; i += BATCH_SIZE) {
-    const batch = toRetry.slice(i, i + BATCH_SIZE);
-    const delayMs = (i / BATCH_SIZE) * BATCH_DELAY_MS;
+  for (let i = 0; i < toRetry.length; i += GRAPH_ERROR_BATCH_SIZE) {
+    const batch = toRetry.slice(i, i + GRAPH_ERROR_BATCH_SIZE);
+    const delayMs = (i / GRAPH_ERROR_BATCH_SIZE) * GRAPH_ERROR_BATCH_DELAY_MS;
 
     setTimeout(() => {
       for (const lead of batch) {

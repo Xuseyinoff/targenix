@@ -231,9 +231,18 @@ async function startServer() {
   // HTTP request/response logging (after body parsers so body is available)
   app.use(httpLogger);
 
-  // Health check — used by Railway, Betterstack, and uptime monitors
+  // Health check — used by Railway, Betterstack, and uptime monitors.
+  //
+  // Probes both MySQL and Redis because the web process needs BOTH to be
+  // production-ready: DB for everything, Redis for BullMQ lead enqueue.
+  // Status semantics:
+  //   - "ok"          : both dependencies reachable
+  //   - "degraded"    : at least one dependency unreachable; HTTP 503 so
+  //                     Railway / k8s readiness probes pull this instance
+  //                     out of the load-balancer rotation until it recovers
   app.get("/api/health", async (_req, res) => {
     let dbOk = false;
+    let redisOk = false;
     let lastWebhookAt: string | null = null;
 
     try {
@@ -253,11 +262,29 @@ async function startServer() {
       dbOk = false;
     }
 
-    const status = dbOk ? "ok" : "degraded";
-    res.status(dbOk ? 200 : 503).json({
-      status,
+    // Redis probe: only run when REDIS_URL is set (otherwise the web
+    // process is in single-instance/in-process mode and Redis is N/A).
+    if (process.env.REDIS_URL) {
+      try {
+        const { getRedisConnection } = await import("../queues/redisConnection");
+        const conn = getRedisConnection();
+        const pong = await conn.ping();
+        redisOk = pong === "PONG";
+      } catch {
+        redisOk = false;
+      }
+    } else {
+      // No Redis configured → treat as OK to keep the probe green for
+      // local dev / single-instance setups.
+      redisOk = true;
+    }
+
+    const healthy = dbOk && redisOk;
+    res.status(healthy ? 200 : 503).json({
+      status: healthy ? "ok" : "degraded",
       dispatchMode: getLeadDispatchMode(),
       dbConnected: dbOk,
+      redisConnected: redisOk,
       lastWebhookAt,
       uptime: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
