@@ -38,6 +38,7 @@ import { fetchAdAccountInsights } from "../services/adAccountsService";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
 import { gte, lt } from "drizzle-orm";
+import { log } from "../services/appLogger";
 
 // ─── Date preset validation ───────────────────────────────────────────────────
 const DATE_PRESETS = ["today", "yesterday", "last_7d", "last_30d"] as const;
@@ -98,7 +99,7 @@ function classifyFbError(err: unknown): TRPCError {
       message: "Facebook token expired or insufficient permissions. Please reconnect your account.",
     });
   }
-  console.error("[adAnalytics] Internal error:", msg);
+  void log.error("FACEBOOK", "[adAnalytics] Internal error", { error: msg });
   return new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Failed to fetch analytics data. Please try again later." });
 }
 
@@ -167,7 +168,11 @@ export const adAnalyticsRouter = router({
           const accessToken = decrypt(fbAccount.accessToken);
           await syncFbAccountData(userId, fbAccount.id, accessToken);
         } catch (err) {
-          console.error(`[adAnalytics] initial sync failed for fbacc=${fbAccount.id}:`, err instanceof Error ? err.message : err);
+          await log.error(
+            "FACEBOOK",
+            `[adAnalytics] initial sync failed for fbacc=${fbAccount.id}`,
+            { fbAccountId: fbAccount.id, userId, error: err instanceof Error ? err.message : String(err) },
+          );
         }
       }
       // Re-read from cache after sync
@@ -201,7 +206,11 @@ export const adAnalyticsRouter = router({
         try {
           const accessToken = decrypt(fbAccount.accessToken);
           void syncFbAccountData(userId, fbAccount.id, accessToken).catch((e: unknown) =>
-            console.error(`[adAnalytics] bg sync failed for fbacc=${fbAccount.id}:`, e instanceof Error ? e.message : e)
+            void log.error(
+              "FACEBOOK",
+              `[adAnalytics] bg sync failed for fbacc=${fbAccount.id}`,
+              { fbAccountId: fbAccount.id, userId, error: e instanceof Error ? e.message : String(e) },
+            ),
           );
         } catch { /* ignore */ }
       }
@@ -248,7 +257,11 @@ export const adAnalyticsRouter = router({
           const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
           await syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken);
         } catch (err) {
-          console.error("[adAnalytics] initial campaign sync failed:", err instanceof Error ? err.message : err);
+          await log.error(
+            "FACEBOOK",
+            "[adAnalytics] initial campaign sync failed",
+            { userId: ctx.user.id, fbAccountId: input.fbAccountId, adAccountId: input.adAccountId, error: err instanceof Error ? err.message : String(err) },
+          );
         }
         const fresh = await db
           .select()
@@ -266,7 +279,11 @@ export const adAnalyticsRouter = router({
         try {
           const accessToken = await getVerifiedToken(ctx.user.id, input.fbAccountId);
           void syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken).catch((e: unknown) =>
-            console.error("[adAnalytics] bg campaign sync failed:", e instanceof Error ? e.message : e)
+            void log.error(
+              "FACEBOOK",
+              "[adAnalytics] bg campaign sync failed",
+              { userId: ctx.user.id, fbAccountId: input.fbAccountId, error: e instanceof Error ? e.message : String(e) },
+            ),
           );
         } catch { /* ignore */ }
       }
@@ -314,12 +331,20 @@ export const adAnalyticsRouter = router({
           await syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken);
           cachedInsights = await readInsights();
         } catch (err) {
-          console.error("[adAnalytics] sync failed for insights:", err instanceof Error ? err.message : err);
+          await log.error(
+            "FACEBOOK",
+            "[adAnalytics] sync failed for insights",
+            { userId: ctx.user.id, fbAccountId: input.fbAccountId, error: err instanceof Error ? err.message : String(err) },
+          );
         }
       } else if (cachedInsights.some((r) => isStale(r.syncedAt))) {
         // ── Stale: return cached immediately + background refresh ──────────────
         void syncFbAccountData(ctx.user.id, input.fbAccountId, accessToken).catch((e: unknown) =>
-          console.error("[adAnalytics] bg insights sync failed:", e instanceof Error ? e.message : e)
+          void log.error(
+            "FACEBOOK",
+            "[adAnalytics] bg insights sync failed",
+            { userId: ctx.user.id, fbAccountId: input.fbAccountId, error: e instanceof Error ? e.message : String(e) },
+          ),
         );
       }
 
@@ -416,7 +441,11 @@ export const adAnalyticsRouter = router({
             input.fbCampaignId,
             accessToken
           ).catch((e: unknown) =>
-            console.error("[adAnalytics] ad sets sync failed:", e instanceof Error ? e.message : e)
+            void log.error(
+              "FACEBOOK",
+              "[adAnalytics] ad sets sync failed",
+              { userId: ctx.user.id, fbAccountId: input.fbAccountId, fbCampaignId: input.fbCampaignId, error: e instanceof Error ? e.message : String(e) },
+            ),
           );
         } catch { /* ignore */ }
       }

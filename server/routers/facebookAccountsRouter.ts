@@ -164,7 +164,7 @@ export const facebookAccountsRouter = router({
           expiresAt = new Date(Date.now() + exchanged.expires_in * 1000);
         }
       } catch {
-        console.warn("[FB] Token exchange failed, using token as-is");
+        void log.warn("FACEBOOK", "[FB] Token exchange failed, using token as-is", { userId: ctx.user.id });
       }
 
       // ── Step 2: Fetch profile ──────────────────────────────────────────────
@@ -209,7 +209,11 @@ export const facebookAccountsRouter = router({
       try {
         bmPages = await getBusinessManagerPages(longLivedToken, appId, appSecret);
       } catch (err) {
-        console.warn("[FB] Business Manager pages fetch failed (non-critical):", String(err));
+        void log.warn(
+          "FACEBOOK",
+          "[FB] Business Manager pages fetch failed (non-critical)",
+          { userId: ctx.user.id, error: err instanceof Error ? err.message : String(err) },
+        );
       }
 
       // Merge and deduplicate pages by ID
@@ -301,7 +305,13 @@ export const facebookAccountsRouter = router({
             pageId: page.id,
             pageName: page.name,
             pageAccessToken: page.access_token,
-          }).catch((err) => console.warn(`[FB] Failed to fetch forms for page ${page.id}:`, err));
+          }).catch((err) =>
+            void log.warn(
+              "FACEBOOK",
+              `[FB] Failed to fetch forms for page ${page.id}`,
+              { pageId: page.id, userId, error: err instanceof Error ? err.message : String(err) },
+            ),
+          );
         }
       }
 
@@ -383,7 +393,7 @@ export const facebookAccountsRouter = router({
           expiresAt = new Date(Date.now() + exchanged.expires_in * 1000);
         }
       } catch {
-        console.warn("[FB] Token exchange failed, using token as-is");
+        void log.warn("FACEBOOK", "[FB] Token exchange failed, using token as-is", { userId: ctx.user.id });
       }
       const profile = await getFbUserProfile(longLivedToken);
       const existing = await db
@@ -535,7 +545,11 @@ export const facebookAccountsRouter = router({
         return { success: true as const, pagesDisconnected, integrationsDeleted };
       } catch (err) {
         if (err instanceof TRPCError) throw err;
-        console.error("[facebookAccounts.disconnect]", err);
+        await log.error(
+          "FACEBOOK",
+          "[facebookAccounts.disconnect] error",
+          { userId: ctx.user.id, fbAccountId: input.id, error: err instanceof Error ? err.message : String(err) },
+        );
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: err instanceof Error ? err.message : "Failed to disconnect Facebook account",

@@ -26,6 +26,7 @@ import { dispatchLeadProcessing } from "../services/leadDispatch";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getDashboardDayUtcBounds } from "../lib/dashboardTimezone";
 import { previewLeadCBState, previewBulkRetryCBState } from "../services/circuitBreaker";
+import { log } from "../services/appLogger";
 
 export const leadsRouter = router({
   list: protectedProcedure
@@ -209,7 +210,13 @@ export const leadsRouter = router({
         pageId: lead.pageId,
         formId: lead.formId,
         userId: lead.userId,
-      }).catch((err) => console.error(`[RetryLead] lead ${lead.id} error:`, err));
+      }).catch((err) =>
+        void log.error(
+          "LEAD",
+          `[RetryLead] lead ${lead.id} error`,
+          { leadId: lead.id, userId: ctx.user.id, error: err instanceof Error ? err.message : String(err) },
+        ),
+      );
 
       return {
         ok: true as const,
@@ -316,7 +323,13 @@ export const leadsRouter = router({
             pageId: lead.pageId,
             formId: lead.formId,
             userId: lead.userId,
-          }).catch((err) => console.error(`[RetryAllFailed] lead ${lead.id} error:`, err));
+          }).catch((err) =>
+            void log.error(
+              "LEAD",
+              `[RetryAllFailed] lead ${lead.id} error`,
+              { leadId: lead.id, userId: ctx.user.id, error: err instanceof Error ? err.message : String(err) },
+            ),
+          );
         }, delayMs);
         i += 1;
       }
@@ -522,7 +535,13 @@ export const leadsRouter = router({
             pageId: input.pageId,
             formId: item.form_id || input.formId,
             userId,
-          }).catch((err) => console.error("[PollLeads] dispatchLeadProcessing error:", err));
+          }).catch((err) =>
+            void log.error(
+              "LEAD",
+              "[PollLeads] dispatchLeadProcessing error",
+              { leadId: saved.id, userId, pageId: input.pageId, error: err instanceof Error ? err.message : String(err) },
+            ),
+          );
         }
 
         synced++;
