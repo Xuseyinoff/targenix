@@ -20,11 +20,7 @@ import { getRetryQueueSize, logMetricsSnapshot } from "../monitoring/metrics";
 import { evaluateAndMaybeBlock, getEnforcementScope, recordShadowDecision } from "./circuitBreaker";
 import { log } from "./appLogger";
 
-function envInt(key: string, fallback: number): number {
-  const raw = process.env[key];
-  const n = raw != null ? parseInt(String(raw).trim(), 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+import { envInt } from "../lib/envHelpers";
 
 const DEFAULT_BATCH = envInt("RETRY_BATCH_SIZE", 500);
 const DEFAULT_CONCURRENCY = envInt("RETRY_CONCURRENCY", 10);

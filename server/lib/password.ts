@@ -22,13 +22,7 @@
  */
 import { hash as argon2Hash, verify as argon2Verify, Algorithm } from "@node-rs/argon2";
 import bcrypt from "bcryptjs";
-
-function envInt(key: string, fallback: number): number {
-  const raw = process.env[key];
-  if (!raw) return fallback;
-  const n = Number(raw.trim());
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+import { envInt } from "./envHelpers";
 
 const ARGON_MEMORY_COST = envInt("ARGON_MEMORY_KB", 64 * 1024); // 64 MiB
 const ARGON_TIME_COST = envInt("ARGON_TIME_COST", 3);

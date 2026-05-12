@@ -1,12 +1,7 @@
 // Retry policy tunables — read from env at module load with safe defaults.
 // All values can be overridden per-deployment without touching code.
 
-function envInt(key: string, fallback: number): number {
-  const raw = process.env[key];
-  if (!raw) return fallback;
-  const n = Number(raw.trim());
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+import { envInt } from "./envHelpers";
 
 /** Max completed delivery tries per order (initial try + timed retries). */
 export const ORDER_MAX_DELIVERY_ATTEMPTS = envInt("ORDER_MAX_DELIVERY_ATTEMPTS", 3);

@@ -29,11 +29,7 @@ import { getDb } from "../db";
 import { verifyConnectionHealth } from "./connectionHealthService";
 import { log } from "./appLogger";
 
-function envInt(key: string, fallback: number): number {
-  const raw = process.env[key];
-  const n = raw != null ? parseInt(String(raw).trim(), 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+import { envInt } from "../lib/envHelpers";
 
 /** How stale a connection must be before the sweep re-probes it. */
 const STALE_THRESHOLD_MS = envInt("CONN_HEALTH_STALE_MS", 60 * 60 * 1000);

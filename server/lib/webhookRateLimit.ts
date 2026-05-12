@@ -44,12 +44,7 @@ setInterval(() => {
   });
 }, 5 * 60 * 1000).unref();
 
-const envInt = (key: string, fallback: number): number => {
-  const raw = process.env[key];
-  if (!raw) return fallback;
-  const n = Number(raw.trim());
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-};
+import { envInt } from "./envHelpers";
 
 /** Default cap: 120 leads/min per page — generous for any legitimate campaign. */
 export const PAGE_LEADS_PER_MIN_MAX = envInt("WEBHOOK_PAGE_LEADS_PER_MIN", 120);

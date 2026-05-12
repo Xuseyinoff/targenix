@@ -19,12 +19,7 @@ import { retryDueFailedOrders } from "./orderRetryScheduler";
 import { autoPromoteExpiredCooldowns } from "./circuitBreaker";
 import { log } from "./appLogger";
 
-function envInt(key: string, fallback: number): number {
-  const raw = process.env[key];
-  if (!raw) return fallback;
-  const n = Number(raw.trim());
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+import { envInt } from "../lib/envHelpers";
 
 /** How often to run (ms). Default: every hour, aligned to top-of-hour. */
 const RETRY_INTERVAL_MS = envInt("RETRY_INTERVAL_MS", 60 * 60 * 1000);

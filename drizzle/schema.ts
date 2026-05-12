@@ -425,7 +425,7 @@ export const connectionEvents = mysqlTable("connection_events", {
   source:        varchar("source", { length: 16 }).notNull(),
   /** Optional structured diff — e.g. `{ from: "old name", to: "new name" }`
    *  for renames, `{ reason: "invalid_grant" }` for refresh failures. */
-  details:       json("details"),
+  details:       json("details").$type<Record<string, unknown> | null>(),
   createdAt:     timestamp("createdAt").defaultNow().notNull(),
 }, (t) => ({
   /** Per-connection timeline — primary access pattern (UI history panel). */
@@ -454,7 +454,7 @@ export const targetWebsites = mysqlTable("target_websites", {
   /** Base URL of the target website's lead submission endpoint. NULL for telegram destinations. */
   url: text("url"),
   /** Optional static headers as JSON object */
-  headers: json("headers"),
+  headers: json("headers").$type<Record<string, string> | null>(),
   /**
    * @deprecated 2026-05-12 — value is always "custom" in production (audit
    * 2026-05-12: 99%+ rows; the remaining `sotuvchi`/`100k`/`albato` values
@@ -647,7 +647,7 @@ export const leads = mysqlTable("leads", {
   // ── Extra field_data values (email, city, custom fields) ──────────────────
   // Stores remaining field_data keys after name+phone extraction.
   // Keeps schema clean while preserving all form answers.
-  extraFields: json("extraFields"),
+  extraFields: json("extraFields").$type<Record<string, string> | null>(),
 
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -824,7 +824,7 @@ export const appLogs = mysqlTable("app_logs", {
   /** Human-readable message */
   message: text("message").notNull(),
   /** Optional structured metadata (request body, response, error details, stack traces, etc.) */
-  meta: json("meta"),
+  meta: json("meta").$type<Record<string, unknown> | null>(),
   /** Optional reference to a lead ID */
   leadId: int("leadId"),
   /** Optional reference to a page ID */
