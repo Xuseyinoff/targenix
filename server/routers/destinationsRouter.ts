@@ -77,25 +77,21 @@ const DIRECT_DISPATCH_KEYS: ReadonlySet<DispatchType> = new Set<DispatchType>([
   "sotuvchi", "100k", "custom", "telegram", "google-sheets",
 ]);
 
-function resolveDispatchType(
-  input: { templateType?: string; appKey?: string },
-): DispatchType {
-  if (input.templateType) return input.templateType as DispatchType;
+function resolveDispatchType(input: { appKey?: string }): DispatchType {
   const k = input.appKey?.trim();
   if (k) {
     if (DIRECT_DISPATCH_KEYS.has(k as DispatchType)) return k as DispatchType;
     if (HTTP_API_KEY_DISPATCH_APP_KEYS.has(k)) return "http-api-key";
   }
-  throw new Error("Either `appKey` or `templateType` is required to create a destination");
+  throw new Error("`appKey` is required to create a destination");
 }
 
-/** Update variant — if neither input field is provided, preserve the current
- *  dispatch type from the existing destination row's appKey. */
+/** Update variant — if no `appKey` is provided in the input, preserve the
+ *  current dispatch type from the existing destination row's appKey. */
 function resolveDispatchTypeForUpdate(
-  input: { templateType?: string; appKey?: string },
+  input: { appKey?: string },
   site: { appKey: string },
 ): DispatchType {
-  if (input.templateType) return input.templateType as DispatchType;
   const k = input.appKey?.trim();
   if (k) {
     if (DIRECT_DISPATCH_KEYS.has(k as DispatchType)) return k as DispatchType;
@@ -324,12 +320,8 @@ export const destinationsRouter = router({
     .input(
       z.object({
         name: z.string().min(1),
-        /** Phase 1 transition — both accepted. `appKey` is the modern shape;
-         *  `templateType` is the legacy dispatch discriminator. At least one
-         *  must be provided. The handler derives the dispatch type via
-         *  `resolveDispatchType`. */
-        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram", "google-sheets", "http-api-key"]).optional(),
-        appKey: z.string().min(1).max(64).optional(),
+        /** `appKey` is the destination type discriminator. Required. */
+        appKey: z.string().min(1).max(64),
         /** For http-api-key apps — all form field values (except connectionId) */
         templateConfig: z.record(z.string(), z.any()).optional(),
         /** Plain-text apiKey — only for sotuvchi / 100k */
@@ -561,7 +553,6 @@ export const destinationsRouter = router({
       z.object({
         id: z.number(),
         name: z.string().min(1).optional(),
-        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram", "google-sheets", "http-api-key"]).optional(),
         appKey: z.string().min(1).max(64).optional(),
         templateConfig: z.record(z.string(), z.any()).optional(),
         apiKey: z.string().optional(),
@@ -727,18 +718,13 @@ export const destinationsRouter = router({
       return { success: true };
     }),
 
-  /** Get variable field definitions for a template type. Phase 1 accepts both
-   *  `templateType` (legacy) and `appKey` (modern, identity map for these
-   *  three values). Exactly one must be provided. */
+  /** Get variable field definitions for a destination app type. */
   getVariableFields: protectedProcedure
     .input(z.object({
-      templateType: z.enum(["sotuvchi", "100k", "custom"]).optional(),
-      appKey: z.enum(["sotuvchi", "100k", "custom"]).optional(),
+      appKey: z.enum(["sotuvchi", "100k", "custom"]),
     }))
     .query(({ input }) => {
-      const key = input.templateType ?? input.appKey;
-      if (!key) return [];
-      return TEMPLATE_VARIABLE_FIELDS[key] ?? [];
+      return TEMPLATE_VARIABLE_FIELDS[input.appKey] ?? [];
     }),
 
   /**
@@ -1006,7 +992,6 @@ export const destinationsRouter = router({
         userId: ctx.user.id,
         name: input.name,
         url: initialUrl,
-        templateType: "custom",   // backwards-compat fallback
         templateId: template.id,
         appKey: template.appKey ?? "unknown",
         actionId,
@@ -1191,7 +1176,6 @@ export const destinationsRouter = router({
         userId: ctx.user.id,
         name: finalName,
         url: initialUrl,
-        templateType: "custom",
         templateId: template.id,
         appKey: template.appKey ?? "unknown",
         actionId,

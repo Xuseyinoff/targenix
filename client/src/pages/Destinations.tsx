@@ -192,7 +192,7 @@ type TranslateFn = (key: string, values?: Record<string, string>) => string;
 
 /** Card / badge label: DB template name when `templateId` is set; otherwise short type label (no preset URLs). */
 function destinationRowTypeLabel(
-  site: { templateType: string | null; templateId?: number | null; templateName?: string | null },
+  site: { appKey: string | null; templateId?: number | null; templateName?: string | null },
   dynList: Array<{ id: number; name: string }>,
   tr: TranslateFn,
 ): string {
@@ -201,7 +201,7 @@ function destinationRowTypeLabel(
     const n = dynList.find((x) => x.id === tid)?.name;
     return n ?? site.templateName ?? tr("destinations.filterTemplate");
   }
-  const tt = String(site.templateType || "");
+  const tt = String(site.appKey || "");
   if (tt === "google-sheets") return tr("destinations.sheets.title");
   if (tt === "telegram") return "Telegram";
   if (tt === "sotuvchi") return "Sotuvchi";
@@ -539,8 +539,8 @@ export default function TargetWebsites() {
     const q = query.trim().toLowerCase();
     return sites
       .filter((site) => {
-        const isTemplateBased = site.templateType !== "custom" || !!(site as { templateId?: number | null }).templateId;
-        const isPureCustom = site.templateType === "custom" && !(site as { templateId?: number | null }).templateId;
+        const isTemplateBased = site.appKey !== "custom" || !!(site as { templateId?: number | null }).templateId;
+        const isPureCustom = site.appKey === "custom" && !(site as { templateId?: number | null }).templateId;
         if (filter === "active") return !!site.isActive;
         if (filter === "inactive") return !site.isActive;
         if (filter === "template") return isTemplateBased;
@@ -551,9 +551,9 @@ export default function TargetWebsites() {
         if (!q) return true;
         const config = (site.templateConfig ?? {}) as Record<string, unknown>;
         const url = String(site.url || (config.url as string) || "");
-        const type = String(site.templateType || "");
+        const type = String(site.appKey || "");
         const sheetId =
-          site.templateType === "google-sheets"
+          site.appKey === "google-sheets"
             ? String((config.spreadsheetId as string) || "")
             : "";
         return (
@@ -643,7 +643,7 @@ export default function TargetWebsites() {
     }
 
     // Google Sheets
-    if (site.templateType === "google-sheets") {
+    if (site.appKey === "google-sheets") {
       const cfg = (site.templateConfig ?? {}) as Record<string, unknown>;
       const gid = cfg.googleAccountId;
       const parsedId =
@@ -682,7 +682,7 @@ export default function TargetWebsites() {
     }
 
     // Telegram destination → dedicated form
-    if (site.templateType === "telegram") {
+    if (site.appKey === "telegram") {
       const config = (site.templateConfig ?? {}) as Record<string, unknown>;
       setForm({
         ...defaultForm(),
@@ -699,7 +699,7 @@ export default function TargetWebsites() {
     }
 
     // Legacy template (sotuvchi / 100k / custom) → full form (URLs from saved row only)
-    const legacyType = (site.templateType as TemplateType) || "custom";
+    const legacyType = (site.appKey as TemplateType) || "custom";
     const config = (site.templateConfig ?? {}) as Record<string, unknown>;
 
     const bodyFields: BodyField[] = Array.isArray(config.bodyFields)
@@ -990,7 +990,7 @@ export default function TargetWebsites() {
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                         <span className="font-semibold text-sm">{site.name}</span>
-                        <Badge variant={isDynamic ? "secondary" : templateBadgeVariant(site.templateType)} className="text-xs shrink-0">
+                        <Badge variant={isDynamic ? "secondary" : templateBadgeVariant(site.appKey)} className="text-xs shrink-0">
                           {isDynamic ? (dynName ?? t("destinations.filterTemplate")) : destinationRowTypeLabel(site, dynTemplates, t)}
                         </Badge>
                         {!site.isActive && (
@@ -1000,9 +1000,9 @@ export default function TargetWebsites() {
                         )}
                       </div>
                       <p className="text-xs text-muted-foreground truncate">
-                        {site.templateType === "telegram"
+                        {site.appKey === "telegram"
                           ? `Chat: ${(config.chatId as string) || "—"}`
-                          : site.templateType === "google-sheets"
+                          : site.appKey === "google-sheets"
                             ? `Sheet: ${(config.spreadsheetId as string) || "—"} · ${(config.sheetName as string) || "—"}`
                             : site.url || (config.url as string) || "—"}
                       </p>

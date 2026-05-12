@@ -133,7 +133,6 @@ export async function dispatchDelivery(
     console.log({
       stage: "app_routing" as const,
       appKey,
-      templateType: tw?.templateType ?? null,
       adapterUsed: adapterKey,
     });
   }

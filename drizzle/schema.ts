@@ -460,16 +460,6 @@ export const destinations = mysqlTable("destinations", {
   url: text("url"),
   /** Optional static headers as JSON object */
   headers: json("headers").$type<Record<string, string> | null>(),
-  /**
-   * @deprecated 2026-05-12 — value is always "custom" in production (audit
-   * 2026-05-12: 99%+ rows; the remaining `sotuvchi`/`100k`/`albato` values
-   * were retired with the legacy-template adapter in commit b003ab9).
-   * Routing reads `appKey` exclusively; this column is kept only because
-   * the targetWebsitesRouter `testIntegration` legacy branch still
-   * inspects it for the editor "Test" button on `templateId IS NULL`
-   * rows. Schedule for drop after that branch is migrated.
-   */
-  templateType: varchar("templateType", { length: 32 }).default("custom").notNull(),
   /** FK to destinationTemplates — set when created from admin-managed template */
   templateId: int("templateId"),
   /**

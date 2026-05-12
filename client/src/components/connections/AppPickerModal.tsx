@@ -241,7 +241,7 @@ export function AppPickerModal({
   const usageCount = useMemo(() => {
     const m = new Map<string | number, number>();
     for (const d of existingDests) {
-      const key: string | number = d.templateId ?? d.templateType ?? "custom";
+      const key: string | number = d.templateId ?? d.appKey ?? "custom";
       m.set(key, (m.get(key) ?? 0) + 1);
     }
     return m;

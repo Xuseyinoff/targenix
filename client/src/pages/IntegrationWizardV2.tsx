@@ -684,7 +684,7 @@ export default function IntegrationWizardV2() {
           : [];
 
     const primaryTw = destinations.find((t) => t.id === destIds[0]);
-    const primaryType = primaryTw?.templateType ?? (cfg.targetTemplateType as string) ?? "custom";
+    const primaryType = primaryTw?.appKey ?? (cfg.targetTemplateType as string) ?? "custom";
     const hasTemplate = (primaryTw?.templateId ?? null) !== null;
     const isCustomDest = primaryType === "custom" && !hasTemplate;
 
@@ -713,7 +713,7 @@ export default function IntegrationWizardV2() {
       return {
         id,
         name: tw?.name ?? (idx === 0 ? (cfg.targetWebsiteName as string) ?? "" : ""),
-        templateType: tw?.templateType ?? (idx === 0 ? primaryType : "custom"),
+        templateType: tw?.appKey ?? (idx === 0 ? primaryType : "custom"),
         leadFields: idx === 0 ? leadFields : {},
         staticValues: idx === 0 ? savedStaticValues : {},
         customMappings: idx === 0 ? primaryCustomMappings : [],
@@ -1653,7 +1653,7 @@ function TriggerEditor({
 interface DestinationListItem {
   id: number;
   name: string;
-  templateType: string;
+  appKey: string;
   templateName?: string | null;
   category: string;
 }
@@ -1745,7 +1745,7 @@ function DestinationEditor({
         {selectedIds.map((id, idx) => {
           const d = destinations.find((x) => x.id === id);
           if (!d) return null;
-          const rawIcon = appIconByKey.get(d.templateType) ?? null;
+          const rawIcon = appIconByKey.get(d.appKey) ?? null;
           const CategoryIcon = iconForCategory(d.category);
           return (
             <div
@@ -1764,12 +1764,12 @@ function DestinationEditor({
                 <div className="truncate text-[11px] text-muted-foreground">
                   {idx === 0 ? "Primary · drives mapping" : `Destination ${idx + 1}`}
                   {" · "}
-                  {d.templateName || d.templateType}
+                  {d.templateName || d.appKey}
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => onToggle(id, d.name, d.templateType)}
+                onClick={() => onToggle(id, d.name, d.appKey)}
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
                 aria-label={`Remove ${d.name}`}
               >
@@ -1901,13 +1901,13 @@ function DestinationEditor({
             <div className="max-h-52 overflow-y-auto rounded-lg border bg-muted/5 p-1 space-y-0.5">
               {filteredExisting.map((d) => {
                 const isSelected = selectedSet.has(d.id);
-                const rawIcon = appIconByKey.get(d.templateType) ?? null;
+                const rawIcon = appIconByKey.get(d.appKey) ?? null;
                 const CategoryIcon = iconForCategory(d.category);
                 return (
                   <button
                     key={d.id}
                     type="button"
-                    onClick={() => handleToggle(d.id, d.name, d.templateType)}
+                    onClick={() => handleToggle(d.id, d.name, d.appKey)}
                     className={cn(
                       "flex w-full items-center gap-2.5 rounded-md px-2 py-2 text-left text-sm transition-colors",
                       isSelected ? "bg-primary/8 font-medium" : "hover:bg-muted/60",
@@ -1923,7 +1923,7 @@ function DestinationEditor({
                     <div className="min-w-0 flex-1">
                       <span className="block truncate leading-tight">{d.name}</span>
                       <span className="block truncate text-[10px] text-muted-foreground">
-                        {d.templateName || d.templateType}
+                        {d.templateName || d.appKey}
                       </span>
                     </div>
                     {isSelected ? (

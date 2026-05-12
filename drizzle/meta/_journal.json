@@ -512,6 +512,13 @@
       "when": 1779660360000,
       "tag": "0076_drop_legacy_views_v2",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "5",
+      "when": 1779660420000,
+      "tag": "0077_drop_templatetype_column",
+      "breakpoints": true
     }
   ]
 }

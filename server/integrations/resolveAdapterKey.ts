@@ -43,7 +43,6 @@ export function resolveAdapterKey(
   integrationType: "LEAD_ROUTING",
   tw?: {
     templateId?: number | null;
-    templateType?: string | null;
     appKey?: string | null;
   } | null,
 ): string {
@@ -67,7 +66,6 @@ export function resolveAdapterKey(
         stage: "adapter_resolution",
         path: "NEW" as const,
         appKey: effectiveKey,
-        templateType: tw.templateType,
         templateId: tw.templateId,
       });
     }
@@ -106,7 +104,6 @@ export function resolveAdapterKey(
       stage: "adapter_resolution",
       path: "LEGACY_DEFAULT" as const,
       appKey: tw.appKey ?? null,
-      templateType: tw.templateType,
       templateId: tw.templateId,
       note: "appKey missing — falling through to plain-url default",
     });
