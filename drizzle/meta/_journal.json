@@ -491,6 +491,20 @@
       "when": 1779660180000,
       "tag": "0073_rename_legacy_index_names",
       "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "5",
+      "when": 1779660240000,
+      "tag": "0074_rename_cache_and_circuit_breakers",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "5",
+      "when": 1779660300000,
+      "tag": "0075_rename_legacy_index_names_v2",
+      "breakpoints": true
     }
   ]
 }

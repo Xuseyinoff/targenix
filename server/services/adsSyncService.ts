@@ -11,8 +11,8 @@
  *  - Respects userId isolation — each user's data is isolated
  *
  * Hierarchy synced:
- *   facebookAccounts → adAccountsCache → campaignsCache + campaignInsightsCache
- *                                      → adSetsCache (on-demand per campaign)
+ *   facebookAccounts → adAccounts → campaigns + campaignInsights
+ *                                      → adSets (on-demand per campaign)
  */
 
 import axios from "axios";
@@ -21,10 +21,10 @@ import { getDb } from "../db";
 import { log } from "./appLogger";
 import {
   facebookAccounts,
-  adAccountsCache,
-  campaignsCache,
-  campaignInsightsCache,
-  adSetsCache,
+  adAccounts,
+  campaigns,
+  campaignInsights,
+  adSets,
 } from "../../drizzle/schema";
 import { decrypt } from "../encryption";
 import {
@@ -150,7 +150,7 @@ const appsecretProof = generateAppSecretProof(token);
 
   for (const raw of adAccountsList) {
     await db
-      .insert(adAccountsCache)
+      .insert(adAccounts)
       .values({
         userId,
         facebookAccountId,
@@ -213,7 +213,7 @@ const appsecretProof = generateAppSecretProof(token);
     // Upsert campaigns
     for (const raw of rawCampaigns) {
       await db
-        .insert(campaignsCache)
+        .insert(campaigns)
         .values({
           userId,
           facebookAccountId,
@@ -285,7 +285,7 @@ const appsecretProof = generateAppSecretProof(token);
         const conversionRate = clicks > 0 ? (leads / clicks) * 100 : 0;
 
         await db
-          .insert(campaignInsightsCache)
+          .insert(campaignInsights)
           .values({
             userId,
             facebookAccountId,
@@ -355,7 +355,7 @@ export async function syncAdSetsForCampaign(
 
   for (const raw of rawAdSets) {
     await db
-      .insert(adSetsCache)
+      .insert(adSets)
       .values({
         userId,
         facebookAccountId,

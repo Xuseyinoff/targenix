@@ -877,10 +877,11 @@ export const facebookOauthStates = mysqlTable("facebook_oauth_states", {
 export type FacebookOauthState = typeof facebookOauthStates.$inferSelect;
 export type InsertFacebookOauthState = typeof facebookOauthStates.$inferInsert;
 
-// ─── Ad Accounts Cache ────────────────────────────────────────────────────────
+// ─── Ad Accounts ──────────────────────────────────────────────────────────────
 // Synced from Facebook Marketing API by background job (every 10 min).
-// Frontend reads from this instead of calling Graph API directly.
-export const adAccountsCache = mysqlTable("ad_accounts_cache", {
+// Frontend reads from this instead of calling Graph API directly — it's the
+// system-of-record for the UI even though FB is the upstream truth.
+export const adAccounts = mysqlTable("ad_accounts", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
   /** FK to facebookAccounts.id — which connected FB user owns this ad account */
@@ -903,16 +904,16 @@ export const adAccountsCache = mysqlTable("ad_accounts_cache", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
-  uqUserAccount: uniqueIndex("uq_ad_accounts_cache_user_account").on(t.userId, t.fbAdAccountId),
-  idxFbAccount: index("idx_ad_accounts_cache_fb_account").on(t.facebookAccountId),
+  uqUserAccount: uniqueIndex("uq_ad_accounts_user_account").on(t.userId, t.fbAdAccountId),
+  idxFbAccount: index("idx_ad_accounts_fb_account").on(t.facebookAccountId),
 }));
 
-export type AdAccountCache = typeof adAccountsCache.$inferSelect;
-export type InsertAdAccountCache = typeof adAccountsCache.$inferInsert;
+export type AdAccount = typeof adAccounts.$inferSelect;
+export type InsertAdAccount = typeof adAccounts.$inferInsert;
 
-// ─── Campaigns Cache ──────────────────────────────────────────────────────────
+// ─── Campaigns ────────────────────────────────────────────────────────────────
 // Synced from Facebook Marketing API. One row per campaign per user.
-export const campaignsCache = mysqlTable("campaigns_cache", {
+export const campaigns = mysqlTable("campaigns", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
   facebookAccountId: int("facebookAccountId").notNull(),
@@ -928,16 +929,16 @@ export const campaignsCache = mysqlTable("campaigns_cache", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
-  uqUserCampaign: uniqueIndex("uq_campaigns_cache_user_campaign").on(t.userId, t.fbCampaignId),
-  idxUserAdAccount: index("idx_campaigns_cache_user_ad_account").on(t.userId, t.fbAdAccountId),
+  uqUserCampaign: uniqueIndex("uq_campaigns_user_campaign").on(t.userId, t.fbCampaignId),
+  idxUserAdAccount: index("idx_campaigns_user_ad_account").on(t.userId, t.fbAdAccountId),
 }));
 
-export type CampaignCache = typeof campaignsCache.$inferSelect;
-export type InsertCampaignCache = typeof campaignsCache.$inferInsert;
+export type Campaign = typeof campaigns.$inferSelect;
+export type InsertCampaign = typeof campaigns.$inferInsert;
 
-// ─── Ad Sets Cache ─────────────────────────────────────────────────────────────
+// ─── Ad Sets ──────────────────────────────────────────────────────────────────
 // Synced on-demand when user drills into a campaign.
-export const adSetsCache = mysqlTable("ad_sets_cache", {
+export const adSets = mysqlTable("ad_sets", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
   facebookAccountId: int("facebookAccountId").notNull(),
@@ -955,18 +956,18 @@ export const adSetsCache = mysqlTable("ad_sets_cache", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
-  uqUserAdSet: uniqueIndex("uq_ad_sets_cache_user_adset").on(t.userId, t.fbAdSetId),
-  idxUserCampaign: index("idx_ad_sets_cache_user_campaign").on(t.userId, t.fbCampaignId),
+  uqUserAdSet: uniqueIndex("uq_ad_sets_user_adset").on(t.userId, t.fbAdSetId),
+  idxUserCampaign: index("idx_ad_sets_user_campaign").on(t.userId, t.fbCampaignId),
 }));
 
-export type AdSetCache = typeof adSetsCache.$inferSelect;
-export type InsertAdSetCache = typeof adSetsCache.$inferInsert;
+export type AdSet = typeof adSets.$inferSelect;
+export type InsertAdSet = typeof adSets.$inferInsert;
 
-// ─── Campaign Insights Cache ──────────────────────────────────────────────────
+// ─── Campaign Insights ────────────────────────────────────────────────────────
 // Stores aggregated performance metrics per campaign per date preset.
 // Sourced from a single campaign-level insights API call (not per-campaign).
 // Key: (userId, fbCampaignId, datePreset) — refreshed every sync cycle.
-export const campaignInsightsCache = mysqlTable("campaign_insights_cache", {
+export const campaignInsights = mysqlTable("campaign_insights", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
   facebookAccountId: int("facebookAccountId").notNull(),
@@ -984,12 +985,12 @@ export const campaignInsightsCache = mysqlTable("campaign_insights_cache", {
   /** When this row was last synced from Facebook */
   syncedAt: timestamp("syncedAt").defaultNow().notNull(),
 }, (t) => ({
-  uqKey: uniqueIndex("uq_campaign_insights_cache_key").on(t.userId, t.fbCampaignId, t.datePreset),
-  idxUserAdAccount: index("idx_campaign_insights_cache_account").on(t.userId, t.fbAdAccountId),
+  uqKey: uniqueIndex("uq_campaign_insights_key").on(t.userId, t.fbCampaignId, t.datePreset),
+  idxUserAdAccount: index("idx_campaign_insights_account").on(t.userId, t.fbAdAccountId),
 }));
 
-export type CampaignInsightsCacheRow = typeof campaignInsightsCache.$inferSelect;
-export type InsertCampaignInsightsCache = typeof campaignInsightsCache.$inferInsert;
+export type CampaignInsights = typeof campaignInsights.$inferSelect;
+export type InsertCampaignInsights = typeof campaignInsights.$inferInsert;
 
 // ─── CRM Connections ──────────────────────────────────────────────────────────
 // Stores affiliate platform credentials for admin CRM status syncing.
@@ -1144,7 +1145,7 @@ export const workflowStepExecutions = mysqlTable("workflow_step_executions", {
 export type WorkflowStepExecution       = typeof workflowStepExecutions.$inferSelect;
 export type InsertWorkflowStepExecution = typeof workflowStepExecutions.$inferInsert;
 
-// ─── Integration Health (Circuit Breaker state) ──────────────────────────────
+// ─── Circuit Breakers ────────────────────────────────────────────────────────
 // Per-destination circuit breaker state. Keyed on (integrationId, destinationId)
 // so multi-destination fan-out integrations can have independent breakers — one
 // flaky destination does not block its siblings.
@@ -1156,7 +1157,7 @@ export type InsertWorkflowStepExecution = typeof workflowStepExecutions.$inferIn
 // destinationId=0 means "whole integration" (legacy / non-fan-out orders).
 // Phase 0 = shadow mode — written on every delivery outcome but not yet
 // enforced in the scheduler claim.
-export const integrationHealth = mysqlTable("integration_health", {
+export const circuitBreakers = mysqlTable("circuit_breakers", {
   id:             int("id").autoincrement().primaryKey(),
   integrationId:  int("integrationId").notNull(),
   /** 0 = whole integration (legacy / single-dest). >0 = specific integration_routes row. */
@@ -1206,21 +1207,21 @@ export const integrationHealth = mysqlTable("integration_health", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
   /** One row per (integration, destination) — upsert target. */
-  uqDest:    uniqueIndex("uq_integration_health_dest").on(t.integrationId, t.destinationId),
+  uqDest:    uniqueIndex("uq_circuit_breakers_dest").on(t.integrationId, t.destinationId),
   /** Scheduler claim JOIN — filter by state + cooldown expiry. */
-  idxState:  index("idx_integration_health_state").on(t.state, t.cooldownUntil),
+  idxState:  index("idx_circuit_breakers_state").on(t.state, t.cooldownUntil),
   /** Per-app sibling lookup ("any 100k.uz destination currently OPEN?"). */
-  idxAppKey: index("idx_integration_health_appkey_state").on(t.appKey, t.state),
+  idxAppKey: index("idx_circuit_breakers_appkey_state").on(t.appKey, t.state),
 }));
 
-export type IntegrationHealth       = typeof integrationHealth.$inferSelect;
-export type InsertIntegrationHealth = typeof integrationHealth.$inferInsert;
+export type CircuitBreaker       = typeof circuitBreakers.$inferSelect;
+export type InsertCircuitBreaker = typeof circuitBreakers.$inferInsert;
 
-// ─── Integration Health Events (immutable audit log) ─────────────────────────
+// ─── Circuit Breaker Events (immutable audit log) ────────────────────────────
 // Append-only history of every CB state transition + probe outcome. Powers
 // the "why did this destination open 3h ago?" admin view and post-incident
 // forensics. Survives parent row deletion (audit must outlive entity).
-export const integrationHealthEvents = mysqlTable("integration_health_events", {
+export const circuitBreakerEvents = mysqlTable("circuit_breaker_events", {
   id:             int("id").autoincrement().primaryKey(),
   integrationId:  int("integrationId").notNull(),
   destinationId:  int("destinationId").default(0).notNull(),
@@ -1243,10 +1244,10 @@ export const integrationHealthEvents = mysqlTable("integration_health_events", {
   createdAt:      timestamp("createdAt").defaultNow().notNull(),
 }, (t) => ({
   /** Per-destination timeline — primary access pattern (admin history view). */
-  idxDestTime:  index("idx_ih_events_dest_time").on(t.integrationId, t.destinationId, t.createdAt),
+  idxDestTime:  index("idx_cb_events_dest_time").on(t.integrationId, t.destinationId, t.createdAt),
   /** Event-type filter for cross-destination ops queries ("all opens in last 24h"). */
-  idxTypeTime:  index("idx_ih_events_type_time").on(t.eventType, t.createdAt),
+  idxTypeTime:  index("idx_cb_events_type_time").on(t.eventType, t.createdAt),
 }));
 
-export type IntegrationHealthEvent       = typeof integrationHealthEvents.$inferSelect;
-export type InsertIntegrationHealthEvent = typeof integrationHealthEvents.$inferInsert;
+export type CircuitBreakerEvent       = typeof circuitBreakerEvents.$inferSelect;
+export type InsertCircuitBreakerEvent = typeof circuitBreakerEvents.$inferInsert;

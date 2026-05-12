@@ -41,7 +41,7 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import type { DbClient } from "../db";
-import { integrationHealth, integrationHealthEvents } from "../../drizzle/schema";
+import { circuitBreakers, circuitBreakerEvents } from "../../drizzle/schema";
 import {
   CIRCUIT_POLICY,
   cooldownMsForLevel,
@@ -110,7 +110,7 @@ function classify(errorType: DeliveryErrorType | null | undefined): CircuitError
   return errorType ?? "unknown";
 }
 
-type HealthRow = typeof integrationHealth.$inferSelect & {
+type HealthRow = typeof circuitBreakers.$inferSelect & {
   /**
    * Server-side computed `cooldownUntil <= NOW()`. We don't trust JS-side Date
    * comparison because mysql2 + pooled connections can return TIMESTAMPs in
@@ -259,7 +259,7 @@ async function appendEvent(
   },
 ): Promise<void> {
   try {
-    await db.insert(integrationHealthEvents).values({
+    await db.insert(circuitBreakerEvents).values({
       integrationId: params.integrationId,
       destinationId: params.destinationId,
       eventType: params.eventType,
@@ -380,7 +380,7 @@ export async function recordOutcome(
     if (!success && trip.trip) {
       const cooldownUntil = new Date(now.getTime() + cooldownMsForLevel(policy, 0));
       await db
-        .insert(integrationHealth)
+        .insert(circuitBreakers)
         .values({
           integrationId,
           destinationId,
@@ -413,7 +413,7 @@ export async function recordOutcome(
     }
 
     await db
-      .insert(integrationHealth)
+      .insert(circuitBreakers)
       .values({
         integrationId,
         destinationId,
@@ -445,7 +445,7 @@ export async function recordOutcome(
     if (success && halfOpenSuccesses >= policy.probesToClose) {
       // Probe(s) passed — close the breaker, reset everything.
       await db
-        .update(integrationHealth)
+        .update(circuitBreakers)
         .set({
           state: "CLOSED",
           consecutiveFailures: 0,
@@ -462,7 +462,7 @@ export async function recordOutcome(
           lastErrorMessage: null,
           lastTripReason: null,
         })
-        .where(eq(integrationHealth.id, existing.id));
+        .where(eq(circuitBreakers.id, existing.id));
       await appendEvent(db, {
         integrationId,
         destinationId,
@@ -487,7 +487,7 @@ export async function recordOutcome(
         : existing.cooldownLevel + 1;
       const cooldownUntil = new Date(now.getTime() + cooldownMsForLevel(policy, newLevel));
       await db
-        .update(integrationHealth)
+        .update(circuitBreakers)
         .set({
           state: "OPEN",
           consecutiveFailures,
@@ -504,7 +504,7 @@ export async function recordOutcome(
           lastErrorMessage: (params.errorMessage ?? "").slice(0, 500) || null,
           lastTripReason: "probe_failed",
         })
-        .where(eq(integrationHealth.id, existing.id));
+        .where(eq(circuitBreakers.id, existing.id));
       await appendEvent(db, {
         integrationId,
         destinationId,
@@ -525,7 +525,7 @@ export async function recordOutcome(
 
     // Success but not enough probes yet — stay HALF_OPEN, accrue.
     await db
-      .update(integrationHealth)
+      .update(circuitBreakers)
       .set({
         consecutiveFailures: 0,
         consecutiveSuccesses,
@@ -535,7 +535,7 @@ export async function recordOutcome(
         halfOpenAttempts,
         halfOpenSuccesses,
       })
-      .where(eq(integrationHealth.id, existing.id));
+      .where(eq(circuitBreakers.id, existing.id));
     return {
       fromState: "HALF_OPEN",
       toState: "HALF_OPEN",
@@ -550,7 +550,7 @@ export async function recordOutcome(
     // shadow scheduler still dispatching (Phase 0) or an admin manual retry.
     // Record the outcome without re-opening or transitioning.
     await db
-      .update(integrationHealth)
+      .update(circuitBreakers)
       .set({
         consecutiveFailures,
         consecutiveSuccesses,
@@ -562,7 +562,7 @@ export async function recordOutcome(
           ? existing.lastErrorMessage
           : (params.errorMessage ?? "").slice(0, 500) || null,
       })
-      .where(eq(integrationHealth.id, existing.id));
+      .where(eq(circuitBreakers.id, existing.id));
     return { fromState: "OPEN", toState: "OPEN", transitioned: false, reason: null };
   }
 
@@ -576,7 +576,7 @@ export async function recordOutcome(
 
   if (!trip.trip) {
     await db
-      .update(integrationHealth)
+      .update(circuitBreakers)
       .set({
         consecutiveFailures,
         consecutiveSuccesses,
@@ -588,7 +588,7 @@ export async function recordOutcome(
           ? existing.lastErrorMessage
           : (params.errorMessage ?? "").slice(0, 500) || null,
       })
-      .where(eq(integrationHealth.id, existing.id));
+      .where(eq(circuitBreakers.id, existing.id));
     return { fromState: "CLOSED", toState: "CLOSED", transitioned: false, reason: null };
   }
 
@@ -596,7 +596,7 @@ export async function recordOutcome(
   const level = 0;
   const cooldownUntil = new Date(now.getTime() + cooldownMsForLevel(policy, level));
   await db
-    .update(integrationHealth)
+    .update(circuitBreakers)
     .set({
       state: "OPEN",
       consecutiveFailures,
@@ -613,7 +613,7 @@ export async function recordOutcome(
       lastErrorMessage: (params.errorMessage ?? "").slice(0, 500) || null,
       lastTripReason: trip.reason.slice(0, 64),
     })
-    .where(eq(integrationHealth.id, existing.id));
+    .where(eq(circuitBreakers.id, existing.id));
 
   await appendEvent(db, {
     integrationId,
@@ -776,13 +776,13 @@ export async function evaluateClaim(
     }
 
     await db
-      .update(integrationHealth)
+      .update(circuitBreakers)
       .set({
         state: "HALF_OPEN",
         halfOpenAttempts: 0,
         halfOpenSuccesses: 0,
       })
-      .where(eq(integrationHealth.id, row.id));
+      .where(eq(circuitBreakers.id, row.id));
     await appendEvent(db, {
       integrationId: params.integrationId,
       destinationId: params.destinationId,

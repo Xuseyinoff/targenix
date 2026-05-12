@@ -22,10 +22,10 @@ import {
   facebookConnections,
   facebookForms,
   integrations,
-  adAccountsCache,
-  campaignsCache,
-  adSetsCache,
-  campaignInsightsCache,
+  adAccounts,
+  campaigns,
+  adSets,
+  campaignInsights,
 } from "../../drizzle/schema";
 import { eq, desc, and, inArray, count } from "drizzle-orm";
 import { logEvent, log } from "../services/appLogger";
@@ -458,25 +458,25 @@ export const facebookAccountsRouter = router({
           const pageIds = Array.from(new Set(connections.map((c) => c.pageId)));
 
           await tx
-            .delete(campaignInsightsCache)
+            .delete(campaignInsights)
             .where(
               and(
-                eq(campaignInsightsCache.userId, userId),
-                eq(campaignInsightsCache.facebookAccountId, input.id)
+                eq(campaignInsights.userId, userId),
+                eq(campaignInsights.facebookAccountId, input.id)
               )
             );
 
           await tx
-            .delete(adSetsCache)
-            .where(and(eq(adSetsCache.userId, userId), eq(adSetsCache.facebookAccountId, input.id)));
+            .delete(adSets)
+            .where(and(eq(adSets.userId, userId), eq(adSets.facebookAccountId, input.id)));
 
           await tx
-            .delete(campaignsCache)
-            .where(and(eq(campaignsCache.userId, userId), eq(campaignsCache.facebookAccountId, input.id)));
+            .delete(campaigns)
+            .where(and(eq(campaigns.userId, userId), eq(campaigns.facebookAccountId, input.id)));
 
           await tx
-            .delete(adAccountsCache)
-            .where(and(eq(adAccountsCache.userId, userId), eq(adAccountsCache.facebookAccountId, input.id)));
+            .delete(adAccounts)
+            .where(and(eq(adAccounts.userId, userId), eq(adAccounts.facebookAccountId, input.id)));
 
           await tx
             .delete(facebookConnections)

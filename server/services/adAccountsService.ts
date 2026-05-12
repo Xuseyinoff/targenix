@@ -44,7 +44,7 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-const adAccountsCache = new Map<string, CacheEntry<AdAccount[]>>();
+const adAccounts = new Map<string, CacheEntry<AdAccount[]>>();
 const insightsCache = new Map<string, CacheEntry<DailyInsight[]>>();
 
 function cacheGet<T>(cache: Map<string, CacheEntry<T>>, key: string): T | null {
@@ -142,7 +142,7 @@ export type GraphDataList<T> = { data?: T[] };
 export async function fetchAdAccounts(accessToken: string): Promise<AdAccount[]> {
   const token = normalizeFacebookAccessToken(accessToken);
   const cacheKey = `adaccounts:${token.slice(-16)}`;
-  const cached = cacheGet(adAccountsCache, cacheKey);
+  const cached = cacheGet(adAccounts, cacheKey);
   if (cached) return cached;
 
   const appsecretProof = generateAppSecretProof(token);
@@ -180,7 +180,7 @@ export async function fetchAdAccounts(accessToken: string): Promise<AdAccount[]>
     minDailyBudget: raw.min_daily_budget ?? "0",
   }));
 
-  cacheSet(adAccountsCache, cacheKey, accounts);
+  cacheSet(adAccounts, cacheKey, accounts);
   return accounts;
 }
 
@@ -299,7 +299,7 @@ function buildSummary(daily: DailyInsight[], currency: string): InsightsSummary 
 // ─── Cache invalidation ───────────────────────────────────────────────────────
 export function invalidateAdAccountsCache(accessToken: string): void {
   const cacheKey = `adaccounts:${accessToken.slice(-16)}`;
-  adAccountsCache.delete(cacheKey);
+  adAccounts.delete(cacheKey);
 }
 
 export function invalidateInsightsCache(adAccountId: string, accessToken: string): void {
