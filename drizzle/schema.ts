@@ -543,13 +543,10 @@ export const integrations = mysqlTable("integrations", {
   formId: varchar("formId", { length: 128 }),
   pageName: varchar("pageName", { length: 255 }),
   formName: varchar("formName", { length: 255 }),
-  /** Dedicated FK column extracted from config.targetWebsiteId for efficient JOIN and index. */
-  // SQL column name stays `targetWebsiteId` for now — TS key was renamed
-  // on 2026-05-12 to align with the table rename (`destinations`). A future
-  // migration can ALTER COLUMN to drop the legacy SQL name; until then
-  // Drizzle's column-key mapping (`destinationId` → SQL `targetWebsiteId`)
-  // keeps the TS side modern and the DB side untouched.
-  destinationId: int("targetWebsiteId"),
+  /** Dedicated FK column to `destinations.id` (legacy config.targetWebsiteId
+   *  remains as a JSON fallback for old rows — see extractDestinationIdFromConfig).
+   *  Migration 0071 renamed this SQL column from `targetWebsiteId` to `destinationId`. */
+  destinationId: int("destinationId"),
   /** Dedicated FK column extracted from config.facebookAccountId for efficient disconnect cleanup.
    *  Nullable — populated by backfill for existing rows; always set on new LEAD_ROUTING integrations. */
   facebookAccountId: int("facebookAccountId"),
@@ -592,8 +589,7 @@ export const integrationRoutes = mysqlTable(
   {
     id: int("id").autoincrement().primaryKey(),
     integrationId: int("integrationId").notNull(),
-    // SQL column stays `targetWebsiteId` (see note in integrations table).
-    destinationId: int("targetWebsiteId").notNull(),
+    destinationId: int("destinationId").notNull(),
     position: int("position").default(0).notNull(),
     enabled: boolean("enabled").default(true).notNull(),
     filterJson: json("filterJson"),
