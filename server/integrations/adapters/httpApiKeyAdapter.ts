@@ -20,6 +20,8 @@ import type { DeliveryResult } from "../types";
 import { getApp } from "../appRegistry";
 import type { AppExecutionEndpoint } from "../manifest";
 import { inferDeliveryErrorType, parseRetryAfterHeader } from "../../lib/orderRetryPolicy";
+import { assertSafeOutboundUrl } from "../../lib/urlSafety";
+import { readBoundedJson } from "../../lib/fetchBounded";
 
 // ─── Config shape (injected by dispatchDelivery) ──────────────────────────────
 
@@ -168,6 +170,21 @@ export const httpApiKeyAdapter = {
       bodyFields[fieldName] = apiKey;
     }
 
+    // SSRF guard: refuse the request before sending if the resolved URL
+    // points at localhost, a private/internal IP, cloud metadata, etc.
+    // Tenant-supplied templateConfig + variable expansion mean a hostile
+    // user could otherwise pivot the worker into the internal network.
+    try {
+      await assertSafeOutboundUrl(url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        error: `Refused outbound URL: ${msg}`,
+        errorType: "validation",
+      };
+    }
+
     const t0 = Date.now();
     try {
       const res = await fetch(url, {
@@ -182,7 +199,7 @@ export const httpApiKeyAdapter = {
 
       const latencyMs = Date.now() - t0;
       let responseBody: unknown = null;
-      try { responseBody = await res.json(); } catch { /* non-JSON response — ok */ }
+      try { responseBody = await readBoundedJson(res); } catch { /* oversize / non-JSON — ok */ }
 
       if (res.ok) {
         return {

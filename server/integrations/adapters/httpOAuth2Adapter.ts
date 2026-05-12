@@ -22,6 +22,8 @@ import type { DeliveryResult } from "../types";
 import { getApp } from "../appRegistry";
 import type { AppExecutionEndpoint } from "../manifest";
 import { inferDeliveryErrorType, parseRetryAfterHeader } from "../../lib/orderRetryPolicy";
+import { assertSafeOutboundUrl } from "../../lib/urlSafety";
+import { readBoundedJson } from "../../lib/fetchBounded";
 
 // ─── Config shape ─────────────────────────────────────────────────────────────
 
@@ -213,6 +215,20 @@ export const httpOAuth2Adapter = {
     const contentType = endpoint.contentType ?? "application/json";
     const body = buildBody(appKey, expanded);
 
+    // SSRF guard: the executionEndpoint URL is partially user-controlled
+    // (manifest may interpolate templateConfig values via injectVariables).
+    // Refuse before sending if it resolves to localhost or a private IP.
+    try {
+      await assertSafeOutboundUrl(url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        error: `Refused outbound URL: ${msg}`,
+        errorType: "validation",
+      };
+    }
+
     const t0 = Date.now();
     try {
       const res = await fetch(url, {
@@ -228,9 +244,9 @@ export const httpOAuth2Adapter = {
       const latencyMs = Date.now() - t0;
       let responseBody: unknown = null;
       try {
-        responseBody = await res.json();
+        responseBody = await readBoundedJson(res);
       } catch {
-        /* non-JSON — ok */
+        /* oversize / non-JSON — ok */
       }
 
       if (res.ok) {
