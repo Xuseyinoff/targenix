@@ -519,6 +519,13 @@
       "when": 1779660420000,
       "tag": "0077_drop_templatetype_column",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "5",
+      "when": 1779660480000,
+      "tag": "0078_users_password_changed_at",
+      "breakpoints": true
     }
   ]
 }

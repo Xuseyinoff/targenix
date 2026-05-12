@@ -32,7 +32,7 @@ import {
   orders,
   appLogs,
 } from "../../drizzle/schema";
-import { eq, and, gt } from "drizzle-orm";
+import { eq, and, gt, isNull } from "drizzle-orm";
 import { sdk } from "../_core/sdk";
 import { getSessionCookieOptions } from "../_core/cookies";
 import { COOKIE_NAME, SESSION_EXPIRATION_MS } from "@shared/const";
@@ -370,6 +370,20 @@ export const authRouter = router({
 
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
+      // Invalidate any prior unused reset tokens for this user before
+      // issuing a new one. Without this, a user who clicks "forgot
+      // password" twice ends up with two independently usable reset
+      // links — useful for attackers who got partial access.
+      await db
+        .update(passwordResetTokens)
+        .set({ usedAt: new Date() })
+        .where(
+          and(
+            eq(passwordResetTokens.userId, user.id),
+            isNull(passwordResetTokens.usedAt),
+          ),
+        );
+
       await db.insert(passwordResetTokens).values({
         userId: user.id,
         token,
@@ -409,12 +423,20 @@ export const authRouter = router({
       }
 
       const passwordHash = await hashPassword(input.password);
+      const now = new Date();
 
       await Promise.all([
-        db.update(users).set({ passwordHash }).where(eq(users.id, resetToken.userId)),
+        // `passwordChangedAt` is the canonical "invalidate everything
+        // issued before this moment" timestamp — sdk.authenticateRequest
+        // rejects any JWT whose `iat` predates it. This is what closes
+        // the "stolen cookie still works after a reset" hole.
+        db
+          .update(users)
+          .set({ passwordHash, passwordChangedAt: now })
+          .where(eq(users.id, resetToken.userId)),
         db
           .update(passwordResetTokens)
-          .set({ usedAt: new Date() })
+          .set({ usedAt: now })
           .where(eq(passwordResetTokens.id, resetToken.id)),
       ]);
 

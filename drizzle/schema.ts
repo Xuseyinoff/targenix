@@ -19,6 +19,10 @@ export const users = mysqlTable("users", {
   email: varchar("email", { length: 320 }),
   /** bcrypt hash — only set for email/password accounts */
   passwordHash: varchar("passwordHash", { length: 255 }),
+  /** Last time the password was changed. JWTs issued before this timestamp
+   *  are rejected by verifySession() — closes the "stolen cookie still works
+   *  after password reset" hole. NULL = never reset; no session invalidation. */
+  passwordChangedAt: timestamp("passwordChangedAt"),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
   /** Telegram integration fields */

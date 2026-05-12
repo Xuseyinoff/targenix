@@ -48,15 +48,18 @@ class SDKServer {
     const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1000);
     const secretKey = this.getSessionSecret();
 
+    // `iat` is load-bearing: verifySession() compares it against the user's
+    // `passwordChangedAt` to invalidate JWTs issued before a password reset.
     return new SignJWT({ openId: payload.openId, name: payload.name })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setIssuedAt(Math.floor(issuedAt / 1000))
       .setExpirationTime(expirationSeconds)
       .sign(secretKey);
   }
 
   async verifySession(
     cookieValue: string | undefined | null
-  ): Promise<{ openId: string; name: string } | null> {
+  ): Promise<{ openId: string; name: string; iatMs: number | null } | null> {
     if (!cookieValue) {
       console.warn("[Auth] Missing session cookie");
       return null;
@@ -67,16 +70,19 @@ class SDKServer {
       const { payload } = await jwtVerify(cookieValue, secretKey, {
         algorithms: ["HS256"],
       });
-      const { openId, name } = payload as Record<string, unknown>;
+      const { openId, name, iat } = payload as Record<string, unknown>;
 
       if (!isNonEmptyString(openId)) {
         console.warn("[Auth] Session payload missing openId");
         return null;
       }
 
+      const iatMs = typeof iat === "number" && Number.isFinite(iat) ? iat * 1000 : null;
+
       return {
         openId,
         name: isNonEmptyString(name) ? name : "",
+        iatMs,
       };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
@@ -97,6 +103,23 @@ class SDKServer {
 
     if (!user) {
       throw ForbiddenError("User not found");
+    }
+
+    // Reject JWTs issued before the user's last password reset. Stale
+    // cookies from before the reset are no longer trusted, even though
+    // they're cryptographically valid.
+    if (user.passwordChangedAt && session.iatMs !== null) {
+      const changedMs = user.passwordChangedAt.getTime();
+      // Allow 1s of clock skew between the password-change write and the
+      // JWT issued moments later by the reset handler itself.
+      if (changedMs > session.iatMs + 1000) {
+        console.warn("[Auth] Session predates password reset — rejecting", {
+          openId: user.openId,
+          iatMs: session.iatMs,
+          changedMs,
+        });
+        throw ForbiddenError("Session expired — please sign in again");
+      }
     }
 
     await db.upsertUser({ openId: user.openId, lastSignedIn: new Date() });
