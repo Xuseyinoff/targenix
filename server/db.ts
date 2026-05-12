@@ -408,12 +408,9 @@ export async function getIntegrations(userId: number): Promise<Integration[]> {
 /**
  * Extract a numeric destinationId from an integration config JSON.
  * Accepts both number and numeric-string forms (historical inconsistency).
- *
- * Legacy JSON config rows still store this as `targetWebsiteId` (the
- * pre-rename key). New rows write it as `destinationId`. Read both.
  */
 function extractDestinationIdFromConfig(cfg: Record<string, unknown> | null | undefined): number | null {
-  const raw = cfg?.destinationId ?? cfg?.targetWebsiteId;
+  const raw = cfg?.destinationId;
   if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
   if (typeof raw === "string" && /^\d+$/.test(raw) && Number(raw) > 0) return Number(raw);
   return null;
@@ -469,10 +466,7 @@ function warnIfLegacyWizardShape(
 ): void {
   const fallbackFields: string[] = [];
   for (const k of LEGACY_WIZARD_FIELDS) {
-    // Legacy JSON config still uses `targetWebsiteId` (pre-rename key).
-    // Read both new top-level + legacy config key for compat.
-    const cfgKey = k === "destinationId" ? "targetWebsiteId" : k;
-    if (topLevel[k] === undefined && cfg?.[cfgKey] !== undefined) fallbackFields.push(k);
+    if (topLevel[k] === undefined && cfg?.[k] !== undefined) fallbackFields.push(k);
   }
   if (topLevel.facebookAccountId === undefined && cfg?.accountId !== undefined && !fallbackFields.includes("facebookAccountId")) {
     fallbackFields.push("facebookAccountId(via accountId alias)");

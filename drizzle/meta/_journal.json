@@ -477,6 +477,13 @@
       "when": 1779660060000,
       "tag": "0071_rename_target_website_id_column",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "5",
+      "when": 1779660120000,
+      "tag": "0072_rewrite_cfg_target_website_id",
+      "breakpoints": true
     }
   ]
 }
