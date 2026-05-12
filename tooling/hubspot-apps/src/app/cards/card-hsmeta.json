@@ -1,0 +1,12 @@
+{
+  "uid": "targenix_oauth_card",
+  "type": "card",
+  "config": {
+    "name": "New Card",
+    "location": "crm.record.tab",
+    "entrypoint": "/app/cards/NewCard.tsx",
+    "objectTypes": [
+      "contacts"
+    ]
+  }
+}

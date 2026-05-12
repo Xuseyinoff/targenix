@@ -1,0 +1,32 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "server/_core/index.ts",
+    "server/workers/run.ts",
+    "client/src/main.tsx",
+    "drizzle.config.ts",
+    "vite.config.ts"
+  ],
+  "project": [
+    "server/**/*.{ts,tsx}",
+    "client/src/**/*.{ts,tsx}",
+    "shared/**/*.{ts,tsx}",
+    "drizzle/schema.ts"
+  ],
+  "ignore": [
+    "tooling/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    ".claude/worktrees/**",
+    "node_modules/**",
+    "dist/**"
+  ],
+  "ignoreDependencies": [
+    "@types/*"
+  ],
+  "ignoreBinaries": [
+    "railway",
+    "tsx",
+    "esbuild"
+  ]
+}

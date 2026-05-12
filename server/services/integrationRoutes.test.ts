@@ -7,7 +7,7 @@
  *   - Duplicate target ids collapse into one row.
  *   - Invalid ids are rejected / filtered.
  *   - Passing an empty list clears the set without re-inserting.
- *   - listIntegrationDestinations sorts by position then id in memory.
+ *   - listIntegrationRoutes sorts by position then id in memory.
  *
  * We stub the DbClient to capture the chain of calls. Drizzle itself is
  * well-tested upstream; we only need to assert the call graph our helpers
@@ -16,9 +16,9 @@
 
 import { afterEach, describe, it, expect, vi, beforeEach } from "vitest";
 import {
-  listIntegrationDestinations,
-  resolveIntegrationDestinations,
-  setIntegrationDestinations,
+  listIntegrationRoutes,
+  resolveIntegrationRoutes,
+  setIntegrationRoutes,
   syncLegacyDestination,
 } from "./integrationRoutes";
 import type { DbClient } from "../db";
@@ -72,14 +72,14 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-// ─── setIntegrationDestinations ────────────────────────────────────────────
+// ─── setIntegrationRoutes ────────────────────────────────────────────
 
-describe("setIntegrationDestinations", () => {
+describe("setIntegrationRoutes", () => {
   it("wipes then inserts inside one transaction, preserving input order as position", async () => {
     const spy: TxSpy = { deletes: [], inserts: [] };
     const db = makeDbWithTx(spy);
 
-    await setIntegrationDestinations(db, 7, [101, 102, 103]);
+    await setIntegrationRoutes(db, 7, [101, 102, 103]);
 
     expect(spy.deletes).toHaveLength(1);
     expect(spy.inserts).toHaveLength(1);
@@ -94,7 +94,7 @@ describe("setIntegrationDestinations", () => {
     const spy: TxSpy = { deletes: [], inserts: [] };
     const db = makeDbWithTx(spy);
 
-    await setIntegrationDestinations(db, 1, [50, 51, 50, 52]);
+    await setIntegrationRoutes(db, 1, [50, 51, 50, 52]);
 
     expect(spy.inserts[0]).toEqual([
       { integrationId: 1, targetWebsiteId: 50, position: 0, enabled: true },
@@ -107,7 +107,7 @@ describe("setIntegrationDestinations", () => {
     const spy: TxSpy = { deletes: [], inserts: [] };
     const db = makeDbWithTx(spy);
 
-    await setIntegrationDestinations(db, 1, [0, -5, Number.NaN, 99]);
+    await setIntegrationRoutes(db, 1, [0, -5, Number.NaN, 99]);
 
     expect(spy.inserts[0]).toEqual([
       { integrationId: 1, targetWebsiteId: 99, position: 0, enabled: true },
@@ -118,7 +118,7 @@ describe("setIntegrationDestinations", () => {
     const spy: TxSpy = { deletes: [], inserts: [] };
     const db = makeDbWithTx(spy);
 
-    await setIntegrationDestinations(db, 1, []);
+    await setIntegrationRoutes(db, 1, []);
 
     expect(spy.deletes).toHaveLength(1);
     expect(spy.inserts).toHaveLength(0);
@@ -127,13 +127,13 @@ describe("setIntegrationDestinations", () => {
   it("rejects invalid integration ids with a clear error", async () => {
     const db = makeDbWithTx({ deletes: [], inserts: [] });
 
-    await expect(setIntegrationDestinations(db, 0, [1])).rejects.toThrow(
+    await expect(setIntegrationRoutes(db, 0, [1])).rejects.toThrow(
       /invalid integrationId/i,
     );
-    await expect(setIntegrationDestinations(db, -3, [1])).rejects.toThrow(
+    await expect(setIntegrationRoutes(db, -3, [1])).rejects.toThrow(
       /invalid integrationId/i,
     );
-    await expect(setIntegrationDestinations(db, NaN, [1])).rejects.toThrow(
+    await expect(setIntegrationRoutes(db, NaN, [1])).rejects.toThrow(
       /invalid integrationId/i,
     );
   });
@@ -164,9 +164,9 @@ describe("syncLegacyDestination", () => {
   });
 });
 
-// ─── listIntegrationDestinations ───────────────────────────────────────────
+// ─── listIntegrationRoutes ───────────────────────────────────────────
 
-describe("listIntegrationDestinations", () => {
+describe("listIntegrationRoutes", () => {
   it("returns rows sorted by position, then id for stability", async () => {
     const unsorted = [
       { id: 3, integrationId: 1, targetWebsiteId: 10, position: 2, enabled: true },
@@ -176,19 +176,19 @@ describe("listIntegrationDestinations", () => {
     ];
     const db = makeDbWithSelect(unsorted);
 
-    const rows = await listIntegrationDestinations(db, 1);
+    const rows = await listIntegrationRoutes(db, 1);
 
     expect(rows.map((r) => r.id)).toEqual([1, 5, 2, 3]);
   });
 
   it("forwards onlyEnabled as a WHERE filter without crashing", async () => {
     const db = makeDbWithSelect([]);
-    const rows = await listIntegrationDestinations(db, 1, { onlyEnabled: true });
+    const rows = await listIntegrationRoutes(db, 1, { onlyEnabled: true });
     expect(rows).toEqual([]);
   });
 });
 
-// ─── resolveIntegrationDestinations ────────────────────────────────────────
+// ─── resolveIntegrationRoutes ────────────────────────────────────────
 //
 // Reads from integration_destinations joined with target_websites and
 // filters by ownership. We stub the DB chain loosely; the point is to
@@ -210,7 +210,7 @@ function makeNewTableDb(state: NewDbState): DbClient {
   return { select: vi.fn(() => chain) } as unknown as DbClient;
 }
 
-describe("resolveIntegrationDestinations", () => {
+describe("resolveIntegrationRoutes", () => {
   it("returns rows from integration_destinations ordered by position", async () => {
     const db = makeNewTableDb({
       joinRows: [
@@ -224,7 +224,7 @@ describe("resolveIntegrationDestinations", () => {
         },
       ],
     });
-    const out = await resolveIntegrationDestinations(db, {
+    const out = await resolveIntegrationRoutes(db, {
       id: 10,
       userId: 42,
     });
@@ -245,7 +245,7 @@ describe("resolveIntegrationDestinations", () => {
         },
       ],
     });
-    const out = await resolveIntegrationDestinations(db, {
+    const out = await resolveIntegrationRoutes(db, {
       id: 10,
       userId: 42,
     });
@@ -255,7 +255,7 @@ describe("resolveIntegrationDestinations", () => {
 
   it("returns [] when the integration has no destination rows", async () => {
     const db = makeNewTableDb({ joinRows: [] });
-    const out = await resolveIntegrationDestinations(db, {
+    const out = await resolveIntegrationRoutes(db, {
       id: 10,
       userId: 42,
     });

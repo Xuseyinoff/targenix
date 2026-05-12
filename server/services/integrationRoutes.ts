@@ -36,7 +36,7 @@ import type { FilterRule } from "./filterEngine";
 export type IntegrationRouteRow = typeof integrationRoutes.$inferSelect;
 
 /**
- * Shape returned by resolveIntegrationDestinations() — each element is
+ * Shape returned by resolveIntegrationRoutes() — each element is
  * one fully-hydrated destination ready for dispatch. We carry the
  * parent mapping row too so later stages (retry tracking, per-destination
  * status) can reference it by id.
@@ -68,13 +68,13 @@ export interface ResolvedDestination {
  * The helper does NOT verify that the caller owns the integration / target
  * website. That's the job of the outer CRUD endpoint (integrationsRouter).
  */
-export async function setIntegrationDestinations(
+export async function setIntegrationRoutes(
   db: DbClient,
   integrationId: number,
   targetWebsiteIds: number[],
 ): Promise<void> {
   if (!Number.isFinite(integrationId) || integrationId <= 0) {
-    throw new Error("setIntegrationDestinations: invalid integrationId");
+    throw new Error("setIntegrationRoutes: invalid integrationId");
   }
 
   const ids = dedupe(targetWebsiteIds.filter((n) => Number.isFinite(n) && n > 0));
@@ -103,7 +103,7 @@ export async function setIntegrationDestinations(
 }
 
 /**
- * Convenience wrapper around setIntegrationDestinations() for the legacy
+ * Convenience wrapper around setIntegrationRoutes() for the legacy
  * 1:1 shape. Use from the existing CRUD code paths until the wizard lands.
  *
  * Passing `null` wipes the destination set — matches the semantics of
@@ -114,7 +114,7 @@ export async function syncLegacyDestination(
   integrationId: number,
   targetWebsiteId: number | null,
 ): Promise<void> {
-  await setIntegrationDestinations(
+  await setIntegrationRoutes(
     db,
     integrationId,
     targetWebsiteId == null ? [] : [targetWebsiteId],
@@ -133,7 +133,7 @@ export async function syncLegacyDestination(
  * Returns 0 for integrations that have never been backfilled — callers can
  * treat `== 0` as "fresh row, mirror is safe".
  */
-export async function countIntegrationDestinations(
+export async function countIntegrationRoutes(
   db: DbClient,
   integrationId: number,
 ): Promise<number> {
@@ -149,7 +149,7 @@ export async function countIntegrationDestinations(
  * Read the current destination set, in position order. Returns an empty
  * array for integrations that have no mapping rows yet.
  */
-export async function listIntegrationDestinations(
+export async function listIntegrationRoutes(
   db: DbClient,
   integrationId: number,
   options: { onlyEnabled?: boolean } = {},
@@ -190,7 +190,7 @@ export async function listIntegrationDestinations(
  * match the integration's owner are filtered out and logged — they
  * cannot be delivered to safely.
  */
-export async function resolveIntegrationDestinations(
+export async function resolveIntegrationRoutes(
   db: DbClient,
   // `targetWebsiteId` + `config` are accepted for caller compatibility only —
   // they used to feed the deleted legacy fallback. Safe to drop from the

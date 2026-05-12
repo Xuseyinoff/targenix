@@ -17,7 +17,7 @@ import { eq, and } from "drizzle-orm";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getAdapter } from "../integrations";
 import { loadConnectionForDelivery } from "../integrations/dispatch";
-import { resolveIntegrationDestinations } from "../services/integrationRoutes";
+import { resolveIntegrationRoutes } from "../services/integrationRoutes";
 import type { DbClient } from "../db";
 import type { FilterRule } from "../services/filterEngine";
 
@@ -259,7 +259,7 @@ export const integrationsRouter = router({
       // "Test lead" is a real dry-run of what production would do — fixes
       // the old behaviour where only the primary `targetWebsiteId` got
       // exercised and the other N-1 destinations stayed untested.
-      const destinations = await resolveIntegrationDestinations(db, {
+      const destinations = await resolveIntegrationRoutes(db, {
         id: integration.id,
         userId: integration.userId,
         targetWebsiteId: integration.targetWebsiteId,

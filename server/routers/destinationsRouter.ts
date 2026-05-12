@@ -193,8 +193,8 @@ export function decryptApiKey(config: unknown): string | null {
 
 const templateConfigSchema = z.record(z.string(), z.any());
 
-export const targetWebsitesRouter = router({
-  /** List all target websites for the authenticated user (secrets masked). */
+export const destinationsRouter = router({
+  /** List all destinations for the authenticated user (secrets masked). */
   list: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) return [];

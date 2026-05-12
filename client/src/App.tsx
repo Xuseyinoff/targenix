@@ -18,7 +18,7 @@ const Leads = lazy(() => import("./pages/Leads"));
 const WebhookHealth = lazy(() => import("./pages/WebhookHealth"));
 const Integrations = lazy(() => import("./pages/Integrations"));
 const Connections = lazy(() => import("./pages/Connections"));
-const TargetWebsites = lazy(() => import("./pages/TargetWebsites"));
+const Destinations = lazy(() => import("./pages/Destinations"));
 const Register = lazy(() => import("./pages/Register"));
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
@@ -234,7 +234,7 @@ function Router() {
         path="/destinations"
         component={() => (
           <AdminDestinationsGate>
-            <TargetWebsites />
+            <Destinations />
           </AdminDestinationsGate>
         )}
       />
@@ -242,7 +242,7 @@ function Router() {
         path="/target-websites"
         component={() => (
           <AdminDestinationsGate>
-            <TargetWebsites />
+            <Destinations />
           </AdminDestinationsGate>
         )}
       />

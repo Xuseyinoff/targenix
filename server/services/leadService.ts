@@ -5,7 +5,7 @@ import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 import { dispatchDelivery } from "../integrations/dispatch";
-import { resolveIntegrationDestinations, type ResolvedDestination } from "./integrationRoutes";
+import { resolveIntegrationRoutes, type ResolvedDestination } from "./integrationRoutes";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
 import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
@@ -572,7 +572,7 @@ async function persistOrderDeliveryAttemptResult(
  * Shared by processLead and the hourly order retry job.
  *
  * `preResolvedDestination` — when provided (including null), the LEAD_ROUTING
- * branch uses it directly and skips the `resolveIntegrationDestinations` call.
+ * branch uses it directly and skips the `resolveIntegrationRoutes` call.
  * Pass `undefined` (or omit) to fall back to the legacy inline resolution.
  * This avoids a double-query when the caller (fan-out loop) already resolved
  * the destination list.
@@ -651,7 +651,7 @@ async function runOrderIntegrationSend(params: {
     if (params.preResolvedDestination !== undefined) {
       primary = params.preResolvedDestination;
     } else {
-      const resolved = await resolveIntegrationDestinations(db, {
+      const resolved = await resolveIntegrationRoutes(db, {
         id: integration.id,
         userId: integration.userId,
         targetWebsiteId: integration.targetWebsiteId ?? null,
@@ -1172,7 +1172,7 @@ export async function processLead(params: {
     // LEAD_ROUTING integrations have valid integration_destinations rows
     // (the 1 outlier references a deleted target_website and is broken
     // independently of which code path runs).
-    const destinations = await resolveIntegrationDestinations(db, {
+    const destinations = await resolveIntegrationRoutes(db, {
       id: integration.id,
       userId: integration.userId,
       targetWebsiteId: integration.targetWebsiteId ?? null,

@@ -11,7 +11,7 @@
  *   2. When `destinationId > 0` is present on an order row, `retryFailedOrderDelivery`
  *      looks up the specific destination mapping (rather than letting the
  *      resolver pick any destination).
- *   3. The fan-out guard in `resolveIntegrationDestinations` correctly returns
+ *   3. The fan-out guard in `resolveIntegrationRoutes` correctly returns
  *      N > 1 rows for a flagged user.
  *
  * We do NOT stub `processLead` here (too many dependencies). Integration

@@ -549,10 +549,10 @@ export async function createIntegration(data: {
     try {
       if (destIds && destIds.length > 0) {
         // Multi-destination path: write all ids in order.
-        // `setIntegrationDestinations` runs inside its own transaction so
+        // `setIntegrationRoutes` runs inside its own transaction so
         // the mapping is consistent even if the process crashes mid-way.
-        const { setIntegrationDestinations } = await import("./services/integrationRoutes");
-        await setIntegrationDestinations(db, insertedId, destIds);
+        const { setIntegrationRoutes } = await import("./services/integrationRoutes");
+        await setIntegrationRoutes(db, insertedId, destIds);
       } else {
         // Single-destination path: mirror the column id.
         await strictSyncLegacyDestination(db, insertedId, targetWebsiteId);
@@ -690,21 +690,21 @@ export async function updateIntegration(
   //      passed. Leave the mapping as-is (matches old behaviour).
   //
   // Notes:
-  //   - The guard uses `countIntegrationDestinations` (single small SELECT)
+  //   - The guard uses `countIntegrationRoutes` (single small SELECT)
   //     so overhead on every update is negligible.
   //   - Sync errors now PROPAGATE: the legacy fallback is gone, so an
   //     unsynced join row means future leads silently drop. Letting the
   //     mutation fail forces the caller to retry until consistent.
   if (destinationIds !== undefined) {
-    const { setIntegrationDestinations } = await import(
+    const { setIntegrationRoutes } = await import(
       "./services/integrationRoutes"
     );
-    await setIntegrationDestinations(db, id, destinationIds);
+    await setIntegrationRoutes(db, id, destinationIds);
   } else if (twIdForSync !== undefined) {
-    const { countIntegrationDestinations } = await import(
+    const { countIntegrationRoutes } = await import(
       "./services/integrationRoutes"
     );
-    const existingCount = await countIntegrationDestinations(db, id);
+    const existingCount = await countIntegrationRoutes(db, id);
 
     if (existingCount > 1) {
       // Multi-destination integration — DO NOT mirror the single id.
