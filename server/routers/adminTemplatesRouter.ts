@@ -16,9 +16,9 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { adminProcedure, router } from "../_core/trpc";
-import { getDb } from "../db";
-import { destinationTemplates } from "../../drizzle/schema";
-import { eq } from "drizzle-orm";
+import { getDb, type DbClient } from "../db";
+import { appActions, destinationTemplates } from "../../drizzle/schema";
+import { and, eq } from "drizzle-orm";
 import { listDestinationTemplatesWithMirrorOverlay } from "../integrations/dynamicTemplateSource";
 import {
   validateTemplateContract,
@@ -101,6 +101,84 @@ function toTrpcError(err: unknown): TRPCError {
     return new TRPCError({ code: "BAD_REQUEST", message: err.message });
   }
   return new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "unknown" });
+}
+
+// ─── app_actions mirror sync ────────────────────────────────────────────────
+//
+// destination_templates is the authoritative table for writes/ids, but
+// dispatchDelivery's dynamicTemplateAdapter reads app_actions FIRST when
+// a target_websites row references it by actionId (Stage 2 mirror,
+// 2026-04-12). Before this helper existed, editing a template in the
+// admin UI silently left the mirror stale — a fix to a Sotuvchi URL
+// would show up in the admin list but never reach the live delivery
+// path until somebody manually re-ran the backfill script.
+//
+// On create: if no mirror row exists for (appKey, "t<id>"), we let it
+//   be — the dispatcher falls back to destination_templates and the
+//   admin can opt into the mirror later via adminAppActionsRouter.
+// On update: upsert the mirror so the dispatcher sees the new fields
+//   immediately. Skip silently when there's no existing mirror row
+//   AND the template wasn't previously mirrored.
+// On delete: drop the mirror row to prevent orphans.
+async function syncAppActionMirror(
+  db: DbClient,
+  templateId: number,
+  data: {
+    appKey: string;
+    name: string;
+    endpointUrl: string;
+    method: string;
+    contentType: string | null;
+    bodyFields: unknown;
+    userFields: unknown;
+    variableFields: unknown;
+    autoMappedFields: unknown;
+    isActive: boolean;
+  },
+): Promise<void> {
+  const legacyKey = `t${templateId}`;
+  // Look for an existing mirror under either the legacy `t<id>` key or
+  // the semantic synonyms documented in dynamicTemplateSource.ts. The
+  // matched row's actionKey is preserved so we don't accidentally
+  // rename it.
+  const [existing] = await db
+    .select({ id: appActions.id })
+    .from(appActions)
+    .where(and(eq(appActions.appKey, data.appKey), eq(appActions.actionKey, legacyKey)))
+    .limit(1);
+
+  if (!existing) {
+    // No mirror today — don't auto-create one. Templates that should be
+    // mirrored are seeded explicitly; auto-create here would conflict with
+    // the admin's own taxonomy decisions (actionKey naming, isDefault).
+    return;
+  }
+
+  await db
+    .update(appActions)
+    .set({
+      name: data.name,
+      endpointUrl: data.endpointUrl,
+      method: data.method,
+      contentType: data.contentType,
+      bodyFields: data.bodyFields,
+      userFields: data.userFields,
+      variableFields: data.variableFields,
+      autoMappedFields: data.autoMappedFields,
+      isActive: data.isActive,
+    })
+    .where(eq(appActions.id, existing.id));
+}
+
+async function deleteAppActionMirror(
+  db: DbClient,
+  templateId: number,
+  appKey: string,
+): Promise<void> {
+  const legacyKey = `t${templateId}`;
+  await db
+    .delete(appActions)
+    .where(and(eq(appActions.appKey, appKey), eq(appActions.actionKey, legacyKey)));
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────────
@@ -229,6 +307,39 @@ export const adminTemplatesRouter = router({
         .update(destinationTemplates)
         .set(updates)
         .where(eq(destinationTemplates.id, id));
+
+      // Mirror sync (best-effort): keep app_actions in lockstep so the
+      // dispatcher's overlay reads the fresh values without a manual backfill.
+      // We fetch the merged row once so the helper has every field in hand.
+      try {
+        const [merged] = await db
+          .select()
+          .from(destinationTemplates)
+          .where(eq(destinationTemplates.id, id))
+          .limit(1);
+        if (merged && merged.appKey) {
+          await syncAppActionMirror(db, id, {
+            appKey: merged.appKey,
+            name: merged.name,
+            endpointUrl: merged.endpointUrl,
+            method: merged.method,
+            contentType: merged.contentType,
+            bodyFields: merged.bodyFields,
+            userFields: merged.userVisibleFields,
+            variableFields: merged.variableFields,
+            autoMappedFields: merged.autoMappedFields,
+            isActive: merged.isActive,
+          });
+        }
+      } catch (err) {
+        // Don't fail the user-facing mutation on mirror sync errors —
+        // the authoritative row is already updated. Log so admins can
+        // spot the drift; the existing backfill script reconciles.
+        console.warn(
+          `[adminTemplatesRouter.update] app_actions mirror sync failed for templateId=${id}:`,
+          err instanceof Error ? err.message : String(err),
+        );
+      }
       return { success: true };
     }),
 
@@ -238,9 +349,31 @@ export const adminTemplatesRouter = router({
     .mutation(async ({ input }) => {
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
+
+      // Snapshot the appKey BEFORE deleting so we know which mirror row to
+      // remove. Mirror sync is best-effort: if the delete succeeds but the
+      // mirror removal fails, we log and move on — the template is gone so
+      // the orphan app_actions row is inert (no targetWebsites reference it).
+      const [snapshot] = await db
+        .select({ appKey: destinationTemplates.appKey })
+        .from(destinationTemplates)
+        .where(eq(destinationTemplates.id, input.id))
+        .limit(1);
+
       await db
         .delete(destinationTemplates)
         .where(eq(destinationTemplates.id, input.id));
+
+      if (snapshot?.appKey) {
+        try {
+          await deleteAppActionMirror(db, input.id, snapshot.appKey);
+        } catch (err) {
+          console.warn(
+            `[adminTemplatesRouter.delete] app_actions mirror cleanup failed for templateId=${input.id}:`,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
       return { success: true };
     }),
 });
