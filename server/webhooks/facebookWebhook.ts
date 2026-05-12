@@ -9,6 +9,7 @@ import { dispatchLeadProcessing } from "../services/leadDispatch";
 import { addSseClient, emitWebhookEvent } from "./sseEmitter";
 import { log } from "../services/appLogger";
 import { sdk } from "../_core/sdk";
+import { checkPageLeadRate } from "../lib/webhookRateLimit";
 
 const router: Router = createRouter();
 
@@ -207,6 +208,21 @@ router.post("/facebook", async (req: Request, res: Response) => {
     const pageId: string = value?.page_id || "test-page";
     const formId: string = value?.form_id || "test-form";
 
+    const rateDecision = checkPageLeadRate(pageId);
+    if (!rateDecision.allowed) {
+      void log.warn(
+        "WEBHOOK",
+        `Test lead throttled — pageId=${pageId} count=${rateDecision.count}/${rateDecision.cap}/min`,
+        { pageId, leadgenId, count: rateDecision.count, cap: rateDecision.cap, retryAfterSec: rateDecision.retryAfterSec },
+        null,
+        pageId,
+        null,
+        "lead_throttled",
+        "facebook",
+      );
+      return;
+    }
+
     void log.info("WEBHOOK", `Facebook test lead received — leadgenId=${leadgenId}`, { leadgenId, pageId, formId }, null, pageId, null, "lead_received", "facebook");
 
     const userIds = await resolveUserIdsForPage(pageId);
@@ -244,6 +260,21 @@ router.post("/facebook", async (req: Request, res: Response) => {
         const formId: string = change.value?.form_id;
 
         if (!leadgenId) continue;
+
+        const rateDecision = checkPageLeadRate(pageId);
+        if (!rateDecision.allowed) {
+          void log.warn(
+            "WEBHOOK",
+            `Lead throttled — pageId=${pageId} count=${rateDecision.count}/${rateDecision.cap}/min`,
+            { pageId, leadgenId, count: rateDecision.count, cap: rateDecision.cap, retryAfterSec: rateDecision.retryAfterSec },
+            null,
+            pageId,
+            null,
+            "lead_throttled",
+            "facebook",
+          );
+          continue;
+        }
 
         void log.info("WEBHOOK", `New lead received — leadgenId=${leadgenId} pageId=${pageId}`, { leadgenId, pageId, formId }, null, pageId, null, "lead_received", "facebook");
 

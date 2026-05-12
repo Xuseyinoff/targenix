@@ -27,6 +27,7 @@ export type LogCategory =
   | "GOOGLE"
   | "OAUTH"
   | "CONNECTIONS"
+  | "WORKFLOW"
   /**
    * Multi-tenant security violations (owner mismatches, cross-tenant
    * credential exposure attempts, etc.). Always paired with log.error so

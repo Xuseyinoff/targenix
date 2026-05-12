@@ -890,33 +890,76 @@ export async function recalculateLeadDeliveryStatus(leadId: number, userId?: num
   await db.update(leads).set({ deliveryStatus }).where(whereClause);
 }
 
+// ─── Concurrency cap for fireLeadWorkflows ──────────────────────────────────
+//
+// fireLeadWorkflows is invoked once per lead and runs the user's workflow
+// list. Each workflow can issue N outbound HTTP steps. processLead awaits
+// the delivery pipeline but kicks off this function in the BACKGROUND
+// (`void fireLeadWorkflows(...).catch(...)`), so on a burst of inbound
+// leads there is no natural backpressure: dozens of fireLeadWorkflows
+// invocations stack up, each with its own pending HTTP graph, and worker
+// memory + outbound socket count grow unbounded.
+//
+// We bound the number of concurrent invocations with a simple counter.
+// When the cap is hit, additional fires are dropped (logged loudly) so a
+// runaway tenant cannot starve other tenants' workflow throughput.
+const FIRE_LEAD_WORKFLOWS_MAX_CONCURRENT = (() => {
+  const raw = process.env.WORKFLOW_FIRE_MAX_CONCURRENT;
+  const n = raw ? Number(raw.trim()) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 10;
+})();
+let _fireLeadWorkflowsInFlight = 0;
+
 /**
  * Execute all active workflows for this user that have triggerOnLead=true.
  * Called at the end of processLead — failures are swallowed so they never
  * interrupt the main lead delivery pipeline.
+ *
+ * Returns early (and warns) when the global concurrency cap is hit. This
+ * is a worker-local cap; if the worker is ever horizontally scaled, the
+ * per-replica limit applies independently, which is the desired behaviour
+ * (each replica protects its own memory budget).
  */
 async function fireLeadWorkflows(
   db: DbClient,
   userId: number,
   triggerData: Record<string, unknown>,
 ): Promise<void> {
-  const activeWorkflows = await db
-    .select({ id: workflows.id })
-    .from(workflows)
-    .where(
-      and(
-        eq(workflows.userId, userId),
-        eq(workflows.isActive, true),
-        eq(workflows.triggerOnLead, true),
-      )
+  if (_fireLeadWorkflowsInFlight >= FIRE_LEAD_WORKFLOWS_MAX_CONCURRENT) {
+    await log.warn(
+      "WORKFLOW",
+      `fireLeadWorkflows skipped — worker at capacity (${_fireLeadWorkflowsInFlight}/${FIRE_LEAD_WORKFLOWS_MAX_CONCURRENT})`,
+      { userId, inFlight: _fireLeadWorkflowsInFlight, cap: FIRE_LEAD_WORKFLOWS_MAX_CONCURRENT },
+      null,
+      null,
+      userId,
+      "workflow_throttled",
+      "system",
     );
+    return;
+  }
+  _fireLeadWorkflowsInFlight++;
+  try {
+    const activeWorkflows = await db
+      .select({ id: workflows.id })
+      .from(workflows)
+      .where(
+        and(
+          eq(workflows.userId, userId),
+          eq(workflows.isActive, true),
+          eq(workflows.triggerOnLead, true),
+        )
+      );
 
-  for (const wf of activeWorkflows) {
-    try {
-      await executeWorkflow({ db, workflowId: wf.id, userId, triggerData });
-    } catch (err) {
-      console.error(`[Workflow] Failed to execute workflow ${wf.id} for user ${userId}:`, (err as Error).message);
+    for (const wf of activeWorkflows) {
+      try {
+        await executeWorkflow({ db, workflowId: wf.id, userId, triggerData });
+      } catch (err) {
+        console.error(`[Workflow] Failed to execute workflow ${wf.id} for user ${userId}:`, (err as Error).message);
+      }
     }
+  } finally {
+    _fireLeadWorkflowsInFlight--;
   }
 }
 

@@ -84,11 +84,14 @@ export async function runConnectionHealthSweep(): Promise<{ checked: number }> {
 
     console.log(`[ConnectionHealth] Sweeping ${due.length} connection(s)`);
     let checked = 0;
-    // Simple bounded concurrency — Promise.allSettled with an in-place
-    // semaphore. Keeps the implementation under 20 lines and matches the
-    // load shape (small batches, short tasks).
+    // Simple bounded concurrency — N workers draining a shared queue. Each
+    // worker catches its own per-connection errors so they never escape;
+    // `Promise.allSettled` is the outer guard against any unexpected throw
+    // outside that inner try/catch (e.g. a future refactor that drops it,
+    // or an error inside log.warn itself). Without allSettled, one
+    // unexpected throw would reject the whole `await`, leak the error into
+    // an unhandled rejection, and skip the `checked=N` summary log.
     const queue = [...due];
-    const inFlight: Array<Promise<void>> = [];
     const work = async () => {
       while (queue.length > 0) {
         const c = queue.shift();
@@ -108,10 +111,24 @@ export async function runConnectionHealthSweep(): Promise<{ checked: number }> {
         }
       }
     };
+    const workers: Array<Promise<void>> = [];
     for (let i = 0; i < Math.min(SWEEP_CONCURRENCY, due.length); i++) {
-      inFlight.push(work());
+      workers.push(work());
     }
-    await Promise.all(inFlight);
+    const results = await Promise.allSettled(workers);
+    const rejected = results.filter((r) => r.status === "rejected");
+    if (rejected.length > 0) {
+      for (const r of rejected as Array<PromiseRejectedResult>) {
+        void log.error(
+          "CONNECTIONS",
+          "Health sweep worker rejected unexpectedly",
+          { error: r.reason instanceof Error ? r.reason.message : String(r.reason) },
+          null,
+          null,
+          null,
+        );
+      }
+    }
 
     console.log(`[ConnectionHealth] Sweep done — checked=${checked}`);
     return { checked };

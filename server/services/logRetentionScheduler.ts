@@ -75,21 +75,57 @@ async function archiveSystemLogs(): Promise<{ archived: number; purged: number }
 
   const archived: number = (insertResult as unknown as { affectedRows?: number })?.affectedRows ?? 0;
 
-  // 2. Delete the archived rows from app_logs
+  // 2. Delete the archived rows from app_logs — batched.
+  //    Unbounded DELETE on a hot table can take a long write lock; chunking
+  //    keeps each statement short so foreground writers (lead ingestion,
+  //    order delivery) only see a sub-second pause per batch.
   if (archived > 0) {
-    await db.execute(sql`
-      DELETE FROM app_logs WHERE logType = 'SYSTEM' AND createdAt < ${archiveCutoff}
-    `);
+    await batchedDelete(db, sql`DELETE FROM app_logs WHERE logType = 'SYSTEM' AND createdAt < ${archiveCutoff} LIMIT ${BATCH_SIZE}`);
   }
 
-  // 3. Purge archive entries older than 90 days
-  const purgeResult = await db.execute(sql`
-    DELETE FROM app_logs_archive WHERE createdAt < ${purgeCutoff}
-  `);
-
-  const purged: number = (purgeResult as unknown as { affectedRows?: number })?.affectedRows ?? 0;
+  // 3. Purge archive entries older than 90 days — batched for the same reason.
+  const purged = await batchedDelete(
+    db,
+    sql`DELETE FROM app_logs_archive WHERE createdAt < ${purgeCutoff} LIMIT ${BATCH_SIZE}`,
+  );
 
   return { archived, purged };
+}
+
+// ─── Batched delete helper ──────────────────────────────────────────────────
+//
+// MySQL's `DELETE ... LIMIT N` deletes up to N rows per statement and
+// returns affectedRows; we loop until affectedRows < N (last batch). A
+// short sleep between batches yields the connection back to the pool so
+// writers don't queue behind us. Net effect on a multi-million-row purge:
+// total wall time is roughly unchanged, but each batch holds a write lock
+// for ~50-200ms instead of multiple seconds — webhook ingestion no longer
+// stalls during the nightly retention sweep.
+const BATCH_SIZE = 10_000;
+const BATCH_PAUSE_MS = 200;
+const MAX_BATCHES = 1_000; // hard ceiling: 10M rows per sweep (safety belt)
+
+async function batchedDelete(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  // SQL fragment must already include `LIMIT ${BATCH_SIZE}` so we don't
+  // have to re-template it on every iteration.
+  query: ReturnType<typeof sql>,
+): Promise<number> {
+  let totalDeleted = 0;
+  for (let i = 0; i < MAX_BATCHES; i++) {
+    const result = await db.execute(query);
+    const affected = (result as unknown as { affectedRows?: number })?.affectedRows ?? 0;
+    totalDeleted += affected;
+    if (affected < BATCH_SIZE) return totalDeleted; // drained
+    if (BATCH_PAUSE_MS > 0) await new Promise((r) => setTimeout(r, BATCH_PAUSE_MS));
+  }
+  // Hit the safety ceiling — extremely unlikely under normal retention
+  // schedules. Log so it's investigated.
+  console.warn(
+    `[LogRetention] batchedDelete hit MAX_BATCHES=${MAX_BATCHES} ceiling (deleted=${totalDeleted}); ` +
+      "next sweep will continue from where this one stopped.",
+  );
+  return totalDeleted;
 }
 
 /**
