@@ -463,6 +463,13 @@
       "when": 1778578925170,
       "tag": "0069_rename_destinations",
       "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "5",
+      "when": 1779660000000,
+      "tag": "0070_drop_legacy_views",
+      "breakpoints": true
     }
   ]
 }
