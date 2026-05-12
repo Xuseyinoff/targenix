@@ -57,6 +57,53 @@ async function validateTargetUrl(url: string): Promise<void> {
   await assertSafeOutboundUrl(url);
 }
 
+// ─── Dispatch-type resolution (templateType → appKey transition) ─────────────
+// Phase 1 of templateType removal: the create/update API now accepts BOTH a
+// legacy `templateType` discriminator AND a modern `appKey`. Internally we
+// always work with one resolved dispatch type. Once Phase 2 ships and every
+// client sends `appKey` only, the `templateType` input field is removed.
+
+type DispatchType = "sotuvchi" | "100k" | "custom" | "telegram" | "google-sheets" | "http-api-key";
+
+/** appKeys that funnel through the http-api-key create branch (HTTP_API_KEY +
+ *  OAuth2 CRM manifests — both share the same create surface). */
+const HTTP_API_KEY_DISPATCH_APP_KEYS: ReadonlySet<string> = new Set([
+  "eskiz-sms", "playmobile-sms", "openai", "crm-generic",
+  "webhook-json", "bitrix24", "amocrm",
+  "hubspot", "kommo", "pipedrive",
+]);
+
+const DIRECT_DISPATCH_KEYS: ReadonlySet<DispatchType> = new Set<DispatchType>([
+  "sotuvchi", "100k", "custom", "telegram", "google-sheets",
+]);
+
+function resolveDispatchType(
+  input: { templateType?: string; appKey?: string },
+): DispatchType {
+  if (input.templateType) return input.templateType as DispatchType;
+  const k = input.appKey?.trim();
+  if (k) {
+    if (DIRECT_DISPATCH_KEYS.has(k as DispatchType)) return k as DispatchType;
+    if (HTTP_API_KEY_DISPATCH_APP_KEYS.has(k)) return "http-api-key";
+  }
+  throw new Error("Either `appKey` or `templateType` is required to create a destination");
+}
+
+/** Update variant — if neither input field is provided, preserve the current
+ *  dispatch type from the existing destination row. */
+function resolveDispatchTypeForUpdate(
+  input: { templateType?: string; appKey?: string },
+  site: { templateType: string },
+): DispatchType {
+  if (input.templateType) return input.templateType as DispatchType;
+  const k = input.appKey?.trim();
+  if (k) {
+    if (DIRECT_DISPATCH_KEYS.has(k as DispatchType)) return k as DispatchType;
+    if (HTTP_API_KEY_DISPATCH_APP_KEYS.has(k)) return "http-api-key";
+  }
+  return site.templateType as DispatchType;
+}
+
 // ─── Variable field definitions per template ──────────────────────────────────
 export const TEMPLATE_VARIABLE_FIELDS: Record<string, Array<{ key: string; label: string; placeholder: string; required: boolean }>> = {
   sotuvchi: [
@@ -272,8 +319,11 @@ export const destinationsRouter = router({
     .input(
       z.object({
         name: z.string().min(1),
-        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram", "google-sheets", "http-api-key"]),
-        /** For http-api-key apps — which app manifest handles delivery */
+        /** Phase 1 transition — both accepted. `appKey` is the modern shape;
+         *  `templateType` is the legacy dispatch discriminator. At least one
+         *  must be provided. The handler derives the dispatch type via
+         *  `resolveDispatchType`. */
+        templateType: z.enum(["sotuvchi", "100k", "custom", "telegram", "google-sheets", "http-api-key"]).optional(),
         appKey: z.string().min(1).max(64).optional(),
         /** For http-api-key apps — all form field values (except connectionId) */
         templateConfig: z.record(z.string(), z.any()).optional(),
@@ -310,6 +360,10 @@ export const destinationsRouter = router({
       const db = await getDb();
       if (!db) throw new Error("DB not available");
 
+      // Phase 1 — derive dispatch type from EITHER templateType (legacy) or
+      // appKey (modern). Throws if neither is provided.
+      const dispatchType = resolveDispatchType(input);
+
       const [me] = await db
         .select({
           mode: users.telegramDestinationDeliveryMode,
@@ -341,10 +395,10 @@ export const destinationsRouter = router({
         if (!cx || cx.userId !== ctx.user.id) {
           throw new Error("Connection not found");
         }
-        if (input.templateType === "google-sheets" && cx.type !== "google_sheets") {
+        if (dispatchType === "google-sheets" && cx.type !== "google_sheets") {
           throw new Error("Selected connection is not a Google Sheets connection");
         }
-        if (input.templateType === "telegram" && cx.type !== "telegram_bot") {
+        if (dispatchType === "telegram" && cx.type !== "telegram_bot") {
           throw new Error("Selected connection is not a Telegram bot connection");
         }
         validatedConnectionId = cx.id;
@@ -353,7 +407,7 @@ export const destinationsRouter = router({
         // `oauth_tokens.id` (stored in connections.oauthTokenId) when the form
         // did not send it explicitly.
         if (
-          input.templateType === "google-sheets" &&
+          dispatchType === "google-sheets" &&
           !input.googleAccountId &&
           cx.oauthTokenId
         ) {
@@ -372,7 +426,7 @@ export const destinationsRouter = router({
       //   B) no connectionId → the caller must supply botToken + chatId
       //      inline; we encrypt the token and persist it in templateConfig.
       //      This is the legacy path used by the old destination form.
-      if (input.templateType === "telegram") {
+      if (dispatchType === "telegram") {
         const defaultTemplate =
           "📋 Yangi lead\n\n👤 Ism: {{full_name}}\n📞 Telefon: {{phone_number}}\n📧 Email: {{email}}";
         const config: Record<string, unknown> = {};
@@ -402,7 +456,7 @@ export const destinationsRouter = router({
       }
 
       // Google Sheets — append row per lead (no HTTP affiliate URL)
-      if (input.templateType === "google-sheets") {
+      if (dispatchType === "google-sheets") {
         if (!input.googleAccountId) throw new Error("Google account is required");
         if (!input.spreadsheetId?.trim()) throw new Error("Spreadsheet ID is required");
         if (!input.sheetName?.trim()) throw new Error("Sheet name is required");
@@ -432,7 +486,7 @@ export const destinationsRouter = router({
       // HTTP API-key apps (Eskiz SMS, PlayMobile, Bitrix24, Webhook, etc.)
       // The manifest executionEndpoint provides the URL at delivery time —
       // we only need to store appKey + templateConfig + connectionId.
-      if (input.templateType === "http-api-key") {
+      if (dispatchType === "http-api-key") {
         if (!input.appKey?.trim()) throw new Error("appKey is required for app destinations");
         const [inserted] = await db.insert(destinations).values({
           userId:         ctx.user.id,
@@ -450,16 +504,16 @@ export const destinationsRouter = router({
 
       // Build URL — resolve from destination_templates by appKey for known affiliate types
       let url = "";
-      if (input.templateType === "sotuvchi" || input.templateType === "100k") {
-        const ep = await getEndpointUrlByTemplateAppKey(db, input.templateType);
-        if (!ep) throw new Error(`Destination template not found for type: ${input.templateType}`);
+      if (dispatchType === "sotuvchi" || dispatchType === "100k") {
+        const ep = await getEndpointUrlByTemplateAppKey(db, dispatchType);
+        if (!ep) throw new Error(`Destination template not found for type: ${dispatchType}`);
         url = ep;
       } else {
         url = input.url ?? "";
       }
 
       // For custom templates the user provides the URL — validate it before storing
-      if (input.templateType === "custom" && url) {
+      if (dispatchType === "custom" && url) {
         await validateTargetUrl(url);
       }
 
@@ -468,7 +522,7 @@ export const destinationsRouter = router({
       if (input.apiKey) {
         config.apiKeyEncrypted = encrypt(input.apiKey);
       }
-      if (input.templateType === "custom") {
+      if (dispatchType === "custom") {
         if (input.method) config.method = input.method;
         if (input.headers) config.headers = input.headers;
         if (input.fieldMap) config.fieldMap = input.fieldMap;
@@ -485,8 +539,8 @@ export const destinationsRouter = router({
         userId: ctx.user.id,
         name: input.name,
         url,
-        templateType: input.templateType,
-        appKey: input.templateType,
+        templateType: dispatchType,
+        appKey: dispatchType,
         templateConfig: config,
         ...(autoChatId ? { telegramChatId: autoChatId } : {}),
         isActive: true,
@@ -496,7 +550,7 @@ export const destinationsRouter = router({
         success: true,
         id,
         name: input.name,
-        templateType: input.templateType,
+        templateType: dispatchType,
       };
     }),
 
@@ -550,6 +604,12 @@ export const destinationsRouter = router({
       if (input.name !== undefined) updates.name = input.name;
       if (input.isActive !== undefined) updates.isActive = input.isActive;
 
+      // Phase 1 — derive effective dispatch type for downstream branching.
+      // Equals input dispatch type if one was provided (templateType OR appKey),
+      // else preserves the existing site.templateType.
+      const effectiveDispatchType = resolveDispatchTypeForUpdate(input, site);
+      const dispatchTypeChanged = effectiveDispatchType !== site.templateType;
+
       // Phase 3 — validate and apply connectionId swaps.
       // `null` explicitly clears the link. Any other value must resolve to
       // a connection owned by this user and compatible with the template.
@@ -569,17 +629,16 @@ export const destinationsRouter = router({
         if (!cx || cx.userId !== ctx.user.id) {
           throw new Error("Connection not found");
         }
-        const effectiveType = input.templateType ?? site.templateType;
-        if (effectiveType === "google-sheets" && cx.type !== "google_sheets") {
+        if (effectiveDispatchType === "google-sheets" && cx.type !== "google_sheets") {
           throw new Error("Selected connection is not a Google Sheets connection");
         }
-        if (effectiveType === "telegram" && cx.type !== "telegram_bot") {
+        if (effectiveDispatchType === "telegram" && cx.type !== "telegram_bot") {
           throw new Error("Selected connection is not a Telegram bot connection");
         }
         updates.connectionId = cx.id;
 
         if (
-          effectiveType === "google-sheets" &&
+          effectiveDispatchType === "google-sheets" &&
           input.googleAccountId === undefined &&
           cx.oauthTokenId
         ) {
@@ -588,7 +647,7 @@ export const destinationsRouter = router({
       }
 
       // Rebuild config if any config fields changed
-      const hasConfigChange = input.apiKey !== undefined || input.templateType !== undefined ||
+      const hasConfigChange = input.apiKey !== undefined || dispatchTypeChanged ||
         input.url !== undefined || input.method !== undefined || input.headers !== undefined ||
         input.fieldMap !== undefined || input.successCondition !== undefined ||
         input.contentType !== undefined || input.variableFields !== undefined ||
@@ -602,13 +661,11 @@ export const destinationsRouter = router({
         const existingConfig = (site.templateConfig as Record<string, unknown>) ?? {};
         const newConfig = { ...existingConfig };
 
-        const templateType = input.templateType ?? site.templateType;
-
-        if (templateType === "telegram") {
+        if (effectiveDispatchType === "telegram") {
           if (input.botToken?.trim()) newConfig.botTokenEncrypted = encrypt(input.botToken);
           if (input.chatId !== undefined) newConfig.chatId = input.chatId.trim();
           if (input.messageTemplate !== undefined) newConfig.messageTemplate = input.messageTemplate;
-        } else if (templateType === "google-sheets") {
+        } else if (effectiveDispatchType === "google-sheets") {
           if (input.googleAccountId !== undefined) newConfig.googleAccountId = input.googleAccountId;
           if (input.spreadsheetId !== undefined) newConfig.spreadsheetId = input.spreadsheetId.trim();
           if (input.sheetName !== undefined) newConfig.sheetName = input.sheetName.trim();
@@ -618,7 +675,7 @@ export const destinationsRouter = router({
           if (input.apiKey) {
             newConfig.apiKeyEncrypted = encrypt(input.apiKey);
           }
-          if (templateType === "custom") {
+          if (effectiveDispatchType === "custom") {
             if (input.method !== undefined) newConfig.method = input.method;
             if (input.headers !== undefined) newConfig.headers = input.headers;
             if (input.fieldMap !== undefined) newConfig.fieldMap = input.fieldMap;
@@ -633,14 +690,14 @@ export const destinationsRouter = router({
         }
         updates.templateConfig = newConfig;
 
-        if (input.templateType) {
-          updates.templateType = input.templateType;
-          if (input.templateType === "sotuvchi" || input.templateType === "100k") {
-            const ep = await getEndpointUrlByTemplateAppKey(db, input.templateType);
-            if (!ep) throw new Error(`Destination template not found for type: ${input.templateType}`);
+        if (dispatchTypeChanged) {
+          updates.templateType = effectiveDispatchType;
+          if (effectiveDispatchType === "sotuvchi" || effectiveDispatchType === "100k") {
+            const ep = await getEndpointUrlByTemplateAppKey(db, effectiveDispatchType);
+            if (!ep) throw new Error(`Destination template not found for type: ${effectiveDispatchType}`);
             updates.url = ep;
-          } else if (input.templateType === "telegram") { /* no url needed */ }
-          else if (input.templateType === "google-sheets") {
+          } else if (effectiveDispatchType === "telegram") { /* no url needed */ }
+          else if (effectiveDispatchType === "google-sheets") {
             updates.url = null;
           }
           else if (input.url) {
@@ -648,8 +705,7 @@ export const destinationsRouter = router({
             updates.url = input.url;
           }
         } else if (input.url) {
-          const effectiveType = site.templateType;
-          if (effectiveType === "custom") await validateTargetUrl(input.url);
+          if (site.templateType === "custom") await validateTargetUrl(input.url);
           updates.url = input.url;
         }
       }
@@ -670,11 +726,18 @@ export const destinationsRouter = router({
       return { success: true };
     }),
 
-  /** Get variable field definitions for a template type. */
+  /** Get variable field definitions for a template type. Phase 1 accepts both
+   *  `templateType` (legacy) and `appKey` (modern, identity map for these
+   *  three values). Exactly one must be provided. */
   getVariableFields: protectedProcedure
-    .input(z.object({ templateType: z.enum(["sotuvchi", "100k", "custom"]) }))
+    .input(z.object({
+      templateType: z.enum(["sotuvchi", "100k", "custom"]).optional(),
+      appKey: z.enum(["sotuvchi", "100k", "custom"]).optional(),
+    }))
     .query(({ input }) => {
-      return TEMPLATE_VARIABLE_FIELDS[input.templateType] ?? [];
+      const key = input.templateType ?? input.appKey;
+      if (!key) return [];
+      return TEMPLATE_VARIABLE_FIELDS[key] ?? [];
     }),
 
   /**
