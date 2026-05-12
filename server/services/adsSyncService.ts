@@ -18,6 +18,7 @@
 import axios from "axios";
 import { eq, and, inArray } from "drizzle-orm";
 import { getDb } from "../db";
+import { log } from "./appLogger";
 import {
   facebookAccounts,
   adAccountsCache,
@@ -139,7 +140,11 @@ const appsecretProof = generateAppSecretProof(token);
     );
     adAccountsList = res.data ?? [];
   } catch (err) {
-    console.error("[adsSyncService] Failed to fetch ad accounts:", err instanceof Error ? err.message : err);
+    await log.error(
+      "FACEBOOK",
+      "[adsSyncService] Failed to fetch ad accounts",
+      { error: err instanceof Error ? err.message : String(err) },
+    );
     throw err;
   }
 
@@ -197,7 +202,11 @@ const appsecretProof = generateAppSecretProof(token);
       );
       rawCampaigns = res.data ?? [];
     } catch (err) {
-      console.error(`[adsSyncService] Failed to fetch campaigns for ${adAccountId}:`, err instanceof Error ? err.message : err);
+      await log.error(
+        "FACEBOOK",
+        `[adsSyncService] Failed to fetch campaigns for ${adAccountId}`,
+        { adAccountId, error: err instanceof Error ? err.message : String(err) },
+      );
       continue; // skip this account if campaigns fail
     }
 
@@ -255,9 +264,10 @@ const appsecretProof = generateAppSecretProof(token);
         const fbError = e?.response?.data?.error?.message ?? "unknown";
         const fbCode = e?.response?.data?.error?.code ?? "unknown";
         const fbType = e?.response?.data?.error?.type ?? "unknown";
-        console.error(
-          `[adsSyncService] Failed insights ${adAccountId} (${preset}):`,
-          `FB Error: ${fbError} | Code: ${fbCode} | Type: ${fbType} | HTTP: ${e?.response?.status}`
+        await log.error(
+          "FACEBOOK",
+          `[adsSyncService] Failed insights ${adAccountId} (${preset}): FB Error: ${fbError} | Code: ${fbCode} | Type: ${fbType} | HTTP: ${e?.response?.status}`,
+          { adAccountId, preset, fbError, fbCode, fbType, httpStatus: e?.response?.status },
         );
         continue;
       }
@@ -382,7 +392,7 @@ export async function syncAdSetsForCampaign(
 export async function syncAllUsersAdsData(): Promise<void> {
   const db = await getDb();
   if (!db) {
-    console.warn("[adsSyncService] DB not available, skipping global sync");
+    await log.warn("SYSTEM", "[adsSyncService] DB not available, skipping global sync");
     return;
   }
 
@@ -394,8 +404,10 @@ export async function syncAllUsersAdsData(): Promise<void> {
     try {
       accessToken = decrypt(account.accessToken);
     } catch {
-      console.warn(
+      await log.warn(
+        "FACEBOOK",
         `[adsSyncService] Failed to decrypt token for userId=${account.userId} facebookAccountId=${account.id}`,
+        { userId: account.userId, facebookAccountId: account.id },
       );
       continue;
     }
@@ -410,9 +422,10 @@ export async function syncAllUsersAdsData(): Promise<void> {
       } else {
         detail = err instanceof Error ? err.message : String(err);
       }
-      console.error(
-        `[adsSyncService] Sync failed for userId=${account.userId} facebookAccountId=${account.id}:`,
-        detail,
+      await log.error(
+        "FACEBOOK",
+        `[adsSyncService] Sync failed for userId=${account.userId} facebookAccountId=${account.id}: ${detail}`,
+        { userId: account.userId, facebookAccountId: account.id, detail },
       );
     }
   }

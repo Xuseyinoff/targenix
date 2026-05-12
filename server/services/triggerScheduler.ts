@@ -20,6 +20,7 @@
 import { getDb } from "../db";
 import { triggers, triggerExecutions, workflows } from "../../drizzle/schema";
 import { and, eq } from "drizzle-orm";
+import { log } from "./appLogger";
 
 let schedulerTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -102,7 +103,11 @@ async function runScheduledTriggers(): Promise<void> {
       void fireLinkedWorkflows(db, trigger.id, trigger.userId, { firedAt: now.toISOString(), cron: cfg.cron });
     }
   } catch (err) {
-    console.error("[TriggerScheduler] Error:", err instanceof Error ? err.message : err);
+    await log.error(
+      "WORKFLOW",
+      "[TriggerScheduler] Tick error",
+      { error: err instanceof Error ? err.message : String(err) },
+    );
   }
 }
 
@@ -150,10 +155,18 @@ async function fireLinkedWorkflows(
       try {
         await executeWorkflow({ db, workflowId: wf.id, userId, triggerData });
       } catch (err) {
-        console.error(`[TriggerScheduler] Workflow ${wf.id} error:`, err instanceof Error ? err.message : err);
+        await log.error(
+          "WORKFLOW",
+          `[TriggerScheduler] Workflow ${wf.id} error`,
+          { workflowId: wf.id, userId, error: err instanceof Error ? err.message : String(err) },
+        );
       }
     }
   } catch (err) {
-    console.error("[TriggerScheduler] fireLinkedWorkflows error:", err instanceof Error ? err.message : err);
+    await log.error(
+      "WORKFLOW",
+      "[TriggerScheduler] fireLinkedWorkflows error",
+      { triggerId, userId, error: err instanceof Error ? err.message : String(err) },
+    );
   }
 }

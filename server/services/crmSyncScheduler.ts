@@ -17,6 +17,7 @@ import {
   performPaginationSync100k,
   syncState,
 } from "../routers/crmRouter";
+import { log } from "./appLogger";
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000;
 const INITIAL_DELAY_MS = 60 * 1000;
@@ -44,7 +45,11 @@ async function runSync(): Promise<void> {
       `[CrmSyncScheduler] Done — ${result.message ?? `synced=${result.synced} errors=${result.errors}`}`,
     );
   } catch (err) {
-    console.error("[CrmSyncScheduler] Sync failed:", err instanceof Error ? err.message : err);
+    await log.error(
+      "SYSTEM",
+      "[CrmSyncScheduler] Sotuvchi sync failed",
+      { error: err instanceof Error ? err.message : String(err) },
+    );
     syncState.lastResult = {
       synced: 0,
       errors: 1,
@@ -91,7 +96,11 @@ async function run100kSync(): Promise<void> {
         (result.total ? ` (API~rows ${result.total})` : ""),
     );
   } catch (err) {
-    console.error("[CrmSyncScheduler/100k] Sync failed:", err instanceof Error ? err.message : err);
+    await log.error(
+      "SYSTEM",
+      "[CrmSyncScheduler/100k] Sync failed",
+      { error: err instanceof Error ? err.message : String(err) },
+    );
   } finally {
     syncState.running100k = false;
   }

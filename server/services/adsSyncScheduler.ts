@@ -11,6 +11,7 @@
  */
 
 import { syncAllUsersAdsData } from "./adsSyncService";
+import { log } from "./appLogger";
 
 const SYNC_INTERVAL_MS = 60 * 60 * 1000; // 60 minutes
 const INITIAL_DELAY_MS = 30 * 1000;       // 30 seconds after startup
@@ -22,7 +23,11 @@ async function runSync(): Promise<void> {
   try {
     await syncAllUsersAdsData();
   } catch (err) {
-    console.error("[AdsSyncScheduler] Sync failed:", err instanceof Error ? err.message : err);
+    await log.error(
+      "FACEBOOK",
+      "[AdsSyncScheduler] Sync failed",
+      { error: err instanceof Error ? err.message : String(err) },
+    );
   }
 }
 

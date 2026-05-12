@@ -56,7 +56,7 @@ export async function runConnectionHealthSweep(): Promise<{ checked: number }> {
   try {
     const db = await getDb();
     if (!db) {
-      console.warn("[ConnectionHealth] DB unavailable — skipping sweep");
+      await log.warn("CONNECTIONS", "[ConnectionHealth] DB unavailable — skipping sweep");
       return { checked: 0 };
     }
 

@@ -52,7 +52,7 @@ export async function saveIncomingLead(params: {
 }): Promise<number | null> {
   const db = await getDb();
   if (!db) {
-    console.error("[LeadService] DB not available");
+    await log.error("LEAD", "[LeadService] DB not available — saveIncomingLead aborted");
     return null;
   }
 
@@ -556,7 +556,11 @@ async function persistOrderDeliveryAttemptResult(
         now,
       });
     } catch (err) {
-      console.error("[CircuitBreaker] recordOutcome failed for order", orderId, err);
+      await log.error(
+        "ORDER",
+        "[CircuitBreaker] recordOutcome failed for order",
+        { orderId, error: err instanceof Error ? err.message : String(err) },
+      );
     }
   }
 
@@ -955,7 +959,11 @@ async function fireLeadWorkflows(
       try {
         await executeWorkflow({ db, workflowId: wf.id, userId, triggerData });
       } catch (err) {
-        console.error(`[Workflow] Failed to execute workflow ${wf.id} for user ${userId}:`, (err as Error).message);
+        await log.error(
+          "WORKFLOW",
+          `[Workflow] Failed to execute workflow ${wf.id} for user ${userId}`,
+          { workflowId: wf.id, userId, error: (err as Error).message },
+        );
       }
     }
   } finally {
@@ -1234,7 +1242,13 @@ export async function processLead(params: {
     campaignName: (leadRow as Record<string, unknown>).campaignName as string ?? null,
     adsetName:    (leadRow as Record<string, unknown>).adsetName    as string ?? null,
     adName:       (leadRow as Record<string, unknown>).adName       as string ?? null,
-  }).catch((err) => console.error("[Workflow] fireLeadWorkflows error:", (err as Error).message));
+  }).catch((err) =>
+    void log.error(
+      "WORKFLOW",
+      "[Workflow] fireLeadWorkflows error",
+      { userId: params.userId, error: (err as Error).message },
+    ),
+  );
 
   await log.info("LEAD", `Processing complete — leadId=${params.leadId} fullName=${fullName ?? "unknown"} phone=${phone ?? "none"}`, { leadId: params.leadId, fullName, phone, email, pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
 }

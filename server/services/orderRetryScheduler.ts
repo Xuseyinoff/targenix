@@ -18,6 +18,7 @@ import { ORDER_MAX_DELIVERY_ATTEMPTS } from "../lib/orderRetryPolicy";
 import { retryFailedOrderDelivery } from "./leadService";
 import { getRetryQueueSize, logMetricsSnapshot } from "../monitoring/metrics";
 import { evaluateAndMaybeBlock, getEnforcementScope, recordShadowDecision } from "./circuitBreaker";
+import { log } from "./appLogger";
 
 function envInt(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -166,7 +167,7 @@ export async function retryDueFailedOrders(options?: {
 }): Promise<{ retried: number }> {
   const db = await getDb();
   if (!db) {
-    console.warn("[OrderRetry] DB not available, skipping order retry run");
+    await log.warn("SYSTEM", "[OrderRetry] DB not available, skipping order retry run");
     return { retried: 0 };
   }
 
@@ -292,7 +293,11 @@ export async function retryDueFailedOrders(options?: {
 
             shouldSkip = guard.shouldBlock;
           } catch (err) {
-            console.error("[OrderRetry] CB eval failed for order", row.id, err);
+            await log.error(
+              "ORDER",
+              "[OrderRetry] CB eval failed for order",
+              { orderId: row.id, error: err instanceof Error ? err.message : String(err) },
+            );
           }
 
           if (shouldSkip) {
@@ -314,7 +319,11 @@ export async function retryDueFailedOrders(options?: {
               retried += 1;
             }
           } catch (err) {
-            console.error(`[OrderRetry] order ${row.id}:`, err);
+            await log.error(
+              "ORDER",
+              `[OrderRetry] order ${row.id} retry failed`,
+              { orderId: row.id, error: err instanceof Error ? err.message : String(err) },
+            );
           }
         }, { groupKey: `${row.integrationId}:${row.destinationId}` }),
       ),

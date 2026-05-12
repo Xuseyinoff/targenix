@@ -199,7 +199,13 @@ function LegacyLeadRoutingEditRedirect({
 }
 
 function Router() {
+  // Per-route ErrorBoundary: a crash inside one lazy-loaded page (e.g. a
+  // chunk that fails to load, or a render-time throw) is contained here
+  // instead of bubbling up to the app-level boundary that requires a
+  // full reload. The user keeps their URL + can navigate away without
+  // losing in-flight state in other tabs / browser history.
   return (
+    <ErrorBoundary>
     <Suspense fallback={<PageLoader />}>
     <Switch>
       <Route path="/" component={RootRoute} />
@@ -281,6 +287,7 @@ function Router() {
       <Route component={NotFound} />
     </Switch>
     </Suspense>
+    </ErrorBoundary>
   );
 }
 

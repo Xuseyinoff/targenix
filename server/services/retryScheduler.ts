@@ -17,6 +17,7 @@ import { leads } from "../../drizzle/schema";
 import { dispatchLeadProcessing } from "./leadDispatch";
 import { retryDueFailedOrders } from "./orderRetryScheduler";
 import { autoPromoteExpiredCooldowns } from "./circuitBreaker";
+import { log } from "./appLogger";
 
 function envInt(key: string, fallback: number): number {
   const raw = process.env[key];
@@ -47,7 +48,10 @@ const GRAPH_ERROR_BATCH_DELAY_MS = envInt("GRAPH_ERROR_BATCH_DELAY_MS", 2000);
 export async function retryGraphErrorLeads(): Promise<{ retried: number }> {
   const db = await getDb();
   if (!db) {
-    console.warn("[RetryScheduler] DB not available, skipping graph-error retry run");
+    await log.warn(
+      "SYSTEM",
+      "[RetryScheduler] DB not available, skipping graph-error retry run",
+    );
     return { retried: 0 };
   }
 
@@ -60,8 +64,10 @@ export async function retryGraphErrorLeads(): Promise<{ retried: number }> {
 
   const toRetry = graphErrorLeads.slice(0, GRAPH_ERROR_RETRY_CAP);
   if (graphErrorLeads.length > GRAPH_ERROR_RETRY_CAP) {
-    console.warn(
+    await log.warn(
+      "SYSTEM",
       `[RetryScheduler] Graph-error backlog (${graphErrorLeads.length}), capping at ${GRAPH_ERROR_RETRY_CAP}`,
+      { backlog: graphErrorLeads.length, cap: GRAPH_ERROR_RETRY_CAP },
     );
   }
 
@@ -86,7 +92,11 @@ export async function retryGraphErrorLeads(): Promise<{ retried: number }> {
           formId: lead.formId,
           userId: lead.userId,
         }).catch((err: unknown) =>
-          console.error(`[RetryScheduler] dispatch failed for lead ${lead.id}:`, err),
+          void log.error(
+            "SYSTEM",
+            `[RetryScheduler] dispatch failed for lead ${lead.id}`,
+            { leadId: lead.id, error: err instanceof Error ? err.message : String(err) },
+          ),
         );
       }
     }, delayMs);
@@ -106,7 +116,10 @@ export async function retryGraphErrorLeads(): Promise<{ retried: number }> {
 export async function retryStuckPendingLeads(): Promise<{ retried: number }> {
   const db = await getDb();
   if (!db) {
-    console.warn("[RetryScheduler] DB not available, skipping stuck-pending retry run");
+    await log.warn(
+      "SYSTEM",
+      "[RetryScheduler] DB not available, skipping stuck-pending retry run",
+    );
     return { retried: 0 };
   }
 
@@ -123,7 +136,11 @@ export async function retryStuckPendingLeads(): Promise<{ retried: number }> {
 
   const toRetry = stuckLeads.slice(0, 500);
   if (stuckLeads.length > 500) {
-    console.warn(`[RetryScheduler] Stuck-pending backlog (${stuckLeads.length}), capping at 500`);
+    await log.warn(
+      "SYSTEM",
+      `[RetryScheduler] Stuck-pending backlog (${stuckLeads.length}), capping at 500`,
+      { backlog: stuckLeads.length, cap: 500 },
+    );
   }
 
   const BATCH_SIZE = 10;
@@ -142,7 +159,11 @@ export async function retryStuckPendingLeads(): Promise<{ retried: number }> {
           formId: lead.formId,
           userId: lead.userId,
         }).catch((err: unknown) =>
-          console.error(`[RetryScheduler] dispatch failed for stuck-pending lead ${lead.id}:`, err),
+          void log.error(
+            "SYSTEM",
+            `[RetryScheduler] dispatch failed for stuck-pending lead ${lead.id}`,
+            { leadId: lead.id, error: err instanceof Error ? err.message : String(err) },
+          ),
         );
       }
     }, delayMs);
@@ -231,13 +252,21 @@ export function startRetryScheduler(): void {
           }
         }
       } catch (err) {
-        console.error("[RetryScheduler] CB auto-promote tick failed:", err);
+        await log.error(
+          "SYSTEM",
+          "[RetryScheduler] CB auto-promote tick failed",
+          { error: err instanceof Error ? err.message : String(err) },
+        );
       }
 
       try {
         await retryDueFailedOrders({ limit: ORDER_TICK_BATCH });
       } catch (err) {
-        console.error("[RetryScheduler] Order tick failed:", err);
+        await log.error(
+          "SYSTEM",
+          "[RetryScheduler] Order tick failed",
+          { error: err instanceof Error ? err.message : String(err) },
+        );
       }
     })();
   }, ORDER_TICK_INTERVAL_MS);
@@ -254,11 +283,19 @@ export function startRetryScheduler(): void {
     hourlyTimer = setTimeout(() => {
       void (async () => {
         const graph = await retryGraphErrorLeads().catch((err: unknown) => {
-          console.error("[RetryScheduler] graph-error tick failed:", err);
+          void log.error(
+            "SYSTEM",
+            "[RetryScheduler] graph-error tick failed",
+            { error: err instanceof Error ? err.message : String(err) },
+          );
           return { retried: 0 };
         });
         const stuck = await retryStuckPendingLeads().catch((err: unknown) => {
-          console.error("[RetryScheduler] stuck-pending tick failed:", err);
+          void log.error(
+            "SYSTEM",
+            "[RetryScheduler] stuck-pending tick failed",
+            { error: err instanceof Error ? err.message : String(err) },
+          );
           return { retried: 0 };
         });
         if (graph.retried > 0 || stuck.retried > 0) {
