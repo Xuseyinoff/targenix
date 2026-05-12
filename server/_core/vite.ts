@@ -73,8 +73,19 @@ export function serveStatic(app: Express) {
     }),
   );
 
-  // fall through to index.html if the file doesn't exist
-  app.use("*", (_req, res) => {
+  // Fall through to index.html for SPA navigation routes.
+  //
+  // We must NOT serve index.html for missing hashed assets (e.g. an old
+  // `Leads-3OV6HDIS.js` requested by a tab opened before the latest deploy).
+  // Returning HTML with a 200 there makes the browser try to parse HTML as a
+  // JS module and throw `Failed to fetch dynamically imported module`.
+  // Letting that path 404 lets the client's `lazyWithRetry` recover by
+  // reloading to pick up fresh chunk hashes.
+  app.use("*", (req, res, next) => {
+    const url = req.originalUrl.split("?")[0];
+    if (url.startsWith("/assets/") || /\.[a-zA-Z0-9]+$/.test(url)) {
+      return next();
+    }
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.sendFile(path.resolve(distPath, "index.html"));
   });
