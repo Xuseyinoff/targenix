@@ -61,23 +61,23 @@ export interface ResolvedDestination {
  *
  * - Runs inside a single transaction so readers never see a torn state
  *   (deleted but not re-inserted, or double entries).
- * - `targetWebsiteIds` preserves order — the array index becomes `position`.
+ * - `destinationIds` preserves order — the array index becomes `position`.
  *   Passing an empty list clears all destinations for the integration.
  * - Dedupes input silently: two identical ids collapse into one row.
  *
- * The helper does NOT verify that the caller owns the integration / target
- * website. That's the job of the outer CRUD endpoint (integrationsRouter).
+ * The helper does NOT verify that the caller owns the integration /
+ * destination. That's the job of the outer CRUD endpoint (integrationsRouter).
  */
 export async function setIntegrationRoutes(
   db: DbClient,
   integrationId: number,
-  targetWebsiteIds: number[],
+  destinationIds: number[],
 ): Promise<void> {
   if (!Number.isFinite(integrationId) || integrationId <= 0) {
     throw new Error("setIntegrationRoutes: invalid integrationId");
   }
 
-  const ids = dedupe(targetWebsiteIds.filter((n) => Number.isFinite(n) && n > 0));
+  const ids = dedupe(destinationIds.filter((n) => Number.isFinite(n) && n > 0));
 
   await db.transaction(async (tx) => {
     // Wipe the old set. Faster than diffing because:
@@ -91,9 +91,9 @@ export async function setIntegrationRoutes(
 
     if (ids.length === 0) return;
 
-    const rows = ids.map((twId, index) => ({
+    const rows = ids.map((destId, index) => ({
       integrationId,
-      destinationId: twId,
+      destinationId: destId,
       position: index,
       enabled: true,
     }));

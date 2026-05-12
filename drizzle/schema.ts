@@ -555,8 +555,8 @@ export const integrations = mysqlTable("integrations", {
 }, (t) => ({
   // Hot-path index: processLead queries WHERE userId=? AND isActive=1 AND pageId=? AND formId=?
   idxUserPageForm: index("idx_integrations_user_page_form").on(t.userId, t.isActive, t.pageId, t.formId),
-  // FK-style index for JOIN with target_websites
-  idxTargetWebsite: index("idx_integrations_target_website_id").on(t.destinationId),
+  // FK-style index for JOIN with destinations
+  idxDestination: index("idx_integrations_destination_id").on(t.destinationId),
   // Index for disconnect cleanup: find all integrations tied to a given FB account
   idxFbAccount: index("idx_integrations_fb_account_id").on(t.facebookAccountId),
 }));
@@ -599,18 +599,18 @@ export const integrationRoutes = mysqlTable(
   (t) => ({
     // Dispatch hot-path: resolve all enabled destinations for one integration,
     // ordered. Index covers the full WHERE + ORDER BY clause.
-    idxIntegration: index("idx_integration_destinations_integration").on(
+    idxIntegration: index("idx_integration_routes_integration").on(
       t.integrationId,
       t.enabled,
       t.position,
     ),
     // Reverse lookup — "what integrations deliver to this destination?" —
-    // used when cleaning up on target_website delete.
-    idxTargetWebsite: index("idx_integration_destinations_target_website").on(
+    // used when cleaning up on destination delete.
+    idxDestination: index("idx_integration_routes_destination").on(
       t.destinationId,
     ),
     // Hard guarantee against duplicate mappings in the UI or via a race.
-    uniqIntegrationDestination: uniqueIndex("uniq_integration_destination").on(
+    uniqIntegrationRoute: uniqueIndex("uniq_integration_route").on(
       t.integrationId,
       t.destinationId,
     ),

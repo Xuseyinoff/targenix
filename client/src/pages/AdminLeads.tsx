@@ -259,9 +259,9 @@ export default function AdminLeads() {
                           <div className="text-xs">
                             {row.deliveries.lastIntegrationName ?? "—"}
                           </div>
-                          {row.deliveries.lastTargetWebsiteName && (
+                          {row.deliveries.lastDestinationName && (
                             <div className="text-xs text-muted-foreground mt-1">
-                              → {row.deliveries.lastTargetWebsiteName}
+                              → {row.deliveries.lastDestinationName}
                             </div>
                           )}
                         </td>

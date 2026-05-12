@@ -53,8 +53,8 @@ type AdminLeadRow = {
     lastOrderAt: Date | null;
     lastIntegrationId: number | null;
     lastIntegrationName: string | null;
-    lastTargetWebsiteId: number | null;
-    lastTargetWebsiteName: string | null;
+    lastDestinationId: number | null;
+    lastDestinationName: string | null;
   };
 };
 
@@ -159,7 +159,7 @@ export const adminLeadsRouter = router({
     );
 
     const integrationById = new Map<number, { name: string; destinationId: number | null }>();
-    const targetWebsiteIds: number[] = [];
+    const destinationIds: number[] = [];
 
     if (lastIntegrationIds.length) {
       const ints = await db
@@ -168,24 +168,24 @@ export const adminLeadsRouter = router({
         .where(inArray(integrations.id, lastIntegrationIds));
       for (const i of ints) {
         integrationById.set(i.id, { name: i.name, destinationId: i.destinationId ?? null });
-        if (i.destinationId) targetWebsiteIds.push(i.destinationId);
+        if (i.destinationId) destinationIds.push(i.destinationId);
       }
     }
 
-    const targetWebsiteById = new Map<number, { name: string }>();
-    const uniqueTwIds = Array.from(new Set(targetWebsiteIds));
-    if (uniqueTwIds.length) {
-      const tws = await db
+    const destinationById = new Map<number, { name: string }>();
+    const uniqueDestIds = Array.from(new Set(destinationIds));
+    if (uniqueDestIds.length) {
+      const dests = await db
         .select({ id: destinations.id, name: destinations.name })
         .from(destinations)
-        .where(inArray(destinations.id, uniqueTwIds));
-      for (const tw of tws) targetWebsiteById.set(tw.id, { name: tw.name });
+        .where(inArray(destinations.id, uniqueDestIds));
+      for (const dest of dests) destinationById.set(dest.id, { name: dest.name });
     }
 
     const rows: AdminLeadRow[] = leadRows.map((r) => {
       const intg = r.lastIntegrationId != null ? integrationById.get(r.lastIntegrationId) : undefined;
-      const twId = intg?.destinationId ?? null;
-      const tw = twId != null ? targetWebsiteById.get(twId) : undefined;
+      const destId = intg?.destinationId ?? null;
+      const dest = destId != null ? destinationById.get(destId) : undefined;
       const resolvedNames = displayNamesByUser.get(r.userId)?.get(leadSourcePairKey(r.pageId, r.formId));
 
       return {
@@ -212,8 +212,8 @@ export const adminLeadsRouter = router({
           lastOrderAt: (r.lastOrderAt as unknown as Date | null) ?? null,
           lastIntegrationId: r.lastIntegrationId ?? null,
           lastIntegrationName: intg?.name ?? null,
-          lastTargetWebsiteId: twId,
-          lastTargetWebsiteName: tw?.name ?? null,
+          lastDestinationId: destId,
+          lastDestinationName: dest?.name ?? null,
         },
       };
     });
