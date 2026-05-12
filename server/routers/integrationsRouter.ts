@@ -480,7 +480,7 @@ async function sendTestLeadToDestination(args: {
     );
   }
 
-  if (tw.templateType === "telegram") {
+  if (tw.appKey === "telegram") {
     // Preserve the "[TEST]" message prefix — this is the only cue users
     // have that a test message isn't a real lead, so it MUST stay.
     const cfg = (tw.templateConfig ?? {}) as {
@@ -511,7 +511,7 @@ async function sendTestLeadToDestination(args: {
     return sendTelegramRawMessage(token, cfg.chatId, message);
   }
 
-  if (tw.templateType === "google-sheets") {
+  if (tw.appKey === "google-sheets") {
     const adapter = getAdapter("google-sheets");
     if (!adapter) throw new Error("Adapter not found: google-sheets");
     return adapter.send(

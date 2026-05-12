@@ -392,7 +392,7 @@ export const connectionsRouter = router({
         .select({
           id: destinations.id,
           name: destinations.name,
-          templateType: destinations.templateType,
+          appKey: destinations.appKey,
           isActive: destinations.isActive,
         })
         .from(destinations)

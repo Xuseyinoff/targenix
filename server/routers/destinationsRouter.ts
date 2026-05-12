@@ -90,10 +90,10 @@ function resolveDispatchType(
 }
 
 /** Update variant — if neither input field is provided, preserve the current
- *  dispatch type from the existing destination row. */
+ *  dispatch type from the existing destination row's appKey. */
 function resolveDispatchTypeForUpdate(
   input: { templateType?: string; appKey?: string },
-  site: { templateType: string },
+  site: { appKey: string },
 ): DispatchType {
   if (input.templateType) return input.templateType as DispatchType;
   const k = input.appKey?.trim();
@@ -101,7 +101,12 @@ function resolveDispatchTypeForUpdate(
     if (DIRECT_DISPATCH_KEYS.has(k as DispatchType)) return k as DispatchType;
     if (HTTP_API_KEY_DISPATCH_APP_KEYS.has(k)) return "http-api-key";
   }
-  return site.templateType as DispatchType;
+  // Map site.appKey back to dispatch type — http-api-key apps map to "http-api-key"
+  // dispatch; direct types map to themselves.
+  const sk = site.appKey;
+  if (DIRECT_DISPATCH_KEYS.has(sk as DispatchType)) return sk as DispatchType;
+  if (HTTP_API_KEY_DISPATCH_APP_KEYS.has(sk)) return "http-api-key";
+  return "custom";
 }
 
 // ─── Variable field definitions per template ──────────────────────────────────
@@ -193,9 +198,9 @@ function isDestinationListCategory(v: unknown): v is DestinationListCategory {
   return typeof v === "string" && (DESTINATION_LIST_CATEGORIES as readonly string[]).includes(v);
 }
 
-/** When `templateId` is null — derive from legacy `templateType`. Unknown types → affiliate. */
-function categoryFromTemplateType(templateType: string): DestinationListCategory {
-  switch (templateType) {
+/** When `templateId` is null — derive from `appKey`. Unknown keys → affiliate. */
+function categoryFromAppKey(appKey: string): DestinationListCategory {
+  switch (appKey) {
     case "telegram":
       return "messaging";
     case "custom":
@@ -213,17 +218,17 @@ function categoryFromTemplateType(templateType: string): DestinationListCategory
 /**
  * UI category for a destination row. Does not affect delivery.
  * 1) If `templateId` is set and the template row has a valid `category` → use it.
- * 2) Else derive from `templateType` (telegram → messaging, custom → webhooks, etc.).
+ * 2) Else derive from `appKey` (telegram → messaging, custom → webhooks, etc.).
  */
 function resolveListDestinationCategory(
   templateId: number | null | undefined,
   dbCategory: string | null | undefined,
-  templateType: string,
+  appKey: string,
 ): DestinationListCategory {
   if (templateId != null && isDestinationListCategory(dbCategory)) {
     return dbCategory;
   }
-  return categoryFromTemplateType(templateType);
+  return categoryFromAppKey(appKey);
 }
 
 /** Decrypt apiKey from templateConfig for server-side use */
@@ -292,7 +297,7 @@ export const destinationsRouter = router({
       const category = resolveListDestinationCategory(
         r.templateId,
         tplMeta?.category,
-        r.templateType,
+        r.appKey,
       );
       return {
         ...r,
@@ -444,7 +449,6 @@ export const destinationsRouter = router({
           userId: ctx.user.id,
           name: input.name,
           url: null,
-          templateType: "telegram",
           appKey: "telegram",
           templateConfig: config,
           color: "#0088cc",
@@ -452,7 +456,7 @@ export const destinationsRouter = router({
           ...(validatedConnectionId ? { connectionId: validatedConnectionId } : {}),
         });
         const id = (inserted as unknown as { insertId?: number })?.insertId;
-        return { success: true, id, name: input.name, templateType: "telegram" as const };
+        return { success: true, id, name: input.name, appKey: "telegram" as const };
       }
 
       // Google Sheets — append row per lead (no HTTP affiliate URL)
@@ -471,7 +475,6 @@ export const destinationsRouter = router({
           userId: ctx.user.id,
           name: input.name,
           url: null,
-          templateType: "google-sheets",
           appKey: "google-sheets",
           templateConfig: config,
           color: "#0F9D58",
@@ -480,7 +483,7 @@ export const destinationsRouter = router({
           ...(validatedConnectionId ? { connectionId: validatedConnectionId } : {}),
         });
         const id = (inserted as unknown as { insertId?: number })?.insertId;
-        return { success: true, id, name: input.name, templateType: "google-sheets" as const };
+        return { success: true, id, name: input.name, appKey: "google-sheets" as const };
       }
 
       // HTTP API-key apps (Eskiz SMS, PlayMobile, Bitrix24, Webhook, etc.)
@@ -492,14 +495,13 @@ export const destinationsRouter = router({
           userId:         ctx.user.id,
           name:           input.name,
           url:            null,
-          templateType:   "custom",
           appKey:         input.appKey.trim(),
           templateConfig: input.templateConfig ?? {},
           isActive:       true,
           ...(validatedConnectionId ? { connectionId: validatedConnectionId } : {}),
         });
         const id = (inserted as unknown as { insertId?: number })?.insertId;
-        return { success: true, id, name: input.name, templateType: "http-api-key" as const };
+        return { success: true, id, name: input.name, appKey: input.appKey.trim() };
       }
 
       // Build URL — resolve from destination_templates by appKey for known affiliate types
@@ -539,7 +541,6 @@ export const destinationsRouter = router({
         userId: ctx.user.id,
         name: input.name,
         url,
-        templateType: dispatchType,
         appKey: dispatchType,
         templateConfig: config,
         ...(autoChatId ? { telegramChatId: autoChatId } : {}),
@@ -550,7 +551,7 @@ export const destinationsRouter = router({
         success: true,
         id,
         name: input.name,
-        templateType: dispatchType,
+        appKey: dispatchType,
       };
     }),
 
@@ -606,9 +607,9 @@ export const destinationsRouter = router({
 
       // Phase 1 — derive effective dispatch type for downstream branching.
       // Equals input dispatch type if one was provided (templateType OR appKey),
-      // else preserves the existing site.templateType.
+      // else preserves the existing site.appKey.
       const effectiveDispatchType = resolveDispatchTypeForUpdate(input, site);
-      const dispatchTypeChanged = effectiveDispatchType !== site.templateType;
+      const dispatchTypeChanged = effectiveDispatchType !== site.appKey;
 
       // Phase 3 — validate and apply connectionId swaps.
       // `null` explicitly clears the link. Any other value must resolve to
@@ -691,7 +692,7 @@ export const destinationsRouter = router({
         updates.templateConfig = newConfig;
 
         if (dispatchTypeChanged) {
-          updates.templateType = effectiveDispatchType;
+          updates.appKey = effectiveDispatchType;
           if (effectiveDispatchType === "sotuvchi" || effectiveDispatchType === "100k") {
             const ep = await getEndpointUrlByTemplateAppKey(db, effectiveDispatchType);
             if (!ep) throw new Error(`Destination template not found for type: ${effectiveDispatchType}`);
@@ -705,7 +706,7 @@ export const destinationsRouter = router({
             updates.url = input.url;
           }
         } else if (input.url) {
-          if (site.templateType === "custom") await validateTargetUrl(input.url);
+          if (site.appKey === "custom") await validateTargetUrl(input.url);
           updates.url = input.url;
         }
       }
@@ -758,7 +759,7 @@ export const destinationsRouter = router({
         .from(destinations)
         .where(and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)))
         .limit(1);
-      if (!site || site.templateType !== "custom") return [];
+      if (!site || site.appKey !== "custom") return [];
       const cfg = (site.templateConfig ?? {}) as Record<string, unknown>;
 
       // 1. Explicit variableFields list (highest priority — user defined these explicitly)
@@ -1340,7 +1341,7 @@ export const destinationsRouter = router({
       }
 
       // ── Telegram destination test ─────────────────────────────────────────────
-      if (site.templateType === "telegram") {
+      if (site.appKey === "telegram") {
         const cfg = (site.templateConfig ?? {}) as { botTokenEncrypted?: string; chatId?: string; messageTemplate?: string };
         if (!cfg.botTokenEncrypted || !cfg.chatId) {
           return { success: false, responseData: null, error: "Telegram config incomplete (missing botToken or chatId)", durationMs: Date.now() - t0, requestPreview: null };
@@ -1352,7 +1353,7 @@ export const destinationsRouter = router({
       }
 
       // ── Google Sheets ──────────────────────────────────────────────────────────
-      if (site.templateType === "google-sheets") {
+      if (site.appKey === "google-sheets") {
         const cfg = (site.templateConfig ?? {}) as Record<string, unknown>;
         const gidRaw = cfg.googleAccountId;
         const googleAccountId =
@@ -1421,7 +1422,7 @@ export const destinationsRouter = router({
         );
       }
       const result = await sendAffiliateOrderByTemplate(
-        site.templateType as TemplateType,
+        site.appKey as TemplateType,
         site.templateConfig as TemplateConfig,
         sampleLead,
         varOverrides,
@@ -1440,7 +1441,7 @@ export const destinationsRouter = router({
         body: unknown;
       } | null = null;
 
-      if (site.templateType === "custom") {
+      if (site.appKey === "custom") {
         const varCtx = buildVariableContext(sampleLead, varOverrides);
         const { body, contentTypeHeader } = _buildCustomBody(cfg, varCtx);
         const rawHeaders = (cfg.headers as Record<string, string> | undefined) ?? {};
@@ -1485,7 +1486,7 @@ export const destinationsRouter = router({
         .select({
           destinationId: destinations.id,
           name:          destinations.name,
-          templateType:  destinations.templateType,
+          appKey:        destinations.appKey,
           templateId:    destinations.templateId,
           color:         destinations.color,
           isActive:      destinations.isActive,
@@ -1519,7 +1520,7 @@ export const destinationsRouter = router({
         const total30d   = Number(r.last30dTotal);
         const success30d = Number(r.last30dSuccess);
         const type: "custom" | "template" =
-          r.templateType === "custom" && !r.templateId ? "custom" : "template";
+          r.appKey === "custom" && !r.templateId ? "custom" : "template";
         return {
           destinationId: r.destinationId,
           name:          r.name,

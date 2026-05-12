@@ -225,7 +225,10 @@ export function DestinationCreatorInline({
       onCreated({
         id: result.id,
         name: result.name ?? effectiveName,
-        templateType: result.templateType ?? fallbackTemplateType,
+        // Phase 3 — server now returns `appKey` (not `templateType`). The
+        // callback prop name keeps `templateType` for callsite stability; a
+        // future cosmetic pass will rename it.
+        templateType: result.appKey ?? fallbackTemplateType,
         category: selectedApp.category,
       });
     } catch (err) {

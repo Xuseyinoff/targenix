@@ -469,7 +469,7 @@ export default function SettingsTelegram() {
                                   <p className="text-sm font-medium truncate">{dm.name}</p>
                                   <p className="text-xs text-muted-foreground font-mono">
                                     destinationId: {dm.id}
-                                    {dm.templateId ? ` · templateId:${dm.templateId}` : ` · ${dm.templateType}`}
+                                    {dm.templateId ? ` · templateId:${dm.templateId}` : ` · ${dm.appKey}`}
                                   </p>
                                 </div>
                                 <div className="w-[240px]">
