@@ -19,12 +19,11 @@
  * existing `integrationDestinations.test.ts` unit suite.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   aggregateLeadDeliveryFromOrderStatuses,
   aggregateDeliveryStatus,
 } from "../lib/leadPipeline";
-import { __resetFeatureFlagsCache } from "./featureFlags";
 
 // ─── leadPipeline — the aggregation primitives used in the fan-out path ─────
 
@@ -74,54 +73,6 @@ describe("aggregateLeadDeliveryFromOrderStatuses — multi-order scenarios", () 
 
   it("returns SUCCESS when the order list is empty", () => {
     expect(aggregateLeadDeliveryFromOrderStatuses([])).toBe("SUCCESS");
-  });
-});
-
-// ─── Feature-flag gating — fan-out only runs when enabled ───────────────────
-
-import { isMultiDestinationsEnabled } from "./featureFlags";
-
-describe("isMultiDestinationsEnabled — fan-out gate", () => {
-  beforeEach(() => {
-    delete process.env.MULTI_DEST_ALL;
-    delete process.env.MULTI_DEST_USER_IDS;
-    __resetFeatureFlagsCache();
-  });
-
-  afterEach(() => {
-    delete process.env.MULTI_DEST_ALL;
-    delete process.env.MULTI_DEST_USER_IDS;
-    __resetFeatureFlagsCache();
-  });
-
-  it("returns false for all users when no env vars set (production default)", () => {
-    expect(isMultiDestinationsEnabled(1)).toBe(false);
-    expect(isMultiDestinationsEnabled(999)).toBe(false);
-  });
-
-  it("returns true for allow-listed user IDs", () => {
-    process.env.MULTI_DEST_USER_IDS = "1,42,100";
-    __resetFeatureFlagsCache();
-    expect(isMultiDestinationsEnabled(1)).toBe(true);
-    expect(isMultiDestinationsEnabled(42)).toBe(true);
-    expect(isMultiDestinationsEnabled(100)).toBe(true);
-    expect(isMultiDestinationsEnabled(99)).toBe(false);
-  });
-
-  it("returns true for ALL users when MULTI_DEST_ALL=true", () => {
-    process.env.MULTI_DEST_ALL = "true";
-    __resetFeatureFlagsCache();
-    expect(isMultiDestinationsEnabled(1)).toBe(true);
-    expect(isMultiDestinationsEnabled(9999)).toBe(true);
-  });
-
-  it("returns false for null / 0 / negative userId regardless of flag", () => {
-    process.env.MULTI_DEST_ALL = "true";
-    __resetFeatureFlagsCache();
-    expect(isMultiDestinationsEnabled(null)).toBe(false);
-    expect(isMultiDestinationsEnabled(0)).toBe(false);
-    expect(isMultiDestinationsEnabled(-1)).toBe(false);
-    expect(isMultiDestinationsEnabled(undefined)).toBe(false);
   });
 });
 

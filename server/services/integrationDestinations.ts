@@ -31,7 +31,6 @@ import {
   type Integration,
   type TargetWebsite,
 } from "../../drizzle/schema";
-import { isMultiDestinationsEnabled } from "./featureFlags";
 import type { FilterRule } from "./filterEngine";
 
 export type IntegrationDestinationRow = typeof integrationDestinations.$inferSelect;
@@ -180,84 +179,23 @@ export async function listIntegrationDestinations(
  * integration row. Returns 0 or more `ResolvedDestination` entries,
  * filtered by enabled flag and ownership, in dispatch order.
  *
- * Two backing paths selected by `isMultiDestinationsEnabled(userId)`:
+ * Reads from `integration_destinations` joined against `target_websites`.
+ * Supports N destinations per integration with per-mapping `position`
+ * ordering. The legacy single-destination fallback (reading
+ * `integrations.targetWebsiteId` directly) was removed on 2026-05-12 —
+ * a coverage audit confirmed 226/227 active LEAD_ROUTING integrations
+ * have valid integration_destinations rows.
  *
- *   - Flag ON (production default — `MULTI_DEST_ALL=true`):
- *       Reads from `integration_destinations` joined against
- *       `target_websites`. Supports N destinations per integration with
- *       per-mapping `position` ordering.
- *
- *   - Flag OFF (rollback / emergency path):
- *       Reads the legacy `integrations.targetWebsiteId` column (or its
- *       JSON-config fallback). Returns 0 or 1 destinations. Kept in
- *       place so the flag can be flipped back instantly without a code
- *       change if the new path ever needs to be disabled.
- *
- * Ownership is enforced in both paths: rows whose `target_websites.userId`
- * doesn't match the integration's owner are filtered out and logged —
- * they cannot be delivered to safely.
+ * Ownership is enforced: rows whose `target_websites.userId` doesn't
+ * match the integration's owner are filtered out and logged — they
+ * cannot be delivered to safely.
  */
 export async function resolveIntegrationDestinations(
   db: DbClient,
+  // `targetWebsiteId` + `config` are accepted for caller compatibility only —
+  // they used to feed the deleted legacy fallback. Safe to drop from the
+  // signature on a future refactor that touches every caller.
   integration: Pick<Integration, "id" | "userId" | "targetWebsiteId" | "config">,
-): Promise<ResolvedDestination[]> {
-  if (isMultiDestinationsEnabled(integration.userId)) {
-    return readFromNewTable(db, integration);
-  }
-  return readFromLegacyColumn(db, integration);
-}
-
-async function readFromLegacyColumn(
-  db: DbClient,
-  integration: Pick<Integration, "id" | "userId" | "targetWebsiteId" | "config">,
-): Promise<ResolvedDestination[]> {
-  const cfg = (integration.config ?? null) as Record<string, unknown> | null;
-  const rawId = integration.targetWebsiteId ?? cfg?.targetWebsiteId;
-  const twId =
-    typeof rawId === "number" && Number.isFinite(rawId) && rawId > 0 ? rawId
-    : typeof rawId === "string" && /^\d+$/.test(rawId) && Number(rawId) > 0 ? Number(rawId)
-    : null;
-  if (!twId) return [];
-
-  const [row] = await db
-    .select()
-    .from(targetWebsites)
-    .where(eq(targetWebsites.id, twId))
-    .limit(1);
-  if (!row) return [];
-  if (row.userId !== integration.userId) {
-    // SECURITY: tenant boundary violation — see Sprint 2 / Item 2.3
-    const { log } = await import("./appLogger");
-    void log.error(
-      "SECURITY",
-      "Target website owner mismatch on legacy single-destination resolve",
-      {
-        integrationId: integration.id,
-        targetWebsiteId: row.id,
-        tenantExpected: integration.userId,
-        tenantActual: row.userId,
-      },
-      null,
-      null,
-      integration.userId,
-      "owner_mismatch",
-    );
-    return [];
-  }
-  return [
-    {
-      mappingId: null,
-      position: 0,
-      enabled: true,
-      targetWebsite: row,
-      filterJson: null,
-    },
-  ];
-}
-
-async function readFromNewTable(
-  db: DbClient,
-  integration: Pick<Integration, "id" | "userId">,
 ): Promise<ResolvedDestination[]> {
   // Single query with a JOIN so we fetch target_websites in one round-trip.
   // Sort is done client-side below to keep the SQL dialect-agnostic (the

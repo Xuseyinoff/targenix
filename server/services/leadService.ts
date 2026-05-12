@@ -6,7 +6,6 @@ import { fetchLeadData, extractLeadFields } from "./facebookService";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 import { dispatchDelivery } from "../integrations/dispatch";
 import { resolveIntegrationDestinations, type ResolvedDestination } from "./integrationDestinations";
-import { isMultiDestinationsEnabled } from "./featureFlags";
 import { formatLeadMessage } from "./telegramFormatter";
 import { log, logEvent } from "./appLogger";
 import { aggregateLeadDeliveryFromOrderStatuses } from "../lib/leadPipeline";
@@ -1110,78 +1109,72 @@ export async function processLead(params: {
       continue;
     }
 
-    // ── Multi-destination fan-out (LEAD_ROUTING + feature flag ON) ──────────
-    // When the flag is on, resolve the full destination list and dispatch to
-    // each one independently. Each destination gets its own `orders` row
-    // keyed by `(leadId, integrationId, destinationId)`, so per-destination
-    // retry state is tracked separately.
+    // ── Multi-destination fan-out (LEAD_ROUTING) ────────────────────────────
+    // Resolve the full destination list and dispatch to each one independently.
+    // Each destination gets its own `orders` row keyed by
+    // `(leadId, integrationId, destinationId)`, so per-destination retry state
+    // is tracked separately.
     //
-    // If the resolver returns 0 rows (e.g. table not yet backfilled), we fall
-    // through to the legacy single-destination path below — no regression.
-    if (
-      integration.type === "LEAD_ROUTING" &&
-      isMultiDestinationsEnabled(integration.userId)
-    ) {
-      const destinations = await resolveIntegrationDestinations(db, {
-        id: integration.id,
-        userId: integration.userId,
-        targetWebsiteId: integration.targetWebsiteId ?? null,
-        config: integration.config,
-      });
+    // The `MULTI_DEST_ALL` feature flag has been globally ON in production
+    // since rollout; the legacy single-destination fall-through was removed
+    // on 2026-05-12 after a coverage audit confirmed 226/227 active
+    // LEAD_ROUTING integrations have valid integration_destinations rows
+    // (the 1 outlier references a deleted target_website and is broken
+    // independently of which code path runs).
+    const destinations = await resolveIntegrationDestinations(db, {
+      id: integration.id,
+      userId: integration.userId,
+      targetWebsiteId: integration.targetWebsiteId ?? null,
+      config: integration.config,
+    });
 
-      if (destinations.length > 0) {
-        const { evaluateFilter } = await import("./filterEngine");
-        for (const dest of destinations) {
-          // Per-destination filter: skip delivery if lead doesn't match.
-          if (dest.filterJson?.enabled) {
-            const passes = evaluateFilter(dest.filterJson, leadPayload);
-            if (!passes) {
-              console.log(
-                `[FilterEngine] Lead ${params.leadId} skipped dest=${dest.mappingId ?? 0} (tw=${dest.targetWebsite.id}) — filter did not match`,
-              );
-              continue;
-            }
-          }
-          await deliverOneDestination({
-            db,
-            integration,
-            // `mappingId` is the integration_destinations.id — used as
-            // destinationId so each destination has its own order row.
-            destinationId: dest.mappingId ?? 0,
-            preResolvedDestination: dest,
-            leadId: params.leadId,
-            leadRow,
-            leadPayload,
-            userId: params.userId,
-            pageId: params.pageId,
-            isAdmin: params.isAdmin,
-          });
-        }
-        // All destinations dispatched; skip the single-destination path.
-        continue;
-      }
-      // If destinations is empty (no rows in integration_destinations yet),
-      // fall through to the legacy single-dest path — `runOrderIntegrationSend`
-      // will call the resolver again internally and handle the "no target" case.
+    if (destinations.length === 0) {
+      // Misconfigured integration — no destination wired up. Surface this
+      // loudly via the structured log so admins can spot it instead of
+      // silently swallowing leads. The previous fall-through pretended to
+      // deliver via plain-url with an empty URL and just produced a
+      // delivery failure; the new behaviour is the same outcome (no
+      // delivery) but explicitly logged as a configuration problem.
+      await log.warn(
+        "ORDER",
+        `Skipping integration ${integration.id} — no destination configured`,
+        { integrationId: integration.id, userId: integration.userId, name: integration.name },
+        params.leadId,
+        params.pageId,
+        params.userId,
+        "integration_misconfigured",
+        "facebook",
+      );
+      continue;
     }
 
-    // ── Legacy single-destination path ──────────────────────────────────────
-    // destinationId = 0 (the schema default). Preserves exact existing
-    // behaviour for users without the multi-destination flag.
-    await deliverOneDestination({
-      db,
-      integration,
-      destinationId: 0,
-      // Leave preResolvedDestination undefined so runOrderIntegrationSend
-      // calls the resolver internally — identical to the pre-6b code path.
-      preResolvedDestination: undefined,
-      leadId: params.leadId,
-      leadRow,
-      leadPayload,
-      userId: params.userId,
-      pageId: params.pageId,
-      isAdmin: params.isAdmin,
-    });
+    const { evaluateFilter } = await import("./filterEngine");
+    for (const dest of destinations) {
+      // Per-destination filter: skip delivery if lead doesn't match.
+      if (dest.filterJson?.enabled) {
+        const passes = evaluateFilter(dest.filterJson, leadPayload);
+        if (!passes) {
+          console.log(
+            `[FilterEngine] Lead ${params.leadId} skipped dest=${dest.mappingId ?? 0} (tw=${dest.targetWebsite.id}) — filter did not match`,
+          );
+          continue;
+        }
+      }
+      await deliverOneDestination({
+        db,
+        integration,
+        // `mappingId` is the integration_destinations.id — used as
+        // destinationId so each destination has its own order row.
+        destinationId: dest.mappingId ?? 0,
+        preResolvedDestination: dest,
+        leadId: params.leadId,
+        leadRow,
+        leadPayload,
+        userId: params.userId,
+        pageId: params.pageId,
+        isAdmin: params.isAdmin,
+      });
+    }
   }
 
   await recalculateLeadDeliveryStatus(params.leadId, params.userId);

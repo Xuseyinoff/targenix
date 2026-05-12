@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { notifyOwner } from "./notification";
-import { adminProcedure, protectedProcedure, publicProcedure, router } from "./trpc";
-import { isMultiDestinationsEnabled } from "../services/featureFlags";
+import { adminProcedure, publicProcedure, router } from "./trpc";
 
 export const systemRouter = router({
   health: publicProcedure
@@ -27,18 +26,4 @@ export const systemRouter = router({
         success: delivered,
       } as const;
     }),
-
-  /**
-   * Returns the feature-flag bundle for the authenticated user. The client uses
-   * it to gate experimental UI (e.g. the v2 integration wizard at
-   * /integrations/new-v2) without touching the environment variables. The
-   * decision lives on the server so flipping a user off is a single env
-   * change — no cache invalidation or client rebuild needed.
-   */
-  featureFlags: protectedProcedure.query(({ ctx }) => {
-    return {
-      multiDestinations: isMultiDestinationsEnabled(ctx.user.id),
-      connectionSecretsOnly: true as const,
-    };
-  }),
 });
