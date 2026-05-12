@@ -34,7 +34,12 @@ export const appRouter = router({
   facebookAccounts: facebookAccountsRouter,
   googleAccounts: googleAccountsRouter,
   google: googleRouter,
+  // Backwards-compatible alias for the legacy "targetWebsites" namespace.
+  // New client code should call `trpc.destinations.*` instead — both keys
+  // point at the same procedures, so existing frontend `trpc.targetWebsites.*`
+  // calls keep working unchanged.
   targetWebsites: targetWebsitesRouter,
+  destinations: targetWebsitesRouter,
   webhook: webhookRouter,
   logs: logsRouter,
   telegram: telegramRouter,

@@ -500,6 +500,16 @@ export const targetWebsites = mysqlTable("target_websites", {
 export type TargetWebsite = typeof targetWebsites.$inferSelect;
 export type InsertTargetWebsite = typeof targetWebsites.$inferInsert;
 
+// ─── Modern industry-standard aliases (Segment / Mixpanel / Make.com) ────────
+// New code should prefer `Destination` over the legacy `TargetWebsite` name.
+// The DB table stays `target_websites` for now — renaming columns/tables is a
+// separate, riskier migration. Adding type aliases is additive: every existing
+// caller using `TargetWebsite` continues to compile unchanged.
+export type Destination = TargetWebsite;
+export type InsertDestination = InsertTargetWebsite;
+/** Convenience alias for the live runtime table object. */
+export const destinations = targetWebsites;
+
 // ─── Integrations ─────────────────────────────────────────────────────────────
 // LEAD_ROUTING: full pipeline — FB account → page → form → field map → target website
 export const integrations = mysqlTable("integrations", {
@@ -608,6 +618,16 @@ export const integrationDestinations = mysqlTable(
 
 export type IntegrationDestination = typeof integrationDestinations.$inferSelect;
 export type InsertIntegrationDestination = typeof integrationDestinations.$inferInsert;
+
+// ─── Modern industry-standard aliases ───────────────────────────────────────
+// `IntegrationRoute` is the Segment/HubSpot-style name for this join table:
+// one Integration → N Routes → each Route points at one Destination. The DB
+// table stays `integration_destinations` for now; aliases let new code use
+// the clearer name without a migration.
+export type IntegrationRoute = IntegrationDestination;
+export type InsertIntegrationRoute = InsertIntegrationDestination;
+/** Convenience alias for the live runtime table object. */
+export const integrationRoutes = integrationDestinations;
 
 // ─── Leads ────────────────────────────────────────────────────────────────────
 export const leads = mysqlTable("leads", {

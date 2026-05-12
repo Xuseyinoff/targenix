@@ -265,3 +265,18 @@ function dedupe(ids: number[]): number[] {
   }
   return out;
 }
+
+// ─── Modern industry-standard aliases ───────────────────────────────────────
+//
+// `Route` is the Segment/HubSpot-style name for an integration→destination
+// mapping. Adding aliases lets new code adopt the clearer name without
+// touching the existing call sites — every old import keeps working.
+//
+// Migration: when a file is opened for unrelated work, prefer the new name
+// in any edits. No big-bang sweep needed.
+export const setIntegrationRoutes = setIntegrationDestinations;
+export const resolveIntegrationRoutes = resolveIntegrationDestinations;
+export const listIntegrationRoutes = listIntegrationDestinations;
+export const countIntegrationRoutes = countIntegrationDestinations;
+export type ResolvedRoute = ResolvedDestination;
+export type IntegrationRouteRow = IntegrationDestinationRow;
