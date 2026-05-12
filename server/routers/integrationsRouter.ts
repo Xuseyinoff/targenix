@@ -257,7 +257,7 @@ export const integrationsRouter = router({
       // (multi-destination users get the full list; legacy single-dest
       // users get an array of one). Matches the runtime delivery path so
       // "Test lead" is a real dry-run of what production would do — fixes
-      // the old behaviour where only the primary `targetWebsiteId` got
+      // the old behaviour where only the primary `destinationId` got
       // exercised and the other N-1 destinations stayed untested.
       const destinations = await resolveIntegrationRoutes(db, {
         id: integration.id,

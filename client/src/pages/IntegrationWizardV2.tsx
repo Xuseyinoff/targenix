@@ -9,7 +9,7 @@
  * The wizard persists two surfaces on each save:
  *   1. Top-level dedicated fields (preferred by the server for the matching
  *      columns): pageId, formId, pageName, formName, facebookAccountId,
- *      targetWebsiteId.
+ *      destinationId.
  *   2. integration.config JSON — fields that don't have dedicated columns:
  *      { fieldMappings, nameField, phoneField, targetWebsiteName,
  *        targetTemplateType, variableFields }
@@ -18,7 +18,7 @@
  *
  * 5b scope (this commit):
  *   - Trigger card: Facebook account / page / form
- *   - Destination card: pick an EXISTING target_website (grouped by category)
+ *   - Destination card: pick an EXISTING destination (grouped by category)
  *   - Mapping card: auto-detected name/phone + extra fields (form | static)
  *   - Variables card: template-specific variables (sotuvchi, 100k, custom)
  *   - Name card: auto-generated, editable
@@ -1107,7 +1107,7 @@ export default function IntegrationWizardV2() {
 
     // Dedicated-column fields are passed at top level — server prefers them
     // over the matching keys inside `config`. We deliberately stop embedding
-    // pageId / formId / pageName / formName / facebookAccountId / targetWebsiteId
+    // pageId / formId / pageName / formName / facebookAccountId / destinationId
     // inside the JSON to keep the source of truth in one place. `targetWebsiteName`
     // and `targetTemplateType` stay in `config` until their display fallbacks
     // are migrated off the JSON.

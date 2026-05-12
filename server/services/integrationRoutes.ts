@@ -179,20 +179,20 @@ export async function listIntegrationRoutes(
  * integration row. Returns 0 or more `ResolvedDestination` entries,
  * filtered by enabled flag and ownership, in dispatch order.
  *
- * Reads from `integration_destinations` joined against `target_websites`.
+ * Reads from `integration_routes` joined against `destinations`.
  * Supports N destinations per integration with per-mapping `position`
  * ordering. The legacy single-destination fallback (reading
  * `integrations.destinationId` directly) was removed on 2026-05-12 —
  * a coverage audit confirmed 226/227 active LEAD_ROUTING integrations
- * have valid integration_destinations rows.
+ * have valid integration_routes rows.
  *
- * Ownership is enforced: rows whose `target_websites.userId` doesn't
+ * Ownership is enforced: rows whose `destinations.userId` doesn't
  * match the integration's owner are filtered out and logged — they
  * cannot be delivered to safely.
  */
 export async function resolveIntegrationRoutes(
   db: DbClient,
-  // `targetWebsiteId` + `config` are accepted for caller compatibility only —
+  // `destinationId` + `config` are accepted for caller compatibility only —
   // they used to feed the deleted legacy fallback. Safe to drop from the
   // signature on a future refactor that touches every caller.
   integration: Pick<Integration, "id" | "userId" | "destinationId" | "config">,

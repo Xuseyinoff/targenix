@@ -927,13 +927,13 @@ export const crmRouter = router({
       const db = await getDb();
       if (!db) return { items: [], total: 0 };
 
-      // Resolve targetWebsiteId per order:
+      // Resolve destinationId per order:
       //   – Multi-destination orders carry `orders.destinationId` →
-      //     `integration_destinations.destinationId` (fan-out path).
+      //     `integration_routes.destinationId` (fan-out path).
       //   – Legacy single-destination orders only have
       //     `integrations.destinationId` (old path).
-      // COALESCE picks whichever is set. The INNER JOIN on target_websites
-      // then drops any order whose target_website was hard-deleted (visible
+      // COALESCE picks whichever is set. The INNER JOIN on destinations
+      // then drops any order whose destination was hard-deleted (visible
       // as "orphan" in the diagnostic — these need a separate UI affordance
       // if we ever want them shown, since their appKey is unknowable here).
       const twJoinExpr = sql`${destinations.id} = COALESCE(${integrationRoutes.destinationId}, ${integrations.destinationId})`;
