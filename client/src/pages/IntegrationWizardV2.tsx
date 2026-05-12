@@ -340,7 +340,7 @@ interface WizardState {
   formName: string;
   // Destinations — ordered list (Commit 6c). The first entry is the
   // "primary" destination: it drives field mapping + variable resolution
-  // and is written to `integrations.targetWebsiteId` for legacy compat.
+  // and is written to `integrations.destinationId` for legacy compat.
   // Additional entries fan-out via `integration_destinations`.
   destinations: DestinationEntry[];
   // Meta
@@ -679,8 +679,8 @@ export default function IntegrationWizardV2() {
     const destIds: number[] =
       savedDestIds && savedDestIds.length > 0
         ? savedDestIds
-        : cfg.targetWebsiteId
-          ? [Number(cfg.targetWebsiteId)]
+        : cfg.destinationId
+          ? [Number(cfg.destinationId)]
           : [];
 
     const primaryTw = destinations.find((t) => t.id === destIds[0]);
@@ -1126,7 +1126,7 @@ export default function IntegrationWizardV2() {
       pageName: state.pageName || undefined,
       formName: state.formName || undefined,
       facebookAccountId: state.accountId || undefined,
-      targetWebsiteId: primaryDestId || undefined,
+      destinationId: primaryDestId || undefined,
     };
     try {
       if (isEditMode) {

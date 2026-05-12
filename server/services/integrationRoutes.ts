@@ -2,7 +2,7 @@
  * Integration → destination mapping layer (authoritative N:1 join).
  *
  * Owns reads and writes of `integration_destinations`, the table that
- * drives live fan-out dispatch. The legacy `integrations.targetWebsiteId`
+ * drives live fan-out dispatch. The legacy `integrations.destinationId`
  * column is kept in parallel via dual-write for rollback safety and as a
  * fallback read source for environments where the multi-destination flag
  * is disabled.
@@ -93,7 +93,7 @@ export async function setIntegrationRoutes(
 
     const rows = ids.map((twId, index) => ({
       integrationId,
-      targetWebsiteId: twId,
+      destinationId: twId,
       position: index,
       enabled: true,
     }));
@@ -107,17 +107,17 @@ export async function setIntegrationRoutes(
  * 1:1 shape. Use from the existing CRUD code paths until the wizard lands.
  *
  * Passing `null` wipes the destination set — matches the semantics of
- * clearing `integrations.targetWebsiteId` in the legacy column.
+ * clearing `integrations.destinationId` in the legacy column.
  */
 export async function syncLegacyDestination(
   db: DbClient,
   integrationId: number,
-  targetWebsiteId: number | null,
+  destinationId: number | null,
 ): Promise<void> {
   await setIntegrationRoutes(
     db,
     integrationId,
-    targetWebsiteId == null ? [] : [targetWebsiteId],
+    destinationId == null ? [] : [destinationId],
   );
 }
 
@@ -182,7 +182,7 @@ export async function listIntegrationRoutes(
  * Reads from `integration_destinations` joined against `target_websites`.
  * Supports N destinations per integration with per-mapping `position`
  * ordering. The legacy single-destination fallback (reading
- * `integrations.targetWebsiteId` directly) was removed on 2026-05-12 —
+ * `integrations.destinationId` directly) was removed on 2026-05-12 —
  * a coverage audit confirmed 226/227 active LEAD_ROUTING integrations
  * have valid integration_destinations rows.
  *
@@ -195,7 +195,7 @@ export async function resolveIntegrationRoutes(
   // `targetWebsiteId` + `config` are accepted for caller compatibility only —
   // they used to feed the deleted legacy fallback. Safe to drop from the
   // signature on a future refactor that touches every caller.
-  integration: Pick<Integration, "id" | "userId" | "targetWebsiteId" | "config">,
+  integration: Pick<Integration, "id" | "userId" | "destinationId" | "config">,
 ): Promise<ResolvedDestination[]> {
   // Single query with a JOIN so we fetch target_websites in one round-trip.
   // Sort is done client-side below to keep the SQL dialect-agnostic (the
@@ -208,7 +208,7 @@ export async function resolveIntegrationRoutes(
     .from(integrationRoutes)
     .innerJoin(
       destinations,
-      eq(integrationRoutes.targetWebsiteId, destinations.id),
+      eq(integrationRoutes.destinationId, destinations.id),
     )
     .where(
       and(
@@ -230,7 +230,7 @@ export async function resolveIntegrationRoutes(
         {
           integrationId: integration.id,
           mappingId: r.mapping.id,
-          targetWebsiteId: r.tw.id,
+          destinationId: r.tw.id,
           tenantExpected: integration.userId,
           tenantActual: r.tw.userId,
         },

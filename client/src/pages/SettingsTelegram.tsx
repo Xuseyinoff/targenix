@@ -477,7 +477,7 @@ export default function SettingsTelegram() {
                                     value={current}
                                     onValueChange={(val) => {
                                       const chatId = val === "none" ? null : val;
-                                      setDestinationChatMutation.mutate({ targetWebsiteId: dm.id, telegramChatId: chatId });
+                                      setDestinationChatMutation.mutate({ destinationId: dm.id, telegramChatId: chatId });
                                     }}
                                     disabled={setDestinationChatMutation.isPending}
                                   >

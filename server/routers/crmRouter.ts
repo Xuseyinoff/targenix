@@ -120,7 +120,7 @@ export async function performCrmSync(
     })
     .from(orders)
     .innerJoin(integrations, eq(orders.integrationId, integrations.id))
-    .innerJoin(destinations, eq(integrations.targetWebsiteId, destinations.id))
+    .innerJoin(destinations, eq(integrations.destinationId, destinations.id))
     .where(
       and(
         eq(orders.status, "SENT"),
@@ -390,7 +390,7 @@ export async function performPaginationSync(): Promise<SyncResult> {
     .select({ createdAt: orders.createdAt })
     .from(orders)
     .innerJoin(integrations, eq(orders.integrationId, integrations.id))
-    .innerJoin(destinations, eq(integrations.targetWebsiteId, destinations.id))
+    .innerJoin(destinations, eq(integrations.destinationId, destinations.id))
     .where(
       and(
         eq(orders.status, "SENT"),
@@ -574,7 +574,7 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
     .select({ createdAt: orders.createdAt })
     .from(orders)
     .innerJoin(integrations, eq(orders.integrationId, integrations.id))
-    .innerJoin(destinations, eq(integrations.targetWebsiteId, destinations.id))
+    .innerJoin(destinations, eq(integrations.destinationId, destinations.id))
     .where(
       and(
         eq(orders.status, "SENT"),
@@ -721,7 +721,7 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
         })
         .from(orders)
         .innerJoin(integrations, eq(orders.integrationId, integrations.id))
-        .innerJoin(destinations, eq(integrations.targetWebsiteId, destinations.id))
+        .innerJoin(destinations, eq(integrations.destinationId, destinations.id))
         .where(
           and(
             eq(destinations.appKey, "100k"),
@@ -929,14 +929,14 @@ export const crmRouter = router({
 
       // Resolve targetWebsiteId per order:
       //   – Multi-destination orders carry `orders.destinationId` →
-      //     `integration_destinations.targetWebsiteId` (fan-out path).
+      //     `integration_destinations.destinationId` (fan-out path).
       //   – Legacy single-destination orders only have
-      //     `integrations.targetWebsiteId` (old path).
+      //     `integrations.destinationId` (old path).
       // COALESCE picks whichever is set. The INNER JOIN on target_websites
       // then drops any order whose target_website was hard-deleted (visible
       // as "orphan" in the diagnostic — these need a separate UI affordance
       // if we ever want them shown, since their appKey is unknowable here).
-      const twJoinExpr = sql`${destinations.id} = COALESCE(${integrationRoutes.targetWebsiteId}, ${integrations.targetWebsiteId})`;
+      const twJoinExpr = sql`${destinations.id} = COALESCE(${integrationRoutes.destinationId}, ${integrations.destinationId})`;
 
       const where = and(
         eq(orders.status, "SENT"),

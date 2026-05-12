@@ -158,17 +158,17 @@ export const adminLeadsRouter = router({
       new Set(leadRows.map((r) => r.lastIntegrationId).filter((x): x is number => typeof x === "number")),
     );
 
-    const integrationById = new Map<number, { name: string; targetWebsiteId: number | null }>();
+    const integrationById = new Map<number, { name: string; destinationId: number | null }>();
     const targetWebsiteIds: number[] = [];
 
     if (lastIntegrationIds.length) {
       const ints = await db
-        .select({ id: integrations.id, name: integrations.name, targetWebsiteId: integrations.targetWebsiteId })
+        .select({ id: integrations.id, name: integrations.name, destinationId: integrations.destinationId })
         .from(integrations)
         .where(inArray(integrations.id, lastIntegrationIds));
       for (const i of ints) {
-        integrationById.set(i.id, { name: i.name, targetWebsiteId: i.targetWebsiteId ?? null });
-        if (i.targetWebsiteId) targetWebsiteIds.push(i.targetWebsiteId);
+        integrationById.set(i.id, { name: i.name, destinationId: i.destinationId ?? null });
+        if (i.destinationId) targetWebsiteIds.push(i.destinationId);
       }
     }
 
@@ -184,7 +184,7 @@ export const adminLeadsRouter = router({
 
     const rows: AdminLeadRow[] = leadRows.map((r) => {
       const intg = r.lastIntegrationId != null ? integrationById.get(r.lastIntegrationId) : undefined;
-      const twId = intg?.targetWebsiteId ?? null;
+      const twId = intg?.destinationId ?? null;
       const tw = twId != null ? targetWebsiteById.get(twId) : undefined;
       const resolvedNames = displayNamesByUser.get(r.userId)?.get(leadSourcePairKey(r.pageId, r.formId));
 

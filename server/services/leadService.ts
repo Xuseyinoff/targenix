@@ -409,7 +409,7 @@ export async function sendLeadTelegramNotification(params: {
           accountName = acct?.fbUserName ?? null;
         }
         // Resolve targetWebsiteName from dedicated column (indexed)
-        const twId = intg.targetWebsiteId;
+        const twId = intg.destinationId;
         if (twId) {
           const [tw] = await db
             .select({ name: destinations.name })
@@ -654,7 +654,7 @@ async function runOrderIntegrationSend(params: {
       const resolved = await resolveIntegrationRoutes(db, {
         id: integration.id,
         userId: integration.userId,
-        targetWebsiteId: integration.targetWebsiteId ?? null,
+        destinationId: integration.destinationId ?? null,
         config: integration.config,
       });
       primary = resolved[0] ?? null;
@@ -671,7 +671,7 @@ async function runOrderIntegrationSend(params: {
     // resolver already filters mismatches out (empty list + console warn),
     // so here we only need to distinguish "no destination configured"
     // from "one was configured but had a mismatch".
-    const hadConfiguredTarget = integration.targetWebsiteId != null;
+    const hadConfiguredTarget = integration.destinationId != null;
     if (!tw && hadConfiguredTarget) {
       result = { success: false, error: "Target website owner mismatch", errorType: "validation" };
     } else {
@@ -1175,7 +1175,7 @@ export async function processLead(params: {
     const destinations = await resolveIntegrationRoutes(db, {
       id: integration.id,
       userId: integration.userId,
-      targetWebsiteId: integration.targetWebsiteId ?? null,
+      destinationId: integration.destinationId ?? null,
       config: integration.config,
     });
 
@@ -1349,7 +1349,7 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
       .from(integrationRoutes)
       .innerJoin(
         destinations,
-        eq(integrationRoutes.targetWebsiteId, destinations.id),
+        eq(integrationRoutes.destinationId, destinations.id),
       )
       .where(
         and(
@@ -1399,7 +1399,7 @@ export async function retryFailedOrderDelivery(orderId: number): Promise<{
         "Order retry owner mismatch — refusing cross-tenant delivery",
         {
           orderId: order.id,
-          targetWebsiteId: destRow.tw.id,
+          destinationId: destRow.tw.id,
           tenantExpected: order.userId,
           tenantActual: destRow.tw.userId,
         },

@@ -352,7 +352,7 @@ export const telegramRouter = router({
 
   /** Set destination → delivery chat mapping (stored on target_websites.telegramChatId) */
   setDestinationChat: protectedProcedure
-    .input(z.object({ targetWebsiteId: z.number(), telegramChatId: z.string().trim().min(1).nullable() }))
+    .input(z.object({ destinationId: z.number(), telegramChatId: z.string().trim().min(1).nullable() }))
     .mutation(async ({ ctx, input }) => {
       const db = await getDb();
       if (!db) throw new Error("DB unavailable");
@@ -360,12 +360,12 @@ export const telegramRouter = router({
       const [tw] = await db
         .select({ id: destinations.id, userId: destinations.userId })
         .from(destinations)
-        .where(eq(destinations.id, input.targetWebsiteId))
+        .where(eq(destinations.id, input.destinationId))
         .limit(1);
       if (!tw || tw.userId !== ctx.user.id) throw new Error("Destination not found");
 
       if (input.telegramChatId == null) {
-        await db.update(destinations).set({ telegramChatId: null }).where(eq(destinations.id, input.targetWebsiteId));
+        await db.update(destinations).set({ telegramChatId: null }).where(eq(destinations.id, input.destinationId));
         return { success: true };
       }
 
@@ -377,7 +377,7 @@ export const telegramRouter = router({
         .limit(1);
       if (!chat || chat.userId !== ctx.user.id || chat.type !== "DELIVERY") throw new Error("Chat not found");
 
-      await db.update(destinations).set({ telegramChatId: chat.chatId }).where(eq(destinations.id, input.targetWebsiteId));
+      await db.update(destinations).set({ telegramChatId: chat.chatId }).where(eq(destinations.id, input.destinationId));
       return { success: true };
     }),
 });

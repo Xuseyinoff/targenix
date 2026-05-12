@@ -544,7 +544,12 @@ export const integrations = mysqlTable("integrations", {
   pageName: varchar("pageName", { length: 255 }),
   formName: varchar("formName", { length: 255 }),
   /** Dedicated FK column extracted from config.targetWebsiteId for efficient JOIN and index. */
-  targetWebsiteId: int("targetWebsiteId"),
+  // SQL column name stays `targetWebsiteId` for now — TS key was renamed
+  // on 2026-05-12 to align with the table rename (`destinations`). A future
+  // migration can ALTER COLUMN to drop the legacy SQL name; until then
+  // Drizzle's column-key mapping (`destinationId` → SQL `targetWebsiteId`)
+  // keeps the TS side modern and the DB side untouched.
+  destinationId: int("targetWebsiteId"),
   /** Dedicated FK column extracted from config.facebookAccountId for efficient disconnect cleanup.
    *  Nullable — populated by backfill for existing rows; always set on new LEAD_ROUTING integrations. */
   facebookAccountId: int("facebookAccountId"),
@@ -554,7 +559,7 @@ export const integrations = mysqlTable("integrations", {
   // Hot-path index: processLead queries WHERE userId=? AND isActive=1 AND pageId=? AND formId=?
   idxUserPageForm: index("idx_integrations_user_page_form").on(t.userId, t.isActive, t.pageId, t.formId),
   // FK-style index for JOIN with target_websites
-  idxTargetWebsite: index("idx_integrations_target_website_id").on(t.targetWebsiteId),
+  idxTargetWebsite: index("idx_integrations_target_website_id").on(t.destinationId),
   // Index for disconnect cleanup: find all integrations tied to a given FB account
   idxFbAccount: index("idx_integrations_fb_account_id").on(t.facebookAccountId),
 }));
@@ -587,7 +592,8 @@ export const integrationRoutes = mysqlTable(
   {
     id: int("id").autoincrement().primaryKey(),
     integrationId: int("integrationId").notNull(),
-    targetWebsiteId: int("targetWebsiteId").notNull(),
+    // SQL column stays `targetWebsiteId` (see note in integrations table).
+    destinationId: int("targetWebsiteId").notNull(),
     position: int("position").default(0).notNull(),
     enabled: boolean("enabled").default(true).notNull(),
     filterJson: json("filterJson"),
@@ -605,12 +611,12 @@ export const integrationRoutes = mysqlTable(
     // Reverse lookup — "what integrations deliver to this destination?" —
     // used when cleaning up on target_website delete.
     idxTargetWebsite: index("idx_integration_destinations_target_website").on(
-      t.targetWebsiteId,
+      t.destinationId,
     ),
     // Hard guarantee against duplicate mappings in the UI or via a race.
     uniqIntegrationDestination: uniqueIndex("uniq_integration_destination").on(
       t.integrationId,
-      t.targetWebsiteId,
+      t.destinationId,
     ),
   }),
 );

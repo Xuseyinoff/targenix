@@ -31,25 +31,25 @@ export const integrationsRouter = router({
       list.map(async (integration) => {
         if (integration.type !== "LEAD_ROUTING") return integration;
         const cfg = integration.config as Record<string, unknown> | null;
-        if (!integration.targetWebsiteId) return integration;
+        if (!integration.destinationId) return integration;
         const [tw] = await db
           .select({ id: destinations.id, name: destinations.name })
           .from(destinations)
           .where(and(
-            eq(destinations.id, integration.targetWebsiteId),
+            eq(destinations.id, integration.destinationId),
             eq(destinations.userId, ctx.user.id),
           ))
           .limit(1);
         // Also enrich with ordered destinationIds from integration_destinations
         const destRows = await db
-          .select({ targetWebsiteId: integrationRoutes.targetWebsiteId })
+          .select({ destinationId: integrationRoutes.destinationId })
           .from(integrationRoutes)
           .where(and(
             eq(integrationRoutes.integrationId, integration.id),
             eq(integrationRoutes.enabled, true),
           ))
           .orderBy(asc(integrationRoutes.position), asc(integrationRoutes.id));
-        const destinationIds = destRows.map((r) => r.targetWebsiteId);
+        const destinationIds = destRows.map((r) => r.destinationId);
         return {
           ...integration,
           // `targetWebsiteName` has no dedicated column — falls back to JSON
@@ -77,7 +77,7 @@ export const integrationsRouter = router({
          * Ordered list of destination IDs to fan-out to (Commit 6c).
          * When provided, `integration_destinations` is populated with the
          * full list instead of only the single id embedded in config.
-         * The first entry also sets `integrations.targetWebsiteId` for
+         * The first entry also sets `integrations.destinationId` for
          * legacy compat (dispatch falls back to that column when the flag
          * is off).
          * Max 20 destinations per integration — reasonable upper bound that
@@ -96,7 +96,7 @@ export const integrationsRouter = router({
         pageName: z.string().max(255).optional(),
         formName: z.string().max(255).optional(),
         facebookAccountId: z.number().int().positive().optional(),
-        targetWebsiteId: z.number().int().positive().optional(),
+        destinationId: z.number().int().positive().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -132,7 +132,7 @@ export const integrationsRouter = router({
         pageName: input.pageName,
         formName: input.formName,
         facebookAccountId: input.facebookAccountId,
-        targetWebsiteId: input.targetWebsiteId,
+        destinationId: input.destinationId,
       });
       return { success: true };
     }),
@@ -147,7 +147,7 @@ export const integrationsRouter = router({
         /**
          * Stage B opt-in: when provided, `integration_destinations` is
          * rewritten to this exact ordered list and the legacy
-         * `integrations.targetWebsiteId` is set to the first id.
+         * `integrations.destinationId` is set to the first id.
          *
          * Omitting the field preserves the pre-Stage-B behaviour for every
          * existing caller (classic routing wizard, toggle, rename). The new
@@ -167,7 +167,7 @@ export const integrationsRouter = router({
         pageName: z.string().max(255).optional(),
         formName: z.string().max(255).optional(),
         facebookAccountId: z.number().int().positive().optional(),
-        targetWebsiteId: z.number().int().positive().optional(),
+        destinationId: z.number().int().positive().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -262,7 +262,7 @@ export const integrationsRouter = router({
       const destinations = await resolveIntegrationRoutes(db, {
         id: integration.id,
         userId: integration.userId,
-        targetWebsiteId: integration.targetWebsiteId,
+        destinationId: integration.destinationId,
         config: integration.config,
       });
 
@@ -379,7 +379,7 @@ export const integrationsRouter = router({
       const rows = await db
         .select({
           mappingId: integrationRoutes.id,
-          targetWebsiteId: integrationRoutes.targetWebsiteId,
+          destinationId: integrationRoutes.destinationId,
           filterJson: integrationRoutes.filterJson,
           position: integrationRoutes.position,
           enabled: integrationRoutes.enabled,
@@ -402,7 +402,7 @@ export const integrationsRouter = router({
   setDestinationFilter: protectedProcedure
     .input(z.object({
       integrationId:  z.number(),
-      targetWebsiteId: z.number(),
+      destinationId: z.number(),
       filter: z.object({
         enabled:    z.boolean(),
         logic:      z.enum(["AND", "OR"]),
@@ -428,7 +428,7 @@ export const integrationsRouter = router({
         .set({ filterJson: input.filter })
         .where(and(
           eq(integrationRoutes.integrationId, input.integrationId),
-          eq(integrationRoutes.targetWebsiteId, input.targetWebsiteId),
+          eq(integrationRoutes.destinationId, input.destinationId),
         ));
 
       return { ok: true };

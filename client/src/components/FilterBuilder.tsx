@@ -174,14 +174,14 @@ function ConditionRow({
 
 function SingleDestinationEditor({
   integrationId,
-  targetWebsiteId,
+  destinationId,
   destName,
   integrationConfig,
   initialFilter,
   onSaved,
 }: {
   integrationId: number;
-  targetWebsiteId: number;
+  destinationId: number;
   destName: string;
   integrationConfig: Record<string, unknown>;
   initialFilter: FilterRule | null;
@@ -226,12 +226,12 @@ function SingleDestinationEditor({
   }
 
   function handleSave() {
-    save.mutate({ integrationId, targetWebsiteId, filter: rule.conditions.length === 0 ? null : rule });
+    save.mutate({ integrationId, destinationId, filter: rule.conditions.length === 0 ? null : rule });
   }
 
   function handleClear() {
     setRule(makeEmpty());
-    save.mutate({ integrationId, targetWebsiteId, filter: null });
+    save.mutate({ integrationId, destinationId, filter: null });
   }
 
   const activeCount = rule.enabled && rule.conditions.length > 0 ? rule.conditions.length : 0;
@@ -249,11 +249,11 @@ function SingleDestinationEditor({
           )}
         </div>
         <div className="flex items-center gap-2">
-          <Label htmlFor={`enabled-${targetWebsiteId}`} className="text-xs text-muted-foreground">
+          <Label htmlFor={`enabled-${destinationId}`} className="text-xs text-muted-foreground">
             Faol
           </Label>
           <Switch
-            id={`enabled-${targetWebsiteId}`}
+            id={`enabled-${destinationId}`}
             checked={rule.enabled}
             onCheckedChange={(v) => setRule((r) => ({ ...r, enabled: v }))}
           />
@@ -390,7 +390,7 @@ export function FilterBuilderSheet({
   integrationId: number;
   integrationName: string;
   integrationConfig: Record<string, unknown>;
-  /** Map of targetWebsiteId → display name */
+  /** Map of destinationId → display name */
   destinationNames: Record<number, string>;
 }) {
   const utils = trpc.useUtils();
@@ -436,7 +436,7 @@ export function FilterBuilderSheet({
                 <div className="flex gap-1 bg-muted/40 p-1 rounded-lg">
                   {dests.map((d, i) => (
                     <button
-                      key={d.targetWebsiteId}
+                      key={d.destinationId}
                       type="button"
                       onClick={() => setActiveDestIdx(i)}
                       className={cn(
@@ -446,7 +446,7 @@ export function FilterBuilderSheet({
                           : "text-muted-foreground hover:text-foreground"
                       )}
                     >
-                      {destinationNames[d.targetWebsiteId] ?? `#${d.targetWebsiteId}`}
+                      {destinationNames[d.destinationId] ?? `#${d.destinationId}`}
                     </button>
                   ))}
                 </div>
@@ -454,10 +454,10 @@ export function FilterBuilderSheet({
 
               {activeDest && (
                 <SingleDestinationEditor
-                  key={`${activeDest.targetWebsiteId}-${activeDestIdx}`}
+                  key={`${activeDest.destinationId}-${activeDestIdx}`}
                   integrationId={integrationId}
-                  targetWebsiteId={activeDest.targetWebsiteId}
-                  destName={destinationNames[activeDest.targetWebsiteId] ?? `Yo'nalish #${activeDest.targetWebsiteId}`}
+                  destinationId={activeDest.destinationId}
+                  destName={destinationNames[activeDest.destinationId] ?? `Yo'nalish #${activeDest.destinationId}`}
                   integrationConfig={integrationConfig}
                   initialFilter={(activeDest.filterJson as FilterRule | null) ?? null}
                   onSaved={() => void utils.integrations.getDestinationFilters.invalidate({ integrationId })}

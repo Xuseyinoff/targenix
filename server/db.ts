@@ -406,11 +406,14 @@ export async function getIntegrations(userId: number): Promise<Integration[]> {
 }
 
 /**
- * Extract a numeric targetWebsiteId from an integration config JSON.
+ * Extract a numeric destinationId from an integration config JSON.
  * Accepts both number and numeric-string forms (historical inconsistency).
+ *
+ * Legacy JSON config rows still store this as `targetWebsiteId` (the
+ * pre-rename key). New rows write it as `destinationId`. Read both.
  */
-function extractTargetWebsiteId(cfg: Record<string, unknown> | null | undefined): number | null {
-  const raw = cfg?.targetWebsiteId;
+function extractDestinationIdFromConfig(cfg: Record<string, unknown> | null | undefined): number | null {
+  const raw = cfg?.destinationId ?? cfg?.targetWebsiteId;
   if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return raw;
   if (typeof raw === "string" && /^\d+$/.test(raw) && Number(raw) > 0) return Number(raw);
   return null;
@@ -432,11 +435,11 @@ function extractTargetWebsiteId(cfg: Record<string, unknown> | null | undefined)
 async function strictSyncLegacyDestination(
   db: DbClient,
   integrationId: number,
-  targetWebsiteId: number | null,
+  destinationId: number | null,
 ): Promise<void> {
   const { syncLegacyDestination } = await import("./services/integrationRoutes");
   try {
-    await syncLegacyDestination(db, integrationId, targetWebsiteId);
+    await syncLegacyDestination(db, integrationId, destinationId);
   } catch (err) {
     // Log loudly first so the failure is captured even if the caller's
     // rollback path itself trips. Then rethrow so the caller can clean
@@ -457,7 +460,7 @@ async function strictSyncLegacyDestination(
  * shows zero hits for an extended window, the JSON fallbacks in
  * `createIntegration` / `updateIntegration` can be dropped.
  */
-const LEGACY_WIZARD_FIELDS = ["pageId", "formId", "pageName", "formName", "facebookAccountId", "targetWebsiteId"] as const;
+const LEGACY_WIZARD_FIELDS = ["pageId", "formId", "pageName", "formName", "facebookAccountId", "destinationId"] as const;
 function warnIfLegacyWizardShape(
   caller: "createIntegration" | "updateIntegration",
   topLevel: Partial<Record<(typeof LEGACY_WIZARD_FIELDS)[number], unknown>>,
@@ -466,7 +469,10 @@ function warnIfLegacyWizardShape(
 ): void {
   const fallbackFields: string[] = [];
   for (const k of LEGACY_WIZARD_FIELDS) {
-    if (topLevel[k] === undefined && cfg?.[k] !== undefined) fallbackFields.push(k);
+    // Legacy JSON config still uses `targetWebsiteId` (pre-rename key).
+    // Read both new top-level + legacy config key for compat.
+    const cfgKey = k === "destinationId" ? "targetWebsiteId" : k;
+    if (topLevel[k] === undefined && cfg?.[cfgKey] !== undefined) fallbackFields.push(k);
   }
   if (topLevel.facebookAccountId === undefined && cfg?.accountId !== undefined && !fallbackFields.includes("facebookAccountId")) {
     fallbackFields.push("facebookAccountId(via accountId alias)");
@@ -489,7 +495,7 @@ export async function createIntegration(data: {
    * Ordered destination IDs for multi-destination fan-out.
    * When provided, `integration_destinations` is populated with the full
    * list (preserving array order as `position`). Otherwise the single id
-   * from `config.targetWebsiteId` is used (single-destination path).
+   * from `config.destinationId` is used (single-destination path).
    */
   destinationIds?: number[];
   /**
@@ -502,7 +508,7 @@ export async function createIntegration(data: {
   pageName?: string;
   formName?: string;
   facebookAccountId?: number;
-  targetWebsiteId?: number;
+  destinationId?: number;
 }): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
@@ -518,8 +524,8 @@ export async function createIntegration(data: {
   const rawFbId = isLR ? (data.facebookAccountId ?? cfg?.facebookAccountId ?? cfg?.accountId) : undefined;
   const facebookAccountId = typeof rawFbId === "number" && rawFbId > 0 ? rawFbId : null;
   // Extract the primary destination id: prefer top-level, fall back to JSON.
-  const targetWebsiteId = isLR
-    ? (data.targetWebsiteId ?? extractTargetWebsiteId(cfg))
+  const destinationId = isLR
+    ? (data.destinationId ?? extractDestinationIdFromConfig(cfg))
     : null;
 
   const [result] = await db.insert(integrations).values({
@@ -534,7 +540,7 @@ export async function createIntegration(data: {
     pageName,
     formName,
     facebookAccountId,
-    targetWebsiteId,
+    destinationId,
   });
 
   // Strict dual-write into the new join table. Since the legacy fallback
@@ -555,7 +561,7 @@ export async function createIntegration(data: {
         await setIntegrationRoutes(db, insertedId, destIds);
       } else {
         // Single-destination path: mirror the column id.
-        await strictSyncLegacyDestination(db, insertedId, targetWebsiteId);
+        await strictSyncLegacyDestination(db, insertedId, destinationId);
       }
     } catch (err) {
       // Roll back the parent row so the caller doesn't accumulate orphan
@@ -590,13 +596,13 @@ export async function updateIntegration(
      * Optional ordered list of destination ids (Stage B opt-in write).
      *
      * When provided, `integration_destinations` is authoritatively rewritten
-     * to this exact list AND the legacy `integrations.targetWebsiteId`
+     * to this exact list AND the legacy `integrations.destinationId`
      * column is set to the first entry (or null for an empty list).
      * Callers must have already verified ownership of each id — this helper
      * does not re-check (same contract as `createIntegration`).
      *
      * When omitted, the legacy single-id mirror (`safeSyncLegacyDestination`)
-     * runs with the ID extracted from `config.targetWebsiteId` — EXCEPT
+     * runs with the ID extracted from `config.destinationId` — EXCEPT
      * when the integration already has multiple destinations wired up; see
      * the guard below.
      */
@@ -610,7 +616,7 @@ export async function updateIntegration(
     pageName: string;
     formName: string;
     facebookAccountId: number;
-    targetWebsiteId: number;
+    destinationId: number;
   }>,
 ): Promise<void> {
   const db = await getDb();
@@ -627,7 +633,7 @@ export async function updateIntegration(
     pageName: topPageName,
     formName: topFormName,
     facebookAccountId: topFbAccountId,
-    targetWebsiteId: topTwId,
+    destinationId: topTwId,
     ...dbFields
   } = data;
   const updateData: Record<string, unknown> = { ...dbFields };
@@ -648,7 +654,7 @@ export async function updateIntegration(
       pageName: topPageName,
       formName: topFormName,
       facebookAccountId: topFbAccountId,
-      targetWebsiteId: topTwId,
+      destinationId: topTwId,
     }, cfg, { id });
     updateData.pageId = topPageId ?? (String(cfg?.pageId ?? "") || null);
     updateData.formId = topFormId ?? (String(cfg?.formId ?? "") || null);
@@ -657,8 +663,8 @@ export async function updateIntegration(
     const rawFbId = topFbAccountId ?? cfg?.facebookAccountId ?? cfg?.accountId;
     updateData.facebookAccountId = typeof rawFbId === "number" && rawFbId > 0 ? rawFbId : null;
     // Keep the dedicated column and the destination table in sync together.
-    twIdForSync = topTwId ?? extractTargetWebsiteId(cfg);
-    updateData.targetWebsiteId = twIdForSync;
+    twIdForSync = topTwId ?? extractDestinationIdFromConfig(cfg);
+    updateData.destinationId = twIdForSync;
   }
 
   // When an explicit destinationIds list is provided, let it override the
@@ -666,7 +672,7 @@ export async function updateIntegration(
   if (destinationIds !== undefined) {
     const firstId =
       destinationIds.length > 0 ? destinationIds[0] : null;
-    updateData.targetWebsiteId = firstId;
+    updateData.destinationId = firstId;
   }
 
   await db.update(integrations).set(updateData).where(eq(integrations.id, id));

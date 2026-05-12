@@ -1442,7 +1442,7 @@ export const destinationsRouter = router({
         .from(destinations)
         .leftJoin(
           integrations,
-          and(eq(integrations.targetWebsiteId, destinations.id), eq(integrations.userId, userId)),
+          and(eq(integrations.destinationId, destinations.id), eq(integrations.userId, userId)),
         )
         .leftJoin(
           orders,
@@ -1506,7 +1506,7 @@ export const destinationsRouter = router({
             and(
               eq(orders.integrationId, integrations.id),
               eq(integrations.userId, userId),
-              eq(integrations.targetWebsiteId, input.destinationId),
+              eq(integrations.destinationId, input.destinationId),
             ),
           )
           .where(and(
@@ -1544,7 +1544,7 @@ export const destinationsRouter = router({
           and(
             eq(orders.integrationId, integrations.id),
             eq(integrations.userId, userId),
-            eq(integrations.targetWebsiteId, input.destinationId),
+            eq(integrations.destinationId, input.destinationId),
           ),
         )
         .where(and(eq(orders.userId, userId), gte(orders.createdAt, startDate)))

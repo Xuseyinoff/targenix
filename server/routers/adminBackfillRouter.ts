@@ -49,11 +49,11 @@ export const adminBackfillRouter = router({
           let targetWebsiteName: string | null = (cfg.targetWebsiteName as string) ?? null;
           let targetWebsiteUrl: string | null = null;
 
-          if (intg.targetWebsiteId) {
+          if (intg.destinationId) {
             const [tw] = await db
               .select({ name: destinations.name, url: destinations.url })
               .from(destinations)
-              .where(eq(destinations.id, intg.targetWebsiteId))
+              .where(eq(destinations.id, intg.destinationId))
               .limit(1);
             if (tw) { targetWebsiteName = tw.name; targetWebsiteUrl = tw.url; }
           }

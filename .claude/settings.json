@@ -82,7 +82,10 @@
       "Bash(node tooling/bulk-rename-client.mjs)",
       "Bash(awk -F: '{s+=$2} END {print s}')",
       "Bash(node tooling/bulk-rename-functions.mjs)",
-      "Bash(git mv *)"
+      "Bash(git mv *)",
+      "Bash(awk -F: '$2>0 {s+=$2} END {print \"   \", s, \"refs\"}')",
+      "Bash(awk -F: '$2>0 {s+=$2} END {print \"   \", s, \"refs \\(kutilgan: 0\\)\"}')",
+      "Bash(node tooling/bulk-rename-column.mjs)"
     ]
   }
 }

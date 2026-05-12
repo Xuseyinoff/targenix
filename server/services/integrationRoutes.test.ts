@@ -84,9 +84,9 @@ describe("setIntegrationRoutes", () => {
     expect(spy.deletes).toHaveLength(1);
     expect(spy.inserts).toHaveLength(1);
     expect(spy.inserts[0]).toEqual([
-      { integrationId: 7, targetWebsiteId: 101, position: 0, enabled: true },
-      { integrationId: 7, targetWebsiteId: 102, position: 1, enabled: true },
-      { integrationId: 7, targetWebsiteId: 103, position: 2, enabled: true },
+      { integrationId: 7, destinationId: 101, position: 0, enabled: true },
+      { integrationId: 7, destinationId: 102, position: 1, enabled: true },
+      { integrationId: 7, destinationId: 103, position: 2, enabled: true },
     ]);
   });
 
@@ -97,9 +97,9 @@ describe("setIntegrationRoutes", () => {
     await setIntegrationRoutes(db, 1, [50, 51, 50, 52]);
 
     expect(spy.inserts[0]).toEqual([
-      { integrationId: 1, targetWebsiteId: 50, position: 0, enabled: true },
-      { integrationId: 1, targetWebsiteId: 51, position: 1, enabled: true },
-      { integrationId: 1, targetWebsiteId: 52, position: 2, enabled: true },
+      { integrationId: 1, destinationId: 50, position: 0, enabled: true },
+      { integrationId: 1, destinationId: 51, position: 1, enabled: true },
+      { integrationId: 1, destinationId: 52, position: 2, enabled: true },
     ]);
   });
 
@@ -110,7 +110,7 @@ describe("setIntegrationRoutes", () => {
     await setIntegrationRoutes(db, 1, [0, -5, Number.NaN, 99]);
 
     expect(spy.inserts[0]).toEqual([
-      { integrationId: 1, targetWebsiteId: 99, position: 0, enabled: true },
+      { integrationId: 1, destinationId: 99, position: 0, enabled: true },
     ]);
   });
 
@@ -149,7 +149,7 @@ describe("syncLegacyDestination", () => {
     await syncLegacyDestination(db, 9, 42);
 
     expect(spy.inserts[0]).toEqual([
-      { integrationId: 9, targetWebsiteId: 42, position: 0, enabled: true },
+      { integrationId: 9, destinationId: 42, position: 0, enabled: true },
     ]);
   });
 
@@ -169,10 +169,10 @@ describe("syncLegacyDestination", () => {
 describe("listIntegrationRoutes", () => {
   it("returns rows sorted by position, then id for stability", async () => {
     const unsorted = [
-      { id: 3, integrationId: 1, targetWebsiteId: 10, position: 2, enabled: true },
-      { id: 1, integrationId: 1, targetWebsiteId: 20, position: 0, enabled: true },
-      { id: 2, integrationId: 1, targetWebsiteId: 30, position: 1, enabled: true },
-      { id: 5, integrationId: 1, targetWebsiteId: 40, position: 0, enabled: true },
+      { id: 3, integrationId: 1, destinationId: 10, position: 2, enabled: true },
+      { id: 1, integrationId: 1, destinationId: 20, position: 0, enabled: true },
+      { id: 2, integrationId: 1, destinationId: 30, position: 1, enabled: true },
+      { id: 5, integrationId: 1, destinationId: 40, position: 0, enabled: true },
     ];
     const db = makeDbWithSelect(unsorted);
 
