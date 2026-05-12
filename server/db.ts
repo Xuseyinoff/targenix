@@ -417,29 +417,36 @@ function extractTargetWebsiteId(cfg: Record<string, unknown> | null | undefined)
 }
 
 /**
- * Best-effort dual-write into integration_destinations.
+ * Strict dual-write into integration_destinations.
  *
  * Mirrors the single-destination integration shape into the N:1 join table
- * so dispatch (which reads from the join table under
- * `MULTI_DEST_ALL=true`) always has at least one mapping row to fan out
- * to. Failures are swallowed with a warn-log so a transient DB glitch on
- * the new table cannot block integration CRUD. If drift ever creeps in,
- * `tooling/mysql/backfill-integration-destinations.mjs` reconciles it
- * idempotently.
+ * — the ONLY path the delivery resolver reads from since the legacy
+ * fallback was retired on 2026-05-12. A failure here means the integration
+ * has no destinations at all and would silently drop every lead, so we
+ * throw a structured error and let the caller (createIntegration /
+ * updateIntegration) decide how to undo the parent insert.
+ *
+ * Idempotency: `syncLegacyDestination` is itself idempotent (delete-then-
+ * insert in a transaction), so caller retries are safe.
  */
-async function safeSyncLegacyDestination(
+async function strictSyncLegacyDestination(
   db: DbClient,
   integrationId: number,
   targetWebsiteId: number | null,
 ): Promise<void> {
+  const { syncLegacyDestination } = await import("./services/integrationDestinations");
   try {
-    const { syncLegacyDestination } = await import("./services/integrationDestinations");
     await syncLegacyDestination(db, integrationId, targetWebsiteId);
   } catch (err) {
-    console.warn(
-      `[dual-write] integration_destinations sync failed for integrationId=${integrationId}:`,
+    // Log loudly first so the failure is captured even if the caller's
+    // rollback path itself trips. Then rethrow so the caller can clean
+    // up the parent integration row.
+    console.error(
+      `[dual-write] integration_destinations sync FAILED for integrationId=${integrationId} — ` +
+        `the parent integration row will be removed to keep state consistent.`,
       err instanceof Error ? err.message : String(err),
     );
+    throw err;
   }
 }
 
@@ -530,26 +537,44 @@ export async function createIntegration(data: {
     targetWebsiteId,
   });
 
-  // Dual-write into the new join table.
+  // Strict dual-write into the new join table. Since the legacy fallback
+  // was retired (see services/integrationDestinations.ts:resolve…), the
+  // delivery resolver ONLY reads from integration_destinations — an
+  // integration without rows here silently drops every lead. We treat a
+  // failure as fatal and roll back the parent row so the user can retry
+  // instead of being left with a broken integration they cannot diagnose.
   const insertedId = (result as { insertId?: number })?.insertId;
   if (isLR && typeof insertedId === "number" && insertedId > 0) {
     const destIds = data.destinationIds;
-    if (destIds && destIds.length > 0) {
-      // Multi-destination path: write all ids in order.
-      // `setIntegrationDestinations` runs inside a transaction, so the
-      // mapping is always consistent even if the process crashes mid-way.
-      try {
+    try {
+      if (destIds && destIds.length > 0) {
+        // Multi-destination path: write all ids in order.
+        // `setIntegrationDestinations` runs inside its own transaction so
+        // the mapping is consistent even if the process crashes mid-way.
         const { setIntegrationDestinations } = await import("./services/integrationDestinations");
         await setIntegrationDestinations(db, insertedId, destIds);
-      } catch (err) {
-        console.warn(
-          `[dual-write] setIntegrationDestinations failed for integrationId=${insertedId}:`,
-          err instanceof Error ? err.message : String(err),
+      } else {
+        // Single-destination path: mirror the column id.
+        await strictSyncLegacyDestination(db, insertedId, targetWebsiteId);
+      }
+    } catch (err) {
+      // Roll back the parent row so the caller doesn't accumulate orphan
+      // integrations on every transient failure. The delete is itself
+      // best-effort — if it fails too, log loudly so admins can spot the
+      // drift and reconcile via tooling/mysql/backfill-integration-destinations.mjs.
+      try {
+        await db.delete(integrations).where(eq(integrations.id, insertedId));
+      } catch (rollbackErr) {
+        console.error(
+          `[createIntegration] CRITICAL: rollback of orphan integration #${insertedId} failed — ` +
+            `manual cleanup required. Run tooling/mysql/backfill-integration-destinations.mjs ` +
+            `to reconcile.`,
+          rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr),
         );
       }
-    } else {
-      // Single-destination / legacy path: mirror the config column only.
-      await safeSyncLegacyDestination(db, insertedId, targetWebsiteId);
+      throw err instanceof Error
+        ? err
+        : new Error(`integration_destinations write failed for new integration: ${String(err)}`);
     }
   }
 }
@@ -667,33 +692,19 @@ export async function updateIntegration(
   // Notes:
   //   - The guard uses `countIntegrationDestinations` (single small SELECT)
   //     so overhead on every update is negligible.
-  //   - `safeSyncLegacyDestination` stays best-effort (swallows errors) so
-  //     a transient DB glitch can never break integration updates.
+  //   - Sync errors now PROPAGATE: the legacy fallback is gone, so an
+  //     unsynced join row means future leads silently drop. Letting the
+  //     mutation fail forces the caller to retry until consistent.
   if (destinationIds !== undefined) {
-    try {
-      const { setIntegrationDestinations } = await import(
-        "./services/integrationDestinations"
-      );
-      await setIntegrationDestinations(db, id, destinationIds);
-    } catch (err) {
-      console.warn(
-        `[dual-write] setIntegrationDestinations failed for integrationId=${id}:`,
-        err instanceof Error ? err.message : String(err),
-      );
-    }
+    const { setIntegrationDestinations } = await import(
+      "./services/integrationDestinations"
+    );
+    await setIntegrationDestinations(db, id, destinationIds);
   } else if (twIdForSync !== undefined) {
-    let existingCount = 0;
-    try {
-      const { countIntegrationDestinations } = await import(
-        "./services/integrationDestinations"
-      );
-      existingCount = await countIntegrationDestinations(db, id);
-    } catch (err) {
-      console.warn(
-        `[dual-write] countIntegrationDestinations failed for integrationId=${id}:`,
-        err instanceof Error ? err.message : String(err),
-      );
-    }
+    const { countIntegrationDestinations } = await import(
+      "./services/integrationDestinations"
+    );
+    const existingCount = await countIntegrationDestinations(db, id);
 
     if (existingCount > 1) {
       // Multi-destination integration — DO NOT mirror the single id.
@@ -705,7 +716,7 @@ export async function updateIntegration(
           `Pass destinationIds to the update to rewrite the list explicitly.`,
       );
     } else {
-      await safeSyncLegacyDestination(db, id, twIdForSync);
+      await strictSyncLegacyDestination(db, id, twIdForSync);
     }
   }
 }

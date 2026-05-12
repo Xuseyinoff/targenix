@@ -7,6 +7,14 @@
  * Uses a simple interval — no external cron library needed.
  * Cron matching: only supports "@hourly", "@daily", and "minute-level" patterns
  * via the `cron-parser` logic (manual implementation, no deps).
+ *
+ * Dedupe: a `lastFireAt` window guard prevents the same trigger from firing
+ * twice in close succession (clock skew, leap-second insert, or a manual
+ * tick triggered while the next setInterval was still in-flight). Without
+ * this guard, the same cron line could match for two ticks ~30s apart and
+ * fire the trigger twice. The 45-second floor is wider than any expected
+ * skew but narrower than the 60s cron resolution, so legitimate
+ * once-per-minute schedules still fire on every minute boundary.
  */
 
 import { getDb } from "../db";
@@ -14,6 +22,9 @@ import { triggers, triggerExecutions, workflows } from "../../drizzle/schema";
 import { and, eq } from "drizzle-orm";
 
 let schedulerTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Minimum gap between two consecutive fires of the same trigger. */
+const MIN_REFIRE_GAP_MS = 45_000;
 
 /** Checks whether a cron expression matches the current time (minute granularity). */
 function cronMatches(cron: string, now: Date): boolean {
@@ -54,6 +65,22 @@ async function runScheduledTriggers(): Promise<void> {
       if (!cfg?.cron) continue;
 
       if (!cronMatches(cfg.cron, now)) continue;
+
+      // Dedupe: skip if the same trigger fired within the past
+      // MIN_REFIRE_GAP_MS. Protects against clock-skew/leap-second
+      // double-ticks and against operator-triggered manual runs that
+      // overlap with the scheduled tick.
+      if (
+        trigger.lastFiredAt &&
+        now.getTime() - new Date(trigger.lastFiredAt).getTime() < MIN_REFIRE_GAP_MS
+      ) {
+        console.log(
+          `[TriggerScheduler] Skipping trigger id=${trigger.id} — last fired ` +
+            `${Math.round((now.getTime() - new Date(trigger.lastFiredAt).getTime()) / 1000)}s ago, ` +
+            `within ${Math.round(MIN_REFIRE_GAP_MS / 1000)}s refire guard`,
+        );
+        continue;
+      }
 
       // Fire trigger
       await db.insert(triggerExecutions).values({
