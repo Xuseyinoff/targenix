@@ -13,9 +13,9 @@
  */
 
 import { z } from "zod";
-import bcrypt from "bcryptjs";
 import axios from "axios";
 import { TRPCError } from "@trpc/server";
+import { hashPassword, verifyPassword } from "../lib/password";
 import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import {
@@ -37,8 +37,6 @@ import { sdk } from "../_core/sdk";
 import { getSessionCookieOptions } from "../_core/cookies";
 import { COOKIE_NAME, SESSION_EXPIRATION_MS } from "@shared/const";
 import { sendPasswordResetEmail } from "../services/emailService";
-
-const BCRYPT_ROUNDS = 12;
 
 function emailToOpenId(email: string): string {
   return `email:${email.toLowerCase().trim()}`;
@@ -93,7 +91,7 @@ export const authRouter = router({
         throw new TRPCError({ code: "CONFLICT", message: "An account with this email already exists." });
       }
 
-      const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+      const passwordHash = await hashPassword(input.password);
 
       await db.insert(users).values({
         openId,
@@ -139,15 +137,22 @@ export const authRouter = router({
         throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid email or password." });
       }
 
-      const passwordMatch = await bcrypt.compare(input.password, user.passwordHash);
-      if (!passwordMatch) {
+      const verifyResult = await verifyPassword(input.password, user.passwordHash);
+      if (!verifyResult.ok) {
         throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid email or password." });
       }
 
-      await db
-        .update(users)
-        .set({ lastSignedIn: new Date() })
-        .where(eq(users.openId, user.openId));
+      // Upgrade-on-login: if the stored hash is still bcrypt, replace it
+      // with argon2id quietly. After every active user has logged in
+      // once, the bcryptjs dep can be dropped (an audit script can
+      // confirm zero `$2[aby]$` rows remain).
+      const updates: { lastSignedIn: Date; passwordHash?: string } = {
+        lastSignedIn: new Date(),
+      };
+      if (verifyResult.needsRehash) {
+        updates.passwordHash = await hashPassword(input.password);
+      }
+      await db.update(users).set(updates).where(eq(users.openId, user.openId));
 
       const sessionToken = await sdk.createSessionToken(user.openId, {
         name: user.name ?? normalizedEmail.split("@")[0],
@@ -236,10 +241,10 @@ export const authRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Password can only be changed for email/password accounts." });
       }
 
-      const ok = await bcrypt.compare(input.currentPassword, user.passwordHash);
-      if (!ok) throw new TRPCError({ code: "UNAUTHORIZED", message: "Current password is incorrect." });
+      const verify = await verifyPassword(input.currentPassword, user.passwordHash);
+      if (!verify.ok) throw new TRPCError({ code: "UNAUTHORIZED", message: "Current password is incorrect." });
 
-      const passwordHash = await bcrypt.hash(input.newPassword, BCRYPT_ROUNDS);
+      const passwordHash = await hashPassword(input.newPassword);
       await db.update(users).set({ passwordHash }).where(eq(users.id, user.id));
 
       return { success: true };
@@ -403,7 +408,7 @@ export const authRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid or expired reset link." });
       }
 
-      const passwordHash = await bcrypt.hash(input.password, BCRYPT_ROUNDS);
+      const passwordHash = await hashPassword(input.password);
 
       await Promise.all([
         db.update(users).set({ passwordHash }).where(eq(users.id, resetToken.userId)),
