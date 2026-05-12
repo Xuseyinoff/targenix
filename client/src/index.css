@@ -44,19 +44,19 @@
 
 :root {
   /*
-   * Light “Sotuvchi-style” shell: white sidebar + cards on a soft gray canvas (~gray-50),
-   * subtle borders, vivid blue accents + pill active nav.
+   * Wapi-inspired emerald shell: white sidebar + cards on soft gray canvas,
+   * emerald-600 (#059669) accent, subtle left-bar active nav.
    */
   --radius: 0.9rem;
-  --primary: var(--color-blue-600);
+  --primary: var(--color-emerald-600);
   --primary-foreground: oklch(0.99 0 0);
-  --sidebar-primary: var(--color-blue-600);
+  --sidebar-primary: var(--color-emerald-600);
   --sidebar-primary-foreground: oklch(0.99 0 0);
-  --chart-1: var(--color-blue-300);
-  --chart-2: var(--color-blue-500);
-  --chart-3: var(--color-blue-600);
-  --chart-4: var(--color-blue-700);
-  --chart-5: var(--color-blue-800);
+  --chart-1: var(--color-emerald-300);
+  --chart-2: var(--color-emerald-500);
+  --chart-3: var(--color-emerald-600);
+  --chart-4: var(--color-emerald-700);
+  --chart-5: var(--color-emerald-800);
   --background: oklch(0.985 0.004 264);
   --foreground: oklch(0.28 0.02 264);
   --card: oklch(1 0 0);
@@ -73,24 +73,24 @@
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.91 0.006 264);
   --input: oklch(0.94 0.006 264);
-  --ring: oklch(0.55 0.19 264);
+  --ring: var(--color-emerald-500);
   --sidebar: oklch(1 0 0);
   --sidebar-foreground: oklch(0.32 0.02 264);
   --sidebar-accent: oklch(0.965 0.006 264);
   --sidebar-accent-foreground: oklch(0.32 0.02 264);
   --sidebar-border: oklch(0.92 0.007 264);
-  --sidebar-ring: oklch(0.55 0.19 264);
+  --sidebar-ring: var(--color-emerald-500);
 }
 
 .dark {
   /*
-   * Sotuvchi-style navy stack: canvas ~#0b1120, cards ~#161f31, sidebar a shade darker,
-   * muted text ~slate-400 (#94a3b8), blue-500 accents — depth from hue layers, not heavy shadow.
+   * Wapi-inspired navy stack: canvas ~#0b1120, cards ~#161f31, sidebar a shade darker,
+   * muted text ~slate-400 (#94a3b8), emerald-500 accents — depth from hue layers, not heavy shadow.
    */
   --radius: 0.9rem;
-  --primary: var(--color-blue-500);
+  --primary: var(--color-emerald-500);
   --primary-foreground: oklch(0.99 0 0);
-  --sidebar-primary: var(--color-blue-500);
+  --sidebar-primary: var(--color-emerald-500);
   --sidebar-primary-foreground: oklch(0.99 0 0);
   --background: oklch(0.138 0.042 264);
   --foreground: oklch(0.985 0.01 264);
@@ -108,21 +108,21 @@
   --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(0.32 0.035 264);
   --input: oklch(0.225 0.045 264);
-  --ring: var(--color-blue-500);
+  --ring: var(--color-emerald-500);
   --scrollbar-thumb: oklch(0.36 0.038 264);
   --scrollbar-thumb-hover: oklch(0.42 0.04 264);
   --scrollbar-track: oklch(0.138 0.042 264);
-  --chart-1: var(--color-blue-300);
-  --chart-2: var(--color-blue-500);
-  --chart-3: var(--color-blue-600);
-  --chart-4: var(--color-blue-700);
-  --chart-5: var(--color-blue-800);
+  --chart-1: var(--color-emerald-300);
+  --chart-2: var(--color-emerald-500);
+  --chart-3: var(--color-emerald-600);
+  --chart-4: var(--color-emerald-700);
+  --chart-5: var(--color-emerald-800);
   --sidebar: oklch(0.118 0.038 264);
   --sidebar-foreground: oklch(0.94 0.015 264);
   --sidebar-accent: oklch(0.205 0.045 264);
   --sidebar-accent-foreground: oklch(0.985 0.01 264);
   --sidebar-border: oklch(0.28 0.032 264);
-  --sidebar-ring: var(--color-blue-500);
+  --sidebar-ring: var(--color-emerald-500);
 }
 
 @layer base {
@@ -210,6 +210,73 @@
       padding-right: 2rem;
       max-width: 1280px; /* Standard content width */
     }
+  }
+}
+
+/*
+ * Wapi-inspired card hover: subtle 3px lift + soft drop shadow.
+ * Apply on any card-shaped element to get the "floating on hover" feel.
+ * Uses GPU-accelerated transform + will-change to keep 60fps even on long lists.
+ */
+@layer components {
+  .wapi-card-hover {
+    transition: transform 250ms cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 250ms cubic-bezier(0.4, 0, 0.2, 1),
+                border-color 250ms ease;
+    will-change: transform;
+  }
+  .wapi-card-hover:hover {
+    transform: translateY(-3px);
+    box-shadow:
+      0 12px 28px -10px rgba(15, 23, 42, 0.10),
+      0 4px 12px -6px rgba(15, 23, 42, 0.05);
+  }
+  .dark .wapi-card-hover:hover {
+    box-shadow:
+      0 12px 28px -10px rgba(0, 0, 0, 0.45),
+      0 4px 12px -6px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Hide the floating sidebar toggle while any Radix dialog/sheet/alert-dialog is
+   * open — prevents the green chevron from peeking out over the modal backdrop.
+   * `:has()` is widely supported (Chrome 105+, Safari 15.4+, Firefox 121+). */
+  body:has(div[role="dialog"][data-state="open"]) .wapi-floating-toggle,
+  body:has(div[role="alertdialog"][data-state="open"]) .wapi-floating-toggle {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* Wapi-style button lift on hover + tactile press on active. Apply to top-level
+   * action buttons (page headers, primary CTAs). Skip inline / table-row buttons. */
+  .wapi-button-hover {
+    transition: transform 180ms cubic-bezier(0.4, 0, 0.2, 1),
+                box-shadow 180ms cubic-bezier(0.4, 0, 0.2, 1),
+                background-color 180ms ease,
+                border-color 180ms ease;
+    will-change: transform;
+  }
+  .wapi-button-hover:hover:not(:disabled) {
+    transform: translateY(-1.5px);
+    box-shadow:
+      0 6px 16px -6px rgba(15, 23, 42, 0.12),
+      0 2px 6px -3px rgba(15, 23, 42, 0.06);
+  }
+  .wapi-button-hover:active:not(:disabled) {
+    transform: translateY(0);
+    transition-duration: 80ms;
+  }
+  .dark .wapi-button-hover:hover:not(:disabled) {
+    box-shadow:
+      0 6px 16px -6px rgba(0, 0, 0, 0.5),
+      0 2px 6px -3px rgba(0, 0, 0, 0.3);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wapi-card-hover,
+  .wapi-card-hover:hover {
+    transition: none;
+    transform: none;
   }
 }
 

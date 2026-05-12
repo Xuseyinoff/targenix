@@ -85,7 +85,9 @@
       "Bash(git mv *)",
       "Bash(awk -F: '$2>0 {s+=$2} END {print \"   \", s, \"refs\"}')",
       "Bash(awk -F: '$2>0 {s+=$2} END {print \"   \", s, \"refs \\(kutilgan: 0\\)\"}')",
-      "Bash(node tooling/bulk-rename-column.mjs)"
+      "Bash(node tooling/bulk-rename-column.mjs)",
+      "Bash(node -e \"const fs=require\\('fs'\\); const j=JSON.parse\\(fs.readFileSync\\('C:/Users/DELL/AppData/Local/Temp/rw-rn3.json','utf8'\\)\\); const env=j.environments.edges[0].node; for\\(const e of env.serviceInstances.edges\\){const s=e.node; const l=s.latestDeployment||{}; const c=l.meta?.commitHash?l.meta.commitHash.slice\\(0,8\\):'-'; console.log\\(s.serviceName.padEnd\\(15\\), \\(l.status||'-'\\).padEnd\\(10\\), c\\);}\")",
+      "Bash(findstr /R \"^Leads.*\\\\.js$ ^AdminBackfill.*\\\\.js$\")"
     ]
   }
 }

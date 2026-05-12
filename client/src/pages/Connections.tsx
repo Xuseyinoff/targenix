@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Link } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import { DisconnectFacebookAccountDialog } from "@/components/DisconnectFacebookAccountDialog";
-import { AppPickerModal } from "@/components/connections/AppPickerModal";
+import { AppCatalogPicker } from "@/components/appCatalog/AppCatalogPicker";
 import { ConnectionsList } from "@/components/connections/ConnectionsList";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -49,7 +49,6 @@ import {
   RefreshCw,
   CheckCircle2,
   AlertTriangle,
-  User,
   ChevronDown,
   Plus,
   ShieldCheck,
@@ -58,6 +57,7 @@ import {
   Fingerprint,
   LifeBuoy,
   Unlink,
+  Webhook,
 } from "lucide-react";
 
 function formatShortDate(d: string | Date) {
@@ -299,11 +299,11 @@ export default function Connections() {
       onClick={handleConnectFacebook}
       disabled={connecting}
       className={cn(
-        "gap-2 rounded-xl bg-[#1877F2] font-medium text-white shadow-sm transition-all hover:bg-[#166fe5] hover:shadow-md active:scale-[0.99]",
-        "md:w-auto w-full min-h-11"
+        "wapi-button-hover gap-2 rounded-full bg-[#1877F2] font-medium text-white shadow-sm hover:bg-[#166fe5]",
+        "md:w-auto w-full h-10 md:h-10 min-h-10 px-4"
       )}
     >
-      {connecting ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <Plus className="h-4 w-4 shrink-0" />}
+      {connecting ? <Loader2 className="h-4 w-4 animate-spin shrink-0" /> : <Facebook className="h-4 w-4 shrink-0" />}
       {connecting ? t("connections.connecting") : t("connections.connectFacebook")}
     </Button>
   );
@@ -314,126 +314,168 @@ export default function Connections() {
         <SheetContent
           side={isMobile ? "bottom" : "right"}
           className={cn(
-            "rounded-t-2xl sm:rounded-none border-border/80",
-            isMobile && "max-h-[min(88vh,640px)]"
+            "rounded-t-2xl sm:rounded-none border-slate-200/70 dark:border-border p-0 gap-0 sm:max-w-md",
+            isMobile && "max-h-[min(92vh,720px)]"
           )}
         >
-          <SheetHeader className="text-left border-b border-border/60 pb-4">
-            <SheetTitle className="flex items-center gap-2 text-lg">
-              <Facebook className="h-5 w-5 text-[#1877F2]" />
-              {t("connections.howTitle")}
-            </SheetTitle>
-            <SheetDescription className="text-left text-sm leading-relaxed">
-              {t("connections.howSubtitle")}
-            </SheetDescription>
+          {/* Header — emerald gradient with FB icon */}
+          <SheetHeader className="text-left p-6 pb-5 bg-gradient-to-br from-emerald-50/70 to-white dark:from-emerald-950/20 dark:to-transparent border-b border-slate-200/70 dark:border-border">
+            <div className="flex items-center gap-3 mb-1">
+              <div className="h-11 w-11 rounded-2xl bg-gradient-to-br from-[#1877F2] to-[#0c5dc8] flex items-center justify-center shadow-sm ring-2 ring-[#1877F2]/10">
+                <Facebook className="h-5 w-5 text-white" strokeWidth={2.2} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <SheetTitle className="text-lg font-bold tracking-tight">
+                  {t("connections.howTitle")}
+                </SheetTitle>
+                <SheetDescription className="text-left text-xs leading-snug mt-0.5">
+                  {t("connections.howSubtitle")}
+                </SheetDescription>
+              </div>
+            </div>
           </SheetHeader>
-          <ul className="mt-4 space-y-3 text-sm text-muted-foreground">
-            <li className="flex gap-3">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-              <span>{t("connections.howStep1")}</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-              <span>{t("connections.howStep2")}</span>
-            </li>
-            <li className="flex gap-3">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-              <span>
-                {t("connections.howStep3Prefix")}{" "}
-                <Link href="/integrations" className="font-medium text-primary hover:underline">
-                  {t("connections.howStep3Link")}
-                </Link>{" "}
-                {t("connections.howStep3Suffix")}
-              </span>
-            </li>
-          </ul>
+
+          {/* Wapi-style numbered stepper */}
+          <div className="flex-1 overflow-y-auto p-6">
+            <ol className="relative space-y-5">
+              {/* Vertical connecting line (behind the numbers) */}
+              <div className="absolute left-[14px] top-7 bottom-7 w-0.5 bg-gradient-to-b from-emerald-200 via-emerald-100 to-transparent dark:from-emerald-900/40 dark:via-emerald-950/30 dark:to-transparent" aria-hidden />
+
+              <li className="relative flex gap-4">
+                <div className="relative z-10 h-7 w-7 shrink-0 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 text-white text-xs font-bold flex items-center justify-center shadow-sm ring-4 ring-background">
+                  1
+                </div>
+                <div className="flex-1 pt-0.5">
+                  <p className="text-sm font-semibold leading-snug">Connect Facebook</p>
+                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                    {t("connections.howStep1")}
+                  </p>
+                </div>
+              </li>
+
+              <li className="relative flex gap-4">
+                <div className="relative z-10 h-7 w-7 shrink-0 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 text-white text-xs font-bold flex items-center justify-center shadow-sm ring-4 ring-background">
+                  2
+                </div>
+                <div className="flex-1 pt-0.5">
+                  <p className="text-sm font-semibold leading-snug">We sync your pages</p>
+                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                    {t("connections.howStep2")}
+                  </p>
+                </div>
+              </li>
+
+              <li className="relative flex gap-4">
+                <div className="relative z-10 h-7 w-7 shrink-0 rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 text-white text-xs font-bold flex items-center justify-center shadow-sm ring-4 ring-background">
+                  3
+                </div>
+                <div className="flex-1 pt-0.5">
+                  <p className="text-sm font-semibold leading-snug">Route in Integrations</p>
+                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                    {t("connections.howStep3Prefix")}{" "}
+                    <Link href="/integrations" className="font-semibold text-primary hover:underline">
+                      {t("connections.howStep3Link")}
+                    </Link>{" "}
+                    {t("connections.howStep3Suffix")}
+                  </p>
+                </div>
+              </li>
+            </ol>
+
+            {/* Security footer info */}
+            <div className="mt-7 rounded-2xl border border-emerald-100 dark:border-emerald-900/40 bg-emerald-50/60 dark:bg-emerald-950/15 p-4">
+              <div className="flex items-start gap-3">
+                <div className="h-9 w-9 rounded-xl bg-emerald-100 dark:bg-emerald-950/40 flex items-center justify-center shrink-0">
+                  <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-100">
+                    Tokens never touch your browser
+                  </p>
+                  <p className="text-xs text-emerald-700/80 dark:text-emerald-300/80 mt-1 leading-relaxed">
+                    OAuth happens entirely on the server. Access tokens are AES-256 encrypted and never exposed to client code.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* CTA */}
+            <Button
+              onClick={() => setHowOpen(false)}
+              className="wapi-button-hover mt-5 w-full h-10 rounded-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
+            >
+              <CheckCircle2 className="h-4 w-4 mr-1.5" />
+              Got it
+            </Button>
+          </div>
         </SheetContent>
       </Sheet>
 
-      <div className="mx-auto max-w-3xl space-y-5 pb-28 md:space-y-6 md:pb-0 px-0 sm:px-0">
-        {/* Header — mobile: compact title row + icon actions; desktop unchanged rhythm */}
-        <header className="space-y-2.5 md:space-y-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-            <div className="min-w-0 flex-1 space-y-1">
-              <div className="flex items-start justify-between gap-2 md:block">
-                <h1 className="text-xl font-semibold tracking-tight text-foreground md:text-2xl">{t("connections.title")}</h1>
-                <div className="flex shrink-0 items-center gap-1.5 md:hidden">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-10 w-10 rounded-xl border-border/60 bg-background shadow-sm"
-                    onClick={() => refetch()}
-                    disabled={isLoading}
-                    aria-label="Refresh connections"
-                  >
-                    <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="h-10 w-10 rounded-xl border-border/60 bg-background shadow-sm"
-                    onClick={() => setHowOpen(true)}
-                    aria-label="How it works"
-                  >
-                    <LifeBuoy className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-              <p className="text-xs leading-snug text-muted-foreground md:text-sm md:leading-relaxed md:max-w-md">
-                {t("connections.subtitlePrefix")}{" "}
-                <Link href="/integrations" className="text-primary font-medium hover:underline">
-                  {t("connections.subtitleLink")}
-                </Link>
-                {t("connections.subtitleSuffix")}
+      {/* ── Sticky page header (Wapi pattern) ── */}
+      <div className="sticky top-16 z-30 -mx-6 -mt-6 mb-6 bg-background/85 backdrop-blur-md border-b border-slate-200/70 dark:border-border">
+        <div className="max-w-4xl mx-auto px-6 py-4 flex items-end justify-between flex-wrap gap-3">
+          <div className="min-w-0 flex-1">
+            <h1 className="text-2xl font-bold tracking-tight text-primary">{t("connections.title")}</h1>
+            <p className="text-muted-foreground text-sm mt-0.5">
+              {t("connections.subtitlePrefix")}{" "}
+              <Link href="/integrations" className="text-primary font-semibold hover:underline">
+                {t("connections.subtitleLink")}
+              </Link>
+              {t("connections.subtitleSuffix")}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button
+              variant="outline"
+              size="icon"
+              className="wapi-button-hover rounded-full h-10 w-10 md:hidden"
+              onClick={() => setHowOpen(true)}
+              aria-label="How it works"
+            >
+              <LifeBuoy className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              className="wapi-button-hover rounded-full h-10 px-4 font-medium"
+              onClick={() => refetch()}
+              disabled={isLoading}
+              title={t("connections.refresh")}
+            >
+              <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+              <span className="hidden sm:inline ml-1.5">{t("connections.refresh")}</span>
+            </Button>
+            {fbConnectButton}
+          </div>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-4xl space-y-5 pb-28 md:space-y-6 md:pb-0 px-0 sm:px-0">
+        {/* ── OAuth security info bar (Wapi info card) ── */}
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-emerald-100 dark:border-emerald-900/40 bg-emerald-50/60 dark:bg-emerald-950/15 px-4 py-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="h-9 w-9 rounded-xl bg-emerald-100 dark:bg-emerald-950/40 flex items-center justify-center shrink-0">
+              <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-emerald-900 dark:text-emerald-100">
+                {t("connections.oauthBadgeTitle")}
+              </p>
+              <p className="text-xs text-emerald-700/80 dark:text-emerald-300/80 mt-0.5 line-clamp-2">
+                {t("connections.oauthBadgeBody")}
               </p>
             </div>
-            <div className="hidden shrink-0 flex-col gap-2 sm:flex-row md:flex">
-              <Button
-                variant="outline"
-                size="default"
-                className="rounded-xl min-h-10 border-border/80"
-                onClick={() => refetch()}
-                disabled={isLoading}
-              >
-                <RefreshCw className={cn("h-4 w-4 sm:mr-2", isLoading && "animate-spin")} />
-                <span className="hidden sm:inline">{t("connections.refresh")}</span>
-              </Button>
-              {fbConnectButton}
-            </div>
           </div>
-
-          {/* Mobile: one tappable row → opens same “How it works” sheet (saves vertical space) */}
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="sm"
+            className="h-9 rounded-full text-xs font-medium text-emerald-700 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-950/40 shrink-0 hidden sm:flex"
             onClick={() => setHowOpen(true)}
-            className="flex w-full items-center gap-2.5 rounded-xl border border-border/60 bg-muted/15 px-3 py-2.5 text-left transition-colors active:bg-muted/30 md:hidden"
           >
-            <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600" />
-            <span className="text-[11px] leading-snug text-muted-foreground">
-              <span className="font-medium text-foreground/90">{t("connections.oauthBadgeTitle")}</span> —{" "}
-              {t("connections.oauthBadgeBody")} <span className="text-primary">{t("connections.learnMore")}</span>
-            </span>
-          </button>
-
-          <div className="hidden flex-wrap items-center gap-2 md:flex">
-            <div className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-3 py-1 text-xs text-muted-foreground">
-              <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
-              <span>{t("connections.oauthBadgeTitle")} — {t("connections.oauthBadgeBody")}</span>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-8 gap-1.5 rounded-full text-xs text-muted-foreground"
-              onClick={() => setHowOpen(true)}
-            >
-              <LifeBuoy className="h-3.5 w-3.5" />
-              {t("connections.howTitle")}
-            </Button>
-          </div>
-        </header>
+            <LifeBuoy className="h-3.5 w-3.5 mr-1.5" />
+            {t("connections.howTitle")}
+          </Button>
+        </div>
 
         {isError && (
           <Alert variant="destructive" className="rounded-2xl">
@@ -477,13 +519,24 @@ export default function Connections() {
           </div>
         )}
 
-        <div className="flex items-baseline justify-between gap-2">
-          <h2 className="text-sm font-medium text-muted-foreground uppercase tracking-wide">{t("connections.yourAccounts")}</h2>
+        <div className="flex items-center justify-between gap-3 pt-2">
+          <div className="flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-xl bg-[#1877F2]/10 dark:bg-[#1877F2]/15 flex items-center justify-center">
+              <Facebook className="h-4 w-4 text-[#1877F2]" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold tracking-tight">{t("connections.yourAccounts")}</h3>
+              <p className="text-xs text-muted-foreground">Facebook accounts &amp; subscribed pages</p>
+            </div>
+          </div>
           {!isLoading && accountsWithPages.length > 0 && (
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {accountsWithPages.length} account{accountsWithPages.length !== 1 ? "s" : ""} · {totalPages} page
-              {totalPages !== 1 ? "s" : ""}
-            </span>
+            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 dark:bg-muted text-xs">
+              <span className="font-bold tabular-nums">{accountsWithPages.length}</span>
+              <span className="text-muted-foreground">account{accountsWithPages.length !== 1 ? "s" : ""}</span>
+              <span className="text-border">·</span>
+              <span className="font-bold tabular-nums">{totalPages}</span>
+              <span className="text-muted-foreground">page{totalPages !== 1 ? "s" : ""}</span>
+            </div>
           )}
         </div>
 
@@ -513,46 +566,55 @@ export default function Connections() {
                   key={account.id}
                   open={isOpen}
                   onOpenChange={(open) => setAccountOpen(account.id, open)}
-                  className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm transition-shadow hover:shadow-md"
+                  className="wapi-card-hover overflow-hidden rounded-2xl border border-slate-200/70 dark:border-border bg-white dark:bg-card"
                 >
                   <div className="flex items-stretch">
                     <CollapsibleTrigger asChild>
                       <button
                         type="button"
-                        className="flex min-h-[4.25rem] flex-1 min-w-0 items-center gap-3 p-4 pr-2 text-left transition-colors hover:bg-muted/30 active:bg-muted/40"
+                        className="flex min-h-[4.5rem] flex-1 min-w-0 items-center gap-3 p-4 pr-2 text-left transition-colors hover:bg-slate-50/60 dark:hover:bg-muted/30 active:bg-muted/40 group"
                       >
-                        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[#1877F2]/10 ring-1 ring-[#1877F2]/15">
-                          <User className="h-5 w-5 text-[#1877F2]" />
+                        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-[#1877F2] to-[#0c5dc8] shadow-sm ring-2 ring-[#1877F2]/10">
+                          <Facebook className="h-6 w-6 text-white" strokeWidth={2.2} />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="truncate font-semibold text-foreground">{account.fbUserName}</div>
-                          <p className="mt-0.5 text-xs text-muted-foreground">
-                            {account.pages.length} page{account.pages.length !== 1 ? "s" : ""}
-                            {activePages < account.pages.length ? (
-                              <> · {activePages} active</>
-                            ) : (
-                              <> · all active</>
-                            )}
-                            <span className="mx-1.5 text-border">·</span>
+                          <div className="truncate font-semibold text-foreground text-base transition-colors group-hover:text-primary">{account.fbUserName}</div>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+                            <span className="inline-flex items-center gap-1 font-medium tabular-nums">
+                              <Facebook className="h-3 w-3" />
+                              {account.pages.length} page{account.pages.length !== 1 ? "s" : ""}
+                            </span>
+                            <span className="text-border">·</span>
+                            <span className={cn(
+                              "inline-flex items-center gap-1 font-medium",
+                              activePages === account.pages.length ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"
+                            )}>
+                              <span className={cn(
+                                "h-1.5 w-1.5 rounded-full",
+                                activePages === account.pages.length ? "bg-emerald-500" : "bg-amber-500"
+                              )} />
+                              {activePages < account.pages.length ? `${activePages} active` : "all active"}
+                            </span>
+                            <span className="text-border">·</span>
                             <span className="tabular-nums">
                               Updated {formatShortDate(account.connectedAt ?? account.createdAt)}
                             </span>
-                          </p>
+                          </div>
                         </div>
-                        <div className="flex shrink-0 flex-col items-end gap-1.5 pl-1">
+                        <div className="flex shrink-0 flex-col items-end gap-2 pl-1">
                           {tokenExpired ? (
                             <Badge
                               variant="outline"
-                              className="border-red-200 bg-red-50 text-red-700 text-[10px] uppercase tracking-wide"
+                              className="border-rose-200 bg-rose-50 text-rose-700 text-[10px] uppercase tracking-widest font-bold dark:bg-rose-950/30 dark:border-rose-900/40 dark:text-rose-400"
                             >
                               Token expired
                             </Badge>
                           ) : (
                             <Badge
                               variant="secondary"
-                              className="border-emerald-200/60 bg-emerald-50 text-emerald-800 text-[10px] font-medium uppercase tracking-wide dark:bg-emerald-950/40 dark:text-emerald-300"
+                              className="border-emerald-200/60 bg-emerald-50 text-emerald-700 text-[10px] font-bold uppercase tracking-widest dark:bg-emerald-950/40 dark:text-emerald-300"
                             >
-                              Token OK
+                              ● Token OK
                             </Badge>
                           )}
                           <ChevronDown
@@ -622,55 +684,70 @@ export default function Connections() {
                   </div>
 
                   <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-                    <div className="border-t border-border/60 bg-muted/5 px-2 pb-2 pt-1 sm:px-3">
+                    <div className="border-t border-slate-200/70 dark:border-border bg-slate-50/30 dark:bg-muted/10 px-3 pb-3 pt-2">
                       {account.pages.length === 0 ? (
                         <p className="py-8 text-center text-sm text-muted-foreground">{t("connections.noPagesForAccount")}</p>
                       ) : (
                         <ul className="space-y-2 py-2">
-                          {account.pages.map((page) => (
-                            <li
-                              key={page.id}
-                              className="flex flex-col gap-3 rounded-xl border border-transparent bg-background/80 p-3 shadow-sm transition-all hover:border-border/80 hover:shadow-sm sm:flex-row sm:items-center sm:gap-4"
-                            >
-                              <div className="min-w-0 flex-1 space-y-1">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <span className="font-medium text-foreground leading-snug">{page.pageName}</span>
-                                  {page.subscriptionStatus === "failed" && (
-                                    <Badge
-                                      variant="outline"
-                                      className="border-amber-300 bg-amber-50 text-amber-800 text-[10px] uppercase dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
-                                      title={page.subscriptionError ?? t("connections.subscriptionFailed")}
-                                    >
-                                      {t("connections.webhookIssue")}
-                                    </Badge>
-                                  )}
-                                  {page.isActive ? (
-                                    <Badge className="border-0 bg-emerald-100 text-emerald-800 hover:bg-emerald-100 text-[10px] uppercase tracking-wide dark:bg-emerald-950/50 dark:text-emerald-300">
-                                      {t("connections.active")}
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="secondary" className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                                      {t("connections.inactive")}
-                                    </Badge>
-                                  )}
+                          {account.pages.map((page) => {
+                            const initial = page.pageName.trim().charAt(0).toUpperCase() || "?";
+                            return (
+                              <li
+                                key={page.id}
+                                className="flex flex-col gap-3 rounded-xl border border-slate-200/60 dark:border-border bg-white dark:bg-card p-3 transition-all hover:border-emerald-200 hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15 group sm:flex-row sm:items-center sm:gap-4"
+                              >
+                                <div className="flex items-center gap-3 min-w-0 flex-1">
+                                  <div
+                                    className={cn(
+                                      "h-9 w-9 shrink-0 rounded-full flex items-center justify-center text-sm font-bold text-white transition-all",
+                                      page.isActive
+                                        ? "bg-gradient-to-br from-emerald-400 to-emerald-600"
+                                        : "bg-gradient-to-br from-slate-300 to-slate-400"
+                                    )}
+                                  >
+                                    {initial}
+                                  </div>
+                                  <div className="min-w-0 flex-1 space-y-1">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-semibold text-sm text-foreground leading-snug transition-colors group-hover:text-emerald-700 dark:group-hover:text-emerald-400">{page.pageName}</span>
+                                      {page.subscriptionStatus === "failed" && (
+                                        <Badge
+                                          variant="outline"
+                                          className="border-amber-300 bg-amber-50 text-amber-800 text-[10px] uppercase tracking-wider font-bold dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                                          title={page.subscriptionError ?? t("connections.subscriptionFailed")}
+                                        >
+                                          <AlertTriangle className="h-2.5 w-2.5 mr-1" />
+                                          {t("connections.webhookIssue")}
+                                        </Badge>
+                                      )}
+                                      {page.isActive ? (
+                                        <Badge className="border-0 bg-emerald-100 text-emerald-700 hover:bg-emerald-100 text-[10px] uppercase tracking-widest font-bold dark:bg-emerald-950/50 dark:text-emerald-300">
+                                          ● {t("connections.active")}
+                                        </Badge>
+                                      ) : (
+                                        <Badge variant="secondary" className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
+                                          {t("connections.inactive")}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      <span>{t("connections.added", { date: formatShortDate(page.createdAt) })}</span>
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <button
+                                            type="button"
+                                            className="ml-2 inline text-primary underline-offset-2 hover:underline font-medium"
+                                          >
+                                            {t("connections.pageId")}
+                                          </button>
+                                        </TooltipTrigger>
+                                        <TooltipContent className="max-w-xs font-mono text-xs">{page.pageId}</TooltipContent>
+                                      </Tooltip>
+                                    </div>
+                                  </div>
                                 </div>
-                                <div className="text-xs text-muted-foreground">
-                                  <span>{t("connections.added", { date: formatShortDate(page.createdAt) })}</span>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <button
-                                        type="button"
-                                        className="ml-2 inline text-primary underline-offset-2 hover:underline"
-                                      >
-                                        {t("connections.pageId")}
-                                      </button>
-                                    </TooltipTrigger>
-                                    <TooltipContent className="max-w-xs font-mono text-xs">{page.pageId}</TooltipContent>
-                                  </Tooltip>
-                                </div>
-                              </div>
 
-                              <div className="flex items-center justify-between gap-3 border-t border-border/50 pt-3 sm:border-t-0 sm:pt-0">
+                              <div className="flex items-center justify-between gap-3 border-t border-slate-200/70 dark:border-border pt-3 sm:border-t-0 sm:pt-0">
                                 <div className="flex items-center gap-2 sm:flex-col sm:items-end">
                                   <span className="text-xs text-muted-foreground sm:hidden">{t("connections.receiveLeads")}</span>
                                   <Switch
@@ -718,7 +795,8 @@ export default function Connections() {
                                 </DropdownMenu>
                               </div>
                             </li>
-                          ))}
+                            );
+                          })}
                         </ul>
                       )}
                     </div>
@@ -738,14 +816,21 @@ export default function Connections() {
               - Admin tpl     → /destinations?template=<id>
             No bespoke Google / Telegram sections live on this page anymore;
             their saved rows surface through the unified list (coming next). */}
-        <div className="flex items-center justify-between gap-3 pt-2">
-          <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            {t("connections.deliverySectionLabel")}
-          </span>
+        <div className="flex items-center justify-between gap-3 pt-4">
+          <div className="flex items-center gap-2.5">
+            <div className="h-9 w-9 rounded-xl bg-violet-100 dark:bg-violet-950/40 flex items-center justify-center">
+              <Webhook className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold tracking-tight">
+                {t("connections.deliverySectionLabel")}
+              </h3>
+              <p className="text-xs text-muted-foreground">Where your leads get sent</p>
+            </div>
+          </div>
           <Button
             type="button"
-            size="sm"
-            className="h-9 shrink-0 gap-1.5 rounded-lg"
+            className="wapi-button-hover h-10 shrink-0 gap-1.5 rounded-full px-4 bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
             onClick={() => setPickerOpen(true)}
           >
             <Plus className="h-4 w-4" />
@@ -759,7 +844,11 @@ export default function Connections() {
             doesn't fit a flat row. */}
         <ConnectionsList onReconnect={() => setPickerOpen(true)} />
 
-        <AppPickerModal open={pickerOpen} onOpenChange={setPickerOpen} />
+        <AppCatalogPicker
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          mode="connection"
+        />
 
         {/* Sticky primary CTA — mobile (hidden when empty to avoid duplicate with empty state) */}
         {!isLoading && accountsWithPages.length > 0 && (

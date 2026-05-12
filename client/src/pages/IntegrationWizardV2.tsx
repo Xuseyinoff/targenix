@@ -82,7 +82,7 @@ import {
 } from "@/components/common/GroupedFieldPicker";
 import { AppIcon, appBrandIconTileClass, appIconRingClass } from "@/components/destinations/appIcons";
 import { isSupportedAppKey } from "@/components/destinations/createPayload";
-import { WizardActionPickerModal } from "@/components/wizard/WizardActionPickerModal";
+import { AppCatalogPicker } from "@/components/appCatalog/AppCatalogPicker";
 import type { AppManifestService } from "./lead-routing/shared";
 
 // ─── resolveDestManifest ───────────────────────────────────────────────────────
@@ -450,46 +450,50 @@ function ZapperStep({
   return (
     <div className="flex gap-4">
       {/* ── Left rail: circle + connector line ── */}
-      <div className="flex flex-col items-center shrink-0 w-10">
+      <div className="flex flex-col items-center shrink-0 w-11">
         <button
           type="button"
           disabled={isLocked}
           onClick={onHeaderClick}
           className={cn(
-            "relative z-10 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 bg-background transition-colors",
-            isDone && !isOpen
-              ? "border-primary bg-primary"
+            "relative z-10 flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-all duration-200",
+            isDone
+              ? "bg-gradient-to-br from-emerald-400 to-emerald-600 shadow-sm ring-4 ring-background"
               : isActive
-                ? "border-primary"
+                ? "bg-emerald-100 ring-4 ring-emerald-50 dark:bg-emerald-950/40 dark:ring-emerald-950/20"
                 : isLocked
-                  ? "border-muted-foreground/20"
-                  : "border-muted-foreground/30",
+                  ? "bg-slate-100 dark:bg-muted ring-2 ring-background"
+                  : "bg-white border-2 border-slate-200 dark:bg-card dark:border-border hover:border-emerald-300 ring-2 ring-background",
           )}
           aria-label={`Go to ${label}`}
         >
           {isDone && !isOpen ? (
-            <CheckCircle2 className="h-4 w-4 text-primary-foreground" />
+            <CheckCircle2 className="h-5 w-5 text-white" strokeWidth={2.5} />
           ) : (
             <Icon
               className={cn(
                 "h-4 w-4 transition-colors",
-                isLocked
-                  ? "text-muted-foreground/25"
-                  : isActive
-                    ? iconColor
-                    : "text-muted-foreground/50",
+                isDone
+                  ? "text-white"
+                  : isLocked
+                    ? "text-muted-foreground/30"
+                    : isActive
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : iconColor,
               )}
             />
           )}
         </button>
-        {/* Vertical connector */}
+        {/* Vertical connector — emerald gradient when above is done */}
         {!isLast && (
           <div
             className={cn(
-              "w-px flex-1 mt-1",
-              isDone ? "bg-primary/30" : "bg-border",
+              "w-0.5 flex-1 mt-1.5 rounded-full",
+              isDone
+                ? "bg-gradient-to-b from-emerald-300 via-emerald-200 to-emerald-100 dark:from-emerald-700 dark:via-emerald-800 dark:to-emerald-900/40"
+                : "bg-slate-200 dark:bg-border",
             )}
-            style={{ minHeight: "32px" }}
+            style={{ minHeight: "40px" }}
           />
         )}
       </div>
@@ -497,27 +501,31 @@ function ZapperStep({
       {/* ── Right content ── */}
       <div className={cn("flex-1 pb-6", isLast && "pb-2")}>
         {/* Step header (clickable when done) */}
-        <div className="flex items-start justify-between min-h-[40px] mb-3">
+        <div className="flex items-start justify-between min-h-[44px] mb-3">
           <button
             type="button"
             disabled={isLocked || isOpen}
             onClick={onHeaderClick}
             className={cn(
-              "text-left",
-              !isLocked && !isOpen && "hover:opacity-80",
+              "text-left flex-1 min-w-0",
+              !isLocked && !isOpen && "hover:opacity-80 transition-opacity",
             )}
           >
             <div
               className={cn(
-                "text-[10px] uppercase tracking-widest font-semibold leading-none mb-1",
-                isLocked ? "text-muted-foreground/40" : "text-muted-foreground",
+                "text-[10px] uppercase tracking-widest font-bold leading-none mb-1.5",
+                isLocked
+                  ? "text-muted-foreground/40"
+                  : isActive || isDone
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-muted-foreground",
               )}
             >
               {label}
             </div>
             <div
               className={cn(
-                "text-sm font-bold leading-none",
+                "text-base font-bold tracking-tight leading-tight truncate",
                 isLocked && "text-muted-foreground/40",
               )}
             >
@@ -528,7 +536,7 @@ function ZapperStep({
             <button
               type="button"
               onClick={onHeaderClick}
-              className="ml-3 text-[11px] text-primary hover:underline shrink-0 mt-0.5"
+              className="ml-3 text-xs font-semibold text-primary hover:underline shrink-0 mt-1"
             >
               Edit
             </button>
@@ -537,22 +545,22 @@ function ZapperStep({
 
         {/* Done summary pill (when collapsed) */}
         {isDone && !isOpen && summary && (
-          <div className="inline-flex items-center gap-1.5 rounded-full bg-primary/8 border border-primary/20 px-3 py-1 text-xs text-primary font-medium mb-2">
-            <CheckCircle2 className="h-3 w-3" />
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/40 px-3 py-1 text-xs text-emerald-700 dark:text-emerald-400 font-semibold mb-2">
+            <CheckCircle2 className="h-3 w-3" strokeWidth={2.5} />
             {summary}
           </div>
         )}
 
-        {/* Content card (when open) */}
+        {/* Content card (when open) — Wapi rounded-2xl + slate border */}
         {isOpen && !isLocked && (
-          <div className="rounded-xl border bg-card shadow-sm p-5">
+          <div className="rounded-2xl border border-slate-200/70 dark:border-border bg-white dark:bg-card p-5">
             {children}
           </div>
         )}
 
         {/* Locked placeholder */}
         {isLocked && (
-          <div className="rounded-xl border border-dashed bg-muted/5 px-4 py-3 text-xs text-muted-foreground/50">
+          <div className="rounded-2xl border border-dashed border-slate-200 dark:border-border bg-slate-50/40 dark:bg-muted/10 px-4 py-3 text-xs text-muted-foreground/60">
             Complete the trigger step first.
           </div>
         )}
@@ -1214,28 +1222,26 @@ export default function IntegrationWizardV2() {
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
     <DashboardLayout>
-      <div className="max-w-2xl mx-auto py-6 px-4 pb-16">
-        {/* ── Page header ── */}
-        <div className="flex items-center gap-2 mb-1">
-          <Button
-            variant="ghost"
-            size="sm"
+      {/* ── Sticky page header (Wapi pattern) ── */}
+      <div className="sticky top-16 z-30 -mx-6 -mt-6 mb-6 bg-background/85 backdrop-blur-md border-b border-slate-200/70 dark:border-border">
+        <div className="max-w-3xl mx-auto px-6 py-4">
+          <button
+            type="button"
             onClick={() => navigate("/integrations")}
-            className="h-8 -ml-2 text-muted-foreground"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-primary transition-colors"
           >
-            <ArrowLeft className="h-4 w-4 mr-1" />
+            <ArrowLeft className="h-3.5 w-3.5" />
             Integrations
-          </Button>
-          <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/50" />
-          <span className="text-sm text-muted-foreground">
-            {isEditMode ? "Edit integration" : "New integration"}
-          </span>
+            <ChevronRight className="h-3 w-3 opacity-50" />
+            <span>{isEditMode ? "Edit integration" : "New integration"}</span>
+          </button>
+          <h1 className="text-2xl font-bold tracking-tight text-primary mt-1">
+            {isEditMode ? (editIntegration?.name ?? "Edit integration") : "New integration"}
+          </h1>
         </div>
+      </div>
 
-        <h1 className="text-xl font-bold tracking-tight mb-8">
-          {isEditMode ? (editIntegration?.name ?? "Edit integration") : "New Zap"}
-        </h1>
-
+      <div className="max-w-3xl mx-auto pb-16">
         {/* Loading state in edit mode while data is being fetched */}
         {isEditMode && !stateInitialized && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground py-8">
@@ -1278,8 +1284,11 @@ export default function IntegrationWizardV2() {
 
             {/* Continue — field mapping lives in Step 2 per destination */}
             {triggerFilled && (
-              <div className="flex justify-end pt-4 mt-2 border-t">
-                <Button size="sm" onClick={() => setActiveStep(2)}>
+              <div className="flex justify-end pt-4 mt-2 border-t border-slate-200/70 dark:border-border">
+                <Button
+                  onClick={() => setActiveStep(2)}
+                  className="wapi-button-hover rounded-full h-10 px-5 bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
+                >
                   Continue
                   <ChevronRight className="h-4 w-4 ml-1" />
                 </Button>
@@ -1437,7 +1446,7 @@ export default function IntegrationWizardV2() {
                     </div>
 
                     {/* Publish / Save row */}
-                    <div className="flex items-center justify-between pt-1">
+                    <div className="flex items-center justify-between pt-1 gap-3 flex-wrap">
                       <p className="text-xs text-muted-foreground">
                         {canSave
                           ? isEditMode
@@ -1445,19 +1454,19 @@ export default function IntegrationWizardV2() {
                             : "Ready to publish — activates immediately."
                           : "Fill in Name and Phone fields to continue."}
                       </p>
-                      <div className="flex items-center gap-2 ml-4 shrink-0">
+                      <div className="flex items-center gap-2 shrink-0">
                         <Button
                           variant="ghost"
-                          size="sm"
                           onClick={() => navigate("/integrations")}
                           disabled={isSaving}
+                          className="wapi-button-hover rounded-full h-10 px-4 font-medium"
                         >
                           Cancel
                         </Button>
                         <Button
-                          size="sm"
                           onClick={handleSave}
                           disabled={!canSave || isSaving}
+                          className="wapi-button-hover rounded-full h-10 px-5 bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
                         >
                           {isSaving ? (
                             <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
@@ -1479,9 +1488,10 @@ export default function IntegrationWizardV2() {
       {/* Zapier-style app picker modal. Mounted once at the page level so
           opening/closing it preserves all wizard state (trigger choices,
           mapping edits, etc.). */}
-      <WizardActionPickerModal
+      <AppCatalogPicker
         open={actionPickerOpen}
         onOpenChange={setActionPickerOpen}
+        mode="destination"
         onDestinationReady={(id, name, templateType) => {
           addDestination(id, name, templateType);
           setActiveStep(2);
@@ -1542,11 +1552,12 @@ function TriggerEditor({
   onPickForm,
 }: TriggerEditorProps) {
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {/* Account */}
-      <div className="space-y-1.5">
-        <Label className="text-xs flex items-center gap-1.5">
-          <User className="h-3 w-3" /> Facebook account
+      <div className="space-y-2">
+        <Label className="text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground flex items-center gap-1.5">
+          <User className="h-3.5 w-3.5 text-primary" />
+          Facebook account
         </Label>
         {loadingAccounts ? (
           <LoadingBar />
@@ -1564,10 +1575,10 @@ function TriggerEditor({
               if (acc) onPickAccount(acc.id, acc.fbUserName);
             }}
           >
-            <SelectTrigger className="h-9 text-sm">
+            <SelectTrigger className="h-11 rounded-xl text-sm font-medium">
               <SelectValue placeholder="Select account" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="rounded-xl">
               {accounts.map((a) => (
                 <SelectItem key={a.id} value={String(a.id)}>
                   {a.fbUserName || `Account #${a.id}`}
@@ -1580,9 +1591,10 @@ function TriggerEditor({
 
       {/* Page */}
       {state.accountId && (
-        <div className="space-y-1.5">
-          <Label className="text-xs flex items-center gap-1.5">
-            <Facebook className="h-3 w-3" /> Page
+        <div className="space-y-2">
+          <Label className="text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground flex items-center gap-1.5">
+            <Facebook className="h-3.5 w-3.5 text-primary" />
+            Page
           </Label>
           {loadingPages ? (
             <LoadingBar />
@@ -1596,10 +1608,10 @@ function TriggerEditor({
                 if (p) onPickPage(p.id, p.name);
               }}
             >
-              <SelectTrigger className="h-9 text-sm">
+              <SelectTrigger className="h-11 rounded-xl text-sm font-medium">
                 <SelectValue placeholder="Select page" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-xl">
                 {pages.map((p) => (
                   <SelectItem key={p.id} value={p.id}>
                     {p.name}
@@ -1613,9 +1625,10 @@ function TriggerEditor({
 
       {/* Form */}
       {state.pageId && (
-        <div className="space-y-1.5">
-          <Label className="text-xs flex items-center gap-1.5">
-            <FileText className="h-3 w-3" /> Lead form
+        <div className="space-y-2">
+          <Label className="text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground flex items-center gap-1.5">
+            <FileText className="h-3.5 w-3.5 text-primary" />
+            Lead form
           </Label>
           {loadingForms ? (
             <LoadingBar />
@@ -1629,10 +1642,10 @@ function TriggerEditor({
                 if (f) onPickForm(f.id, f.name);
               }}
             >
-              <SelectTrigger className="h-9 text-sm">
+              <SelectTrigger className="h-11 rounded-xl text-sm font-medium">
                 <SelectValue placeholder="Select form" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="rounded-xl">
                 {forms.map((f) => (
                   <SelectItem key={f.id} value={f.id}>
                     {f.name}

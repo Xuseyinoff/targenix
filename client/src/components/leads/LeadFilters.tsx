@@ -98,10 +98,10 @@ function PagesDropdown({
       <PopoverTrigger asChild>
         <button
           className={cn(
-            "flex h-9 items-center justify-between gap-1.5 rounded-md border bg-background px-3 text-sm transition-colors",
+            "flex h-10 items-center justify-between gap-2 rounded-full border bg-background px-4 text-sm font-medium transition-colors",
             "hover:bg-accent hover:text-accent-foreground",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-            "min-w-[140px] max-w-[200px]",
+            "min-w-[150px] max-w-[220px]",
             value !== "ALL" ? "border-primary/40 text-foreground" : "text-muted-foreground"
           )}
         >
@@ -110,7 +110,7 @@ function PagesDropdown({
           <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[220px] p-0" align="start">
+      <PopoverContent className="w-[220px] p-0 rounded-2xl" align="start">
         <Command>
           <CommandInput placeholder="Search pages..." />
           <CommandList>
@@ -182,10 +182,10 @@ function FormsDropdown({
       <PopoverTrigger asChild>
         <button
           className={cn(
-            "flex h-9 items-center justify-between gap-1.5 rounded-md border bg-background px-3 text-sm transition-colors",
+            "flex h-10 items-center justify-between gap-2 rounded-full border bg-background px-4 text-sm font-medium transition-colors",
             "hover:bg-accent hover:text-accent-foreground",
             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-            "min-w-[140px] max-w-[220px]",
+            "min-w-[150px] max-w-[240px]",
             value !== "ALL" ? "border-primary/40 text-foreground" : "text-muted-foreground"
           )}
         >
@@ -193,7 +193,7 @@ function FormsDropdown({
           <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
-      <PopoverContent className="w-[260px] p-0" align="start">
+      <PopoverContent className="w-[260px] p-0 rounded-2xl" align="start">
         <Command>
           <CommandInput placeholder="Search forms..." />
           <CommandList className="max-h-[320px]">
@@ -253,13 +253,13 @@ export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }
   } = filters;
 
   return (
-    <div className="space-y-2">
-      {/* Search — always visible */}
+    <div className="space-y-3">
+      {/* Search — always visible (Wapi-style big rounded search) */}
       <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
         <Input
           placeholder={t("leads.filters.searchPlaceholder")}
-          className="pl-9 h-9 md:max-w-[500px]"
+          className="pl-11 h-11 rounded-xl bg-slate-50/60 dark:bg-muted/30 border-transparent focus-visible:bg-background focus-visible:border-input text-sm"
           value={search}
           onChange={(e) => handleSearchChange(e.target.value)}
         />
@@ -310,11 +310,14 @@ export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }
         )}
       </div>
 
-      {/* Desktop: dropdown selects */}
+      {/* Desktop: dropdown selects (Wapi-style rounded pills) */}
       <div className="hidden md:flex flex-wrap gap-2 items-center">
         {/* Platform — simple 3-item select, no search needed */}
         <Select value={platformFilter} onValueChange={handlePlatformChange}>
-          <SelectTrigger className="w-[130px] h-9">
+          <SelectTrigger className={cn(
+            "w-[150px] h-10 rounded-full font-medium",
+            platformFilter !== "ALL" && "border-primary/40 text-foreground"
+          )}>
             <SelectValue placeholder={t("leads.filters.platformPlaceholder")} />
           </SelectTrigger>
           <SelectContent>
@@ -353,7 +356,10 @@ export function LeadFilters({ filters, pageOptions, formOptions, allFormsIndex }
 
         {/* Status — simple 4-item select */}
         <Select value={statusFilter} onValueChange={handleStatusChange}>
-          <SelectTrigger className="w-[120px] h-9">
+          <SelectTrigger className={cn(
+            "w-[140px] h-10 rounded-full font-medium",
+            statusFilter !== "ALL" && "border-primary/40 text-foreground"
+          )}>
             <SelectValue placeholder={t("leads.filters.statusPlaceholder")} />
           </SelectTrigger>
           <SelectContent>

@@ -138,42 +138,42 @@ export default function Integrations() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-4xl space-y-4">
-        <div className="flex items-center justify-between gap-2">
+      {/* ── Sticky page header (Wapi pattern) ── */}
+      <div className="sticky top-16 z-30 -mx-6 -mt-6 mb-5 bg-background/85 backdrop-blur-md border-b border-slate-200/70 dark:border-border">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-end justify-between flex-wrap gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl font-bold tracking-tight">{t("integrations.title")}</h1>
-            <p className="text-muted-foreground mt-0.5 hidden text-xs sm:block">
+            <h1 className="text-2xl font-bold tracking-tight text-primary">{t("integrations.title")}</h1>
+            <p className="text-muted-foreground text-sm mt-0.5">
               {t("integrations.subtitle")}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <Button
-              size="sm"
-              className="h-8 px-2"
-              onClick={() => navigate("/integrations/new-v2")}
-              title={t("integrations.newLeadRouting")}
-            >
-              <Plus className="h-4 w-4" />
-              <span className="ml-1.5 hidden sm:inline">{t("integrations.leadRouting")}</span>
-            </Button>
-          </div>
+          <Button
+            onClick={() => navigate("/integrations/new-v2")}
+            title={t("integrations.newLeadRouting")}
+            className="wapi-button-hover rounded-full h-10 px-4 bg-primary hover:bg-primary/90 text-primary-foreground font-medium shrink-0"
+          >
+            <Plus className="h-4 w-4 mr-1.5" />
+            {t("integrations.leadRouting")}
+          </Button>
         </div>
+      </div>
 
-        {/* Search & status filters — when at least one Lead Routing rule exists */}
+      <div className="max-w-5xl mx-auto space-y-5 pb-16">
+        {/* Search & status filters card — when at least one Lead Routing rule exists */}
         {!isLoading && routingIntegrations.length > 0 && (
-          <div className="space-y-2">
-            {/* Search input */}
+          <div className="bg-white dark:bg-card border border-slate-200/70 dark:border-border rounded-2xl p-4 space-y-3">
+            {/* Search input — Wapi big rounded */}
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
               <Input
-                className="pl-9 pr-9 h-9 text-sm bg-background"
+                className="pl-11 pr-11 h-11 rounded-xl text-sm bg-slate-50/60 dark:bg-muted/30 border-transparent focus-visible:bg-background focus-visible:border-input"
                 placeholder={t("integrations.searchPlaceholder")}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
               {searchQuery && (
                 <button
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   onClick={() => setSearchQuery("")}
                 >
                   <X className="h-3.5 w-3.5" />
@@ -182,74 +182,80 @@ export default function Integrations() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex max-w-full items-center gap-1 overflow-x-auto rounded-lg bg-muted/50 p-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {/* Filter pills — Wapi rounded-full */}
+              <div className="flex items-center gap-1 rounded-full border border-slate-200/70 dark:border-border bg-slate-50/40 dark:bg-muted/20 p-1">
                 {(["ALL", "ACTIVE", "INACTIVE"] as const).map((s) => (
                   <button
                     key={s}
                     type="button"
                     onClick={() => setFilterStatus(s)}
                     className={cn(
-                      "shrink-0 rounded-md px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-all",
+                      "shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold whitespace-nowrap transition-all",
                       filterStatus === s
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
+                        ? "bg-white dark:bg-card shadow-sm text-foreground ring-1 ring-slate-200/80 dark:ring-border/50"
+                        : "text-muted-foreground hover:text-foreground hover:bg-white/50 dark:hover:bg-muted/40"
                     )}
                   >
                     {s === "ALL" ? t("integrations.allStatus") : s === "ACTIVE" ? t("integrations.active") : t("integrations.inactive")}
                   </button>
                 ))}
               </div>
-              <span className="text-muted-foreground ml-auto shrink-0 text-xs">
-                {filteredIntegrations.length === routingIntegrations.length
-                  ? t("integrations.routingRules", { count: routingIntegrations.length })
-                  : t("integrations.routingRulesOf", { filtered: filteredIntegrations.length, total: routingIntegrations.length })}
-              </span>
+              {/* Count chip */}
+              <div className="ml-auto inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-100 dark:bg-muted text-xs">
+                <span className="font-bold tabular-nums">{filteredIntegrations.length}</span>
+                {filteredIntegrations.length !== routingIntegrations.length && (
+                  <span className="text-muted-foreground">of {routingIntegrations.length}</span>
+                )}
+                <span className="text-muted-foreground">routing rule{filteredIntegrations.length === 1 ? "" : "s"}</span>
+              </div>
             </div>
           </div>
         )}
 
-        {/* Quick-start cards when empty */}
+        {/* Quick-start cards when empty (Wapi onboarding) */}
         {!isLoading && routingIntegrations.length === 0 && (
-          <Card
-            className="max-w-md mx-auto border-dashed cursor-pointer hover:border-primary/50 hover:bg-muted/30 transition-colors"
+          <button
+            type="button"
             onClick={() => navigate("/integrations/new-v2")}
+            className="wapi-card-hover w-full max-w-md mx-auto flex flex-col items-center text-center py-10 px-6 gap-3 bg-white dark:bg-card border border-dashed border-slate-300 dark:border-border rounded-2xl hover:border-emerald-300 transition-colors"
           >
-            <CardContent className="flex flex-col items-center text-center py-8 gap-3">
-              <div className="h-12 w-12 rounded-xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">
-                <Zap className="h-6 w-6 text-orange-600" />
-              </div>
-              <div>
-                <p className="font-semibold text-base">{t("integrations.createRoutingTitle")}</p>
-                <p className="text-xs text-muted-foreground mt-1 max-w-[260px]">
-                  {t("integrations.createRoutingBody")}
-                </p>
-              </div>
-              <Button size="sm" className="mt-1">
-                {t("integrations.getStarted")}
-                <ArrowRight className="h-4 w-4 ml-1.5" />
-              </Button>
-            </CardContent>
-          </Card>
+            <div className="h-14 w-14 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/40 flex items-center justify-center">
+              <Zap className="h-6 w-6 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <div>
+              <p className="font-bold text-base">{t("integrations.createRoutingTitle")}</p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-[280px] leading-relaxed">
+                {t("integrations.createRoutingBody")}
+              </p>
+            </div>
+            <span className="wapi-button-hover inline-flex items-center gap-1.5 mt-2 h-10 px-4 rounded-full bg-primary text-primary-foreground text-sm font-medium">
+              {t("integrations.getStarted")}
+              <ArrowRight className="h-4 w-4" />
+            </span>
+          </button>
         )}
 
         {/* Integration list */}
         {isLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          <div className="bg-white dark:bg-card border border-slate-200/70 dark:border-border rounded-2xl flex items-center justify-center py-16">
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Loading integrations…</p>
+            </div>
           </div>
         ) : filteredIntegrations.length === 0 && routingIntegrations.length > 0 ? (
-          <div className="flex flex-col items-center justify-center py-14 text-center gap-3">
-            <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center">
-              <Search className="h-5 w-5 text-muted-foreground" />
+          <div className="bg-white dark:bg-card border border-slate-200/70 dark:border-border rounded-2xl flex flex-col items-center justify-center py-14 text-center gap-3">
+            <div className="h-14 w-14 rounded-2xl bg-slate-50 dark:bg-muted/30 border border-slate-100 dark:border-border flex items-center justify-center">
+              <Search className="h-6 w-6 text-slate-400 dark:text-muted-foreground/60" />
             </div>
             <div>
-              <p className="text-sm font-medium">{t("integrations.noMatchTitle")}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{t("integrations.noMatchBody")}</p>
+              <p className="text-sm font-semibold">{t("integrations.noMatchTitle")}</p>
+              <p className="text-xs text-muted-foreground mt-1">{t("integrations.noMatchBody")}</p>
             </div>
             <Button
-              variant="ghost"
+              variant="outline"
               size="sm"
-              className="text-xs h-7"
+              className="text-xs h-8 rounded-full"
               onClick={() => { setSearchQuery(""); setFilterStatus("ALL"); }}
             >
               {t("integrations.clearFilters")}
@@ -257,7 +263,7 @@ export default function Integrations() {
           </div>
         ) : (
           routingIntegrations.length > 0 && (
-            <div className="grid gap-2">
+            <div className="grid gap-3">
               {pagedIntegrations.map((integration) => {
                 const config = integration.config as Record<string, unknown>;
                 const isExpanded = expandedIds.has(integration.id);
@@ -276,126 +282,145 @@ export default function Integrations() {
                   .join(" · ");
 
                 return (
-                  <Card
+                  <div
                     key={integration.id}
                     className={cn(
-                      "overflow-hidden transition-colors",
-                      !integration.isActive && "bg-muted/25 border-muted-foreground/15"
+                      "wapi-card-hover overflow-hidden rounded-2xl border bg-white dark:bg-card transition-colors group",
+                      integration.isActive
+                        ? "border-slate-200/70 dark:border-border"
+                        : "border-slate-200/50 bg-slate-50/30 dark:bg-muted/15 dark:border-border/60"
                     )}
                   >
-                    <CardContent className="p-0">
-                      <div
-                        className={cn(
-                          "flex min-h-[3.25rem] items-stretch",
-                          !integration.isActive && "opacity-[0.92]"
-                        )}
+                    <div
+                      className={cn(
+                        "flex min-h-[4.25rem] items-stretch",
+                        !integration.isActive && "opacity-90"
+                      )}
+                    >
+                      <button
+                        type="button"
+                        id={`integration-trigger-${integration.id}`}
+                        className="flex min-w-0 flex-1 items-center gap-3 py-3 pr-2 pl-4 text-left transition-colors hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15"
+                        onClick={() => toggleExpand(integration.id)}
+                        aria-expanded={isExpanded}
+                        aria-controls={`integration-panel-${integration.id}`}
+                        aria-label={`${integration.name}, Lead routing${
+                          integration.isActive ? ", active" : ", turned off"
+                        }. Show details.`}
                       >
-                        <button
-                          type="button"
-                          id={`integration-trigger-${integration.id}`}
-                          className="hover:bg-muted/30 flex min-w-0 flex-1 items-center gap-2.5 py-2 pr-1 pl-2.5 text-left transition-colors sm:gap-3 sm:px-3"
-                          onClick={() => toggleExpand(integration.id)}
-                          aria-expanded={isExpanded}
-                          aria-controls={`integration-panel-${integration.id}`}
-                          aria-label={`${integration.name}, Lead routing${
-                            integration.isActive ? ", active" : ", turned off"
-                          }. Show details.`}
-                        >
-                          <div
-                            className={cn(
-                              "flex h-8 w-8 shrink-0 items-center justify-center rounded-md",
-                              routingIconBg(integration.isActive),
-                            )}
-                          >
-                            <Zap className="h-4 w-4" />
-                          </div>
-                          <div className="min-w-0 flex-1 py-0.5">
-                            <div className="flex min-w-0 items-center gap-1.5">
-                              <p
-                                className={cn(
-                                  "min-w-0 flex-1 truncate text-sm font-semibold leading-tight",
-                                  !integration.isActive && "text-foreground/75"
-                                )}
-                              >
-                                {integration.name}
-                              </p>
-                              <span
-                                className={cn(
-                                  "inline-flex shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
-                                  routingBadgeClass(integration.isActive),
-                                )}
-                              >
-                                {t("integrations.routing")}
-                              </span>
-                            </div>
-                            <p
-                              className={cn(
-                                "mt-0.5 truncate text-[11px] leading-tight sm:text-xs",
-                                integration.isActive
-                                  ? "text-muted-foreground"
-                                  : "text-muted-foreground/80"
-                              )}
-                            >
-                              {summaryLine}
-                            </p>
-                          </div>
-                          <ChevronDown
-                            className={cn(
-                              "text-muted-foreground h-4 w-4 shrink-0 transition-transform",
-                              isExpanded && "rotate-180"
-                            )}
-                          />
-                        </button>
-
                         <div
-                          className="bg-muted/20 flex shrink-0 items-center gap-0.5 border-l px-1 py-1.5 sm:gap-1 sm:px-1.5"
-                          onClick={(e) => e.stopPropagation()}
-                          role="presentation"
+                          className={cn(
+                            "flex h-11 w-11 shrink-0 items-center justify-center rounded-xl transition-all duration-200 group-hover:scale-105",
+                            integration.isActive
+                              ? "bg-gradient-to-br from-orange-400 to-orange-500 shadow-sm ring-2 ring-orange-100 dark:ring-orange-950/40"
+                              : "bg-slate-100 dark:bg-muted ring-2 ring-background"
+                          )}
                         >
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-muted-foreground hover:text-foreground h-8 w-8"
-                            title={t("integrations.editRouting")}
-                            onClick={() => navigate(`/integrations/edit-v2/${integration.id}`)}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="text-muted-foreground hover:text-foreground h-8 w-8"
-                            title={t("integrations.testLead")}
-                            disabled={
-                              testLeadMutation.isPending &&
-                              testLeadMutation.variables?.id === integration.id
-                            }
-                            onClick={() => testLeadMutation.mutate({ id: integration.id })}
-                          >
-                            {testLeadMutation.isPending &&
-                            testLeadMutation.variables?.id === integration.id ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <FlaskConical className="h-3.5 w-3.5" />
+                          <Zap
+                            className={cn(
+                              "h-5 w-5",
+                              integration.isActive ? "text-white" : "text-slate-400"
                             )}
-                          </Button>
-                          <Switch
-                            className="mx-0.5 shrink-0 scale-90 data-[state=checked]:bg-primary sm:scale-100"
-                            checked={integration.isActive}
-                            onCheckedChange={(checked) =>
-                              toggleMutation.mutate({ id: integration.id, isActive: checked })
-                            }
+                            strokeWidth={2.2}
                           />
                         </div>
-                      </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-1.5">
+                            <p
+                              className={cn(
+                                "min-w-0 flex-1 truncate text-sm font-bold leading-tight transition-colors",
+                                integration.isActive
+                                  ? "text-foreground group-hover:text-emerald-700 dark:group-hover:text-emerald-400"
+                                  : "text-foreground/70"
+                              )}
+                            >
+                              {integration.name}
+                            </p>
+                            <span
+                              className={cn(
+                                "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest",
+                                integration.isActive
+                                  ? "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/30 dark:text-orange-400 dark:border-orange-900/40"
+                                  : "bg-slate-100 text-slate-500 border-slate-200 dark:bg-muted dark:text-muted-foreground dark:border-border"
+                              )}
+                            >
+                              <span
+                                className={cn(
+                                  "h-1.5 w-1.5 rounded-full",
+                                  integration.isActive ? "bg-orange-500" : "bg-slate-400"
+                                )}
+                              />
+                              {t("integrations.routing")}
+                            </span>
+                          </div>
+                          <p
+                            className={cn(
+                              "mt-1 truncate text-xs leading-tight",
+                              integration.isActive
+                                ? "text-muted-foreground"
+                                : "text-muted-foreground/70"
+                            )}
+                          >
+                            {summaryLine}
+                          </p>
+                        </div>
+                        <ChevronDown
+                          className={cn(
+                            "text-muted-foreground h-4 w-4 shrink-0 transition-transform",
+                            isExpanded && "rotate-180"
+                          )}
+                        />
+                      </button>
 
-                      {isExpanded && (
-                        <div
-                          id={`integration-panel-${integration.id}`}
-                          role="region"
-                          aria-labelledby={`integration-trigger-${integration.id}`}
-                          className="bg-muted/15 border-t px-2.5 pb-2.5 sm:px-3 sm:pb-3"
+                      <div
+                        className="flex shrink-0 items-center gap-1 border-l border-slate-200/70 dark:border-border px-2 py-2"
+                        onClick={(e) => e.stopPropagation()}
+                        role="presentation"
+                      >
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-muted-foreground hover:text-primary hover:bg-emerald-50 dark:hover:bg-emerald-950/30 h-9 w-9 rounded-lg"
+                          title={t("integrations.editRouting")}
+                          onClick={() => navigate(`/integrations/edit-v2/${integration.id}`)}
                         >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="text-muted-foreground hover:text-primary hover:bg-emerald-50 dark:hover:bg-emerald-950/30 h-9 w-9 rounded-lg"
+                          title={t("integrations.testLead")}
+                          disabled={
+                            testLeadMutation.isPending &&
+                            testLeadMutation.variables?.id === integration.id
+                          }
+                          onClick={() => testLeadMutation.mutate({ id: integration.id })}
+                        >
+                          {testLeadMutation.isPending &&
+                          testLeadMutation.variables?.id === integration.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <FlaskConical className="h-3.5 w-3.5" />
+                          )}
+                        </Button>
+                        <Switch
+                          className="mx-1 shrink-0 data-[state=checked]:bg-emerald-500"
+                          checked={integration.isActive}
+                          onCheckedChange={(checked) =>
+                            toggleMutation.mutate({ id: integration.id, isActive: checked })
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div
+                        id={`integration-panel-${integration.id}`}
+                        role="region"
+                        aria-labelledby={`integration-trigger-${integration.id}`}
+                        className="bg-slate-50/40 dark:bg-muted/15 border-t border-slate-200/70 dark:border-border px-4 pb-4"
+                      >
                           <div className="pt-3 space-y-2">
                             <div className="text-xs text-muted-foreground">
                               {t("integrations.page")}: <span className="font-medium text-foreground">{String(integration.pageName ?? "—")}</span>
@@ -425,92 +450,83 @@ export default function Integrations() {
                               {t("integrations.added", { date: new Date(integration.createdAt).toLocaleDateString() })}
                             </p>
 
-                            {/* Action buttons */}
-                            <div className="flex flex-wrap items-center gap-2 pt-1">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 text-xs"
-                                title={t("integrations.testLead")}
-                                disabled={testLeadMutation.isPending && testLeadMutation.variables?.id === integration.id}
-                                onClick={() => testLeadMutation.mutate({ id: integration.id })}
-                              >
-                                {testLeadMutation.isPending && testLeadMutation.variables?.id === integration.id ? (
-                                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                                ) : (
-                                  <FlaskConical className="mr-1.5 h-3.5 w-3.5" />
-                                )}
-                                {t("integrations.testLeadButton")}
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 text-xs"
-                                title={t("integrations.editRouting")}
-                                onClick={() => navigate(`/integrations/edit-v2/${integration.id}`)}
-                              >
-                                <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                                {t("integrations.edit")}
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="h-8 text-xs text-violet-600 border-violet-200 hover:bg-violet-50 hover:text-violet-700 dark:border-violet-800 dark:hover:bg-violet-950/30"
-                                title="Filtr sozlamalari"
-                                onClick={() => setFilterIntegrationId(integration.id)}
-                              >
-                                <Filter className="mr-1.5 h-3.5 w-3.5" />
-                                Filtr
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 text-xs text-destructive hover:text-destructive hover:bg-destructive/10 ml-auto"
-                                onClick={() => setDeleteId(integration.id)}
-                              >
-                                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
-                                {t("integrations.delete")}
-                              </Button>
-                            </div>
+                          {/* Action buttons (Wapi pill style) */}
+                          <div className="flex flex-wrap items-center gap-2 pt-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="wapi-button-hover h-9 text-xs rounded-full font-medium"
+                              title={t("integrations.testLead")}
+                              disabled={testLeadMutation.isPending && testLeadMutation.variables?.id === integration.id}
+                              onClick={() => testLeadMutation.mutate({ id: integration.id })}
+                            >
+                              {testLeadMutation.isPending && testLeadMutation.variables?.id === integration.id ? (
+                                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <FlaskConical className="mr-1.5 h-3.5 w-3.5" />
+                              )}
+                              {t("integrations.testLeadButton")}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="wapi-button-hover h-9 text-xs rounded-full font-medium"
+                              title={t("integrations.editRouting")}
+                              onClick={() => navigate(`/integrations/edit-v2/${integration.id}`)}
+                            >
+                              <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                              {t("integrations.edit")}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="wapi-button-hover h-9 text-xs rounded-full font-medium text-violet-600 border-violet-200 hover:bg-violet-50 hover:text-violet-700 dark:border-violet-800 dark:hover:bg-violet-950/30"
+                              title="Filtr sozlamalari"
+                              onClick={() => setFilterIntegrationId(integration.id)}
+                            >
+                              <Filter className="mr-1.5 h-3.5 w-3.5" />
+                              Filtr
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="wapi-button-hover h-9 text-xs rounded-full font-medium text-destructive hover:text-destructive hover:bg-destructive/10 ml-auto"
+                              onClick={() => setDeleteId(integration.id)}
+                            >
+                              <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                              {t("integrations.delete")}
+                            </Button>
                           </div>
                         </div>
-                      )}
-                    </CardContent>
-                  </Card>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
 
-              {/* Pagination */}
+              {/* Pagination — Wapi pill style */}
               {totalPages > 1 && (
-                <div className="flex items-center justify-between pt-1">
+                <div className="flex items-center justify-between bg-white dark:bg-card border border-slate-200/70 dark:border-border rounded-2xl px-4 py-3 mt-2">
                   <p className="text-muted-foreground text-xs">
-                    {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredIntegrations.length)} / {filteredIntegrations.length}
+                    {(currentPage - 1) * PAGE_SIZE + 1}–{Math.min(currentPage * PAGE_SIZE, filteredIntegrations.length)} of {filteredIntegrations.length}
                   </p>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1.5">
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-7 w-7 p-0"
+                      className="h-8 w-8 p-0 rounded-full"
                       disabled={currentPage === 1}
                       onClick={() => setCurrentPage((p) => p - 1)}
                     >
                       <ChevronLeft className="h-3.5 w-3.5" />
                     </Button>
-                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                      <Button
-                        key={p}
-                        variant={p === currentPage ? "default" : "outline"}
-                        size="sm"
-                        className="h-7 w-7 p-0 text-xs"
-                        onClick={() => setCurrentPage(p)}
-                      >
-                        {p}
-                      </Button>
-                    ))}
+                    <div className="h-8 min-w-[80px] px-3 inline-flex items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold tabular-nums">
+                      {currentPage} / {totalPages}
+                    </div>
                     <Button
                       variant="outline"
                       size="sm"
-                      className="h-7 w-7 p-0"
+                      className="h-8 w-8 p-0 rounded-full"
                       disabled={currentPage === totalPages}
                       onClick={() => setCurrentPage((p) => p + 1)}
                     >

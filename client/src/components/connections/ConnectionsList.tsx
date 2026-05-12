@@ -342,9 +342,10 @@ function ConnectionRowView({
 
   return (
     <li className={cn(
-      "flex items-center gap-3 rounded-xl border bg-card p-3 shadow-sm transition-colors",
-      "hover:border-border hover:bg-muted/10",
-      h.label === "Active" ? "border-border/60" : "border-amber-300/60 dark:border-amber-700/40",
+      "flex items-center gap-3 rounded-xl border bg-white dark:bg-card p-3 group",
+      "transition-[background-color,box-shadow,border-color] duration-200 ease-out",
+      "hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15 hover:shadow-[inset_3px_0_0_0_var(--primary)]",
+      h.label === "Active" ? "border-slate-200/60 dark:border-border" : "border-amber-300/60 dark:border-amber-700/40",
     )}>
       {/* Icon */}
       <button
@@ -352,7 +353,8 @@ function ConnectionRowView({
         onClick={onDetail}
         className={cn(
           appBrandIconTileClass("h-9 w-9 rounded-full"),
-          "transition-opacity hover:opacity-80",
+          "transition-all duration-200",
+          "group-hover:ring-4 group-hover:ring-emerald-100 dark:group-hover:ring-emerald-950/50 group-hover:scale-105",
         )}
         title="View details"
       >
@@ -372,7 +374,7 @@ function ConnectionRowView({
           <button
             type="button"
             onClick={onDetail}
-            className="truncate text-sm font-medium text-foreground hover:underline underline-offset-2"
+            className="truncate text-sm font-medium text-foreground transition-colors duration-200 group-hover:text-emerald-700 dark:group-hover:text-emerald-400 hover:underline underline-offset-2"
           >
             {row.displayName}
           </button>

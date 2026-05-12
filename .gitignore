@@ -118,3 +118,11 @@ scripts/
 # One-off rollback backups produced by tooling/mysql/* migrations
 # (contain plaintext secrets — must never be committed)
 backup_*.json
+
+# Wapi research screenshots (local exploration, not product assets)
+wapi-*.png
+snap-pipeline.md
+
+# Playwright MCP server runtime
+.playwright-mcp/
+.mcp.json

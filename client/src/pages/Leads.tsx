@@ -80,6 +80,8 @@ export default function Leads() {
 
   const { data: formsIndex } = trpc.leads.getFormsIndex.useQuery();
   const { data: connections } = trpc.facebookAccounts.listConnectedPages.useQuery();
+  /** Global stats for the Wapi-style KPI strip — unaffected by current page filters. */
+  const { data: stats } = trpc.leads.stats.useQuery(undefined, { refetchInterval: 10_000 });
 
   const pageOptions = useMemo(() => {
     if (!formsIndex) return [];
@@ -244,48 +246,43 @@ export default function Leads() {
 
   return (
     <DashboardLayout>
-      <div className="space-y-4 max-w-7xl">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-2">
+      {/* ── Sticky page header (escapes main padding, blurs over content) ── */}
+      <div className="sticky top-16 z-30 -mx-6 -mt-6 mb-5 bg-background/85 backdrop-blur-md border-b border-slate-200/70 dark:border-border">
+        <div className="max-w-[1400px] mx-auto px-6 py-4 flex items-end justify-between flex-wrap gap-3">
           <div className="min-w-0">
-            <h1 className="text-xl font-bold tracking-tight">{t("leads.title")}</h1>
-            <p className="text-muted-foreground text-xs mt-0.5 flex items-center gap-1.5">
-              {data?.total ?? 0} {t("common.total")}
+            <h1 className="text-2xl font-bold tracking-tight text-primary">{t("leads.title")}</h1>
+            <p className="text-muted-foreground text-sm mt-0.5 flex items-center gap-1.5">
+              All incoming Facebook &amp; Instagram leads · {data?.total ?? 0} {t("common.total")}
               {isFetching && !isLoading && <RefreshCw className="h-3 w-3 animate-spin" />}
             </p>
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            {failedCount > 0 && (
+          <div className="flex items-center gap-2 shrink-0">
+            {(stats?.leads.failed ?? 0) > 0 && (
               <Button
-                variant="outline"
-                size="sm"
                 onClick={() => retryAllMutation.mutate()}
                 disabled={retryAllMutation.isPending}
-                className="border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30 h-8 px-2"
-                title={`${t("leads.retryAll")} (${failedCount})`}
+                className="wapi-button-hover rounded-full h-10 px-4 bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-100 dark:bg-rose-950/30 dark:border-rose-900/40 dark:text-rose-400 dark:hover:bg-rose-950/50 shadow-none font-medium"
+                title={`${t("leads.retryAll")} (${stats?.leads.failed ?? 0})`}
               >
                 {retryAllMutation.isPending
                   ? <Loader2 className="h-4 w-4 animate-spin" />
                   : <RotateCcw className="h-4 w-4" />}
-                <span className="hidden sm:inline ml-1.5">{t("leads.retryAll")} ({failedCount})</span>
+                <span className="hidden sm:inline ml-1.5">{t("leads.retryAll")} ({stats?.leads.failed ?? 0})</span>
               </Button>
             )}
             <Button
               variant="outline"
-              size="sm"
               onClick={handleExportCSV}
               disabled={!leads.length}
-              className="h-8 px-2"
+              className="wapi-button-hover rounded-full h-10 px-4 font-medium"
               title={t("common.export")}
             >
               <FileDown className="h-4 w-4" />
               <span className="hidden sm:inline ml-1.5">{t("common.export")}</span>
             </Button>
             <Button
-              variant="outline"
-              size="sm"
               onClick={() => { setSyncOpen(true); setSyncResult(null); }}
-              className="h-8 px-2"
+              className="wapi-button-hover rounded-full h-10 px-4 bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
               title={t("common.sync")}
             >
               <Download className="h-4 w-4" />
@@ -293,26 +290,27 @@ export default function Leads() {
             </Button>
             <Button
               variant="outline"
-              size="sm"
               onClick={() => refetch()}
-              className="h-8 px-2"
+              className="wapi-button-hover rounded-full h-10 w-10 p-0"
               title={t("common.refresh")}
             >
               <RefreshCw className="h-4 w-4" />
             </Button>
           </div>
         </div>
+      </div>
 
-        {/* Bulk action bar */}
+      <div className="space-y-5 max-w-[1400px] mx-auto">
+        {/* ── Bulk action bar ── */}
         {selectedIds.size > 0 && (
-          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-primary/5 border border-primary/20">
-            <span className="text-sm font-medium text-primary">
+          <div className="flex items-center justify-between gap-2 px-4 py-2.5 rounded-2xl bg-primary/5 border border-primary/20">
+            <span className="text-sm font-semibold text-primary">
               {selectedIds.size} {t("common.selected")}
             </span>
             <Button
               variant="outline"
               size="sm"
-              className="h-7 text-xs"
+              className="h-7 text-xs rounded-full"
               onClick={() => setSelectedIds(new Set())}
             >
               {t("common.deselectAll")}
@@ -320,31 +318,36 @@ export default function Leads() {
           </div>
         )}
 
-        {/* Filters */}
-        <LeadFilters
-          filters={filters}
-          pageOptions={pageOptions}
-          formOptions={formOptions}
-          allFormsIndex={formsIndex ?? []}
-        />
+        {/* ── Search + filters card ── */}
+        <div className="bg-white dark:bg-card border border-slate-200/70 dark:border-border rounded-2xl p-4">
+          <LeadFilters
+            filters={filters}
+            pageOptions={pageOptions}
+            formOptions={formOptions}
+            allFormsIndex={formsIndex ?? []}
+          />
+        </div>
 
-        {/* Content */}
+        {/* ── Content ── */}
         {isLoading ? (
-          <div className="flex items-center justify-center py-16">
-            <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+          <div className="bg-white dark:bg-card border border-slate-200/70 dark:border-border rounded-2xl flex items-center justify-center py-20">
+            <div className="flex flex-col items-center gap-3">
+              <RefreshCw className="h-6 w-6 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Loading leads…</p>
+            </div>
           </div>
         ) : leads.length === 0 ? (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-              <Zap className="h-10 w-10 text-muted-foreground/30 mb-3" />
-              <p className="text-muted-foreground font-medium">{t("leads.noLeadsFound")}</p>
-              <p className="text-xs text-muted-foreground/60 mt-1">
-                {filters.hasActiveFilters
-                  ? t("leads.noLeadsFilter")
-                  : t("leads.noLeadsWebhook")}
-              </p>
-            </CardContent>
-          </Card>
+          <div className="bg-white dark:bg-card border border-slate-200/70 dark:border-border rounded-2xl flex flex-col items-center justify-center py-16 text-center">
+            <div className="h-14 w-14 rounded-2xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-100 dark:border-emerald-900/40 flex items-center justify-center mb-3">
+              <Zap className="h-6 w-6 text-emerald-600/70 dark:text-emerald-400/70" />
+            </div>
+            <p className="text-sm font-semibold">{t("leads.noLeadsFound")}</p>
+            <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+              {filters.hasActiveFilters
+                ? t("leads.noLeadsFilter")
+                : t("leads.noLeadsWebhook")}
+            </p>
+          </div>
         ) : (
           <>
             {/* Mobile: card list */}
@@ -383,9 +386,9 @@ export default function Leads() {
           </>
         )}
 
-        {/* Pagination */}
+        {/* ── Pagination (Wapi-style pill buttons) ── */}
         {totalPages > 1 && (
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between bg-white dark:bg-card border border-slate-200/70 dark:border-border rounded-2xl px-4 py-3">
             <p className="text-xs text-muted-foreground">
               {t("leads.pagePagination", {
                 current: filters.page + 1,
@@ -399,16 +402,19 @@ export default function Leads() {
                 size="sm"
                 onClick={() => filters.setPage(Math.max(0, filters.page - 1))}
                 disabled={filters.page === 0}
-                className="h-8 w-8 p-0"
+                className="h-8 w-8 p-0 rounded-full"
               >
                 <ChevronLeft className="h-4 w-4" />
               </Button>
+              <div className="h-8 min-w-[80px] px-3 inline-flex items-center justify-center rounded-full bg-primary/10 text-primary text-xs font-semibold tabular-nums">
+                {filters.page + 1} / {totalPages}
+              </div>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => filters.setPage(Math.min(totalPages - 1, filters.page + 1))}
                 disabled={filters.page >= totalPages - 1}
-                className="h-8 w-8 p-0"
+                className="h-8 w-8 p-0 rounded-full"
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
@@ -542,3 +548,4 @@ export default function Leads() {
     </DashboardLayout>
   );
 }
+

@@ -28,7 +28,9 @@ import {
   Activity,
   BarChart3,
   Bell,
+  Check,
   ChevronDown,
+  ChevronLeft,
   Globe,
   LayoutDashboard,
   Link2,
@@ -49,6 +51,7 @@ import {
   CircleUser,
   LayoutList,
   GitBranch,
+  Workflow,
 } from "lucide-react";
 
 type NavItem = {
@@ -67,6 +70,7 @@ import { cn } from "@/lib/utils";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 import { AdminSidebarNav } from "./AdminSidebarNav";
+import { Flag } from "./ui/flag";
 
 function buildNavGroups(t: (k: string) => string, isAdmin = false): NavGroup[] {
   return [
@@ -176,7 +180,7 @@ export default function DashboardLayout({
         } as CSSProperties
       }
     >
-      <DashboardLayoutContent setSidebarWidth={setSidebarWidth}>
+      <DashboardLayoutContent sidebarWidth={sidebarWidth} setSidebarWidth={setSidebarWidth}>
         {children}
       </DashboardLayoutContent>
     </SidebarProvider>
@@ -185,11 +189,13 @@ export default function DashboardLayout({
 
 type DashboardLayoutContentProps = {
   children: React.ReactNode;
+  sidebarWidth: number;
   setSidebarWidth: (width: number) => void;
 };
 
 function DashboardLayoutContent({
   children,
+  sidebarWidth,
   setSidebarWidth,
 }: DashboardLayoutContentProps) {
   const { user, logout } = useAuth();
@@ -205,15 +211,6 @@ function DashboardLayoutContent({
   const navGroups = useMemo(() => buildNavGroups(t, isAdmin), [locale, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   // Admin sidebar is handled by `AdminSidebarNav` (data-driven, nested-safe).
   const businessToolsItems = useMemo(() => buildBusinessToolsItems(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
-  const allItems = navGroups.flatMap((g) => g.items);
-  const activeMenuItem = allItems.find((item) => item.path === location);
-  const headerNavLabel = activeMenuItem?.label;
-  const activeGroupLabel = useMemo(() => {
-    for (const g of navGroups) {
-      if (g.items.some((it) => it.path === location)) return g.label ?? t("nav.overview");
-    }
-    return location.startsWith("/business/") ? t("nav.businessTools") : undefined;
-  }, [location, navGroups]); // eslint-disable-line react-hooks/exhaustive-deps
   const isMobile = useIsMobile();
   const [navQuery, setNavQuery] = useState("");
 
@@ -310,41 +307,19 @@ function DashboardLayoutContent({
           disableTransition={isResizing}
         >
           <SidebarHeader className="h-16 shrink-0 justify-center border-b border-sidebar-border">
-            <div className="flex items-center gap-3 px-2 w-full">
-              <button
-                onClick={toggleSidebar}
-                className="h-8 w-8 flex items-center justify-center hover:bg-sidebar-accent rounded-lg transition-colors focus:outline-none shrink-0"
-                aria-label="Toggle navigation"
-              >
-                <PanelLeft className="h-4 w-4 text-sidebar-foreground/60" />
-              </button>
+            <div className={`flex items-center gap-2 px-2 w-full ${isCollapsed ? "justify-center" : ""}`}>
+              <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center shrink-0 shadow-sm">
+                <Workflow className="h-4 w-4 text-primary-foreground" strokeWidth={2.5} />
+              </div>
               {!isCollapsed && (
-                <div className="flex items-center gap-2 min-w-0">
-                  <div className="h-6 w-6 rounded bg-primary flex items-center justify-center shrink-0">
-                    <Zap className="h-3.5 w-3.5 text-primary-foreground" />
-                  </div>
-                  <span className="font-semibold text-sm text-sidebar-foreground truncate">
-                    Targenix.uz
-                  </span>
-                </div>
+                <span className="font-bold text-base text-sidebar-foreground truncate tracking-tight">
+                  Targenix<span className="text-primary">.</span>
+                </span>
               )}
             </div>
           </SidebarHeader>
 
-          <SidebarContent className="flex-1 min-h-0 gap-0 pt-2 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-            {!isCollapsed && (
-              <div className="px-3 pb-2">
-                <div className="relative">
-                  <Search className="h-4 w-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    value={navQuery}
-                    onChange={(e) => setNavQuery(e.target.value)}
-                    placeholder="Search..."
-                    className="pl-9 bg-sidebar-accent/30 border-sidebar-border focus-visible:ring-0 focus-visible:ring-offset-0"
-                  />
-                </div>
-              </div>
-            )}
+          <SidebarContent className="flex-1 min-h-0 gap-0 pt-3 overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
             {/* Main nav groups */}
             {filteredNavGroups.map((group, gi) => (
               <div key={gi}>
@@ -500,7 +475,7 @@ function DashboardLayoutContent({
                 <DropdownMenuTrigger asChild>
                   <button className="flex items-center gap-3 rounded-lg px-1 py-1 hover:bg-sidebar-accent/50 transition-colors flex-1 min-w-0 text-left focus:outline-none">
                     <Avatar className="h-8 w-8 border border-sidebar-border shrink-0">
-                      <AvatarFallback className="text-xs font-medium bg-primary/20 text-sidebar-foreground">
+                      <AvatarFallback className="text-xs font-semibold bg-primary/10 text-primary">
                         {user?.name?.charAt(0).toUpperCase() ?? "U"}
                       </AvatarFallback>
                     </Avatar>
@@ -548,76 +523,103 @@ function DashboardLayoutContent({
           style={{ zIndex: 50 }}
         />
       </div>
+      {/* Wapi-style floating sidebar toggle — fixed to viewport, follows sidebar edge */}
+      {!isMobile && (
+        <button
+          onClick={toggleSidebar}
+          style={{
+            left: isCollapsed ? "calc(3rem - 14px)" : `${sidebarWidth - 14}px`,
+          }}
+          className="wapi-floating-toggle fixed top-[50px] z-[60] h-7 w-7 rounded-md bg-primary hover:bg-primary/90 text-primary-foreground flex items-center justify-center shadow-md transition-[left,background-color,opacity] duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          <ChevronLeft className={`h-4 w-4 transition-transform duration-200 ${isCollapsed ? "rotate-180" : ""}`} strokeWidth={2.5} />
+        </button>
+      )}
 
       <SidebarInset>
-        <div className="flex border-b h-14 items-center justify-between bg-background/85 px-4 backdrop-blur sticky top-0 z-40">
-          <div className="flex items-center gap-3 min-w-0">
-            {isMobile ? (
-              <SidebarTrigger className="h-9 w-9 rounded-lg" />
-            ) : (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-9 w-9 rounded-lg"
-                onClick={toggleSidebar}
-                aria-label="Toggle sidebar"
-              >
-                <PanelLeft className="h-4 w-4" />
-              </Button>
-            )}
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                {activeGroupLabel && (
-                  <span className="text-xs text-muted-foreground hidden sm:inline">
-                    {activeGroupLabel}
-                  </span>
-                )}
-                {activeGroupLabel && (
-                  <span className="text-muted-foreground/60 hidden sm:inline">/</span>
-                )}
-                <span className="font-medium text-sm truncate">
-                  {headerNavLabel ?? "Dashboard"}
-                </span>
+        <div className="flex border-b h-16 items-center gap-3 bg-background/85 px-4 backdrop-blur sticky top-0 z-40">
+          {/* Mobile-only sidebar trigger (desktop uses the floating sidebar toggle) */}
+          {isMobile && (
+            <SidebarTrigger className="h-9 w-9 rounded-lg shrink-0" />
+          )}
+
+          {/* Center: big Quick Find (Wapi-style) */}
+          {!isMobile ? (
+            <div className="flex-1 max-w-3xl mx-auto px-2">
+              <div className="relative">
+                <Search className="h-4 w-4 text-muted-foreground absolute left-4 top-1/2 -translate-y-1/2" />
+                <Input
+                  value={navQuery}
+                  onChange={(e) => setNavQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    if (!firstNavMatch) return;
+                    setLocation(firstNavMatch.path);
+                  }}
+                  placeholder={t("nav.search")}
+                  className="pl-11 h-10 rounded-xl bg-muted/40 border border-transparent focus-visible:bg-background focus-visible:border-input text-sm"
+                />
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex-1" />
+          )}
 
-          <div className="flex items-center gap-2">
-            {!isMobile && (
-              <div className="hidden md:block w-[360px] lg:w-[440px]">
-                <div className="relative">
-                  <Search className="h-4 w-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2" />
-                  <Input
-                    value={navQuery}
-                    onChange={(e) => setNavQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key !== "Enter") return;
-                      if (!firstNavMatch) return;
-                      setLocation(firstNavMatch.path);
-                    }}
-                    placeholder={t("nav.search")}
-                    className="pl-9 bg-background/60"
-                  />
-                </div>
+          {/* Right: workspace pill + actions */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* Targenix workspace pill (Wapi-style) */}
+            <div className="hidden sm:flex items-center gap-2 h-9 pl-1.5 pr-3 rounded-full border border-border bg-background">
+              <div className="h-6 w-6 rounded-full bg-primary flex items-center justify-center">
+                <Workflow className="h-3 w-3 text-primary-foreground" strokeWidth={2.5} />
               </div>
-            )}
+              <span className="text-[13px] font-semibold tracking-tight">Targenix</span>
+            </div>
+
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" className="h-9 px-2">
-                  {locale === "uz" ? "🇺🇿 UZ" : locale === "ru" ? "🇷🇺 RU" : "🇬🇧 EN"}
-                  <ChevronDown className="ml-1 h-4 w-4 opacity-60" />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 pl-2 pr-2.5 gap-1.5 rounded-full border border-transparent hover:border-border"
+                >
+                  <Flag code={locale} className="w-5 h-3.5" />
+                  <span className="text-[13px] font-medium uppercase tracking-wide">
+                    {locale === "uz" ? "UZ" : locale === "ru" ? "RU" : "EN"}
+                  </span>
+                  <ChevronDown className="h-3.5 w-3.5 opacity-60" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
-                <DropdownMenuItem onClick={() => setLocale("uz")} className="cursor-pointer">
-                  🇺🇿 O’zbekcha
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setLocale("ru")} className="cursor-pointer">
-                  🇷🇺 Русский
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setLocale("en")} className="cursor-pointer">
-                  🇬🇧 English
-                </DropdownMenuItem>
+              <DropdownMenuContent align="end" className="w-56 p-1.5 rounded-2xl border-slate-200/70">
+                {(
+                  [
+                    { code: "uz", name: "O‘zbekcha" },
+                    { code: "ru", name: "Русский" },
+                    { code: "en", name: "English" },
+                  ] as const
+                ).map((lang) => {
+                  const active = locale === lang.code;
+                  return (
+                    <DropdownMenuItem
+                      key={lang.code}
+                      onClick={() => setLocale(lang.code)}
+                      className={`cursor-pointer rounded-xl px-2.5 py-2 my-0.5 gap-2.5 transition-colors focus:bg-transparent ${
+                        active
+                          ? "bg-emerald-50 text-emerald-700 focus:bg-emerald-100 focus:text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400 dark:focus:bg-emerald-950/60"
+                          : "hover:bg-slate-50 focus:bg-slate-50 dark:hover:bg-muted/40 dark:focus:bg-muted/40"
+                      }`}
+                    >
+                      <Flag code={lang.code} className="w-6 h-[18px]" />
+                      <span className={`text-sm flex-1 ${active ? "font-semibold" : "font-medium"}`}>
+                        {lang.name}
+                      </span>
+                      {active && (
+                        <Check className="h-4 w-4 text-emerald-600 dark:text-emerald-400" strokeWidth={2.5} />
+                      )}
+                    </DropdownMenuItem>
+                  );
+                })}
               </DropdownMenuContent>
             </DropdownMenu>
 
@@ -625,7 +627,7 @@ function DashboardLayoutContent({
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-9 w-9 rounded-lg"
+                className="h-9 w-9 rounded-full"
                 onClick={() => toggleTheme?.()}
                 aria-label="Toggle theme"
               >
@@ -640,7 +642,7 @@ function DashboardLayoutContent({
             <Button
               variant="ghost"
               size="icon"
-              className="h-9 w-9 rounded-lg"
+              className="h-9 w-9 rounded-full"
               aria-label="Notifications"
               title="Notifications"
             >
@@ -652,17 +654,13 @@ function DashboardLayoutContent({
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="h-9 px-2 gap-2 rounded-lg">
-                  <Avatar className="h-7 w-7 border border-border">
-                    <AvatarFallback className="text-[10px] font-semibold">
-                      {user?.name?.charAt(0).toUpperCase() ?? "U"}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="hidden sm:inline text-sm max-w-[140px] truncate">
-                    {user?.name || "User"}
-                  </span>
-                  <ChevronDown className="h-4 w-4 opacity-60" />
-                </Button>
+                <button
+                  className="h-9 w-9 rounded-full bg-primary text-primary-foreground font-semibold text-sm flex items-center justify-center hover:opacity-90 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  aria-label={user?.name || "Account"}
+                  title={user?.name || ""}
+                >
+                  {user?.name?.charAt(0).toUpperCase() ?? "U"}
+                </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuItem onClick={() => setLocation("/settings")} className="cursor-pointer">

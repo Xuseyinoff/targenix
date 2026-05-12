@@ -1,4 +1,3 @@
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   Phone,
@@ -42,9 +41,11 @@ function LeadAvatar({ name, size = "sm" }: { name?: string | null; size?: "sm" |
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center justify-center rounded-xl font-semibold",
-        "bg-sky-100 text-sky-800 dark:bg-sky-950/55 dark:text-sky-200",
-        size === "sm" ? "h-8 w-8 text-sm" : "h-9 w-9 text-sm",
+        "flex shrink-0 items-center justify-center rounded-full font-semibold text-white",
+        "bg-emerald-500 dark:bg-emerald-600",
+        "transition-all duration-200",
+        "group-hover:ring-4 group-hover:ring-emerald-100 dark:group-hover:ring-emerald-950/50 group-hover:scale-105",
+        size === "sm" ? "h-9 w-9 text-sm" : "h-10 w-10 text-sm",
       )}
     >
       {initials}
@@ -113,54 +114,56 @@ export function LeadsTable({
   const someSelected = leads.some((l) => selectedIds.has(l.id));
 
   return (
-    <Card>
-      <CardContent className="p-0">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b bg-muted/40">
-                {/* Checkbox col — desktop only */}
-                <th className="hidden lg:table-cell px-4 py-3 w-10">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
-                    checked={allSelected}
-                    ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
-                    onChange={(e) => onSelectAll(e.target.checked)}
-                  />
-                </th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">{t("leads.table.name")}</th>
-                {/* Contact col — desktop only */}
-                <th className="hidden lg:table-cell text-left px-4 py-3 font-medium text-muted-foreground">
-                  {t("leads.table.contact")}
-                </th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">{t("leads.table.source")}</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground">{t("leads.table.status")}</th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground whitespace-nowrap">
-                  {t("leads.table.date")}
-                </th>
-                <th className="text-left px-4 py-3 font-medium text-muted-foreground w-[110px]">
-                  {t("leads.table.actions")}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {leads.map((lead) => {
-                const isSelected = selectedIds.has(lead.id);
-                const pageName = lead.pageName ?? lead.pageId;
-                const formName = lead.formName ?? lead.formId;
-                const date = new Date(lead.createdAt as string);
-                const firstOrder = lead.orders?.[0];
+    <div className="bg-white dark:bg-card border border-slate-200/70 dark:border-border rounded-2xl overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="bg-slate-50/60 dark:bg-muted/30 border-b border-slate-200/70 dark:border-border">
+              {/* Checkbox col — desktop only */}
+              <th className="hidden lg:table-cell px-4 py-3 w-10">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                  checked={allSelected}
+                  ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                  onChange={(e) => onSelectAll(e.target.checked)}
+                />
+              </th>
+              <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">{t("leads.table.name")}</th>
+              {/* Contact col — desktop only */}
+              <th className="hidden lg:table-cell text-left px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">
+                {t("leads.table.contact")}
+              </th>
+              <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">{t("leads.table.source")}</th>
+              <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground">{t("leads.table.status")}</th>
+              <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground whitespace-nowrap">
+                {t("leads.table.date")}
+              </th>
+              <th className="text-left px-4 py-3 text-[11px] font-bold uppercase tracking-widest text-slate-500 dark:text-muted-foreground w-[110px]">
+                {t("leads.table.actions")}
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {leads.map((lead) => {
+              const isSelected = selectedIds.has(lead.id);
+              const pageName = lead.pageName ?? lead.pageId;
+              const formName = lead.formName ?? lead.formId;
+              const date = new Date(lead.createdAt as string);
+              const firstOrder = lead.orders?.[0];
 
-                return (
-                  <tr
-                    key={lead.id}
-                    className={cn(
-                      "border-b last:border-0 cursor-pointer transition-colors group",
-                      isSelected ? "bg-primary/5" : "hover:bg-muted/30"
-                    )}
-                    onClick={() => onRowClick(lead)}
-                  >
+              return (
+                <tr
+                  key={lead.id}
+                  className={cn(
+                    "border-b border-slate-200/70 dark:border-border last:border-0 cursor-pointer group",
+                    "transition-[background-color,box-shadow] duration-200 ease-out",
+                    isSelected
+                      ? "bg-emerald-50/60 dark:bg-emerald-950/20 shadow-[inset_3px_0_0_0_var(--primary)]"
+                      : "hover:bg-emerald-50/40 dark:hover:bg-emerald-950/15 hover:shadow-[inset_3px_0_0_0_var(--primary)]"
+                  )}
+                  onClick={() => onRowClick(lead)}
+                >
                     {/* Checkbox — desktop only */}
                     <td
                       className="hidden lg:table-cell px-4 py-3"
@@ -179,7 +182,7 @@ export function LeadsTable({
                       <div className="flex items-center gap-2.5">
                         <LeadAvatar name={lead.fullName} />
                         <div className="min-w-0">
-                          <p className="font-medium truncate max-w-[140px]">
+                          <p className="font-medium truncate max-w-[140px] transition-colors duration-200 group-hover:text-emerald-700 dark:group-hover:text-emerald-400">
                             {lead.fullName || t("leads.table.unknown")}
                           </p>
                           {/* Show phone inline on tablet (md but not lg) */}
@@ -300,10 +303,9 @@ export function LeadsTable({
                   </tr>
                 );
               })}
-            </tbody>
-          </table>
-        </div>
-      </CardContent>
-    </Card>
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

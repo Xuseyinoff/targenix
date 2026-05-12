@@ -492,9 +492,9 @@ const sidebarMenuButtonVariants = cva(
     // Hover (ONLY when not active)
     "data-[active=false]:hover:bg-sidebar-accent/60 data-[active=false]:hover:text-sidebar-accent-foreground",
 
-    // Active: solid blue pill (Sotuvchi-style, light + dark)
-    "data-[active=true]:rounded-full data-[active=true]:bg-primary data-[active=true]:text-primary-foreground data-[active=true]:font-semibold",
-    "data-[active=true]:[&>svg]:text-primary-foreground",
+    // Active: Wapi-style emerald-50 fill (light + dark)
+    "data-[active=true]:rounded-lg data-[active=true]:bg-primary/10 data-[active=true]:text-primary data-[active=true]:font-semibold",
+    "data-[active=true]:[&>svg]:text-primary",
 
     // Focus (keep accessible without adding noise)
     "focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-0",
@@ -711,7 +711,7 @@ function SidebarMenuSubButton({
       data-active={isActive}
       className={cn(
         "text-sidebar-foreground ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground active:bg-sidebar-accent active:text-sidebar-accent-foreground [&>svg]:text-sidebar-accent-foreground flex h-7 min-w-0 -translate-x-px items-center gap-2 overflow-hidden rounded-md px-2 outline-hidden focus-visible:ring-2 disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg]:size-4 [&>svg]:shrink-0",
-        "data-[active=true]:rounded-full data-[active=true]:bg-primary data-[active=true]:font-semibold data-[active=true]:text-primary-foreground data-[active=true]:[&>svg]:text-primary-foreground",
+        "data-[active=true]:rounded-lg data-[active=true]:bg-primary/10 data-[active=true]:font-semibold data-[active=true]:text-primary data-[active=true]:[&>svg]:text-primary",
         size === "sm" && "text-xs",
         size === "md" && "text-sm",
         "group-data-[collapsible=icon]:hidden",
