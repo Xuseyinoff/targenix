@@ -115,7 +115,7 @@ describe("buildCreatePayload — telegram", () => {
     });
     expect(payload).toEqual({
       name: "My bot",
-      templateType: "telegram",
+      appKey: "telegram",
       connectionId: 42,
     });
   });
@@ -128,7 +128,7 @@ describe("buildCreatePayload — telegram", () => {
     });
     expect(payload).toEqual({
       name: "Sales",
-      templateType: "telegram",
+      appKey: "telegram",
       connectionId: 7,
       chatId: "-100123",
       messageTemplate: "Hi {{full_name}}",
@@ -186,7 +186,7 @@ describe("buildCreatePayload — google-sheets", () => {
     });
     expect(payload).toEqual({
       name: "Leads",
-      templateType: "google-sheets",
+      appKey: "google-sheets",
       connectionId: 9,
       spreadsheetId: "spread_id",
       sheetName: "Sheet1",
@@ -201,7 +201,7 @@ describe("buildCreatePayload — google-sheets", () => {
       spreadsheetId: "s",
       sheetName: "t",
     });
-    if (payload.templateType !== "google-sheets") {
+    if (payload.appKey !== "google-sheets") {
       throw new Error("expected google-sheets payload");
     }
     expect(payload.mapping).toEqual({});
@@ -216,7 +216,7 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
     });
     expect(payload).toEqual({
       name: "Hook",
-      templateType: "custom",
+      appKey: "custom",
       url: "https://example.com/hook",
       method: "POST",
       contentType: "json",
@@ -257,7 +257,7 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
       url: "https://example.com",
       headers: '{"Authorization":"Bearer abc"}',
     });
-    if (payload.templateType !== "custom") {
+    if (payload.appKey !== "custom") {
       throw new Error("expected custom payload");
     }
     expect(payload.headers).toEqual({ Authorization: "Bearer abc" });
@@ -281,7 +281,7 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
         { name: "X-Tag", value: "a" },
       ],
     });
-    if (payload.templateType !== "custom") {
+    if (payload.appKey !== "custom") {
       throw new Error("expected custom payload");
     }
     expect(payload.headers).toEqual({
@@ -295,7 +295,7 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
       url: "https://example.com",
       headers: [{ name: "", value: "" }, { name: "", value: "" }],
     });
-    if (payload.templateType !== "custom") {
+    if (payload.appKey !== "custom") {
       throw new Error("expected custom payload");
     }
     expect(payload.headers).toBeUndefined();
@@ -320,7 +320,7 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
         { key: "phone", value: "{{phone_number}}" },
       ],
     });
-    if (payload.templateType !== "custom") {
+    if (payload.appKey !== "custom") {
       throw new Error("expected custom payload");
     }
     expect(payload.contentType).toBe("form-urlencoded");
@@ -342,7 +342,7 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
         { key: "", value: "" }, // seed row — silently ignored
       ],
     });
-    if (ok.templateType !== "custom") throw new Error();
+    if (ok.appKey !== "custom") throw new Error();
     expect(ok.bodyFields).toEqual([{ key: "full_name", value: "John" }]);
 
     expect(() =>
@@ -362,7 +362,7 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
       bodyTemplate: '{"x":1}',
       bodyFields: [{ key: "stale", value: "value" }],
     });
-    if (jsonPayload.templateType !== "custom") throw new Error();
+    if (jsonPayload.appKey !== "custom") throw new Error();
     expect(jsonPayload.bodyTemplate).toBe('{"x":1}');
     expect(jsonPayload).not.toHaveProperty("bodyFields");
 
@@ -373,7 +373,7 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
       bodyTemplate: '{"should-not-leak":1}',
       bodyFields: [{ key: "real", value: "value" }],
     });
-    if (formPayload.templateType !== "custom") throw new Error();
+    if (formPayload.appKey !== "custom") throw new Error();
     expect(formPayload.bodyFields).toEqual([{ key: "real", value: "value" }]);
     expect(formPayload).not.toHaveProperty("bodyTemplate");
   });
@@ -386,7 +386,7 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
         { name: "lead", value: "{{full_name}}" },
       ],
     });
-    if (payload.templateType !== "custom") throw new Error();
+    if (payload.appKey !== "custom") throw new Error();
     expect(payload.url).toBe(
       "https://example.com/hook?utm_source=facebook&lead=%7B%7Bfull_name%7D%7D",
     );
@@ -397,7 +397,7 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
       url: "https://example.com/hook?v=1",
       queryParams: [{ name: "utm_source", value: "fb" }],
     });
-    if (payload.templateType !== "custom") throw new Error();
+    if (payload.appKey !== "custom") throw new Error();
     expect(payload.url).toBe("https://example.com/hook?v=1&utm_source=fb");
   });
 
@@ -406,7 +406,7 @@ describe("buildCreatePayload — plain-url (custom webhook)", () => {
       url: "https://example.com/hook",
       queryParams: [{ name: "", value: "" }],
     });
-    if (payload.templateType !== "custom") throw new Error();
+    if (payload.appKey !== "custom") throw new Error();
     expect(payload.url).toBe("https://example.com/hook");
   });
 

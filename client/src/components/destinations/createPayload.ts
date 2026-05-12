@@ -51,21 +51,23 @@ export function isSupportedAppKey(key: string): key is SupportedAppKey {
 // ─── Payload shape ───────────────────────────────────────────────────────────
 
 /**
- * Typed union describing what `destinations.create` accepts per template
- * type. Kept narrow so the call site gets compile-time help when the server
- * contract changes.
+ * Typed union describing what `destinations.create` accepts per app key.
+ * The discriminator is `appKey` — the server's resolveDispatchType()
+ * derives the storage-side dispatch type from it (Phase 2 of templateType
+ * removal). Kept narrow so the call site gets compile-time help when the
+ * server contract changes.
  */
 export type CreatePayload =
   | {
       name: string;
-      templateType: "telegram";
+      appKey: "telegram";
       connectionId?: number;
       chatId?: string;
       messageTemplate?: string;
     }
   | {
       name: string;
-      templateType: "google-sheets";
+      appKey: "google-sheets";
       connectionId?: number;
       googleAccountId?: number;
       spreadsheetId: string;
@@ -75,7 +77,7 @@ export type CreatePayload =
     }
   | {
       name: string;
-      templateType: "custom";
+      appKey: "custom";
       url: string;
       method?: "POST" | "GET";
       contentType?: "json" | "form" | "form-urlencoded" | "multipart";
@@ -84,9 +86,9 @@ export type CreatePayload =
       headers?: Record<string, string>;
     }
   | {
-      /** Generic handler for all manifest-driven http-api-key apps */
+      /** Generic handler for all manifest-driven http-api-key apps —
+       *  appKey is the specific app (e.g. "bitrix24", "webhook-json"). */
       name: string;
-      templateType: "http-api-key";
       appKey: string;
       connectionId?: number;
       templateConfig: Record<string, unknown>;
@@ -113,7 +115,7 @@ export function buildCreatePayload(
     const messageTemplate = asString(v.messageTemplate);
     return {
       name,
-      templateType: "telegram",
+      appKey: "telegram",
       connectionId,
       ...(chatId ? { chatId } : {}),
       ...(messageTemplate ? { messageTemplate } : {}),
@@ -135,7 +137,7 @@ export function buildCreatePayload(
         : {};
     return {
       name,
-      templateType: "google-sheets",
+      appKey: "google-sheets",
       connectionId,
       spreadsheetId,
       sheetName,
@@ -189,7 +191,7 @@ export function buildCreatePayload(
 
     return {
       name,
-      templateType: "custom",
+      appKey: "custom",
       url,
       method,
       contentType,
@@ -205,8 +207,10 @@ export function buildCreatePayload(
   }
 
   // Generic http-api-key handler — works for any manifest app with that type.
-  // connectionId is extracted and sent top-level; all other field values go
-  // into templateConfig so the server's httpApiKeyAdapter can read them.
+  // The appKey IS the discriminator (server's resolveDispatchType maps the
+  // specific app key into the http-api-key dispatch branch). connectionId is
+  // extracted and sent top-level; all other field values go into
+  // templateConfig so the server's httpApiKeyAdapter can read them.
   if (APP_KEY_TO_TEMPLATE_TYPE[appKey as SupportedAppKey] === "http-api-key") {
     const connectionId = asNumber(v.connectionId);
     const templateConfig: Record<string, unknown> = {};
@@ -216,7 +220,7 @@ export function buildCreatePayload(
         templateConfig[k] = val;
       }
     }
-    return { name, templateType: "http-api-key", appKey, connectionId, templateConfig };
+    return { name, appKey, connectionId, templateConfig };
   }
 
   throw new Error(`Unsupported app: ${appKey}`);

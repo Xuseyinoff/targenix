@@ -782,7 +782,7 @@ export default function TargetWebsites() {
 
       const payload = {
         name: form.name.trim(),
-        templateType: "google-sheets" as const,
+        appKey: "google-sheets" as const,
         googleAccountId: form.googleAccountId!,
         spreadsheetId: form.spreadsheetId.trim(),
         sheetName: form.sheetName.trim(),
@@ -807,7 +807,7 @@ export default function TargetWebsites() {
       }
       const telegramPayload = {
         name: form.name,
-        templateType: "telegram" as const,
+        appKey: "telegram" as const,
         chatId: form.chatId.trim(),
         botToken: form.botToken.trim() || undefined,
         messageTemplate: form.messageTemplate || DEFAULT_TELEGRAM_TEMPLATE,
@@ -848,7 +848,7 @@ export default function TargetWebsites() {
 
     const payload: Parameters<typeof createMutation.mutate>[0] = {
       name: form.name,
-      templateType: form.templateType,
+      appKey: form.templateType,
       ...(form.fields.apiKey ? { apiKey: form.fields.apiKey } : {}),
       ...(isCustom ? {
         url: form.url,
