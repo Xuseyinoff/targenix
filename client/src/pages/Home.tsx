@@ -381,13 +381,15 @@ export default function Home() {
                 color="bg-amber-100 text-amber-600 dark:bg-amber-950/40 dark:text-amber-400"
                 icon={Clock}
               />
-              <ResourceRow
-                label="Webhook Health"
-                value={webhookStats?.processed ?? 0}
-                hint="Processed events"
-                color="bg-violet-100 text-violet-600 dark:bg-violet-950/40 dark:text-violet-400"
-                icon={Webhook}
-              />
+              {isAdmin && (
+                <ResourceRow
+                  label="Webhook Health"
+                  value={webhookStats?.processed ?? 0}
+                  hint="Processed events"
+                  color="bg-violet-100 text-violet-600 dark:bg-violet-950/40 dark:text-violet-400"
+                  icon={Webhook}
+                />
+              )}
             </div>
           </div>
         </div>
@@ -407,9 +409,9 @@ export default function Home() {
               caption="New incoming leads"
               value={isLoading ? "—" : (stats?.leads.todayReceived ?? 0)}
               icon={Zap}
-              iconBg="bg-orange-100 dark:bg-orange-950/40"
-              iconColor="text-orange-600 dark:text-orange-400"
-              numberColor="text-orange-600 dark:text-orange-400"
+              iconBg="bg-indigo-100 dark:bg-indigo-950/40"
+              iconColor="text-indigo-600 dark:text-indigo-400"
+              numberColor="text-indigo-600 dark:text-indigo-400"
             />
             <LiveKpiCard
               title="Sent Today"
@@ -434,9 +436,9 @@ export default function Home() {
               caption="Need a retry"
               value={isLoading ? "—" : (stats?.todayIntegrationLeads?.leadsWithFailedDeliveryToday ?? 0)}
               icon={AlertTriangle}
-              iconBg="bg-violet-100 dark:bg-violet-950/40"
-              iconColor="text-violet-600 dark:text-violet-400"
-              numberColor="text-violet-600 dark:text-violet-400"
+              iconBg="bg-rose-100 dark:bg-rose-950/40"
+              iconColor="text-rose-600 dark:text-rose-400"
+              numberColor="text-rose-600 dark:text-rose-400"
             />
           </div>
         </div>
