@@ -27,9 +27,49 @@ function exportNameForSlug(slug: string): string {
 const FETCH_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
+/**
+ * In-memory cache for proxied brand logos (Bosqich 4 of the icon system
+ * modernization). Without this, every page load that resolves an affiliate
+ * without `apps.iconUrl` fires three external requests (Clearbit → Google
+ * favicons → DuckDuckGo). The cache key is the resolved brand domain so
+ * the same logo is reused across different appKeys that map to the same
+ * domain. TTL is short enough that a brand redesign propagates within a
+ * day, long enough to absorb the rendering bursts during admin sessions.
+ *
+ * Cap kept small — these are admin-facing dashboards, not a CDN; we'd
+ * rather evict and re-fetch than balloon the process heap.
+ */
+type CachedLogo = { buf: Buffer; contentType: string; expiresAt: number };
+const LOGO_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+const LOGO_CACHE_MAX_ENTRIES = 128;
+const logoCache = new Map<string, CachedLogo>();
+
+function readCachedLogo(domain: string): CachedLogo | null {
+  const hit = logoCache.get(domain);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    logoCache.delete(domain);
+    return null;
+  }
+  // Refresh insertion order (LRU touch).
+  logoCache.delete(domain);
+  logoCache.set(domain, hit);
+  return hit;
+}
+
+function writeCachedLogo(domain: string, buf: Buffer, contentType: string): void {
+  if (logoCache.size >= LOGO_CACHE_MAX_ENTRIES) {
+    const oldest = logoCache.keys().next().value;
+    if (oldest) logoCache.delete(oldest);
+  }
+  logoCache.set(domain, { buf, contentType, expiresAt: Date.now() + LOGO_CACHE_TTL_MS });
+}
+
 async function fetchLogoBytes(
   domain: string,
 ): Promise<{ buf: Buffer; contentType: string } | null> {
+  const cached = readCachedLogo(domain);
+  if (cached) return { buf: cached.buf, contentType: cached.contentType };
   const tryFetch = async (url: string): Promise<{ buf: Buffer; contentType: string } | null> => {
     try {
       const r = await fetch(url, {
@@ -50,14 +90,21 @@ async function fetchLogoBytes(
 
   // Clearbit often 404s / is deprecated for public use — don't stop there.
   let got = await tryFetch(`https://logo.clearbit.com/${domain}`);
-  if (got) return got;
+  if (got) {
+    writeCachedLogo(domain, got.buf, got.contentType);
+    return got;
+  }
 
   got = await tryFetch(
     `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`,
   );
-  if (got) return got;
+  if (got) {
+    writeCachedLogo(domain, got.buf, got.contentType);
+    return got;
+  }
 
   got = await tryFetch(`https://icons.duckduckgo.com/ip3/${domain}.ico`);
+  if (got) writeCachedLogo(domain, got.buf, got.contentType);
   return got;
 }
 
@@ -68,7 +115,9 @@ async function proxyRasterBrand(domain: string, res: Response): Promise<void> {
     return;
   }
   res.setHeader("Content-Type", got.contentType);
-  res.setHeader("Cache-Control", "public, max-age=86400");
+  // 7 days browser/CDN cache. Brand redesigns are rare; admins can always
+  // override with `apps.iconUrl` (Bosqich 2) when they need an immediate flip.
+  res.setHeader("Cache-Control", "public, max-age=604800, stale-while-revalidate=86400");
   res.status(200).send(got.buf);
 }
 
