@@ -40,6 +40,8 @@ describe("app registry (Phase 2 manifests)", () => {
         "hubspot",
         "kommo",
         "pipedrive",
+        // Universal HTTP — consolidates webhook-json / plain-url / crm-generic.
+        "http-request",
       ].sort(),
     );
   });

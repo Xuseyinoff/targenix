@@ -14,6 +14,7 @@ import { telegramAdapter } from "./adapters/telegramAdapter";
 import { googleSheetsAdapter } from "./adapters/googleSheetsAdapter";
 import { httpApiKeyAdapter } from "./adapters/httpApiKeyAdapter";
 import { httpOAuth2Adapter } from "./adapters/httpOAuth2Adapter";
+import { httpRequestAdapter } from "./adapters/httpRequestAdapter";
 
 registerAdapter("plain-url", plainUrlAdapter);
 registerAdapter("dynamic-template", dynamicTemplateAdapter);
@@ -21,3 +22,4 @@ registerAdapter("telegram", telegramAdapter);
 registerAdapter("google-sheets", googleSheetsAdapter);
 registerAdapter("http-api-key", httpApiKeyAdapter);
 registerAdapter("http-oauth2", httpOAuth2Adapter);
+registerAdapter("http-request", httpRequestAdapter);

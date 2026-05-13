@@ -31,6 +31,8 @@ import { amocrmApp } from "./amocrm";
 import { hubspotApp } from "./hubspot";
 import { kommoApp } from "./kommo";
 import { pipedriveApp } from "./pipedrive";
+// Universal HTTP — consolidates webhook-json / plain-url / crm-generic.
+import { httpRequestApp } from "./httpRequest";
 
 registerApp(telegramApp);
 registerApp(googleSheetsApp);
@@ -48,3 +50,4 @@ registerApp(amocrmApp);
 registerApp(hubspotApp);
 registerApp(kommoApp);
 registerApp(pipedriveApp);
+registerApp(httpRequestApp);
