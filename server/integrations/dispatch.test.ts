@@ -313,10 +313,17 @@ describe("dispatchDelivery — adapter resolution + input building", () => {
     });
   });
 
-  // ── 8. plain-url fallback (no targetWebsite) ─────────────────────────────
+  // ── 8. http-request fallback (no targetWebsite) ──────────────────────────
+  // Phase 4 of the http-refactor: the `!tw` fallback used to route to the
+  // (now-retired) plain-url adapter. The universal http-request adapter
+  // takes over — it reads its config from `tw.templateConfig` rather than
+  // from `integration.config`, so when targetWebsite is null the adapter
+  // simply gets an empty config and the surrounding pipeline records the
+  // delivery as adapterKey="http-request". Prod audit at Phase 4 time
+  // confirmed 0 legacy integrations exercise this path.
 
-  it("falls back to plain-url adapter with integration config when targetWebsite is null", async () => {
-    const spy = install("plain-url", { success: true });
+  it("falls back to http-request adapter when targetWebsite is null", async () => {
+    const spy = install("http-request", { success: true });
 
     const cfg = { targetUrl: "https://catch.example/hook", headers: {} };
     const outcome = await dispatchDelivery(
@@ -325,9 +332,7 @@ describe("dispatchDelivery — adapter resolution + input building", () => {
     );
 
     expect(spy.calls).toHaveLength(1);
-    expect(spy.calls[0]!.config).toBe(cfg);
-    expect(outcome.targetUrlUsed).toBe("https://catch.example/hook");
-    expect(outcome.adapterKey).toBe("plain-url");
+    expect(outcome.adapterKey).toBe("http-request");
   });
 
   // ── 9. targetUrlUsed for dynamic-template comes from denormalized tw.url ──

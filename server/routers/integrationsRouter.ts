@@ -528,13 +528,12 @@ async function sendTestLeadToDestination(args: {
 
   // Manifest-driven destinations (http-api-key / http-oauth2) for rows that
   // have no templateId — e.g. hubspot OAuth rows where appKey alone steers
-  // delivery. Route by appKey to mirror resolveAdapterKey().
+  // delivery. Route by appKey to mirror resolveAdapterKey(). The retired
+  // webhook-json / crm-generic keys are intentionally absent (Phase 4).
   const apiKeyApps = new Set([
     "eskiz-sms",
     "playmobile-sms",
     "openai",
-    "crm-generic",
-    "webhook-json",
     "bitrix24",
     "amocrm",
   ]);
@@ -566,6 +565,18 @@ async function sendTestLeadToDestination(args: {
         userId,
         connectionId: tw.connectionId ?? null,
       },
+      testLead,
+    );
+  }
+
+  // Universal HTTP — appKey="http-request" (also catches the legacy
+  // "plain-url" sentinel routed through this adapter, see resolveAdapterKey).
+  if (tw.appKey === "http-request" || tw.appKey === "plain-url") {
+    const adapter = getAdapter("http-request");
+    if (!adapter) throw new Error("Adapter not found: http-request");
+    const tplCfg = (tw.templateConfig ?? {}) as Record<string, unknown>;
+    return adapter.send(
+      { ...tplCfg, leadRow: { createdAt: testLeadTimestamp } },
       testLead,
     );
   }

@@ -26,21 +26,19 @@ describe("app registry (Phase 2 manifests)", () => {
         // Core
         "dynamic-template",
         "google-sheets",
-        "plain-url",
         "telegram",
         // Phase 9 — manifest-driven HTTP API-key apps
         "amocrm",
         "bitrix24",
-        "crm-generic",
         "eskiz-sms",
         "openai",
         "playmobile-sms",
-        "webhook-json",
         // Phase 12 — OAuth2 CRM apps
         "hubspot",
         "kommo",
         "pipedrive",
-        // Universal HTTP — consolidates webhook-json / plain-url / crm-generic.
+        // Universal HTTP — supersedes the retired webhook-json / plain-url /
+        // crm-generic apps (Phase 4 of the http-refactor).
         "http-request",
       ].sort(),
     );
@@ -59,7 +57,7 @@ describe("app registry (Phase 2 manifests)", () => {
   it("public apps expose expected connection types", () => {
     const telegram = getApp("telegram");
     const sheets = getApp("google-sheets");
-    const http = getApp("plain-url");
+    const http = getApp("http-request");
     const dyn = getApp("dynamic-template");
 
     expect(telegram?.connectionType).toBe("telegram_bot");

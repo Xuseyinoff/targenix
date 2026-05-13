@@ -25,9 +25,7 @@ const HTTP_API_KEY_APP_KEYS = new Set([
   "eskiz-sms",
   "playmobile-sms",
   "openai",
-  "crm-generic",
   // Phase 11
-  "webhook-json",
   "bitrix24",
   "amocrm",
 ]);
@@ -51,7 +49,10 @@ export function resolveAdapterKey(
   // 2026-05-12: 0 production rows). Only LEAD_ROUTING reaches this fn now.
   void integrationType;
 
-  if (!tw) return "plain-url";
+  // Phase 4 of the http-refactor — plain-url adapter retired. The universal
+  // `http-request` adapter is the new default fallback; it handles empty
+  // configs gracefully (URL-missing returns a validation DeliveryResult).
+  if (!tw) return "http-request";
 
   const appKeyRaw = tw.appKey;
   const appKeyNorm =
@@ -71,12 +72,12 @@ export function resolveAdapterKey(
     }
     if (effectiveKey === "telegram") return "telegram";
     if (effectiveKey === "google-sheets" || effectiveKey === "google_sheets") return "google-sheets";
-    // Sentinel written by the NOT NULL backfill for destinations that had no templateType.
-    if (effectiveKey === "plain-url") return "plain-url";
     // Universal HTTP — consolidates webhook-json / plain-url / crm-generic
-    // behind one manifest + adapter (httpRequestAdapter). Phase 1 of the
-    // http-refactor; see MIGRATION_PLAN_http_refactor.md.
-    if (effectiveKey === "http-request") return "http-request";
+    // behind one manifest + adapter (httpRequestAdapter). Phase 4 of the
+    // http-refactor; see MIGRATION_PLAN_http_refactor.md. Legacy "plain-url"
+    // sentinel is also routed here so any latent backfilled row keeps
+    // delivering after the plain-url adapter is retired.
+    if (effectiveKey === "http-request" || effectiveKey === "plain-url") return "http-request";
     // Phase 9 — manifest-driven HTTP api_key apps (no destination_templates row needed).
     if (HTTP_API_KEY_APP_KEYS.has(effectiveKey)) return "http-api-key";
     // Phase 12 — OAuth2 CRM apps (token fetched via getValidAccessToken).
@@ -109,8 +110,8 @@ export function resolveAdapterKey(
       path: "LEGACY_DEFAULT" as const,
       appKey: tw.appKey ?? null,
       templateId: tw.templateId,
-      note: "appKey missing — falling through to plain-url default",
+      note: "appKey missing — falling through to http-request default",
     });
   }
-  return "plain-url";
+  return "http-request";
 }

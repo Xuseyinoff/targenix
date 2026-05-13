@@ -9,8 +9,8 @@ describe("resolveAdapterKey — Stage 2 appKey", () => {
     else process.env.STAGE2_ADAPTER_LOG = orig;
   });
 
-  it("LEAD no tw -> plain-url", () => {
-    expect(resolveAdapterKey("LEAD_ROUTING", null)).toBe("plain-url");
+  it("LEAD no tw -> http-request", () => {
+    expect(resolveAdapterKey("LEAD_ROUTING", null)).toBe("http-request");
   });
 
   it("LEAD NEW: appKey mgoods -> dynamic-template (affiliate app)", () => {
@@ -64,35 +64,35 @@ describe("resolveAdapterKey — Stage 2 appKey", () => {
   // confirming 0 rows had a null or 'unknown' appKey. Tests now document
   // the post-sunset behaviour: appKey is mandatory, anything without one
   // (or with the `unknown` backfill sentinel) falls into the safe
-  // plain-url default.
-  it("LEAD: missing appKey → plain-url default (4.3 sunset)", () => {
+  // http-request default (was plain-url before Phase 4 retired it).
+  it("LEAD: missing appKey → http-request default (4.3 sunset)", () => {
     expect(
       resolveAdapterKey("LEAD_ROUTING", { templateId: 7, templateType: "custom", appKey: null }),
-    ).toBe("plain-url");
+    ).toBe("http-request");
   });
 
-  it("LEAD: missing appKey + no templateId → plain-url (4.3 sunset)", () => {
+  it("LEAD: missing appKey + no templateId → http-request (4.3 sunset)", () => {
     expect(
       resolveAdapterKey("LEAD_ROUTING", { templateId: null, templateType: "sotuvchi", appKey: null }),
-    ).toBe("plain-url");
+    ).toBe("http-request");
   });
 
-  it("LEAD: appKey='unknown' sentinel → plain-url (4.3 sunset)", () => {
+  it("LEAD: appKey='unknown' sentinel → http-request (4.3 sunset)", () => {
     expect(
       resolveAdapterKey("LEAD_ROUTING", {
         templateId: null,
         templateType: "sotuvchi",
         appKey: "unknown",
       }),
-    ).toBe("plain-url");
+    ).toBe("http-request");
   });
 
-  it("LEAD: templateType=telegram without appKey → plain-url (4.3 sunset)", () => {
+  it("LEAD: templateType=telegram without appKey → http-request (4.3 sunset)", () => {
     // templateType is no longer a routing signal. Setting the appKey is
     // mandatory for any destination type the system knows about.
     expect(
       resolveAdapterKey("LEAD_ROUTING", { templateId: null, templateType: "telegram", appKey: null }),
-    ).toBe("plain-url");
+    ).toBe("http-request");
   });
 
   it("STAGE2_ADAPTER_LOG logs when set", () => {

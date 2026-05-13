@@ -8,7 +8,6 @@
  */
 
 import { registerAdapter } from "./registry";
-import { plainUrlAdapter } from "./adapters/plainUrlAdapter";
 import { dynamicTemplateAdapter } from "./adapters/dynamicTemplateAdapter";
 import { telegramAdapter } from "./adapters/telegramAdapter";
 import { googleSheetsAdapter } from "./adapters/googleSheetsAdapter";
@@ -16,7 +15,6 @@ import { httpApiKeyAdapter } from "./adapters/httpApiKeyAdapter";
 import { httpOAuth2Adapter } from "./adapters/httpOAuth2Adapter";
 import { httpRequestAdapter } from "./adapters/httpRequestAdapter";
 
-registerAdapter("plain-url", plainUrlAdapter);
 registerAdapter("dynamic-template", dynamicTemplateAdapter);
 registerAdapter("telegram", telegramAdapter);
 registerAdapter("google-sheets", googleSheetsAdapter);

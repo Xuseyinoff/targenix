@@ -1,10 +1,14 @@
 /**
  * Unit tests for the pure payload builder used by DestinationCreatorDrawer.
  *
- * These tests cover the three supported app keys (telegram, google-sheets,
- * plain-url) and the shared coercion / header-parsing helpers. No React,
- * tRPC, or DOM — the module is 100% pure so vitest in the default node
- * environment is enough.
+ * Covers the dedicated-templateType paths (telegram, google-sheets) and the
+ * shared coercion / header-parsing helpers. No React, tRPC, or DOM — the
+ * module is 100% pure so vitest in the default node environment is enough.
+ *
+ * The previous "plain-url (custom webhook)" suite was retired in Phase 4 of
+ * the http-refactor along with the plain-url manifest. The universal
+ * http-request app's payload is exercised end-to-end by the integration
+ * tests in `server/integrations/adapters/httpRequestAdapter.test.ts`.
  */
 
 import { describe, it, expect } from "vitest";
@@ -21,13 +25,14 @@ describe("APP_KEY_TO_TEMPLATE_TYPE / isSupportedAppKey", () => {
   it("maps every supported key to a concrete templateType", () => {
     expect(APP_KEY_TO_TEMPLATE_TYPE.telegram).toBe("telegram");
     expect(APP_KEY_TO_TEMPLATE_TYPE["google-sheets"]).toBe("google-sheets");
-    expect(APP_KEY_TO_TEMPLATE_TYPE["plain-url"]).toBe("custom");
+    expect(APP_KEY_TO_TEMPLATE_TYPE["http-request"]).toBe("http-request");
   });
 
   it("narrows unknown keys via isSupportedAppKey", () => {
     expect(isSupportedAppKey("telegram")).toBe(true);
     expect(isSupportedAppKey("google-sheets")).toBe(true);
-    expect(isSupportedAppKey("plain-url")).toBe(true);
+    expect(isSupportedAppKey("http-request")).toBe(true);
+    expect(isSupportedAppKey("plain-url")).toBe(false);
     expect(isSupportedAppKey("unknown")).toBe(false);
     expect(isSupportedAppKey("")).toBe(false);
   });
@@ -206,217 +211,6 @@ describe("buildCreatePayload — google-sheets", () => {
     }
     expect(payload.mapping).toEqual({});
     expect(payload.sheetHeaders).toEqual([]);
-  });
-});
-
-describe("buildCreatePayload — plain-url (custom webhook)", () => {
-  it("defaults method to POST and contentType to json", () => {
-    const payload = buildCreatePayload("plain-url", "Hook", {
-      url: "https://example.com/hook",
-    });
-    expect(payload).toEqual({
-      name: "Hook",
-      appKey: "custom",
-      url: "https://example.com/hook",
-      method: "POST",
-      contentType: "json",
-    });
-  });
-
-  it("accepts GET, form-urlencoded, and multipart", () => {
-    const getPayload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com",
-      method: "GET",
-    });
-    expect(getPayload).toMatchObject({ method: "GET" });
-
-    const formPayload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com",
-      contentType: "form-urlencoded",
-    });
-    expect(formPayload).toMatchObject({ contentType: "form-urlencoded" });
-
-    const multipart = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com",
-      contentType: "multipart",
-    });
-    expect(multipart).toMatchObject({ contentType: "multipart" });
-  });
-
-  it("coerces unknown method/contentType back to defaults", () => {
-    const payload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com",
-      method: "PATCH",
-      contentType: "xml",
-    });
-    expect(payload).toMatchObject({ method: "POST", contentType: "json" });
-  });
-
-  it("includes headers when valid JSON is provided", () => {
-    const payload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com",
-      headers: '{"Authorization":"Bearer abc"}',
-    });
-    if (payload.appKey !== "custom") {
-      throw new Error("expected custom payload");
-    }
-    expect(payload.headers).toEqual({ Authorization: "Bearer abc" });
-  });
-
-  it("surfaces invalid headers JSON as a descriptive error", () => {
-    expect(() =>
-      buildCreatePayload("plain-url", "x", {
-        url: "https://example.com",
-        headers: "{not json",
-      }),
-    ).toThrow(/Invalid headers JSON/);
-  });
-
-  // ── Repeatable "+ Add header" output (Make.com-style row builder) ─────────
-  it("converts a RepeatableField array of {name, value} rows into a Record", () => {
-    const payload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com",
-      headers: [
-        { name: "Authorization", value: "Bearer abc" },
-        { name: "X-Tag", value: "a" },
-      ],
-    });
-    if (payload.appKey !== "custom") {
-      throw new Error("expected custom payload");
-    }
-    expect(payload.headers).toEqual({
-      Authorization: "Bearer abc",
-      "X-Tag": "a",
-    });
-  });
-
-  it("drops fully-blank header rows and omits headers entirely when none remain", () => {
-    const payload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com",
-      headers: [{ name: "", value: "" }, { name: "", value: "" }],
-    });
-    if (payload.appKey !== "custom") {
-      throw new Error("expected custom payload");
-    }
-    expect(payload.headers).toBeUndefined();
-  });
-
-  it("rejects a header row with a value but no name", () => {
-    expect(() =>
-      buildCreatePayload("plain-url", "x", {
-        url: "https://example.com",
-        headers: [{ name: "", value: "Bearer abc" }],
-      }),
-    ).toThrow(/missing a name/);
-  });
-
-  // ── Body fields for form-urlencoded / multipart (Make.com parity) ────────
-  it("passes bodyFields through when contentType is form-urlencoded", () => {
-    const payload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com",
-      contentType: "form-urlencoded",
-      bodyFields: [
-        { key: "full_name", value: "{{full_name}}" },
-        { key: "phone", value: "{{phone_number}}" },
-      ],
-    });
-    if (payload.appKey !== "custom") {
-      throw new Error("expected custom payload");
-    }
-    expect(payload.contentType).toBe("form-urlencoded");
-    expect(payload.bodyFields).toEqual([
-      { key: "full_name", value: "{{full_name}}" },
-      { key: "phone", value: "{{phone_number}}" },
-    ]);
-    // bodyTemplate must NOT leak when the form is in field-rows mode —
-    // stale textarea content would otherwise survive a contentType flip.
-    expect(payload).not.toHaveProperty("bodyTemplate");
-  });
-
-  it("drops blank body-field rows but rejects a valued row without a name", () => {
-    const ok = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com",
-      contentType: "multipart",
-      bodyFields: [
-        { key: "full_name", value: "John" },
-        { key: "", value: "" }, // seed row — silently ignored
-      ],
-    });
-    if (ok.appKey !== "custom") throw new Error();
-    expect(ok.bodyFields).toEqual([{ key: "full_name", value: "John" }]);
-
-    expect(() =>
-      buildCreatePayload("plain-url", "x", {
-        url: "https://example.com",
-        contentType: "multipart",
-        bodyFields: [{ key: "", value: "orphan" }],
-      }),
-    ).toThrow(/missing a name/);
-  });
-
-  it("swaps body payload key when the user flips between JSON and form rows", () => {
-    // JSON mode → bodyTemplate lands, bodyFields is suppressed.
-    const jsonPayload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com",
-      contentType: "json",
-      bodyTemplate: '{"x":1}',
-      bodyFields: [{ key: "stale", value: "value" }],
-    });
-    if (jsonPayload.appKey !== "custom") throw new Error();
-    expect(jsonPayload.bodyTemplate).toBe('{"x":1}');
-    expect(jsonPayload).not.toHaveProperty("bodyFields");
-
-    // Form mode → the reverse.
-    const formPayload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com",
-      contentType: "form-urlencoded",
-      bodyTemplate: '{"should-not-leak":1}',
-      bodyFields: [{ key: "real", value: "value" }],
-    });
-    if (formPayload.appKey !== "custom") throw new Error();
-    expect(formPayload.bodyFields).toEqual([{ key: "real", value: "value" }]);
-    expect(formPayload).not.toHaveProperty("bodyTemplate");
-  });
-
-  it("appends queryParams rows to the URL as proper query string", () => {
-    const payload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com/hook",
-      queryParams: [
-        { name: "utm_source", value: "facebook" },
-        { name: "lead", value: "{{full_name}}" },
-      ],
-    });
-    if (payload.appKey !== "custom") throw new Error();
-    expect(payload.url).toBe(
-      "https://example.com/hook?utm_source=facebook&lead=%7B%7Bfull_name%7D%7D",
-    );
-  });
-
-  it("preserves existing URL query when appending queryParams rows", () => {
-    const payload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com/hook?v=1",
-      queryParams: [{ name: "utm_source", value: "fb" }],
-    });
-    if (payload.appKey !== "custom") throw new Error();
-    expect(payload.url).toBe("https://example.com/hook?v=1&utm_source=fb");
-  });
-
-  it("omits query append when every row is blank", () => {
-    const payload = buildCreatePayload("plain-url", "x", {
-      url: "https://example.com/hook",
-      queryParams: [{ name: "", value: "" }],
-    });
-    if (payload.appKey !== "custom") throw new Error();
-    expect(payload.url).toBe("https://example.com/hook");
-  });
-
-  it("requires a URL", () => {
-    expect(() => buildCreatePayload("plain-url", "x", {})).toThrow(
-      /URL is required/,
-    );
-    expect(() =>
-      buildCreatePayload("plain-url", "x", { url: "   " }),
-    ).toThrow(/URL is required/);
   });
 });
 

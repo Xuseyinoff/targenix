@@ -73,10 +73,13 @@ type DispatchType =
   | "http-request";
 
 /** appKeys that funnel through the http-api-key create branch (HTTP_API_KEY +
- *  OAuth2 CRM manifests — both share the same create surface). */
+ *  OAuth2 CRM manifests — both share the same create surface). The retired
+ *  webhook-json / crm-generic keys are intentionally absent: every legacy
+ *  destination using them was either zero in prod (audit) or has been
+ *  migrated to `http-request` via tooling/migrate-to-http-request.mjs. */
 const HTTP_API_KEY_DISPATCH_APP_KEYS: ReadonlySet<string> = new Set([
-  "eskiz-sms", "playmobile-sms", "openai", "crm-generic",
-  "webhook-json", "bitrix24", "amocrm",
+  "eskiz-sms", "playmobile-sms", "openai",
+  "bitrix24", "amocrm",
   "hubspot", "kommo", "pipedrive",
 ]);
 

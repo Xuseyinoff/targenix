@@ -27,24 +27,21 @@ export const APP_KEY_TO_TEMPLATE_TYPE = {
   // Dedicated template types
   telegram:        "telegram",
   "google-sheets": "google-sheets",
-  "plain-url":     "custom",
   // HTTP API-key apps — all routed through the generic http-api-key handler
   "eskiz-sms":     "http-api-key",
   "playmobile-sms":"http-api-key",
   "openai":        "http-api-key",
-  "crm-generic":   "http-api-key",
-  "webhook-json":  "http-api-key",
   "bitrix24":      "http-api-key",
   "amocrm":        "http-api-key",
   // OAuth2 CRM apps — same templateType; adapter resolved by appKey at delivery
   "hubspot":       "http-api-key",
   "kommo":         "http-api-key",
   "pipedrive":     "http-api-key",
-  // Universal HTTP — Phase 1 of the http-refactor. The server's
-  // httpRequestAdapter reads its config from `templateConfig` directly, so
-  // the payload follows the same generic shape as http-api-key apps.
+  // Universal HTTP — supersedes the retired webhook-json / plain-url /
+  // crm-generic apps. The server's httpRequestAdapter reads its config
+  // from `templateConfig` directly.
   "http-request":  "http-request",
-} as const satisfies Record<string, "telegram" | "google-sheets" | "custom" | "http-api-key" | "http-request">;
+} as const satisfies Record<string, "telegram" | "google-sheets" | "http-api-key" | "http-request">;
 
 export type SupportedAppKey = keyof typeof APP_KEY_TO_TEMPLATE_TYPE;
 
@@ -78,16 +75,6 @@ export type CreatePayload =
       sheetName: string;
       sheetHeaders?: string[];
       mapping?: Record<string, string>;
-    }
-  | {
-      name: string;
-      appKey: "custom";
-      url: string;
-      method?: "POST" | "GET";
-      contentType?: "json" | "form" | "form-urlencoded" | "multipart";
-      bodyTemplate?: string;
-      bodyFields?: Array<{ key: string; value: string }>;
-      headers?: Record<string, string>;
     }
   | {
       /** Generic handler for all manifest-driven http-api-key apps —
@@ -147,66 +134,6 @@ export function buildCreatePayload(
       sheetName,
       mapping,
       sheetHeaders: Object.keys(mapping),
-    };
-  }
-
-  if (appKey === "plain-url") {
-    const rawUrl = asString(v.url).trim();
-    if (!rawUrl) throw new Error("URL is required.");
-    const method = asString(v.method) === "GET" ? "GET" : "POST";
-    const contentTypeRaw = asString(v.contentType);
-    const contentType: "json" | "form-urlencoded" | "multipart" =
-      contentTypeRaw === "form-urlencoded" || contentTypeRaw === "multipart"
-        ? (contentTypeRaw as "form-urlencoded" | "multipart")
-        : "json";
-
-    // Headers switched from a JSON-blob `code` field to a Make.com-style
-    // "+ Add header" row builder (type: "repeatable"). To keep the server
-    // contract identical we accept BOTH shapes:
-    //   • Array<{ name, value }>  (new row-builder output)
-    //   • string (legacy raw JSON) (persisted templates, unit tests)
-    // and always emit Record<string, string> to destinations.create.
-    const headers = Array.isArray(v.headers)
-      ? collectHeadersArray(v.headers as Array<Record<string, unknown>>)
-      : parseHeadersJson(asString(v.headers));
-
-    // Query string is a repeatable too, but the server schema has no
-    // `queryParams` field — we merge onto the URL here instead. Existing
-    // query in the URL is preserved (Make.com does the same). Blank rows
-    // drop silently so "+ Add parameter" doesn't force users to remove the
-    // empty seed row before saving.
-    const url = Array.isArray(v.queryParams)
-      ? appendQueryParams(rawUrl, v.queryParams as Array<Record<string, unknown>>)
-      : rawUrl;
-
-    // Body: JSON mode uses `bodyTemplate` (string). Form-urlencoded /
-    // multipart use `bodyFields` (array of {key, value}) — the EXACT shape
-    // affiliateService.buildCustomBody reads at delivery time, so we pass
-    // it straight through without translation.
-    const bodyTemplate = asString(v.bodyTemplate);
-    const bodyFields =
-      method === "POST" && (contentType === "form-urlencoded" || contentType === "multipart")
-        ? collectBodyFieldsArray(
-            Array.isArray(v.bodyFields)
-              ? (v.bodyFields as Array<Record<string, unknown>>)
-              : [],
-          )
-        : undefined;
-
-    return {
-      name,
-      appKey: "custom",
-      url,
-      method,
-      contentType,
-      // Only surface the body key that matches the current contentType —
-      // avoids sending a stale JSON template when the user switched to
-      // form-urlencoded but never cleared the old textarea value.
-      ...(method === "POST" && contentType === "json" && bodyTemplate
-        ? { bodyTemplate }
-        : {}),
-      ...(bodyFields && bodyFields.length > 0 ? { bodyFields } : {}),
-      ...(headers ? { headers } : {}),
     };
   }
 
