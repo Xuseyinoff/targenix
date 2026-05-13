@@ -17,7 +17,7 @@
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { NOT_ADMIN_ERR_MSG } from "@shared/const";
-import { protectedProcedure, router } from "../_core/trpc";
+import { adminAuditProcedureMiddleware, protectedProcedure, router } from "../_core/trpc";
 import { getDb, type DbClient } from "../db";
 import { appActions, apps, destinationTemplates } from "../../drizzle/schema";
 import { and, eq } from "drizzle-orm";
@@ -34,14 +34,21 @@ import { slugifyAppKey } from "../../shared/slugify";
  * Allow admins + temporarily-whitelisted users (see shared/tempAccess.ts) to
  * manage destination templates. Replace this with `adminProcedure` again once
  * the temporary access window closes (see shared/tempAccess.ts).
+ *
+ * Audit: pipes through the same admin-audit middleware as `adminProcedure`,
+ * so non-admin actors using the temp-access window are still captured in
+ * `admin_audit_log`. The widened actor surface makes auditing MORE important
+ * here, not less — every template mutation by a non-admin must be traceable.
  */
-const templateEditorProcedure = protectedProcedure.use(async (opts) => {
-  const { ctx, next } = opts;
-  if (!canManageTemplates(ctx.user)) {
-    throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
-  }
-  return next({ ctx });
-});
+const templateEditorProcedure = protectedProcedure
+  .use(async (opts) => {
+    const { ctx, next } = opts;
+    if (!canManageTemplates(ctx.user)) {
+      throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+    }
+    return next({ ctx });
+  })
+  .use(adminAuditProcedureMiddleware);
 
 // ─── Shared Zod schemas ───────────────────────────────────────────────────────
 

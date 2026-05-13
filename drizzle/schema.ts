@@ -1253,3 +1253,55 @@ export const circuitBreakerEvents = mysqlTable("circuit_breaker_events", {
 
 export type CircuitBreakerEvent       = typeof circuitBreakerEvents.$inferSelect;
 export type InsertCircuitBreakerEvent = typeof circuitBreakerEvents.$inferInsert;
+
+// ─── Admin audit log ──────────────────────────────────────────────────────────
+//
+// Roadmap #12. Captures every admin-protected tRPC mutation so we have a
+// forensic "who touched what, when" record for the global tables admins can
+// write to (apps, app_actions, destination_templates) and the privileged
+// trigger endpoints (DLQ replay, retry-all, backfill).
+//
+// Source of truth is the tRPC audit middleware in server/_core/trpc.ts —
+// any new admin procedure inherits auditing automatically the moment it
+// is built on top of `adminProcedure` (and `templateEditorProcedure`,
+// which has been wired in alongside).
+//
+// Retention: append-only. No TTL today; rotation can be added later when
+// volume warrants it (admin actions are low-frequency by design).
+export const adminAuditLogs = mysqlTable("admin_audit_log", {
+  id:           int("id").autoincrement().primaryKey(),
+  /** The acting admin (ctx.user.id at call time). Not an FK so the row
+   *  survives if the user is ever deleted. */
+  adminId:      int("adminId").notNull(),
+  /** tRPC procedure path — e.g. "adminApps.create", "adminDlq.replayBatch". */
+  path:         varchar("path", { length: 128 }).notNull(),
+  /** "mutation" today; "query" reserved for future opt-in read auditing. */
+  type:         varchar("type", { length: 16 }).notNull(),
+  /** Sanitized input payload. Secrets are stripped and large blobs
+   *  truncated by the audit middleware before insertion. NULL when the
+   *  procedure takes no input. */
+  input:        json("input").$type<Record<string, unknown> | null>(),
+  /** "success" | "failure". */
+  resultStatus: varchar("resultStatus", { length: 16 }).notNull(),
+  /** TRPCError code on failure (e.g. "FORBIDDEN", "BAD_REQUEST"). NULL on success. */
+  errorCode:    varchar("errorCode", { length: 64 }),
+  /** First 500 chars of the error message on failure. NULL on success. */
+  errorMessage: varchar("errorMessage", { length: 500 }),
+  /** Server-side wall-clock duration of the procedure call, in milliseconds. */
+  durationMs:   int("durationMs").notNull().default(0),
+  /** Best-effort caller IP (from req.ip with Express's trust-proxy applied). */
+  ipAddress:    varchar("ipAddress", { length: 64 }),
+  /** Truncated User-Agent header — useful for distinguishing browser sessions
+   *  from CLI tooling in forensic reviews. */
+  userAgent:    varchar("userAgent", { length: 256 }),
+  createdAt:    timestamp("createdAt").defaultNow().notNull(),
+}, (t) => ({
+  /** Per-admin timeline — primary access pattern ("show me everything admin#3
+   *  did last week"). */
+  idxAdminCreated: index("idx_admin_audit_admin_created").on(t.adminId, t.createdAt),
+  /** Per-procedure timeline — for "who touched destination_templates lately". */
+  idxPathCreated:  index("idx_admin_audit_path_created").on(t.path, t.createdAt),
+}));
+
+export type AdminAuditLog       = typeof adminAuditLogs.$inferSelect;
+export type InsertAdminAuditLog = typeof adminAuditLogs.$inferInsert;

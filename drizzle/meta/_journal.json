@@ -540,6 +540,13 @@
       "when": 1779833280000,
       "tag": "0080_drop_facebook_oauth_states",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "5",
+      "when": 1778701605692,
+      "tag": "0081_admin_audit_log",
+      "breakpoints": true
     }
   ]
 }

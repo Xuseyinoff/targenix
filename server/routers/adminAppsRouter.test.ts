@@ -146,6 +146,7 @@ vi.mock("../db", () => ({ getDb: vi.fn() }));
 
 import { getDb } from "../db";
 import { adminAppsRouter } from "./adminAppsRouter";
+import { apps } from "../../drizzle/schema";
 import type { TrpcContext } from "../_core/context";
 import type { DbClient } from "../db";
 
@@ -218,7 +219,12 @@ describe("adminAppsRouter — create", () => {
     await expect(adminCaller(db).create(VALID_PAYLOAD)).rejects.toMatchObject({
       code: "CONFLICT",
     });
-    expect((db as any).insert).not.toHaveBeenCalled();
+    // Audit middleware writes a row to `admin_audit_log` on every admin
+    // mutation outcome (including failures — that's the whole point), so
+    // we can no longer assert "db.insert was never called". Assert what
+    // we actually care about: the duplicate-check short-circuited before
+    // any write to the `apps` table.
+    expect((db as any).insert).not.toHaveBeenCalledWith(apps);
   });
 
   it("11. DB null → INTERNAL_SERVER_ERROR", async () => {

@@ -3,6 +3,8 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import type { TrpcContext } from "./context";
 import { log } from "../services/appLogger";
+import { getDb } from "../db";
+import { recordAdminAction } from "../services/adminAuditService";
 
 const t = initTRPC.context<TrpcContext>().create({
   transformer: superjson,
@@ -77,6 +79,128 @@ const requireUser = t.middleware(async opts => {
 
 export const protectedProcedure = t.procedure.use(requireUser);
 
+/**
+ * Forensic audit middleware — wraps every admin-protected mutation with a
+ * row in `admin_audit_log` capturing (adminId, path, sanitized input,
+ * outcome, duration, ip, user-agent). Roadmap #12.
+ *
+ * Mutations are recorded always; queries are skipped because they're high-
+ * volume and rarely interesting for "who changed what". A future opt-in
+ * read-audit could record specific sensitive queries (e.g. exporting all
+ * user emails); the table schema already supports `type = "query"`.
+ *
+ * Failures are best-effort: a broken audit subsystem must not break admin
+ * functionality. The audit service itself catches its own DB errors.
+ *
+ * Also exported as `adminAuditProcedureMiddleware` so the temp-access
+ * `templateEditorProcedure` in adminTemplatesRouter can opt in without
+ * importing internals. The widened actor surface — admin-equivalent
+ * writes from a non-admin user — makes auditing MORE important there.
+ */
+const adminAuditMiddleware = t.middleware(async (opts) => {
+  const { ctx, next, path, type, getRawInput } = opts;
+  const start = Date.now();
+  const adminId = (ctx as TrpcContext).user?.id ?? null;
+
+  // Only mutations get audited today. Queries are too noisy and the cost
+  // of one extra DB write per query would dominate read latency.
+  const shouldAudit = type === "mutation" && adminId != null;
+
+  let rawInput: unknown = undefined;
+  if (shouldAudit) {
+    try {
+      rawInput = await getRawInput();
+    } catch {
+      // If we can't read the input (e.g. parse error before middleware runs),
+      // leave it null — the audit row is still useful for path+adminId+outcome.
+      rawInput = undefined;
+    }
+  }
+
+  try {
+    const result = await next();
+    if (shouldAudit) {
+      const durationMs = Date.now() - start;
+      void writeAuditRow({
+        adminId: adminId!,
+        path,
+        type,
+        rawInput,
+        outcome: { status: "success" },
+        durationMs,
+        ctx: ctx as TrpcContext,
+      });
+    }
+    return result;
+  } catch (err) {
+    if (shouldAudit) {
+      const durationMs = Date.now() - start;
+      const isTrpc = err instanceof TRPCError;
+      void writeAuditRow({
+        adminId: adminId!,
+        path,
+        type,
+        rawInput,
+        outcome: {
+          status: "failure",
+          errorCode: isTrpc ? err.code : "INTERNAL_SERVER_ERROR",
+          errorMessage: err instanceof Error ? err.message : String(err),
+        },
+        durationMs,
+        ctx: ctx as TrpcContext,
+      });
+    }
+    throw err;
+  }
+});
+
+interface AuditWriteParams {
+  adminId: number;
+  path: string;
+  type: "mutation" | "query";
+  rawInput: unknown;
+  outcome:
+    | { status: "success" }
+    | { status: "failure"; errorCode: string; errorMessage: string };
+  durationMs: number;
+  ctx: TrpcContext;
+}
+
+async function writeAuditRow(p: AuditWriteParams): Promise<void> {
+  try {
+    const db = await getDb();
+    if (!db) return; // DB not yet initialized — drop silently, app log already warned
+
+    const reqIp = (p.ctx.req?.ip ?? null) || null;
+    const reqUa = p.ctx.req?.headers?.["user-agent"] ?? null;
+    const userAgent = typeof reqUa === "string" ? reqUa : Array.isArray(reqUa) ? reqUa[0] : null;
+
+    await recordAdminAction(db, {
+      adminId: p.adminId,
+      path: p.path,
+      type: p.type,
+      input: p.rawInput,
+      resultStatus: p.outcome.status,
+      errorCode: p.outcome.status === "failure" ? p.outcome.errorCode : null,
+      errorMessage: p.outcome.status === "failure" ? p.outcome.errorMessage : null,
+      durationMs: p.durationMs,
+      ipAddress: reqIp,
+      userAgent,
+    });
+  } catch (err) {
+    void log.error(
+      "SYSTEM",
+      "admin audit middleware threw outside recordAdminAction",
+      { path: p.path, error: err instanceof Error ? err.message : String(err) },
+      null,
+      null,
+      p.adminId,
+    );
+  }
+}
+
+export const adminAuditProcedureMiddleware = adminAuditMiddleware;
+
 export const adminProcedure = t.procedure.use(
   t.middleware(async opts => {
     const { ctx, next } = opts;
@@ -92,4 +216,4 @@ export const adminProcedure = t.procedure.use(
       },
     });
   }),
-);
+).use(adminAuditMiddleware);
