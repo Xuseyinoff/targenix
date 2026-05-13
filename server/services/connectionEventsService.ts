@@ -35,7 +35,8 @@ export type ConnectionEventType =
   | "oauth_refreshed"   // OAuth token successfully refreshed
   | "oauth_refresh_failed" // invalid_grant or similar — connection becomes unusable
   | "owner_mismatch"    // SECURITY — cross-tenant access attempt detected
-  | "health_check_failed"; // background probe reported an error
+  | "health_check_failed" // background probe reported an error
+  | "notification_sent"; // user notified about a connection lifecycle event (e.g. expiration)
 
 export type ConnectionEventSource =
   | "user"
@@ -66,6 +67,21 @@ export async function appendConnectionEvent(
       source: params.source,
       details: params.details ?? null,
     });
+
+    // Side-effect: when the event represents a transition into "expired",
+    // notify the user. All three expiration paths (oauth_refresh_failed in
+    // connectionService, oauth_refresh_failed at refresh time, and the
+    // health-check sweep) funnel through this function, so one hook
+    // covers them uniformly. The notifier handles its own cooldown and
+    // never throws — we void-discard.
+    if (isTransitionToExpired(params)) {
+      const { notifyConnectionExpired } = await import("./connectionExpirationNotifier");
+      void notifyConnectionExpired(db, {
+        connectionId: params.connectionId,
+        userId: params.userId,
+        reason: deriveReason(params),
+      });
+    }
   } catch (err) {
     // Audit write failure is logged loudly but never blocks the main flow.
     void log.error(
@@ -81,6 +97,38 @@ export async function appendConnectionEvent(
       params.userId,
     );
   }
+}
+
+/**
+ * True when this event row represents a connection moving INTO the expired
+ * state (`details.to === "expired"`) FROM something other than expired.
+ * Only the three transition-bearing event types qualify — `created`,
+ * `renamed`, `disconnected`, `oauth_refreshed`, `owner_mismatch`, and
+ * `notification_sent` are never transitions to expired.
+ */
+function isTransitionToExpired(params: {
+  eventType: ConnectionEventType;
+  details?: Record<string, unknown>;
+}): boolean {
+  if (
+    params.eventType !== "status_changed" &&
+    params.eventType !== "oauth_refresh_failed" &&
+    params.eventType !== "health_check_failed"
+  ) {
+    return false;
+  }
+  const to = params.details?.to;
+  const from = params.details?.from;
+  return to === "expired" && from !== "expired";
+}
+
+function deriveReason(params: {
+  eventType: ConnectionEventType;
+  details?: Record<string, unknown>;
+}): string {
+  const explicit = params.details?.reason;
+  if (typeof explicit === "string" && explicit.length > 0) return explicit;
+  return params.eventType;
 }
 
 /**
