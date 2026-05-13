@@ -1,0 +1,26 @@
+-- ──────────────────────────────────────────────────────────────────────────
+-- Migration 0080 — drop legacy `facebook_oauth_states` table.
+--
+-- Sprint B (facebook_oauth_states Strangler Fig) final step:
+--   Step 1 (0658afa) — dual-write to universal `oauth_states`
+--   Step 2 (c72c7cb) — CSRF reads switched to universal table
+--   Step 4 (this commit) — legacy INSERTs / cleanup intervals removed
+--   Step 5 (this migration) — drop the now-orphan table
+--
+-- Preconditions (verified by repo audit at HEAD):
+--   1) No application code references `facebook_oauth_states` or
+--      `facebookOauthStates` outside of historical migrations (drizzle/00*.sql
+--      and meta snapshots) and tooling/ scripts.
+--   2) Live rows have a 10-minute TTL — any in-flight FB OAuth flow either
+--      already wrote to `oauth_states` (current code path) or the row is
+--      stale. No human-meaningful data is lost.
+--   3) No FK references this table:
+--        SELECT * FROM information_schema.KEY_COLUMN_USAGE
+--         WHERE TABLE_SCHEMA = DATABASE()
+--           AND REFERENCED_TABLE_NAME = 'facebook_oauth_states';
+--
+-- Idempotency: DROP TABLE IF EXISTS — safe to re-run.
+-- Rollback: see 0080_rollback_drop_facebook_oauth_states.sql.
+-- ──────────────────────────────────────────────────────────────────────────
+
+DROP TABLE IF EXISTS `facebook_oauth_states`;

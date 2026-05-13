@@ -11,9 +11,9 @@
 
 import type { Express, Request, Response } from "express";
 import { getDb } from "../db";
-import { facebookOauthStates, facebookAccounts, facebookConnections } from "../../drizzle/schema";
+import { facebookAccounts, facebookConnections } from "../../drizzle/schema";
 import { insertOAuthState, consumeOAuthState } from "../oauth/stateService";
-import { eq, and, lt } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { encrypt } from "../encryption";
 import { log } from "../services/appLogger";
 import {
@@ -84,18 +84,8 @@ function generateState(): string {
   return Array.from(array, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * Clean up expired OAuth states from DB (housekeeping).
- */
-async function cleanupExpiredStates(): Promise<void> {
-  try {
-    const db = await getDb();
-    if (!db) return;
-    await db.delete(facebookOauthStates).where(lt(facebookOauthStates.expiresAt, new Date()));
-  } catch {
-    // Non-critical — ignore cleanup errors
-  }
-}
+// Sprint B Step 4 — universal oauth_states cleanup is owned by
+// `scheduleCleanupExpiredStates` in stateService.ts; no per-table sweep needed.
 
 /**
  * Register the Facebook OAuth routes:
@@ -170,34 +160,15 @@ export function registerFacebookOAuthRoutes(app: Express): void {
         return;
       }
 
-      // Generate CSRF state token
+      // Sprint B Step 4 — universal oauth_states is now the sole source of truth.
       const state = generateState();
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-
-      // Sprint B Step 1 — dual-write to universal oauth_states. Best-effort:
-      // if the universal write errors, the legacy write below still runs and
-      // the integration flow stays functional. Step 2 flips the read path.
-      try {
-        await insertOAuthState(db, {
-          state,
-          userId: user.id,
-          provider: "facebook",
-          mode: "integration",
-          appKey: null,
-        });
-      } catch (err) {
-        console.warn("[fbOAuthCallback] dual-write to oauth_states failed:", err);
-      }
-
-      // Save state to DB linked to this user
-      await db.insert(facebookOauthStates).values({
+      await insertOAuthState(db, {
         state,
         userId: user.id,
-        expiresAt,
+        provider: "facebook",
+        mode: "integration",
+        appKey: null,
       });
-
-      // Clean up old expired states (non-blocking)
-      cleanupExpiredStates().catch(() => {});
 
       const appId = ENV.facebookAppId;
       if (!appId) {

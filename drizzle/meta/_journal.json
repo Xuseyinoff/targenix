@@ -526,6 +526,20 @@
       "when": 1779660480000,
       "tag": "0078_users_password_changed_at",
       "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "5",
+      "when": 1779746880000,
+      "tag": "0079_lead_retry_state",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "5",
+      "when": 1779833280000,
+      "tag": "0080_drop_facebook_oauth_states",
+      "breakpoints": true
     }
   ]
 }

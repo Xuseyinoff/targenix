@@ -189,7 +189,7 @@ A **React 19** SPA bundled by **Vite 7**, served as static files from `dist/publ
 
 | Domain | Tables |
 |--------|--------|
-| Users & Auth | `users`, `password_reset_tokens`, `facebook_oauth_states` |
+| Users & Auth | `users`, `password_reset_tokens`, `oauth_states`, `oauth_tokens` |
 | Facebook | `facebook_accounts`, `facebook_connections`, `facebook_forms` |
 | Lead Pipeline | `leads`, `orders`, `integrations` |
 | Destinations | `target_websites`, `destination_templates` |

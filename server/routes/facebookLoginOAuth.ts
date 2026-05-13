@@ -14,9 +14,9 @@
 import type { Express, Request, Response } from "express";
 import axios from "axios";
 import { getDb } from "../db";
-import { users, facebookAccounts, facebookOauthStates } from "../../drizzle/schema";
+import { users, facebookAccounts } from "../../drizzle/schema";
 import { insertOAuthState, consumeOAuthState } from "../oauth/stateService";
-import { eq, and, lt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { log } from "../services/appLogger";
 import { exchangeCodeForToken } from "../services/facebookGraphService";
 import { ENV } from "../_core/env";
@@ -68,25 +68,16 @@ export function registerFacebookLoginRoutes(app: Express): void {
       if (!appId) { res.status(500).json({ error: "FACEBOOK_APP_ID not configured" }); return; }
 
       const state = generateState();
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-      // Sprint B Step 1 — dual-write to universal oauth_states. Best-effort:
-      // if the universal write errors, the legacy write below still runs and
-      // the login flow stays functional. Step 2 flips the read path.
-      try {
-        await insertOAuthState(db, {
-          state,
-          userId: 0,
-          provider: "facebook",
-          mode: "login",
-          appKey: null,
-        });
-      } catch (err) {
-        console.warn("[fbLoginOAuth] dual-write to oauth_states failed (login):", err);
-      }
-
-      // userId=0 indicates this is a login flow (user not yet authenticated)
-      await db.insert(facebookOauthStates).values({ state, userId: 0, expiresAt });
+      // Sprint B Step 4 — universal oauth_states is now the sole source of truth.
+      // userId=0 indicates this is a login flow (user not yet authenticated).
+      await insertOAuthState(db, {
+        state,
+        userId: 0,
+        provider: "facebook",
+        mode: "login",
+        appKey: null,
+      });
 
       const callbackUrl = getLoginCallbackUrl(req);
       const oauthUrl = new URL("https://www.facebook.com/v21.0/dialog/oauth");
@@ -240,11 +231,6 @@ export function registerFacebookLoginRoutes(app: Express): void {
     }
   });
 
-  // Cleanup expired states periodically (non-blocking)
-  setInterval(async () => {
-    try {
-      const db = await getDb();
-      if (db) await db.delete(facebookOauthStates).where(lt(facebookOauthStates.expiresAt, new Date()));
-    } catch { /* ignore */ }
-  }, 60 * 60 * 1000);
+  // Cleanup of expired oauth_states is owned by stateService
+  // (`scheduleCleanupExpiredStates`); no per-table sweep needed here.
 }
