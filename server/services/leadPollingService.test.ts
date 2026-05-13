@@ -65,7 +65,9 @@ function buildMockDb(cfg: MockDbConfig) {
       if (isTargetsQuery) {
         return {
           from: vi.fn(() => ({
-            innerJoin: vi.fn(() => Promise.resolve(cfg.targets)),
+            innerJoin: vi.fn(() => ({
+              innerJoin: vi.fn(() => Promise.resolve(cfg.targets)),
+            })),
           })),
         };
       }

@@ -32,6 +32,7 @@ import { getDb, type DbClient } from "../db";
 import {
   facebookConnections,
   facebookForms,
+  integrations,
   leads,
 } from "../../drizzle/schema";
 import { decrypt } from "../encryption";
@@ -42,6 +43,7 @@ import {
 } from "./facebookService";
 import { dispatchLeadProcessing } from "./leadDispatch";
 import { log } from "./appLogger";
+import { envInt, envIntNonNegative } from "../lib/envHelpers";
 
 export interface PollingTickResult {
   forms: number;
@@ -55,18 +57,32 @@ export interface PollingTickResult {
  * Lookback window (hours) passed to `fetchLeadsFromForm` when a form has
  * NEVER produced a lead yet. Short enough to avoid reprocessing old data
  * on first activation; long enough to absorb a missed webhook burst.
+ * Override via `LEAD_POLLING_INITIAL_HOURS`.
  */
-const DEFAULT_INITIAL_WINDOW_HOURS = 2;
+const DEFAULT_INITIAL_WINDOW_HOURS = envInt("LEAD_POLLING_INITIAL_HOURS", 2);
+
+/**
+ * Hard override for per-form `hoursBack`. When > 0, every form is polled
+ * with this exact window regardless of its own newest-lead cursor — useful
+ * for catching up after a long outage or for a one-off wider sweep. When 0
+ * (default), per-form cursor derivation is used. Override via
+ * `LEAD_POLLING_LOOKBACK_HOURS`.
+ */
+const FORCED_LOOKBACK_HOURS = envIntNonNegative("LEAD_POLLING_LOOKBACK_HOURS", 0);
 
 /**
  * Extra slack (minutes) added on top of the derived cursor to compensate
  * for Facebook's `created_time` occasionally trailing our insert time by
  * a few minutes. Prevents edge leads from being dropped.
+ * Override via `LEAD_POLLING_OVERLAP_MINUTES`.
  */
-const OVERLAP_MINUTES = 30;
+const OVERLAP_MINUTES = envInt("LEAD_POLLING_OVERLAP_MINUTES", 30);
 
-/** Upper bound on forms polled per tick — safety net, logs a warning. */
-const MAX_FORMS_PER_TICK = 200;
+/**
+ * Upper bound on forms polled per tick — safety net, logs a warning when hit.
+ * Override via `LEAD_POLLING_MAX_FORMS_PER_TICK`.
+ */
+const MAX_FORMS_PER_TICK = envInt("LEAD_POLLING_MAX_FORMS_PER_TICK", 500);
 
 /** Milliseconds to wait between consecutive form polls to smooth load. */
 const DELAY_BETWEEN_FORMS_MS = 250;
@@ -85,7 +101,18 @@ interface ActivePollingTarget {
  * polling. A form is eligible when:
  *   • the user still has an `isActive` connection for its page, AND
  *   • that connection's `subscriptionStatus` is not explicitly `inactive`
- *     (we DO poll `failed` subscriptions — that's the whole point).
+ *     (we DO poll `failed` subscriptions — that's the whole point), AND
+ *   • at least one active LEAD_ROUTING integration is wired to this exact
+ *     (user, page, form) — no point polling forms with no destination.
+ *
+ * The integration filter cuts the candidate set ~10× in production
+ * (audit 2026-05-13: 2,083 active forms → 232 actually wired up). Without
+ * it, polling burned FB Graph quota on forms whose leads would be dropped
+ * anyway because no integration could route them.
+ *
+ * Multiple integrations on the same (user, page, form) collapse to one
+ * polling target via the Map dedup below — we still only need to fetch
+ * each form once per tick.
  */
 async function loadActiveTargets(db: DbClient): Promise<ActivePollingTarget[]> {
   const rows = await db
@@ -106,29 +133,50 @@ async function loadActiveTargets(db: DbClient): Promise<ActivePollingTarget[]> {
         eq(facebookConnections.pageId, facebookForms.pageId),
         eq(facebookConnections.isActive, true),
       ),
+    )
+    .innerJoin(
+      integrations,
+      and(
+        eq(integrations.userId, facebookForms.userId),
+        eq(integrations.pageId, facebookForms.pageId),
+        eq(integrations.formId, facebookForms.formId),
+        eq(integrations.isActive, true),
+        eq(integrations.type, "LEAD_ROUTING"),
+      ),
     );
 
-  return rows
-    .filter((r) => r.subscriptionStatus !== "inactive")
-    .map((r) => ({
+  const dedup = new Map<string, ActivePollingTarget>();
+  for (const r of rows) {
+    if (r.subscriptionStatus === "inactive") continue;
+    const key = `${r.userId}|${r.pageId}|${r.formId}`;
+    if (dedup.has(key)) continue;
+    dedup.set(key, {
       userId: r.userId,
       pageId: r.pageId,
       pageName: r.pageName,
       formId: r.formId,
       formName: r.formName,
       encryptedPageToken: r.encryptedPageToken,
-    }));
+    });
+  }
+  return Array.from(dedup.values());
 }
 
 /**
  * Derive a `hoursBack` cutoff per form from the newest lead already stored
  * for the given (userId, pageId, formId). Falls back to
  * `DEFAULT_INITIAL_WINDOW_HOURS` for forms that have never produced a lead.
+ *
+ * When `LEAD_POLLING_LOOKBACK_HOURS` is set (>0), it bypasses derivation
+ * entirely and every form gets the same window — used to widen the sweep
+ * after an outage without redeploying.
  */
 async function deriveHoursBack(
   db: DbClient,
   target: ActivePollingTarget,
 ): Promise<number> {
+  if (FORCED_LOOKBACK_HOURS > 0) return FORCED_LOOKBACK_HOURS;
+
   const [row] = await db
     .select({ latest: sql<Date | null>`MAX(${leads.createdAt})` })
     .from(leads)
@@ -357,11 +405,11 @@ export async function runLeadPollingTick(): Promise<PollingTickResult> {
 // ─── Scheduler ──────────────────────────────────────────────────────────────
 
 /**
- * Interval between polling ticks. 10 minutes matches Zapier's typical
+ * Interval between polling ticks. Default 10 min matches Zapier's typical
  * fallback cadence and stays well inside Facebook's Graph rate limits for
- * even 100+ forms per tick.
+ * a few hundred forms per tick. Override via `LEAD_POLLING_INTERVAL_MIN`.
  */
-const POLLING_INTERVAL_MS = 10 * 60 * 1000;
+const POLLING_INTERVAL_MS = envInt("LEAD_POLLING_INTERVAL_MIN", 10) * 60 * 1000;
 
 /** Startup grace so we don't pile onto the boot-time dispatch spike. */
 const POLLING_INITIAL_DELAY_MS = 60 * 1000;
