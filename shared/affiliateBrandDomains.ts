@@ -21,6 +21,28 @@ export const AFFILIATE_BRAND_DOMAIN_BY_APP_KEY: Readonly<Record<string, string>>
   sotuvchi: "sotuvchi.com",
   /** Templates labelled “MyCPA” in admin often use appKey `mgoods`. */
   mgoods: "mgoods.uz",
+  // ── CPA-style affiliates created via the admin one-shot path. The slug
+  // matches the `.uz` brand domain — `xana-uz` → `xana.uz`, etc. Adding a
+  // brand here lets `apps.iconUrl=/api/brand-icons-by-key/<appKey>` resolve
+  // through the in-memory LRU + 7-day cache (Bosqich 4) without an admin
+  // upload step.
+  "alibabashop-uz": "alibabashop.uz",
+  "alitrend-uz": "alitrend.uz",
+  "arenashop-uz": "arenashop.uz",
+  "dovcham-uz": "dovcham.uz",
+  "fayzlibazar-uz": "fayzlibazar.uz",
+  "ishonchli-uz": "ishonchli.uz",
+  "jin-uz": "jin.uz",
+  "karvo-uz": "karvo.uz",
+  "lidershop-uz": "lidershop.uz",
+  "mandarinshop-uz": "mandarinshop.uz",
+  "olchamarket-uz": "olchamarket.uz",
+  "shoxmarket-uz": "shoxmarket.uz",
+  "tezbro-uz": "tezbro.uz",
+  "troia-uz": "troia.uz",
+  "uzmakon-uz": "uzmakon.uz",
+  "uztez-uz": "uztez.uz",
+  "xana-uz": "xana.uz",
 };
 
 /** Same keys as above — committed raster assets (see module doc). */
