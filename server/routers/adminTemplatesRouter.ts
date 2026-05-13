@@ -4,7 +4,8 @@
  * These templates define how leads are sent to affiliate endpoints.
  * Admins create templates; users pick a template when creating a destination.
  *
- * Security: all routes require isAdmin (via adminProcedure).
+ * Security: all routes require isAdmin OR a temporarily-whitelisted user
+ * (see shared/tempAccess.ts) via templateEditorProcedure.
  *
  * Stage 1 contract: every mutation runs `validateTemplateContract` which
  * verifies the `appKey` resolves to a known spec and that every secret
@@ -15,7 +16,8 @@
 
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { adminProcedure, router } from "../_core/trpc";
+import { NOT_ADMIN_ERR_MSG } from "@shared/const";
+import { protectedProcedure, router } from "../_core/trpc";
 import { getDb, type DbClient } from "../db";
 import { appActions, destinationTemplates } from "../../drizzle/schema";
 import { and, eq } from "drizzle-orm";
@@ -25,6 +27,20 @@ import {
   TemplateContractError,
 } from "../integrations/validateTemplateContract";
 import { listAppKeyOptionsForPicker } from "../integrations/listAppsSafe";
+import { canManageTemplates } from "../../shared/tempAccess";
+
+/**
+ * Allow admins + temporarily-whitelisted users (see shared/tempAccess.ts) to
+ * manage destination templates. Replace this with `adminProcedure` again once
+ * the temporary access window closes (see shared/tempAccess.ts).
+ */
+const templateEditorProcedure = protectedProcedure.use(async (opts) => {
+  const { ctx, next } = opts;
+  if (!canManageTemplates(ctx.user)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+  }
+  return next({ ctx });
+});
 
 // ─── Shared Zod schemas ───────────────────────────────────────────────────────
 
@@ -185,7 +201,7 @@ async function deleteAppActionMirror(
 
 export const adminTemplatesRouter = router({
   /** List all destination templates (admin only). */
-  list: adminProcedure.query(async () => {
+  list: templateEditorProcedure.query(async () => {
     const db = await getDb();
     if (!db) return [];
     // Stage 2 — `destination_templates` is still authoritative for id / writes;
@@ -203,13 +219,13 @@ export const adminTemplatesRouter = router({
    * The raw authType is kept for UIs that want to render differently per
    * protocol (e.g. badge color, help text).
    */
-  listAppKeys: adminProcedure.query(async () => {
+  listAppKeys: templateEditorProcedure.query(async () => {
     const db = await getDb();
     return listAppKeyOptionsForPicker(db);
   }),
 
   /** Create a new destination template. */
-  create: adminProcedure
+  create: templateEditorProcedure
     .input(templateInputSchema)
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -244,7 +260,7 @@ export const adminTemplatesRouter = router({
     }),
 
   /** Update a destination template. */
-  update: adminProcedure
+  update: templateEditorProcedure
     .input(templateInputSchema.partial().extend({ id: z.number() }))
     .mutation(async ({ input }) => {
       const db = await getDb();
@@ -344,7 +360,7 @@ export const adminTemplatesRouter = router({
     }),
 
   /** Delete a destination template. */
-  delete: adminProcedure
+  delete: templateEditorProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const db = await getDb();

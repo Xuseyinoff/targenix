@@ -71,6 +71,7 @@ import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 import { AdminSidebarNav } from "./AdminSidebarNav";
 import { Flag } from "./ui/flag";
+import { canManageTemplates } from "@shared/tempAccess";
 
 function buildNavGroups(t: (k: string) => string, isAdmin = false): NavGroup[] {
   return [
@@ -208,6 +209,10 @@ function DashboardLayoutContent({
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isAdmin = user?.role === "admin";
+  // TEMP (REMOVE BY 2026-05-18): non-admin users in the template-editor allowlist
+  // see a one-item admin section so they can reach /admin/destination-templates.
+  const canEditTemplates = canManageTemplates(user);
+  const showAdminSection = isAdmin || canEditTemplates;
   const navGroups = useMemo(() => buildNavGroups(t, isAdmin), [locale, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   // Admin sidebar is handled by `AdminSidebarNav` (data-driven, nested-safe).
   const businessToolsItems = useMemo(() => buildBusinessToolsItems(t), [locale]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -455,8 +460,8 @@ function DashboardLayoutContent({
               </>
             )}
 
-            {/* Admin section — only visible to admins */}
-            {user?.role === "admin" && (
+            {/* Admin section — visible to admins and template-editor allowlist. */}
+            {showAdminSection && (
               <>
                 {!isCollapsed && <div className="mx-3 my-1 border-t border-sidebar-border/50" />}
                 <div className="px-3 py-1.5 mt-1">

@@ -6,6 +6,7 @@ import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui
 import type { LucideIcon } from "lucide-react";
 import { ChevronDown, ClipboardList, CircleUser, LayoutList, Shield, Users, SendHorizonal, Globe, Webhook, AlertTriangle } from "lucide-react";
 import { useT } from "@/hooks/useT";
+import { useAuth } from "@/_core/hooks/useAuth";
 
 type NavLeaf = {
   key: string;
@@ -50,30 +51,42 @@ export function AdminSidebarNav() {
   const [location, setLocation] = useLocation();
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
 
   const items = useMemo<AdminNavItem[]>(
-    () => [
-      {
-        key: "crm",
-        label: t("nav.adminCrm"),
-        icon: ClipboardList,
-        children: [
-          { key: "crm-orders", label: t("nav.adminCrmOrders"), icon: LayoutList, href: "/admin/crm/orders" },
-          { key: "crm-accounts", label: t("nav.adminCrmAccounts"), icon: CircleUser, href: "/admin/crm/accounts" },
-        ],
-      },
-      { key: "webhook", label: t("nav.webhookHealth"), icon: Webhook, href: "/webhook" },
-      { key: "admin-leads", label: t("nav.adminLeads"), icon: Users, href: "/admin/leads" },
-      { key: "admin-logs", label: t("nav.adminLogs"), icon: Shield, href: "/admin/logs" },
-      { key: "lead-backfill", label: t("nav.leadBackfill"), icon: SendHorizonal, href: "/admin/backfill" },
-      { key: "dest-templates", label: t("nav.destTemplates"), icon: Globe, href: "/admin/destination-templates" },
-      { key: "dlq", label: "DLQ", icon: AlertTriangle, href: "/admin/dlq" },
-    ],
-    [t],
+    () => {
+      const all: AdminNavItem[] = [
+        {
+          key: "crm",
+          label: t("nav.adminCrm"),
+          icon: ClipboardList,
+          children: [
+            { key: "crm-orders", label: t("nav.adminCrmOrders"), icon: LayoutList, href: "/admin/crm/orders" },
+            { key: "crm-accounts", label: t("nav.adminCrmAccounts"), icon: CircleUser, href: "/admin/crm/accounts" },
+          ],
+        },
+        { key: "webhook", label: t("nav.webhookHealth"), icon: Webhook, href: "/webhook" },
+        { key: "admin-leads", label: t("nav.adminLeads"), icon: Users, href: "/admin/leads" },
+        { key: "admin-logs", label: t("nav.adminLogs"), icon: Shield, href: "/admin/logs" },
+        { key: "lead-backfill", label: t("nav.leadBackfill"), icon: SendHorizonal, href: "/admin/backfill" },
+        { key: "dest-templates", label: t("nav.destTemplates"), icon: Globe, href: "/admin/destination-templates" },
+        { key: "dlq", label: "DLQ", icon: AlertTriangle, href: "/admin/dlq" },
+      ];
+      // TEMP (REMOVE BY 2026-05-18): non-admin template editors only see the
+      // destination-templates link; the rest of the admin nav stays admin-only
+      // because the backend still gates those routes on role === 'admin'.
+      if (!isAdmin) {
+        return all.filter((it) => it.key === "dest-templates");
+      }
+      return all;
+    },
+    [t, isAdmin],
   );
 
-  const crm = items[0] as NavParent;
-  const childActive = hasActiveChild(location, crm);
+  const crm = items.find((it): it is NavParent => "children" in it && it.key === "crm");
+  const childActive = crm ? hasActiveChild(location, crm) : false;
+  const leafItems = items.filter((it): it is NavLeaf => !("children" in it));
 
   const [crmExpanded, setCrmExpanded] = useState(readCrmExpanded);
 
@@ -93,35 +106,37 @@ export function AdminSidebarNav() {
 
   return (
     <SidebarMenu className="px-2 py-1">
-      {/* CRM parent */}
-      <SidebarMenuItem>
-        <SidebarMenuButton
-          isActive={false}
-          onClick={() => {
-            if (!isCollapsed) setCrmExpanded((v) => !v);
-          }}
-          tooltip={crm.label}
-          type="button"
-          aria-expanded={!isCollapsed ? crmExpanded : undefined}
-          className={cn("h-10", isCollapsed ? "justify-center" : "")}
-        >
-          <crm.icon className={cn("text-violet-500", childActive ? "text-sidebar-primary" : "")} />
-          {!isCollapsed && (
-            <>
-              <span className="flex-1 min-w-0 truncate whitespace-nowrap">{crm.label}</span>
-              <ChevronDown
-                className={cn(
-                  "h-[18px] w-[18px] shrink-0 text-sidebar-foreground/40 transition-transform duration-200",
-                  crmExpanded ? "rotate-0" : "-rotate-90",
-                )}
-              />
-            </>
-          )}
-        </SidebarMenuButton>
-      </SidebarMenuItem>
+      {/* CRM parent — only when present (skipped for non-admin template editors). */}
+      {crm && (
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            isActive={false}
+            onClick={() => {
+              if (!isCollapsed) setCrmExpanded((v) => !v);
+            }}
+            tooltip={crm.label}
+            type="button"
+            aria-expanded={!isCollapsed ? crmExpanded : undefined}
+            className={cn("h-10", isCollapsed ? "justify-center" : "")}
+          >
+            <crm.icon className={cn("text-violet-500", childActive ? "text-sidebar-primary" : "")} />
+            {!isCollapsed && (
+              <>
+                <span className="flex-1 min-w-0 truncate whitespace-nowrap">{crm.label}</span>
+                <ChevronDown
+                  className={cn(
+                    "h-[18px] w-[18px] shrink-0 text-sidebar-foreground/40 transition-transform duration-200",
+                    crmExpanded ? "rotate-0" : "-rotate-90",
+                  )}
+                />
+              </>
+            )}
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      )}
 
       {/* CRM children */}
-      {!isCollapsed && (
+      {crm && !isCollapsed && (
         <div className={cn("grid transition-[grid-template-rows] duration-200 ease-in-out", crmExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]")}>
           <div className={cn("min-h-0 overflow-hidden transition-opacity duration-200 ease-in-out", crmExpanded ? "opacity-100" : "pointer-events-none opacity-0")}>
             <SidebarMenu className="pl-3 pr-0 py-0.5">
@@ -147,7 +162,7 @@ export function AdminSidebarNav() {
       )}
 
       {/* Collapsed view: show CRM children as icons below */}
-      {isCollapsed && (
+      {crm && isCollapsed && (
         <SidebarMenu className="px-0 py-0.5">
           {crm.children.map((c) => {
             const active = isLeafActive(location, c.href);
@@ -163,8 +178,7 @@ export function AdminSidebarNav() {
       )}
 
       {/* Other admin leaves */}
-      {items.slice(1).map((it) => {
-        const leaf = it as NavLeaf;
+      {leafItems.map((leaf) => {
         const active = isLeafActive(location, leaf.href);
         return (
           <SidebarMenuItem key={leaf.key}>
