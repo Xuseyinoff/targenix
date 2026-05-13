@@ -688,10 +688,16 @@ export default function AdminTemplates() {
                     <Plus className="w-3 h-3 mr-1" />
                     Add Field
                   </Button>
-                  {form.bodyFields.some(f => f.isSecret) && (
+                  {form.bodyFields.some(f => f.isSecret) ? (
                     <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 mt-1">
                       <Lock className="w-3 h-3" />
                       Secret fields ({form.userVisibleFields.join(", ")}) will be shown to users at destination creation.
+                    </p>
+                  ) : editId === null && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-1 mt-1">
+                      <Info className="w-3 h-3" />
+                      No secret fields — this app will be created as <code className="bg-muted px-1 rounded">authType=&quot;none&quot;</code>.
+                      Users won&apos;t need to supply an API key at destination creation.
                     </p>
                   )}
                 </>

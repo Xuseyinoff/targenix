@@ -115,6 +115,27 @@ const STANDARD_API_KEY_FIELDS = [
 ] as const;
 
 /**
+ * Infer the auth shape for a freshly-minted affiliate `apps` row from the
+ * template's bodyFields. If the operator did NOT mark any field as secret
+ * and did NOT embed a `{{SECRET:*}}` placeholder, the destination needs no
+ * credentials at all — we record `authType='none'` with empty `fields`, and
+ * runtime delivery (`resolveSecretsForDelivery`) short-circuits to {} so
+ * the destination is deliverable without anyone wiring up a connection.
+ * Otherwise we fall back to the standard API-key shape, matching the prior
+ * behaviour for legacy CPA affiliates.
+ */
+function inferAppAuthShape(
+  bodyFields: Array<{ key: string; value: string; isSecret?: boolean }>,
+): { authType: "none" | "api_key"; fields: object } {
+  const needsSecret = bodyFields.some(
+    (f) => f.isSecret === true || (typeof f.value === "string" && /\{\{\s*SECRET:/.test(f.value)),
+  );
+  return needsSecret
+    ? { authType: "api_key", fields: STANDARD_API_KEY_FIELDS as unknown as object }
+    : { authType: "none", fields: [] };
+}
+
+/**
  * Translate a TemplateContractError (thrown by the validator) into a
  * TRPCError so the router contract remains uniform. The structured
  * `details` and `code` are preserved as `cause` for logs.
@@ -315,12 +336,13 @@ export const adminTemplatesRouter = router({
           .limit(1);
 
         if (!existingApp) {
+          const { authType, fields } = inferAppAuthShape(input.bodyFields);
           await tx.insert(apps).values({
             appKey,
             displayName: input.name,
             category: "affiliate",
-            authType: "api_key",
-            fields: STANDARD_API_KEY_FIELDS as unknown as object,
+            authType,
+            fields,
             oauthConfig: null,
             iconUrl: null,
             docsUrl: null,
