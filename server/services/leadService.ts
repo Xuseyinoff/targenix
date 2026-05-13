@@ -1253,31 +1253,60 @@ export async function processLead(params: {
     }
 
     const { evaluateFilter } = await import("./filterEngine");
-    for (const dest of destinations) {
-      // Per-destination filter: skip delivery if lead doesn't match.
-      if (dest.filterJson?.enabled) {
-        const passes = evaluateFilter(dest.filterJson, leadPayload);
-        if (!passes) {
-          console.log(
-            `[FilterEngine] Lead ${params.leadId} skipped dest=${dest.mappingId ?? 0} (tw=${dest.targetWebsite.id}) — filter did not match`,
-          );
-          continue;
+    // Parallel fan-out: each destination has a unique (leadId, integrationId,
+    // destinationId) tuple, so order-row writes never collide, and there is
+    // no shared mutable state across destinations. allSettled (not all) is
+    // load-bearing — a throw in one destination must not prevent the others
+    // from dispatching. Each deliverOneDestination already persists its own
+    // delivery outcome; the rejection check below only surfaces unexpected
+    // programmer errors (uncaught throws) so they don't disappear silently.
+    const deliveryResults = await Promise.allSettled(
+      destinations.map(async (dest) => {
+        // Per-destination filter: skip delivery if lead doesn't match.
+        if (dest.filterJson?.enabled) {
+          const passes = evaluateFilter(dest.filterJson, leadPayload);
+          if (!passes) {
+            console.log(
+              `[FilterEngine] Lead ${params.leadId} skipped dest=${dest.mappingId ?? 0} (tw=${dest.targetWebsite.id}) — filter did not match`,
+            );
+            return;
+          }
         }
+        await deliverOneDestination({
+          db,
+          integration,
+          // `mappingId` is the integration_routes.id — used as
+          // destinationId so each destination has its own order row.
+          destinationId: dest.mappingId ?? 0,
+          preResolvedDestination: dest,
+          leadId: params.leadId,
+          leadRow,
+          leadPayload,
+          userId: params.userId,
+          pageId: params.pageId,
+          isAdmin: params.isAdmin,
+        });
+      }),
+    );
+    for (let i = 0; i < deliveryResults.length; i++) {
+      const r = deliveryResults[i];
+      if (r.status === "rejected") {
+        const dest = destinations[i];
+        await log.error(
+          "ORDER",
+          `deliverOneDestination threw — integration=${integration.id} dest=${dest.mappingId ?? 0}`,
+          {
+            integrationId: integration.id,
+            destinationId: dest.mappingId ?? 0,
+            error: (r.reason as Error)?.message ?? String(r.reason),
+          },
+          params.leadId,
+          params.pageId,
+          params.userId,
+          "order_delivery_threw",
+          "facebook",
+        );
       }
-      await deliverOneDestination({
-        db,
-        integration,
-        // `mappingId` is the integration_routes.id — used as
-        // destinationId so each destination has its own order row.
-        destinationId: dest.mappingId ?? 0,
-        preResolvedDestination: dest,
-        leadId: params.leadId,
-        leadRow,
-        leadPayload,
-        userId: params.userId,
-        pageId: params.pageId,
-        isAdmin: params.isAdmin,
-      });
     }
   }
 
