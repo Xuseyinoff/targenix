@@ -3,6 +3,12 @@ import { facebookConnections, facebookAccounts, facebookForms, integrationRoutes
 import { getDb, type DbClient } from "../db";
 import { decrypt } from "../encryption";
 import { fetchLeadData, extractLeadFields } from "./facebookService";
+import {
+  classifyGraphError,
+  computeLeadNextRetryAt,
+  LEAD_MAX_GRAPH_ATTEMPTS,
+} from "../lib/leadEnrichmentRetryPolicy";
+import { sql } from "drizzle-orm";
 import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 import { dispatchDelivery } from "../integrations/dispatch";
 import { resolveIntegrationRoutes, type ResolvedDestination } from "./integrationRoutes";
@@ -1011,35 +1017,77 @@ export async function processLead(params: {
 
   const accessToken = await resolvePageAccessToken(params.pageId, params.formId, params.userId);
 
-  if (!accessToken) {
-    await log.warn("LEAD", `No access token found — lead data cannot be fetched`, { pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
-    await db
+  // Persist a Graph-enrichment failure with retry-state metadata so the
+  // per-minute scheduler (`retryDueGraphErrorLeads`) can pick this lead up
+  // again only when its backoff window has elapsed AND it still has
+  // attempts left. `dataAttempts = dataAttempts + 1` is an atomic SQL
+  // increment so two concurrent workers cannot double-bump the counter.
+  // TS doesn't narrow the outer `db` non-null check through this closure,
+  // so we re-read it here. The throw above guarantees a connection at this
+  // point — this is purely a typecheck convenience.
+  const dbClient = db;
+  async function persistGraphFailure(opts: {
+    dataError: string;
+    errorType: ReturnType<typeof classifyGraphError>;
+    retryAfterMs?: number;
+  }): Promise<void> {
+    const [currentRow] = await dbClient
+      .select({ dataAttempts: leads.dataAttempts })
+      .from(leads)
+      .where(and(eq(leads.id, params.leadId), eq(leads.userId, params.userId)))
+      .limit(1);
+    const newAttempts = (currentRow?.dataAttempts ?? 0) + 1;
+    const nextRetryAt = computeLeadNextRetryAt({
+      now: new Date(),
+      newAttempts,
+      maxAttempts: LEAD_MAX_GRAPH_ATTEMPTS,
+      success: false,
+      errorType: opts.errorType,
+      retryAfterMs: opts.retryAfterMs,
+    });
+    await dbClient
       .update(leads)
       .set({
         dataStatus: "ERROR",
         deliveryStatus: "PENDING",
-        dataError: "No Facebook page access token — connect a page or LEAD_ROUTING integration with a valid account.",
+        dataError: opts.dataError,
+        dataErrorType: opts.errorType,
+        dataAttempts: sql`${leads.dataAttempts} + 1`,
+        dataNextRetryAt: nextRetryAt,
         pageName,
         formName,
       })
       .where(and(eq(leads.id, params.leadId), eq(leads.userId, params.userId)));
+  }
+
+  if (!accessToken) {
+    await log.warn("LEAD", `No access token found — lead data cannot be fetched`, { pageId: params.pageId, formId: params.formId }, params.leadId, params.pageId, params.userId, "lead_enriched", "facebook");
+    // Missing token is auth-class. The policy allows one follow-up retry
+    // (catches a reconnect-in-progress race) and then gives up — only a
+    // user-initiated page/account reconnect can fix it.
+    await persistGraphFailure({
+      dataError: "No Facebook page access token — connect a page or LEAD_ROUTING integration with a valid account.",
+      errorType: "auth",
+    });
     return;
   }
 
-  const leadData = await fetchLeadData(params.leadgenId, accessToken);
-  if (!leadData) {
-    await db
-      .update(leads)
-      .set({
-        dataStatus: "ERROR",
-        deliveryStatus: "PENDING",
-        dataError: "Facebook Graph API returned no lead payload.",
-        pageName,
-        formName,
-      })
-      .where(and(eq(leads.id, params.leadId), eq(leads.userId, params.userId)));
+  const fetchResult = await fetchLeadData(params.leadgenId, accessToken);
+  if (!fetchResult.ok) {
+    const errorType = classifyGraphError({
+      httpStatus: fetchResult.error.httpStatus,
+      fbErrorCode: fetchResult.error.fbErrorCode,
+      fbErrorSubcode: fetchResult.error.fbErrorSubcode,
+      message: fetchResult.error.message,
+    });
+    await persistGraphFailure({
+      dataError: fetchResult.error.message || "Facebook Graph API returned no lead payload.",
+      errorType,
+      retryAfterMs: fetchResult.error.retryAfterMs,
+    });
     return;
   }
+  const leadData = fetchResult.data;
 
   const rawData: unknown = leadData;
 
@@ -1118,6 +1166,11 @@ export async function processLead(params: {
       dataStatus:   "ENRICHED",
       deliveryStatus: "PROCESSING",
       dataError:    null,
+      // Clear retry-state on success so a future failure (e.g. webhook
+      // replay) starts fresh from attempt 1 instead of inheriting the
+      // pre-success counter.
+      dataErrorType:   null,
+      dataNextRetryAt: null,
       ...(platformToWrite ? { platform: platformToWrite } : {}),
       pageName,
       formName,

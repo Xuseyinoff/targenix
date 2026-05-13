@@ -106,20 +106,29 @@ describe("retryAllFailedLeads", () => {
     expect(result).toEqual({ retried: 0 });
   });
 
-  it("returns { retried: 0 } when there are no leads with Graph errors", async () => {
-    const selectChain = {
-      select: vi.fn(),
-      from: vi.fn(),
-      where: vi.fn().mockResolvedValue([]), // terminal — resolves to empty array
+  it("aggregates retries from graph + stuck-pending + orders", async () => {
+    // The implementation now delegates Graph retries to
+    // `leadGraphRetryScheduler.retryDueGraphErrorLeads` and orders to
+    // `orderRetryScheduler.retryDueFailedOrders`. We mock those at the
+    // module boundary and only check that retryAllFailedLeads sums them
+    // correctly + skips the stuck-pending path when the DB has none.
+    const selectBuilder = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([]), // empty stuck PENDING
     };
-    selectChain.select.mockReturnValue(selectChain);
-    selectChain.from.mockReturnValue(selectChain);
+    const fakeDb = {
+      select: vi.fn(() => selectBuilder),
+      update: vi.fn(),
+    };
 
     vi.doMock("./db", () => ({
-      getDb: vi.fn().mockResolvedValue(selectChain),
+      getDb: vi.fn().mockResolvedValue(fakeDb),
     }));
     vi.doMock("./services/orderRetryScheduler", () => ({
-      retryDueFailedOrders: () => Promise.resolve({ retried: 0 }),
+      retryDueFailedOrders: () => Promise.resolve({ retried: 3 }),
+    }));
+    vi.doMock("./services/leadGraphRetryScheduler", () => ({
+      retryDueGraphErrorLeads: () => Promise.resolve({ retried: 5 }),
     }));
     vi.doMock("./services/leadDispatch", () => ({
       dispatchLeadProcessing: vi.fn().mockResolvedValue(undefined),
@@ -127,46 +136,6 @@ describe("retryAllFailedLeads", () => {
 
     const { retryAllFailedLeads } = await import("./services/retryScheduler");
     const result = await retryAllFailedLeads();
-    expect(result).toEqual({ retried: 0 });
-  });
-
-  it("resets Graph-error leads and calls dispatchLeadProcessing for each", async () => {
-    const failedLeads = [
-      { id: 1, leadgenId: "lg1", pageId: "p1", formId: "f1", userId: 1, dataStatus: "ERROR", deliveryStatus: "PENDING" },
-      { id: 2, leadgenId: "lg2", pageId: "p2", formId: "f2", userId: 1, dataStatus: "ERROR", deliveryStatus: "PENDING" },
-    ];
-
-    const updateBuilder = {
-      set: vi.fn().mockReturnThis(),
-      where: vi.fn().mockResolvedValue(undefined),
-    };
-
-    const selectBuilder = {
-      from: vi.fn().mockReturnThis(),
-      // 1st: graph ERROR leads; 2nd: stuck PENDING query (empty)
-      where: vi.fn().mockResolvedValueOnce(failedLeads).mockResolvedValueOnce([]),
-    };
-
-    const fakeDb = {
-      select: vi.fn(() => selectBuilder),
-      update: vi.fn(() => updateBuilder),
-    };
-
-    const dispatchMock = vi.fn().mockResolvedValue(undefined);
-
-    vi.doMock("./db", () => ({
-      getDb: vi.fn().mockResolvedValue(fakeDb),
-    }));
-    vi.doMock("./services/orderRetryScheduler", () => ({
-      retryDueFailedOrders: () => Promise.resolve({ retried: 0 }),
-    }));
-    vi.doMock("./services/leadDispatch", () => ({
-      dispatchLeadProcessing: dispatchMock,
-    }));
-
-    const { retryAllFailedLeads } = await import("./services/retryScheduler");
-    const result = await retryAllFailedLeads();
-
-    expect(result.retried).toBe(2);
+    expect(result.retried).toBe(8); // 5 graph + 0 stuck + 3 orders
   });
 });

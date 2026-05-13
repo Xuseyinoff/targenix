@@ -65,12 +65,52 @@ export function verifyWebhookSignature(
 }
 
 /**
+ * Discriminated result from `fetchLeadData`. The error branch carries enough
+ * detail for `leadEnrichmentRetryPolicy.classifyGraphError` to pick the
+ * correct backoff / giveup policy. `retryAfterMs` is parsed from FB's
+ * rate-limit headers when present so callers can honour the provider's
+ * cooldown instead of guessing.
+ */
+export type FetchLeadDataResult =
+  | { ok: true; data: LeadData }
+  | {
+      ok: false;
+      error: {
+        httpStatus?: number;
+        fbErrorCode?: number;
+        fbErrorSubcode?: number;
+        message: string;
+        retryAfterMs?: number;
+      };
+    };
+
+function parseFbRetryAfter(headers: Record<string, unknown> | undefined): number | undefined {
+  if (!headers) return undefined;
+  const lower = (k: string) => headers[k] ?? headers[k.toLowerCase()];
+  // FB sends `X-Business-Use-Case-Usage` / `X-App-Usage` for the soft limit
+  // and a standard `Retry-After` after a 429 — we only honour the explicit
+  // Retry-After here; the JSON usage headers need finer-grained parsing.
+  const ra = lower("Retry-After");
+  if (typeof ra === "string" || typeof ra === "number") {
+    const asNumber = Number(String(ra).trim());
+    if (Number.isFinite(asNumber) && asNumber >= 0) return Math.round(asNumber * 1000);
+    const asDate = Date.parse(String(ra));
+    if (Number.isFinite(asDate)) return Math.max(0, asDate - Date.now());
+  }
+  return undefined;
+}
+
+/**
  * Fetch full lead data from Facebook Graph API using the page access token.
+ *
+ * On success returns `{ ok: true, data }`. On any failure returns
+ * `{ ok: false, error: { … } }` with enough metadata for the retry
+ * policy classifier to decide whether to retry, when, or give up.
  */
 export async function fetchLeadData(
   leadgenId: string,
   accessToken: string
-): Promise<LeadData | null> {
+): Promise<FetchLeadDataResult> {
   const url = `${GRAPH_API_BASE}/${leadgenId}`;
   await log.info("FACEBOOK", `→ fetchLeadData(${leadgenId})`, {
     endpoint: `/${leadgenId}`,
@@ -89,19 +129,36 @@ export async function fetchLeadData(
       fieldCount: response.data?.field_data?.length ?? 0,
       fields: response.data?.field_data?.map((f) => f.name),
     });
-    return response.data;
+    return { ok: true, data: response.data };
   } catch (err: unknown) {
     const duration = Date.now() - startAt;
-    const axiosErr = err as { response?: { status?: number; data?: unknown }; message?: string };
-    const fbError = (axiosErr?.response?.data as { error?: { message?: string; code?: number } })?.error;
+    const axiosErr = err as {
+      response?: { status?: number; data?: unknown; headers?: Record<string, unknown> };
+      message?: string;
+    };
+    const fbError = (axiosErr?.response?.data as {
+      error?: { message?: string; code?: number; error_subcode?: number };
+    })?.error;
     const message = fbError?.message ?? axiosErr?.message ?? "Unknown error";
+    const retryAfterMs = parseFbRetryAfter(axiosErr?.response?.headers);
     await log.error("FACEBOOK", `← fetchLeadData(${leadgenId}) → ERROR (${duration}ms): ${message}`, {
       duration,
       status: axiosErr?.response?.status,
       fbErrorCode: fbError?.code,
+      fbErrorSubcode: fbError?.error_subcode,
       fbErrorMessage: fbError?.message,
+      retryAfterMs,
     });
-    return null;
+    return {
+      ok: false,
+      error: {
+        httpStatus: axiosErr?.response?.status,
+        fbErrorCode: fbError?.code,
+        fbErrorSubcode: fbError?.error_subcode,
+        message,
+        retryAfterMs,
+      },
+    };
   }
 }
 

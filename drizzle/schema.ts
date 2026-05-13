@@ -634,6 +634,31 @@ export const leads = mysqlTable("leads", {
   deliveryStatus: mysqlEnum("deliveryStatus", ["PENDING", "PROCESSING", "SUCCESS", "FAILED", "PARTIAL"]).default("PENDING").notNull(),
   /** Set when dataStatus = ERROR (Graph/token failure) */
   dataError: text("dataError"),
+  /**
+   * Completed Graph-enrichment attempts. Per-minute retry scheduler stops
+   * claiming the lead once `dataAttempts >= LEAD_MAX_GRAPH_ATTEMPTS`.
+   * Mirrors `orders.attempts`.
+   */
+  dataAttempts: int("dataAttempts").default(0).notNull(),
+  /**
+   * When to retry the Graph fetch next. `null` = no retry scheduled (either
+   * success, permanently failed via classifier, or attempts exhausted). The
+   * scheduler claims rows by clearing this column inside the same locking
+   * transaction so concurrent workers can't re-dispatch the same lead.
+   */
+  dataNextRetryAt: timestamp("dataNextRetryAt"),
+  /**
+   * Classified outcome of the last Graph failure. Drives the backoff ladder
+   * and the giveup decision (see `leadEnrichmentRetryPolicy.ts`).
+   *
+   *   - `permanently_missing` — Graph code 100/33 ("Object does not exist").
+   *     Lead got deleted on FB's side; no point retrying.
+   *   - `auth`                — token invalid/expired (code 190 / 102).
+   *   - `validation`          — request shape wrong (rare).
+   *   - `rate_limit`          — code 4 / 17 / 80004 — honour Retry-After.
+   *   - `network`             — timeout / 5xx / connection error.
+   */
+  dataErrorType: varchar("dataErrorType", { length: 32 }),
 
   // ── Denormalized source info (copied from facebook_forms on write) ─────────
   // Eliminates N+1 queries on leads list — no JOIN needed at read time.
@@ -674,6 +699,9 @@ export const leads = mysqlTable("leads", {
   idxUserCampaignId: index("idx_leads_user_campaign_id").on(t.userId, t.campaignId),
   // Speeds up global time-series queries (admin analytics, archival)
   idxCreatedAt: index("idx_leads_created_at").on(t.createdAt),
+  // Speeds up the per-minute Graph-retry scheduler scan: walks only ERROR
+  // rows whose nextRetryAt is due and dataAttempts is under cap.
+  idxDataRetryDue: index("idx_leads_data_retry_due").on(t.dataStatus, t.dataNextRetryAt, t.dataAttempts),
 }));
 
 export type Lead = typeof leads.$inferSelect;

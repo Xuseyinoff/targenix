@@ -1,11 +1,16 @@
 /**
- * Hourly background jobs (in-process timer, aligned to clock hour):
+ * Background retry timers (in-process):
  *
- * 1. **Graph errors** — leads with dataStatus = ERROR still need a full processLead
- *    (token / Graph fetch). Capped batch + staggered dispatch.
+ *   1. **Per-minute order tick** — drains failed deliveries that are due
+ *      (see `orderRetryScheduler`).
  *
- * 2. **Failed orders** — integration routing only, max 3 attempts, 1h spacing
- *    (see orderRetryScheduler + leadService.retryFailedOrderDelivery).
+ *   2. **Per-minute Graph retry tick** — re-enqueues leads whose Facebook
+ *      Graph enrichment failed and whose `dataNextRetryAt <= NOW()` window
+ *      has elapsed (see `leadGraphRetryScheduler`). Replaces the previous
+ *      hourly thundering-herd retry that ignored attempts and backoff.
+ *
+ *   3. **Hourly stuck-pending tick** — re-dispatches leads stuck in
+ *      `PENDING` for more than 10 minutes (the worker likely crashed mid-job).
  *
  * For Kubernetes / Railway, you can instead run `curl` against an admin
  * endpoint or a dedicated worker on the same schedule — example at bottom of file.
@@ -16,6 +21,7 @@ import { getDb } from "../db";
 import { leads } from "../../drizzle/schema";
 import { dispatchLeadProcessing } from "./leadDispatch";
 import { retryDueFailedOrders } from "./orderRetryScheduler";
+import { retryDueGraphErrorLeads } from "./leadGraphRetryScheduler";
 import { autoPromoteExpiredCooldowns } from "./circuitBreaker";
 import { log } from "./appLogger";
 
@@ -27,80 +33,15 @@ const RETRY_INTERVAL_MS = envInt("RETRY_INTERVAL_MS", 60 * 60 * 1000);
 /** Leads stuck in PENDING longer than this are considered lost (worker was down). */
 const STUCK_PENDING_THRESHOLD_MS = envInt("STUCK_PENDING_THRESHOLD_MS", 10 * 60 * 1000);
 
-/** Max Graph-error leads re-queued per hourly tick (prevents thundering-herd on FB). */
-const GRAPH_ERROR_RETRY_CAP = envInt("GRAPH_ERROR_RETRY_CAP", 500);
-
-/** Lead-dispatch batch size for the staggered Graph-error retry tick. */
-const GRAPH_ERROR_BATCH_SIZE = envInt("GRAPH_ERROR_BATCH_SIZE", 10);
-
-/** Delay between successive Graph-error batches. */
-const GRAPH_ERROR_BATCH_DELAY_MS = envInt("GRAPH_ERROR_BATCH_DELAY_MS", 2000);
-
 /**
- * Re-queue leads that failed Facebook Graph enrichment (full pipeline).
- * Delivery-only failures are handled by {@link retryDueFailedOrders}, not here.
+ * @deprecated Use the per-minute `retryDueGraphErrorLeads` (in
+ * `leadGraphRetryScheduler.ts`) which uses the same `attempts` + `nextRetryAt`
+ * model as orders. Kept here as a thin shim so any external callers (CRON,
+ * admin tooling) continue to work; it now just delegates with the same
+ * per-minute batch size.
  */
 export async function retryGraphErrorLeads(): Promise<{ retried: number }> {
-  const db = await getDb();
-  if (!db) {
-    await log.warn(
-      "SYSTEM",
-      "[RetryScheduler] DB not available, skipping graph-error retry run",
-    );
-    return { retried: 0 };
-  }
-
-  const graphErrorLeads = await db.select().from(leads).where(eq(leads.dataStatus, "ERROR"));
-
-  if (graphErrorLeads.length === 0) {
-    console.log("[RetryScheduler] No leads with Graph errors to auto-retry");
-    return { retried: 0 };
-  }
-
-  const toRetry = graphErrorLeads.slice(0, GRAPH_ERROR_RETRY_CAP);
-  if (graphErrorLeads.length > GRAPH_ERROR_RETRY_CAP) {
-    await log.warn(
-      "SYSTEM",
-      `[RetryScheduler] Graph-error backlog (${graphErrorLeads.length}), capping at ${GRAPH_ERROR_RETRY_CAP}`,
-      { backlog: graphErrorLeads.length, cap: GRAPH_ERROR_RETRY_CAP },
-    );
-  }
-
-  const ids = toRetry.map((l) => l.id);
-  for (const id of ids) {
-    await db
-      .update(leads)
-      .set({ dataStatus: "PENDING", deliveryStatus: "PENDING", dataError: null })
-      .where(eq(leads.id, id));
-  }
-
-  for (let i = 0; i < toRetry.length; i += GRAPH_ERROR_BATCH_SIZE) {
-    const batch = toRetry.slice(i, i + GRAPH_ERROR_BATCH_SIZE);
-    const delayMs = (i / GRAPH_ERROR_BATCH_SIZE) * GRAPH_ERROR_BATCH_DELAY_MS;
-
-    setTimeout(() => {
-      for (const lead of batch) {
-        void dispatchLeadProcessing({
-          leadId: lead.id,
-          leadgenId: lead.leadgenId,
-          pageId: lead.pageId,
-          formId: lead.formId,
-          userId: lead.userId,
-        }).catch((err: unknown) =>
-          void log.error(
-            "SYSTEM",
-            `[RetryScheduler] dispatch failed for lead ${lead.id}`,
-            { leadId: lead.id, error: err instanceof Error ? err.message : String(err) },
-          ),
-        );
-      }
-    }, delayMs);
-  }
-
-  console.log(
-    `[RetryScheduler] ${new Date().toISOString()} — queued ${toRetry.length} lead(s) with Graph errors for full reprocessing`,
-  );
-  return { retried: toRetry.length };
+  return retryDueGraphErrorLeads();
 }
 
 /**
@@ -263,28 +204,37 @@ export function startRetryScheduler(): void {
           { error: err instanceof Error ? err.message : String(err) },
         );
       }
+
+      // Graph enrichment retries piggy-back on the same per-minute tick.
+      // Smooth steady-state load on Facebook (no top-of-hour spike) and the
+      // policy classifier in `leadEnrichmentRetryPolicy` keeps
+      // permanently-missing leadgenIds (code 100/33) out of the rotation.
+      try {
+        await retryDueGraphErrorLeads();
+      } catch (err) {
+        await log.error(
+          "SYSTEM",
+          "[RetryScheduler] Graph-retry tick failed",
+          { error: err instanceof Error ? err.message : String(err) },
+        );
+      }
     })();
   }, ORDER_TICK_INTERVAL_MS);
   (orderTickTimer as unknown as { unref?: () => void })?.unref?.();
 
-  // 2. Hourly lead-pipeline tick (graph + stuck pending)
+  // 2. Hourly stuck-pending tick — Graph retries moved to the per-minute
+  // tick (see retryDueGraphErrorLeads above), so this hourly job only
+  // sweeps up leads stuck in PENDING beyond the threshold (worker crashed
+  // mid-processing).
   const scheduleHourly = () => {
     const delay = msUntilNextHour();
     const nextRun = new Date(Date.now() + delay);
     console.log(
-      `[RetryScheduler] Next hourly lead-pipeline tick at ${nextRun.toISOString()} (in ${Math.round(delay / 60000)} min)`,
+      `[RetryScheduler] Next hourly stuck-pending tick at ${nextRun.toISOString()} (in ${Math.round(delay / 60000)} min)`,
     );
 
     hourlyTimer = setTimeout(() => {
       void (async () => {
-        const graph = await retryGraphErrorLeads().catch((err: unknown) => {
-          void log.error(
-            "SYSTEM",
-            "[RetryScheduler] graph-error tick failed",
-            { error: err instanceof Error ? err.message : String(err) },
-          );
-          return { retried: 0 };
-        });
         const stuck = await retryStuckPendingLeads().catch((err: unknown) => {
           void log.error(
             "SYSTEM",
@@ -293,9 +243,9 @@ export function startRetryScheduler(): void {
           );
           return { retried: 0 };
         });
-        if (graph.retried > 0 || stuck.retried > 0) {
+        if (stuck.retried > 0) {
           console.log(
-            `[RetryScheduler] Hourly lead-pipeline summary — graph errors: ${graph.retried}, stuck pending: ${stuck.retried}`,
+            `[RetryScheduler] Hourly stuck-pending summary — re-queued: ${stuck.retried}`,
           );
         }
       })();
