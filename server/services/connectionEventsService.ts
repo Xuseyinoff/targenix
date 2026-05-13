@@ -67,21 +67,6 @@ export async function appendConnectionEvent(
       source: params.source,
       details: params.details ?? null,
     });
-
-    // Side-effect: when the event represents a transition into "expired",
-    // notify the user. All three expiration paths (oauth_refresh_failed in
-    // connectionService, oauth_refresh_failed at refresh time, and the
-    // health-check sweep) funnel through this function, so one hook
-    // covers them uniformly. The notifier handles its own cooldown and
-    // never throws — we void-discard.
-    if (isTransitionToExpired(params)) {
-      const { notifyConnectionExpired } = await import("./connectionExpirationNotifier");
-      void notifyConnectionExpired(db, {
-        connectionId: params.connectionId,
-        userId: params.userId,
-        reason: deriveReason(params),
-      });
-    }
   } catch (err) {
     // Audit write failure is logged loudly but never blocks the main flow.
     void log.error(
@@ -96,6 +81,37 @@ export async function appendConnectionEvent(
       null,
       params.userId,
     );
+    return; // No event row → no notification to fire.
+  }
+
+  // Side-effect: when the event represents a transition into "expired",
+  // notify the user. All three expiration paths (oauth_refresh_failed in
+  // connectionService, oauth_refresh_failed at refresh time, and the
+  // health-check sweep) funnel through this function, so one hook covers
+  // them uniformly. The notifier handles its own cooldown and never throws
+  // — we void-discard. Kept OUTSIDE the audit-row try/catch so a notifier
+  // dispatch failure doesn't masquerade as an audit-row failure in the log.
+  if (isTransitionToExpired(params)) {
+    try {
+      const { notifyConnectionExpired } = await import("./connectionExpirationNotifier");
+      void notifyConnectionExpired(db, {
+        connectionId: params.connectionId,
+        userId: params.userId,
+        reason: deriveReason(params),
+      });
+    } catch (err) {
+      void log.error(
+        "CONNECTIONS",
+        "Failed to load connectionExpirationNotifier — user not notified",
+        {
+          connectionId: params.connectionId,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        null,
+        null,
+        params.userId,
+      );
+    }
   }
 }
 
