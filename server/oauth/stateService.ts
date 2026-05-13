@@ -1,4 +1,4 @@
-import { eq, lt } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import { oauthStates } from "../../drizzle/schema";
 import type { DbClient } from "../db";
 import type { OAuthMode } from "./types";
@@ -34,6 +34,13 @@ export async function insertOAuthState(
 export async function consumeOAuthState(
   db: DbClient,
   stateParam: string,
+  /**
+   * Optional provider scoping. When set, the row is matched only when its
+   * `provider` column equals this value — prevents a cross-provider state
+   * lookup (e.g. a Facebook callback consuming a Google row that randomly
+   * collides on the 64-char hex token, however astronomically unlikely).
+   */
+  provider?: string,
 ): Promise<{
   id: number;
   userId: number;
@@ -41,11 +48,10 @@ export async function consumeOAuthState(
   mode: OAuthMode;
   appKey: string | null;
 } | null> {
-  const [row] = await db
-    .select()
-    .from(oauthStates)
-    .where(eq(oauthStates.state, stateParam))
-    .limit(1);
+  const whereExpr = provider
+    ? and(eq(oauthStates.state, stateParam), eq(oauthStates.provider, provider))
+    : eq(oauthStates.state, stateParam);
+  const [row] = await db.select().from(oauthStates).where(whereExpr).limit(1);
   if (!row) return null;
   if (new Date() > row.expiresAt) {
     await db.delete(oauthStates).where(eq(oauthStates.id, row.id));

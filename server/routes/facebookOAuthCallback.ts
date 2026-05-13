@@ -12,7 +12,7 @@
 import type { Express, Request, Response } from "express";
 import { getDb } from "../db";
 import { facebookOauthStates, facebookAccounts, facebookConnections } from "../../drizzle/schema";
-import { insertOAuthState } from "../oauth/stateService";
+import { insertOAuthState, consumeOAuthState } from "../oauth/stateService";
 import { eq, and, lt } from "drizzle-orm";
 import { encrypt } from "../encryption";
 import { log } from "../services/appLogger";
@@ -277,20 +277,19 @@ export function registerFacebookOAuthRoutes(app: Express): void {
         return;
       }
 
-      // ── CSRF Verification ──────────────────────────────────────────────────
-      const [savedState] = await db
-        .select()
-        .from(facebookOauthStates)
-        .where(eq(facebookOauthStates.state, stateParam))
-        .limit(1);
-
-      if (!savedState) {
-        await log.error("FACEBOOK", "OAuth CSRF check failed: state not found", {
+      // ── CSRF Verification (Sprint B Step 2) ────────────────────────────────
+      // Reads from universal oauth_states (provider='facebook'). consumeOAuthState
+      // returns null on missing or expired and deletes the row on use. The legacy
+      // `facebook_oauth_states` mirror row written by dual-write (Step 1) is
+      // drained by the hourly sweep further below — we no longer consume it here.
+      const consumed = await consumeOAuthState(db, stateParam, "facebook");
+      if (!consumed) {
+        await log.error("FACEBOOK", "OAuth CSRF check failed: state not found or expired", {
           state: stateParam.slice(0, 8) + "...",
         });
         res.status(403).send(
           renderPopupBridgeHtml(
-            { type: "fb_oauth_error", error: "CSRF validation failed" },
+            { type: "fb_oauth_error", error: "CSRF validation failed or session expired" },
             "Security validation failed. Please try again.",
             "Facebook Connection Failed"
           )
@@ -298,26 +297,7 @@ export function registerFacebookOAuthRoutes(app: Express): void {
         return;
       }
 
-      // Check state expiry
-      if (new Date() > savedState.expiresAt) {
-        await db.delete(facebookOauthStates).where(eq(facebookOauthStates.id, savedState.id));
-        await log.error("FACEBOOK", "OAuth CSRF check failed: state expired", {
-          userId: savedState.userId,
-        });
-        res.status(403).send(
-          renderPopupBridgeHtml(
-            { type: "fb_oauth_error", error: "OAuth session expired. Please try again." },
-            "OAuth session expired. Please try again.",
-            "Facebook Connection Failed"
-          )
-        );
-        return;
-      }
-
-      const userId = savedState.userId;
-
-      // Delete state after use (one-time use)
-      await db.delete(facebookOauthStates).where(eq(facebookOauthStates.id, savedState.id));
+      const userId = consumed.userId;
 
       const appId = ENV.facebookAppId;
       const appSecret = ENV.facebookAppSecret;

@@ -15,7 +15,7 @@ import type { Express, Request, Response } from "express";
 import axios from "axios";
 import { getDb } from "../db";
 import { users, facebookAccounts, facebookOauthStates } from "../../drizzle/schema";
-import { insertOAuthState } from "../oauth/stateService";
+import { insertOAuthState, consumeOAuthState } from "../oauth/stateService";
 import { eq, and, lt } from "drizzle-orm";
 import { log } from "../services/appLogger";
 import { exchangeCodeForToken } from "../services/facebookGraphService";
@@ -143,20 +143,17 @@ export function registerFacebookLoginRoutes(app: Express): void {
       const db = await getDb();
       if (!db) { closeWithError("Database not available."); return; }
 
-      // CSRF check
-      const [savedState] = await db
-        .select()
-        .from(facebookOauthStates)
-        .where(eq(facebookOauthStates.state, stateParam))
-        .limit(1);
-
-      if (!savedState || new Date() > savedState.expiresAt) {
-        if (savedState) await db.delete(facebookOauthStates).where(eq(facebookOauthStates.id, savedState.id));
+      // Sprint B Step 2 — CSRF check now reads from the universal oauth_states
+      // table (provider='facebook'). consumeOAuthState deletes the row on use
+      // and returns null when expired/missing. The legacy `facebook_oauth_states`
+      // row written by dual-write (Step 1) gets cleaned by the hourly sweep —
+      // we no longer touch it here. Step 4 will drop dual-write entirely; Step 5
+      // drops the legacy table.
+      const consumed = await consumeOAuthState(db, stateParam, "facebook");
+      if (!consumed) {
         closeWithError("Session expired. Please try again.");
         return;
       }
-
-      await db.delete(facebookOauthStates).where(eq(facebookOauthStates.id, savedState.id));
 
       const appId = ENV.facebookAppId;
       const appSecret = ENV.facebookAppSecret;
