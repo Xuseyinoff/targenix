@@ -40,7 +40,11 @@ export const APP_KEY_TO_TEMPLATE_TYPE = {
   "hubspot":       "http-api-key",
   "kommo":         "http-api-key",
   "pipedrive":     "http-api-key",
-} as const satisfies Record<string, "telegram" | "google-sheets" | "custom" | "http-api-key">;
+  // Universal HTTP — Phase 1 of the http-refactor. The server's
+  // httpRequestAdapter reads its config from `templateConfig` directly, so
+  // the payload follows the same generic shape as http-api-key apps.
+  "http-request":  "http-request",
+} as const satisfies Record<string, "telegram" | "google-sheets" | "custom" | "http-api-key" | "http-request">;
 
 export type SupportedAppKey = keyof typeof APP_KEY_TO_TEMPLATE_TYPE;
 
@@ -221,6 +225,20 @@ export function buildCreatePayload(
       }
     }
     return { name, appKey, connectionId, templateConfig };
+  }
+
+  // Universal HTTP request — same templateConfig pattern as http-api-key,
+  // but routes to `httpRequestAdapter` server-side. There's no connection
+  // (auth lives inline inside the `authentication` group), so we never set
+  // connectionId here.
+  if (appKey === "http-request") {
+    const templateConfig: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v)) {
+      if (val !== undefined && val !== null && val !== "") {
+        templateConfig[k] = val;
+      }
+    }
+    return { name, appKey, templateConfig };
   }
 
   throw new Error(`Unsupported app: ${appKey}`);

@@ -292,6 +292,21 @@ export async function dispatchDelivery(
       break;
     }
 
+    case "http-request": {
+      // Universal HTTP — config lives entirely inside `destinations.templateConfig`
+      // (url, method, authentication group, body group, advanced headers/query).
+      // The adapter renders {{variables}} from the lead at send time.
+      const tplCfg = (tw?.templateConfig ?? {}) as Record<string, unknown>;
+      // Surface targetUrlUsed for ORDER logs (other adapters expose it via cfg).
+      const urlVal = tplCfg.url;
+      if (typeof urlVal === "string") targetUrlUsed = urlVal;
+      adapterInput = {
+        ...tplCfg,
+        leadRow,
+      };
+      break;
+    }
+
     case "plain-url":
     default: {
       targetUrlUsed = (cfg.targetUrl as string | undefined) ?? undefined;

@@ -122,6 +122,12 @@ type Entry =
       popular: boolean;
       authType: string | null;
       connectionType: string | null;
+      /**
+       * Manifest availability flag — `"beta"` surfaces a badge so users know
+       * the integration is not stable yet. `"deprecated"` is filtered out
+       * upstream so we never have to render anything for it here.
+       */
+      availability?: "stable" | "beta" | "deprecated";
     }
   | {
       kind: "template";
@@ -299,6 +305,11 @@ export function AppCatalogPicker({
       // Hide internal meta-adapters (dynamic-template) — they only represent
       // the "admin template" generic entry and would confuse the picker.
       if ((a as { internal?: boolean }).internal) continue;
+      const availability = (a as { availability?: "stable" | "beta" | "deprecated" }).availability;
+      // Deprecated manifests stay loadable for legacy destinations but
+      // disappear from the picker so users don't pick something we're
+      // sunsetting.
+      if (availability === "deprecated") continue;
       const category = normalizeManifestCategory(a.category);
       const connectionType = (a as { connectionType?: string | null }).connectionType ?? null;
       out.push({
@@ -314,6 +325,7 @@ export function AppCatalogPicker({
         popular: isPopular(a.key) || isPopular(a.name),
         authType: authByKey.get(a.key) ?? null,
         connectionType,
+        availability,
       });
     }
     for (const tt of templates) {
@@ -750,6 +762,16 @@ function Row({
               <Sparkles className="h-2.5 w-2.5" strokeWidth={2.5} />
               <span className="text-[9px] font-bold uppercase tracking-widest leading-none">
                 Popular
+              </span>
+            </span>
+          )}
+          {entry.kind === "manifest" && entry.availability === "beta" && (
+            <span
+              className="inline-flex items-center px-1.5 py-0.5 rounded-full bg-sky-50 border border-sky-200 text-sky-700 dark:bg-sky-950/30 dark:border-sky-900/40 dark:text-sky-400 shrink-0"
+              title="Beta — interface may still change"
+            >
+              <span className="text-[9px] font-bold uppercase tracking-widest leading-none">
+                Beta
               </span>
             </span>
           )}

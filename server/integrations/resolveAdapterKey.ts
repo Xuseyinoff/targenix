@@ -73,6 +73,10 @@ export function resolveAdapterKey(
     if (effectiveKey === "google-sheets" || effectiveKey === "google_sheets") return "google-sheets";
     // Sentinel written by the NOT NULL backfill for destinations that had no templateType.
     if (effectiveKey === "plain-url") return "plain-url";
+    // Universal HTTP — consolidates webhook-json / plain-url / crm-generic
+    // behind one manifest + adapter (httpRequestAdapter). Phase 1 of the
+    // http-refactor; see MIGRATION_PLAN_http_refactor.md.
+    if (effectiveKey === "http-request") return "http-request";
     // Phase 9 — manifest-driven HTTP api_key apps (no destination_templates row needed).
     if (HTTP_API_KEY_APP_KEYS.has(effectiveKey)) return "http-api-key";
     // Phase 12 — OAuth2 CRM apps (token fetched via getValidAccessToken).

@@ -63,7 +63,14 @@ async function validateTargetUrl(url: string): Promise<void> {
 // always work with one resolved dispatch type. Once Phase 2 ships and every
 // client sends `appKey` only, the `templateType` input field is removed.
 
-type DispatchType = "sotuvchi" | "100k" | "custom" | "telegram" | "google-sheets" | "http-api-key";
+type DispatchType =
+  | "sotuvchi"
+  | "100k"
+  | "custom"
+  | "telegram"
+  | "google-sheets"
+  | "http-api-key"
+  | "http-request";
 
 /** appKeys that funnel through the http-api-key create branch (HTTP_API_KEY +
  *  OAuth2 CRM manifests — both share the same create surface). */
@@ -82,6 +89,7 @@ function resolveDispatchType(input: { appKey?: string }): DispatchType {
   if (k) {
     if (DIRECT_DISPATCH_KEYS.has(k as DispatchType)) return k as DispatchType;
     if (HTTP_API_KEY_DISPATCH_APP_KEYS.has(k)) return "http-api-key";
+    if (k === "http-request") return "http-request";
   }
   throw new Error("`appKey` is required to create a destination");
 }
@@ -96,12 +104,14 @@ function resolveDispatchTypeForUpdate(
   if (k) {
     if (DIRECT_DISPATCH_KEYS.has(k as DispatchType)) return k as DispatchType;
     if (HTTP_API_KEY_DISPATCH_APP_KEYS.has(k)) return "http-api-key";
+    if (k === "http-request") return "http-request";
   }
   // Map site.appKey back to dispatch type — http-api-key apps map to "http-api-key"
   // dispatch; direct types map to themselves.
   const sk = site.appKey;
   if (DIRECT_DISPATCH_KEYS.has(sk as DispatchType)) return sk as DispatchType;
   if (HTTP_API_KEY_DISPATCH_APP_KEYS.has(sk)) return "http-api-key";
+  if (sk === "http-request") return "http-request";
   return "custom";
 }
 
@@ -494,6 +504,23 @@ export const destinationsRouter = router({
         });
         const id = (inserted as unknown as { insertId?: number })?.insertId;
         return { success: true, id, name: input.name, appKey: input.appKey.trim() };
+      }
+
+      // Universal HTTP Request — auth lives inline inside templateConfig
+      // (no connection row), so storage matches the http-api-key branch but
+      // without the `connectionId` reference. The delivery path picks up
+      // `httpRequestAdapter` via resolveAdapterKey when `appKey === "http-request"`.
+      if (dispatchType === "http-request") {
+        const [inserted] = await db.insert(destinations).values({
+          userId:         ctx.user.id,
+          name:           input.name,
+          url:            null,
+          appKey:         "http-request",
+          templateConfig: input.templateConfig ?? {},
+          isActive:       true,
+        });
+        const id = (inserted as unknown as { insertId?: number })?.insertId;
+        return { success: true, id, name: input.name, appKey: "http-request" };
       }
 
       // Build URL — resolve from destination_templates by appKey for known affiliate types
