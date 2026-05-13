@@ -22,6 +22,7 @@ import { startCrmSyncScheduler } from "../services/crmSyncScheduler";
 import { startConnectionHealthScheduler } from "../services/connectionHealthScheduler";
 import { startLeadPollingScheduler } from "../services/leadPollingService";
 import { startTriggerScheduler } from "../services/triggerScheduler";
+import { startOAuthStateCleanupScheduler } from "../services/oauthStateCleanupScheduler";
 import { getDb } from "../db";
 
 if (!process.env.REDIS_URL) {
@@ -67,6 +68,9 @@ async function boot() {
   // against Facebook and saves + dispatches any leadgen the webhook missed.
   startLeadPollingScheduler();
   startTriggerScheduler();
+  // Universal oauth_states: hourly sweep of expired CSRF rows. Replaces the
+  // per-provider hourly intervals removed in Sprint B Step 4.
+  startOAuthStateCleanupScheduler();
 
   console.log("[Worker] All systems running. Waiting for jobs...");
 

@@ -363,6 +363,7 @@ async function startServer() {
     const { startCrmSyncScheduler } = await import("../services/crmSyncScheduler");
     const { startConnectionHealthScheduler } = await import("../services/connectionHealthScheduler");
     const { startLeadPollingScheduler } = await import("../services/leadPollingService");
+    const { startOAuthStateCleanupScheduler } = await import("../services/oauthStateCleanupScheduler");
     startLeadWorker();
     startRetryScheduler();
     startLogRetentionScheduler();
@@ -371,6 +372,7 @@ async function startServer() {
     startCrmSyncScheduler();
     startConnectionHealthScheduler();
     startLeadPollingScheduler();
+    startOAuthStateCleanupScheduler();
     console.log("[Server] Embedded worker + schedulers started.");
   }
 
