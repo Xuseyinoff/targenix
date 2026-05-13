@@ -73,6 +73,12 @@ interface TemplateForm {
   variableFields: string[];
   autoMappedFields: AutoMappedField[];
   isActive: boolean;
+  /**
+   * Brand icon URL (Bosqich 2): admin pastes a same-origin path or
+   * `https://…` URL. Stored on `apps.iconUrl`; UI fallback chain handles
+   * blank values via `iconUrlForTemplateAppKey`.
+   */
+  iconUrl: string;
 }
 
 /**
@@ -150,6 +156,7 @@ function defaultForm(): TemplateForm {
       { key: "phone", label: "Phone" },
     ],
     isActive: true,
+    iconUrl: "",
   };
 }
 
@@ -320,6 +327,13 @@ export default function AdminTemplates() {
     onError: e => toast.error(e.message),
   });
 
+  // Bosqich 2 — push the brand icon URL to the matching `apps` row. Fires
+  // on edit only; createAffiliate handles iconUrl inside its own transaction.
+  const setAppIconMutation = trpc.adminTemplates.setAppIcon.useMutation({
+    onSuccess: () => utils.adminTemplates.list.invalidate(),
+    onError: e => toast.error(`Icon update failed: ${e.message}`),
+  });
+
   const deleteMutation = trpc.adminTemplates.delete.useMutation({
     onSuccess: () => { utils.adminTemplates.list.invalidate(); toast.success("Template deleted"); },
     onError: e => toast.error(e.message),
@@ -357,6 +371,8 @@ export default function AdminTemplates() {
       variableFields: (t.variableFields as string[]) ?? [],
       autoMappedFields: (t.autoMappedFields as AutoMappedField[]) ?? [],
       isActive: t.isActive,
+      // appIconUrl is joined from apps.iconUrl by the server list endpoint.
+      iconUrl: ((t as { appIconUrl?: string | null }).appIconUrl ?? "") as string,
     });
     setOpen(true);
   }
@@ -403,6 +419,12 @@ export default function AdminTemplates() {
       if (form.bodyFields.length === 0) { toast.error("At least one body field is required"); return; }
     }
 
+    const trimmedIcon = form.iconUrl.trim();
+    if (trimmedIcon !== "" && !/^https:\/\//i.test(trimmedIcon) && !trimmedIcon.startsWith("/")) {
+      toast.error("Icon URL must start with https:// or /");
+      return;
+    }
+
     const sharedPayload = {
       name: form.name.trim(),
       description: form.description.trim() || undefined,
@@ -418,16 +440,28 @@ export default function AdminTemplates() {
       variableFields: form.variableFields,
       autoMappedFields: form.autoMappedFields.filter(f => f.key.trim() && f.label.trim()),
       isActive: form.isActive,
+      iconUrl: trimmedIcon,
     };
 
     if (editId !== null) {
       // Edit preserves the existing appKey — it links to the affiliate's
       // apps row (and connections that already reference it). Renaming the
-      // template here does not rename the underlying app.
-      updateMutation.mutate({ id: editId, appKey: form.appKey, ...sharedPayload });
+      // template here does not rename the underlying app. Icon URL is
+      // separately pushed to the apps row via setAppIcon below — the
+      // template update path itself does not touch apps.
+      updateMutation.mutate(
+        { id: editId, appKey: form.appKey, ...sharedPayload },
+        {
+          onSuccess: () => {
+            if (form.appKey.trim() !== "") {
+              setAppIconMutation.mutate({ appKey: form.appKey.trim(), iconUrl: trimmedIcon });
+            }
+          },
+        },
+      );
     } else {
       // Create: server slugifies `name` to derive appKey and creates the
-      // matching apps row in the same transaction.
+      // matching apps row in the same transaction (iconUrl picked up there).
       createMutation.mutate(sharedPayload);
     }
   }
@@ -608,6 +642,39 @@ export default function AdminTemplates() {
                 </p>
               )
             )}
+
+            {/* Brand icon URL — written to apps.iconUrl. Empty falls through
+                to the legacy bundled-PNG / brand-domain proxy chain. */}
+            <div className="space-y-1.5">
+              <Label>Brand icon URL</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="url"
+                  placeholder="https://example.com/logo.png  or  /affiliates/name.png"
+                  value={form.iconUrl}
+                  onChange={e => setField("iconUrl", e.target.value)}
+                  className="font-mono text-xs"
+                />
+                {form.iconUrl.trim() !== "" && (
+                  <div className="shrink-0 flex h-9 w-9 items-center justify-center overflow-hidden rounded-md bg-white shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-50">
+                    <img
+                      src={form.iconUrl.trim()}
+                      alt="Preview"
+                      className="max-h-full max-w-full object-contain"
+                      loading="lazy"
+                      referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Paste an <code className="bg-muted px-1 rounded">https://</code> URL or a same-origin path (e.g. <code className="bg-muted px-1 rounded">/affiliates/name.png</code>).
+                Leave blank to fall back to the brand-domain favicon proxy. SVG and PNG/WebP both work.
+              </p>
+            </div>
 
             {/* Endpoint */}
             <div className="space-y-1.5">

@@ -125,15 +125,38 @@ export async function findAppActionIdForTemplate(
  * All `destination_templates` rows, overlay body/name/url from `app_actions` when
  * the 0048 pair (`appKey`, `t`+id) exists.
  */
-export async function listDestinationTemplatesWithMirrorOverlay(db: DbClient): Promise<DestinationTemplate[]> {
+export async function listDestinationTemplatesWithMirrorOverlay(
+  db: DbClient,
+): Promise<DestinationTemplateForPicker[]> {
   const dtRows = await db
     .select()
     .from(destinationTemplates)
     .orderBy(desc(destinationTemplates.createdAt));
   if (dtRows.length === 0) return [];
 
+  // Build (appKey → iconUrl) map in one query so the response carries the
+  // brand mark without forcing every consumer to re-query the apps table.
+  const allKeys = Array.from(
+    new Set(dtRows.map((d) => d.appKey).filter((k): k is string => !!k && k.trim() !== "")),
+  );
+  const iconByAppKey = new Map<string, string>();
+  if (allKeys.length > 0) {
+    const appRows = await db
+      .select({ appKey: apps.appKey, iconUrl: apps.iconUrl })
+      .from(apps)
+      .where(inArray(apps.appKey, allKeys));
+    for (const r of appRows) {
+      if (r.iconUrl) iconByAppKey.set(r.appKey, r.iconUrl);
+    }
+  }
+
   const withKeys = dtRows.filter((d) => d.appKey && String(d.appKey).trim() !== "");
-  if (withKeys.length === 0) return dtRows;
+  if (withKeys.length === 0) {
+    return dtRows.map((dt) => ({
+      ...dt,
+      appIconUrl: dt.appKey ? (iconByAppKey.get(dt.appKey) ?? null) : null,
+    }));
+  }
 
   const pairConds = withKeys.map((d) => {
     const aks = actionKeysForTemplateId(d.id);
@@ -152,11 +175,12 @@ export async function listDestinationTemplatesWithMirrorOverlay(db: DbClient): P
   }
 
   return dtRows.map((dt) => {
-    if (!dt.appKey) return dt;
+    const appIconUrl = dt.appKey ? (iconByAppKey.get(dt.appKey) ?? null) : null;
+    if (!dt.appKey) return { ...dt, appIconUrl };
     const a = resolveOverlayAction(byKey, dt.appKey, dt.id);
     if (!a) {
       log("list overlay miss — legacy only", { templateId: dt.id });
-      return dt;
+      return { ...dt, appIconUrl };
     }
     log("list overlay hit", { templateId: dt.id });
     return {
@@ -170,6 +194,7 @@ export async function listDestinationTemplatesWithMirrorOverlay(db: DbClient): P
       userVisibleFields: a.userFields,
       variableFields: a.variableFields,
       autoMappedFields: a.autoMappedFields,
+      appIconUrl,
     };
   });
 }
@@ -188,27 +213,11 @@ export type DestinationTemplateForPicker = DestinationTemplate & {
 export async function listActiveDestinationTemplatesForPicker(
   db: DbClient,
 ): Promise<DestinationTemplateForPicker[]> {
+  // `listDestinationTemplatesWithMirrorOverlay` already joins `apps.iconUrl`,
+  // so we just filter for active rows and sort by name.
   const merged = await listDestinationTemplatesWithMirrorOverlay(db);
-  const active = merged.filter((t) => t.isActive);
-
-  // Pull every distinct appKey in one query so the icon map is cheap.
-  const keys = Array.from(new Set(active.map((t) => t.appKey).filter((k): k is string => !!k)));
-  const iconByAppKey = new Map<string, string>();
-  if (keys.length > 0) {
-    const rows = await db
-      .select({ appKey: apps.appKey, iconUrl: apps.iconUrl })
-      .from(apps)
-      .where(inArray(apps.appKey, keys));
-    for (const r of rows) {
-      if (r.iconUrl) iconByAppKey.set(r.appKey, r.iconUrl);
-    }
-  }
-
-  return active
-    .map((t) => ({
-      ...t,
-      appIconUrl: t.appKey ? (iconByAppKey.get(t.appKey) ?? null) : null,
-    }))
+  return merged
+    .filter((t) => t.isActive)
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 

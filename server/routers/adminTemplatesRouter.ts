@@ -81,6 +81,21 @@ const appKeySchema = z
   .string()
   .regex(APP_KEY_RE, "appKey must match /^[a-z0-9][a-z0-9_-]{0,63}$/");
 
+/**
+ * App icon URL: same-origin `/path` or fully-qualified `https://…`. Capped at
+ * the `apps.iconUrl` column width (512 chars). Empty string is normalised to
+ * `null` by the mutation handler so admins can clear the icon by submitting
+ * a blank field.
+ */
+const appIconUrlSchema = z
+  .string()
+  .max(512)
+  .refine(
+    (s) => s === "" || /^https:\/\//i.test(s) || s.startsWith("/"),
+    "iconUrl must be https://… or start with /",
+  )
+  .optional();
+
 const templateInputSchema = z.object({
   name: z.string().min(1).max(255),
   description: z.string().max(500).optional(),
@@ -95,6 +110,13 @@ const templateInputSchema = z.object({
   variableFields: z.array(z.string()),
   autoMappedFields: z.array(autoMappedFieldSchema),
   isActive: z.boolean().default(true),
+  /**
+   * Brand icon URL written to `apps.iconUrl` for the matching app row. When
+   * omitted the apps row's existing iconUrl is preserved on edit; on create
+   * a NULL iconUrl falls through to the legacy bundled-PNG / brand-domain
+   * proxy resolution chain in `iconUrlForTemplateAppKey`.
+   */
+  iconUrl: appIconUrlSchema,
 });
 
 /**
@@ -344,7 +366,7 @@ export const adminTemplatesRouter = router({
             authType,
             fields,
             oauthConfig: null,
-            iconUrl: null,
+            iconUrl: input.iconUrl && input.iconUrl.trim() !== "" ? input.iconUrl.trim() : null,
             docsUrl: null,
             isActive: true,
           });
@@ -488,6 +510,36 @@ export const adminTemplatesRouter = router({
         );
       }
       return { success: true };
+    }),
+
+  /**
+   * Update the brand-icon URL for an app. Affects every destination_template
+   * that shares the same `appKey` because the icon is rendered from
+   * `apps.iconUrl`. Pass an empty string to clear the icon (back to the
+   * bundled-PNG / brand-domain proxy fallback chain).
+   */
+  setAppIcon: templateEditorProcedure
+    .input(
+      z.object({
+        appKey: appKeySchema,
+        iconUrl: appIconUrlSchema,
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
+      const next = input.iconUrl && input.iconUrl.trim() !== "" ? input.iconUrl.trim() : null;
+      const [r] = await db
+        .update(apps)
+        .set({ iconUrl: next })
+        .where(eq(apps.appKey, input.appKey));
+      if ((r as { affectedRows?: number }).affectedRows === 0) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `No app row found for appKey="${input.appKey}"`,
+        });
+      }
+      return { success: true, iconUrl: next };
     }),
 
   /** Delete a destination template. */
