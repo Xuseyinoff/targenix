@@ -239,5 +239,9 @@ export const httpWebhookApp: AppManifest = {
       ],
     },
   ],
-  availability: "stable",
+  // Phase 3 of the http-refactor (commit 9677ec6 → next) — the universal
+  // `http-request` app supersedes this one. Deprecating it removes the card
+  // from the catalogue immediately while keeping delivery for any legacy row
+  // working until Phase 4 retires the manifest + adapter entirely.
+  availability: "deprecated",
 };

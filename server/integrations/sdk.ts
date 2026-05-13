@@ -57,6 +57,13 @@ export interface HttpApiKeyAppOptions {
    * connectionId picker is omitted from the form.
    */
   noConnection?: boolean;
+  /**
+   * UI gating override. SDK default is "beta" so brand-new manifests start
+   * gated. Pass "stable" once the app is production-validated, or
+   * "deprecated" when it's being retired (e.g. superseded by a universal
+   * manifest like `http-request`).
+   */
+  availability?: "stable" | "beta" | "deprecated";
 }
 
 /**
@@ -100,6 +107,6 @@ export function defineHttpApiKeyApp(opts: HttpApiKeyAppOptions): AppManifest {
         ],
       },
     ],
-    availability: "beta",
+    availability: opts.availability ?? "beta",
   });
 }

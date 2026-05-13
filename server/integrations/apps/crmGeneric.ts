@@ -6,6 +6,9 @@ export const crmGenericApp = defineHttpApiKeyApp({
   icon: "Database",
   category: "ecommerce",
   description: "Push leads to any CRM or HTTP endpoint that accepts a JSON payload with Bearer auth.",
+  // Phase 3 of the http-refactor — superseded by `http-request`. Hidden from
+  // the catalogue immediately; the adapter is retired in Phase 4.
+  availability: "deprecated",
   endpoint: {
     // URL is provided by the user via the endpointUrl field below.
     // The adapter will use this placeholder if the field is empty.

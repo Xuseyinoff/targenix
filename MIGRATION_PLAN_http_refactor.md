@@ -43,7 +43,22 @@ Hozirgi prod ishlashida hech qanday o'zgarish yo'q. Yangi app **opt-in** — adm
    ```
    Har birini bosish formni preset value bilan to'ldiradi.
 
-### Phase 3 — Migration script (1-2 soat)
+### Phase 3 — Migration script (TUGADI ✅, audit natija: 0 row)
+
+**Audit kashfiyoti** ([`tooling/audit-http-destinations.mjs`](tooling/audit-http-destinations.mjs)):
+prod'da `webhook-json`, `plain-url`, va `crm-generic` apps'lardan **hech qaysida active destination yo'q**. Apps catalog'da turardi lekin ishlatilmagan.
+
+**Bajarilgan**:
+- 3 ta app `availability: "deprecated"` ga o'tkazildi → catalog'dan darhol yashirildi
+  ([`httpWebhook.ts`](server/integrations/apps/httpWebhook.ts), [`webhookJson.ts`](server/integrations/apps/webhookJson.ts), [`crmGeneric.ts`](server/integrations/apps/crmGeneric.ts))
+- SDK `defineHttpApiKeyApp`'ga `availability` override qo'shildi
+- Defensive migration script yozildi ([`tooling/migrate-to-http-request.mjs`](tooling/migrate-to-http-request.mjs)) — dry-run + apply rejimi bilan, agar kelajakda biror test row paydo bo'lsa avtomatik tarjima qilinadi
+
+**crm-generic'ni ko'chirmaslik qarori**: Bearer token `connections.credentialsJson.apiKeyEncrypted` ichida encrypted saqlanadi. Universal manifest'da token plain templateConfig'da turadi — bu encryption-at-rest regression bo'lar edi. Phase 4a'da `httpRequestAdapter`'ga encrypted secrets qo'llab-quvvatlash qo'shilgach, crm-generic migratsiya xavfsiz bo'ladi. Hozir esa eski kod yo'lida turadi.
+
+---
+
+### (Eski Phase 3 plani — tarixiy yozuv)
 
 Mavjud destinationlarni eski apps'dan `http-request`'ga ko'chirish:
 

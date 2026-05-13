@@ -7,6 +7,10 @@ export const webhookJsonApp = defineHttpApiKeyApp({
   category: "other",
   description: "POST lead data as JSON to any webhook URL — no API key required.",
   noConnection: true,
+  // Phase 3 of the http-refactor — superseded by `http-request`. Hidden from
+  // the catalogue immediately; the adapter is retired in Phase 4 after a
+  // verification window confirms no legacy rows reference this appKey.
+  availability: "deprecated",
   endpoint: {
     url: "{{endpointUrl}}",
     method: "POST",
