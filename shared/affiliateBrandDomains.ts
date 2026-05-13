@@ -39,12 +39,30 @@ export function resolveAffiliateBrandDomain(appKey: string | null | undefined): 
   return AFFILIATE_BRAND_DOMAIN_BY_APP_KEY[k] ?? null;
 }
 
-/** Same-origin URL for `<img>`; returns null when the key is not whitelisted. */
-export function iconUrlForTemplateAppKey(appKey: string | null | undefined): string | null {
+/**
+ * Same-origin URL for `<img>`.
+ *
+ * Resolution order (modernized — Bosqich 1):
+ *   1. `dbIconUrl` — the value joined from `apps.iconUrl` on the wire. Admin
+ *      controls this without a client rebuild.
+ *   2. Hardcoded `BUNDLED_AFFILIATE_ICON_PNG` map — legacy fallback for the
+ *      five originally bundled affiliates. Will be removed once every row
+ *      has its DB iconUrl populated.
+ *   3. `/api/brand-icons-by-key/:appKey` — server-side favicon proxy
+ *      (Clearbit → Google s2 → DuckDuckGo). Only used when the appKey is
+ *      whitelisted in `AFFILIATE_BRAND_DOMAIN_BY_APP_KEY`.
+ *   4. `null` — caller picks a fallback (lucide Globe by convention).
+ */
+export function iconUrlForTemplateAppKey(
+  appKey: string | null | undefined,
+  dbIconUrl?: string | null,
+): string | null {
+  if (dbIconUrl && dbIconUrl.trim() !== "") return dbIconUrl;
   if (appKey == null || typeof appKey !== "string") return null;
   const k = appKey.trim().toLowerCase();
-  if (!k || resolveAffiliateBrandDomain(k) == null) return null;
+  if (!k) return null;
   const bundled = BUNDLED_AFFILIATE_ICON_PNG[k];
   if (bundled) return bundled;
+  if (resolveAffiliateBrandDomain(k) == null) return null;
   return `/api/brand-icons-by-key/${encodeURIComponent(k)}`;
 }

@@ -235,12 +235,12 @@ export function AppCatalogPicker({
       { name: string; color: string; category: UiCategory; iconName: string | null }
     >();
     for (const tt of templates) {
-      const tpl = tt as { category?: string; appKey?: string | null };
+      const tpl = tt as { category?: string; appKey?: string | null; appIconUrl?: string | null };
       m.set(tt.id, {
         name: tt.name,
         color: tt.color,
         category: normalizeTemplateCategory(tpl.category ?? null),
-        iconName: iconUrlForTemplateAppKey(tpl.appKey ?? null),
+        iconName: iconUrlForTemplateAppKey(tpl.appKey ?? null, tpl.appIconUrl ?? null),
       });
     }
     return m;
@@ -321,6 +321,7 @@ export function AppCatalogPicker({
         category?: string;
         userVisibleFields?: string[] | null;
         appKey?: string | null;
+        appIconUrl?: string | null;
       };
       const category = normalizeTemplateCategory(tpl.category ?? null);
       const connCount = connectionCountByTemplate.get(tt.id) ?? 0;
@@ -335,7 +336,7 @@ export function AppCatalogPicker({
         subtitle,
         category,
         color: tt.color,
-        iconName: iconUrlForTemplateAppKey(tpl.appKey ?? null),
+        iconName: iconUrlForTemplateAppKey(tpl.appKey ?? null, tpl.appIconUrl ?? null),
         templateId: tt.id,
         templateName: tt.name,
         userVisibleFields: tpl.userVisibleFields ?? [],

@@ -3,7 +3,7 @@
  * `destination_templates` (authoritative for writes and IDs).
  */
 import { and, desc, eq, inArray, or } from "drizzle-orm";
-import { appActions, destinationTemplates } from "../../drizzle/schema";
+import { appActions, apps, destinationTemplates } from "../../drizzle/schema";
 import type { AppActionRow, DestinationTemplate } from "../../drizzle/schema";
 import type { destinations } from "../../drizzle/schema";
 import type { DbClient } from "../db";
@@ -174,10 +174,41 @@ export async function listDestinationTemplatesWithMirrorOverlay(db: DbClient): P
   });
 }
 
-export async function listActiveDestinationTemplatesForPicker(db: DbClient): Promise<DestinationTemplate[]> {
+/**
+ * Same shape as `DestinationTemplate` with the app row's icon URL spliced in
+ * so the client can render the brand mark without re-querying. `null` when
+ * the template's `appKey` has no matching `apps` row or the row's `iconUrl`
+ * is unset — the client falls back to the legacy hardcoded map and then to
+ * the generic Globe placeholder.
+ */
+export type DestinationTemplateForPicker = DestinationTemplate & {
+  appIconUrl: string | null;
+};
+
+export async function listActiveDestinationTemplatesForPicker(
+  db: DbClient,
+): Promise<DestinationTemplateForPicker[]> {
   const merged = await listDestinationTemplatesWithMirrorOverlay(db);
-  return merged
-    .filter((t) => t.isActive)
+  const active = merged.filter((t) => t.isActive);
+
+  // Pull every distinct appKey in one query so the icon map is cheap.
+  const keys = Array.from(new Set(active.map((t) => t.appKey).filter((k): k is string => !!k)));
+  const iconByAppKey = new Map<string, string>();
+  if (keys.length > 0) {
+    const rows = await db
+      .select({ appKey: apps.appKey, iconUrl: apps.iconUrl })
+      .from(apps)
+      .where(inArray(apps.appKey, keys));
+    for (const r of rows) {
+      if (r.iconUrl) iconByAppKey.set(r.appKey, r.iconUrl);
+    }
+  }
+
+  return active
+    .map((t) => ({
+      ...t,
+      appIconUrl: t.appKey ? (iconByAppKey.get(t.appKey) ?? null) : null,
+    }))
     .sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 
