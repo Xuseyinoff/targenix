@@ -19,7 +19,7 @@ import { TRPCError } from "@trpc/server";
 import { NOT_ADMIN_ERR_MSG } from "@shared/const";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb, type DbClient } from "../db";
-import { appActions, destinationTemplates } from "../../drizzle/schema";
+import { appActions, apps, destinationTemplates } from "../../drizzle/schema";
 import { and, eq } from "drizzle-orm";
 import { listDestinationTemplatesWithMirrorOverlay } from "../integrations/dynamicTemplateSource";
 import {
@@ -28,6 +28,7 @@ import {
 } from "../integrations/validateTemplateContract";
 import { listAppKeyOptionsForPicker } from "../integrations/listAppsSafe";
 import { canManageTemplates } from "../../shared/tempAccess";
+import { slugifyAppKey } from "../../shared/slugify";
 
 /**
  * Allow admins + temporarily-whitelisted users (see shared/tempAccess.ts) to
@@ -95,6 +96,23 @@ const templateInputSchema = z.object({
   autoMappedFields: z.array(autoMappedFieldSchema),
   isActive: z.boolean().default(true),
 });
+
+/**
+ * Affiliate-shaped input — same as templateInputSchema but `appKey` is omitted
+ * because the server derives it by slugifying `name`, and the matching `apps`
+ * row is created automatically if missing.
+ *
+ * Every CPA-style affiliate in production shares the same `apps` row shape
+ * (category="affiliate", authType="api_key", fields=[{key:"api_key",…}]),
+ * so the user does not need to fill these out separately. This procedure
+ * encodes that convention.
+ */
+const affiliateInputSchema = templateInputSchema.omit({ appKey: true });
+
+/** Standard `apps.fields[]` shape every API-key affiliate uses in production. */
+const STANDARD_API_KEY_FIELDS = [
+  { key: "api_key", label: "API Key", required: true, sensitive: true },
+] as const;
 
 /**
  * Translate a TemplateContractError (thrown by the validator) into a
@@ -257,6 +275,97 @@ export const adminTemplatesRouter = router({
         isActive: input.isActive,
       });
       return { success: true };
+    }),
+
+  /**
+   * Create a new affiliate (apps + destination_templates) in one shot.
+   *
+   * The client does NOT pass `appKey`; the server slugifies `name` to derive
+   * it. The matching `apps` row is created on demand with the standard API-key
+   * shape used by every existing CPA affiliate (sotuvchi, 100k, alijahon, …).
+   * If a slug collides with an existing `apps` row the request is rejected so
+   * the operator can pick a distinct name — auto-suffixing would silently
+   * mislead users about which app key their template ended up under.
+   */
+  createAffiliate: templateEditorProcedure
+    .input(affiliateInputSchema)
+    .mutation(async ({ input }) => {
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
+
+      const appKey = slugifyAppKey(input.name);
+      if (!appKey) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Name must contain at least one letter or digit",
+        });
+      }
+      if (!APP_KEY_RE.test(appKey)) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Slugified appKey "${appKey}" violates ${APP_KEY_RE}`,
+        });
+      }
+
+      await db.transaction(async (tx) => {
+        const [existingApp] = await tx
+          .select({ appKey: apps.appKey })
+          .from(apps)
+          .where(eq(apps.appKey, appKey))
+          .limit(1);
+
+        if (!existingApp) {
+          await tx.insert(apps).values({
+            appKey,
+            displayName: input.name,
+            category: "affiliate",
+            authType: "api_key",
+            fields: STANDARD_API_KEY_FIELDS as unknown as object,
+            oauthConfig: null,
+            iconUrl: null,
+            docsUrl: null,
+            isActive: true,
+          });
+        } else {
+          // A duplicate slug almost always means the operator is re-entering
+          // an existing affiliate by accident; failing loud beats silently
+          // attaching this template to a pre-existing app row.
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: `An affiliate with appKey "${appKey}" already exists. Pick a different name.`,
+          });
+        }
+
+        // Validate the template body against the freshly-created app row so
+        // any {{SECRET:...}} tokens line up with declared sensitive fields.
+        try {
+          await validateTemplateContract({
+            appKey,
+            bodyFields: input.bodyFields,
+            db: tx as unknown as DbClient,
+          });
+        } catch (err) {
+          throw toTrpcError(err);
+        }
+
+        await tx.insert(destinationTemplates).values({
+          name: input.name,
+          description: input.description ?? null,
+          color: input.color,
+          category: input.category,
+          appKey,
+          endpointUrl: input.endpointUrl,
+          method: input.method,
+          contentType: input.contentType,
+          bodyFields: input.bodyFields,
+          userVisibleFields: input.userVisibleFields,
+          variableFields: input.variableFields,
+          autoMappedFields: input.autoMappedFields,
+          isActive: input.isActive,
+        });
+      });
+
+      return { success: true, appKey };
     }),
 
   /** Update a destination template. */

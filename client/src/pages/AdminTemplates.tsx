@@ -9,6 +9,7 @@
 
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { slugifyAppKey } from "@shared/slugify";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -308,10 +309,9 @@ export default function AdminTemplates() {
 
   const utils = trpc.useUtils();
   const { data: templates = [], isLoading } = trpc.adminTemplates.list.useQuery();
-  const { data: appKeyOptions = [] } = trpc.adminTemplates.listAppKeys.useQuery();
 
-  const createMutation = trpc.adminTemplates.create.useMutation({
-    onSuccess: () => { utils.adminTemplates.list.invalidate(); setOpen(false); toast.success("Template created"); },
+  const createMutation = trpc.adminTemplates.createAffiliate.useMutation({
+    onSuccess: () => { utils.adminTemplates.list.invalidate(); setOpen(false); toast.success("Affiliate created"); },
     onError: e => toast.error(e.message),
   });
 
@@ -395,7 +395,6 @@ export default function AdminTemplates() {
 
   function handleSave() {
     if (!form.name.trim()) { toast.error("Name is required"); return; }
-    if (!form.appKey.trim()) { toast.error("App is required — pick which connection spec this template uses"); return; }
     if (!form.endpointUrl.trim()) { toast.error("Endpoint URL is required"); return; }
     const effectiveFields = getEffectiveBodyFields(form);
     if (isJsonMode(form.contentType)) {
@@ -404,12 +403,11 @@ export default function AdminTemplates() {
       if (form.bodyFields.length === 0) { toast.error("At least one body field is required"); return; }
     }
 
-    const payload = {
+    const sharedPayload = {
       name: form.name.trim(),
       description: form.description.trim() || undefined,
       color: form.color,
       category: form.category,
-      appKey: form.appKey,
       endpointUrl: form.endpointUrl.trim(),
       method: form.method,
       contentType: form.contentType,
@@ -423,9 +421,14 @@ export default function AdminTemplates() {
     };
 
     if (editId !== null) {
-      updateMutation.mutate({ id: editId, ...payload });
+      // Edit preserves the existing appKey — it links to the affiliate's
+      // apps row (and connections that already reference it). Renaming the
+      // template here does not rename the underlying app.
+      updateMutation.mutate({ id: editId, appKey: form.appKey, ...sharedPayload });
     } else {
-      createMutation.mutate(payload);
+      // Create: server slugifies `name` to derive appKey and creates the
+      // matching apps row in the same transaction.
+      createMutation.mutate(sharedPayload);
     }
   }
 
@@ -523,9 +526,11 @@ export default function AdminTemplates() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{editId !== null ? "Edit Template" : "New Destination Template"}</DialogTitle>
+            <DialogTitle>{editId !== null ? "Edit affiliate" : "New affiliate"}</DialogTitle>
             <DialogDescription>
-              Define how leads are sent to this affiliate endpoint.
+              {editId !== null
+                ? "Update how leads are sent to this affiliate's order endpoint."
+                : "Define a new affiliate's order endpoint. The matching apps row (API key auth) is created automatically on save."}
             </DialogDescription>
           </DialogHeader>
 
@@ -584,64 +589,25 @@ export default function AdminTemplates() {
               </div>
             </div>
 
-            {/* App — connection spec the template requires */}
-            <div className="space-y-1.5">
-              <Label>
-                App <span className="text-destructive">*</span>
-              </Label>
-              <select
-                className="w-full h-9 rounded-md border bg-background px-3 text-sm"
-                value={form.appKey}
-                onChange={e => setField("appKey", e.target.value)}
-              >
-                <option value="">— pick an app —</option>
-                {appKeyOptions.map(o => {
-                  const label = o.displayName
-                    ? `${o.displayName} (${o.appKey})`
-                    : o.appKey;
-                  const suffix = o.requiresCredentials === false
-                    ? " — no credentials"
-                    : o.authType === "api_key"
-                      ? " — API key"
-                      : o.authType
-                        ? ` — ${o.authType}`
-                        : "";
-                  return (
-                    <option key={o.appKey} value={o.appKey}>
-                      {label}{suffix}
-                    </option>
-                  );
-                })}
-              </select>
-              <p className="text-xs text-muted-foreground">
-                {(() => {
-                  const picked = appKeyOptions.find(o => o.appKey === form.appKey);
-                  if (!picked) {
-                    return (
-                      <>
-                        Every <code className="bg-muted px-1 rounded">{"{{SECRET:key}}"}</code> token is validated
-                        against this app&apos;s declared credential fields.
-                      </>
-                    );
-                  }
-                  if (picked.requiresCredentials === false) {
-                    return (
-                      <>
-                        This app accepts leads without any credentials. Secret fields and{" "}
-                        <code className="bg-muted px-1 rounded">{"{{SECRET:…}}"}</code> tokens are rejected at save time.
-                      </>
-                    );
-                  }
-                  return (
-                    <>
-                      Users will provide credentials when they create a connection. Every{" "}
-                      <code className="bg-muted px-1 rounded">{"{{SECRET:key}}"}</code> token must reference a
-                      declared sensitive field.
-                    </>
-                  );
-                })()}
-              </p>
-            </div>
+            {/* App row is auto-created from the affiliate name on save.
+                For edits we show the existing appKey read-only so operators
+                can see which apps row this template is tied to. */}
+            {editId !== null && form.appKey ? (
+              <div className="space-y-1.5">
+                <Label>App key</Label>
+                <Input value={form.appKey} disabled className="font-mono" />
+                <p className="text-xs text-muted-foreground">
+                  Renaming the template does not rename the underlying app or move existing connections.
+                </p>
+              </div>
+            ) : (
+              form.name.trim() && (
+                <p className="text-xs text-muted-foreground">
+                  Affiliate app key (auto): <code className="bg-muted px-1 rounded font-mono">{slugifyAppKey(form.name) || "—"}</code>
+                  . The matching <code className="bg-muted px-1 rounded">apps</code> row with API-key auth is created on save.
+                </p>
+              )
+            )}
 
             {/* Endpoint */}
             <div className="space-y-1.5">
