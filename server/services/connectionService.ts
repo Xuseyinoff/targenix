@@ -348,6 +348,58 @@ export async function relinkOrphanedDestinationsToConnection(
   return orphaned.map((d) => d.id);
 }
 
+/**
+ * Telegram counterpart of `relinkOrphanedDestinationsToConnection`.
+ *
+ * The same "disconnect old bot → create new bot" gap exists for Telegram:
+ * `disconnect` nulls `destinations.connectionId`, and a Mode-A telegram
+ * destination (credentials live only in the connection, never inline) is
+ * then left with no bot token anywhere — every lead fails with
+ * "Telegram destination missing botToken or chatId".
+ *
+ * Telegram connections have NO `templateId` to match on — a telegram_bot
+ * connection is a specific bot + a specific chat. So the match is by
+ * exact `chatId`: only orphaned telegram destinations whose stored
+ * `templateConfig.chatId` equals THIS connection's chat are re-linked.
+ * That precision is deliberate — a fuzzier rule could re-route a tenant's
+ * leads into the wrong Telegram chat, which is worse than failing loudly.
+ *
+ * Scope — a destination is only touched when it is:
+ *   • owned by the SAME user,
+ *   • `appKey = 'telegram'`,
+ *   • currently orphaned (`connectionId IS NULL`),
+ *   • carrying NO inline bot token (Mode-B inline destinations are
+ *     self-sufficient and were never connection-linked), and
+ *   • storing a `templateConfig.chatId` equal to the connection's chat.
+ *
+ * Returns the ids of the destinations that were re-linked (empty when none).
+ */
+export async function relinkOrphanedTelegramDestinations(
+  db: DbClient,
+  params: { userId: number; connectionId: number; chatId: string },
+): Promise<number[]> {
+  const orphanFilter = and(
+    eq(destinations.userId, params.userId),
+    eq(destinations.appKey, "telegram"),
+    isNull(destinations.connectionId),
+    sql`JSON_EXTRACT(${destinations.templateConfig}, '$.botTokenEncrypted') IS NULL`,
+    sql`JSON_UNQUOTE(JSON_EXTRACT(${destinations.templateConfig}, '$.chatId')) = ${params.chatId}`,
+  );
+
+  const orphaned = await db
+    .select({ id: destinations.id })
+    .from(destinations)
+    .where(orphanFilter);
+  if (orphaned.length === 0) return [];
+
+  await db
+    .update(destinations)
+    .set({ connectionId: params.connectionId })
+    .where(orphanFilter);
+
+  return orphaned.map((d) => d.id);
+}
+
 // ─── Shared read helpers ─────────────────────────────────────────────────────
 
 /**

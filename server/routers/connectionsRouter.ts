@@ -38,6 +38,7 @@ import {
   insertTelegramConnection,
   mapConnectionUsage,
   relinkOrphanedDestinationsToConnection,
+  relinkOrphanedTelegramDestinations,
 } from "../services/connectionService";
 import {
   verifyConnectionHealth,
@@ -586,20 +587,43 @@ export const connectionsRouter = router({
         chatId: input.chatId,
       });
 
+      // Heal the "disconnect old bot → create new bot" gap, same class of
+      // bug fixed for createApiKey. A Mode-A telegram destination keeps its
+      // bot token only in the connection, so a prior `disconnect` leaves it
+      // credential-less. Re-link by exact chatId match — only destinations
+      // that were delivering to THIS connection's chat — so leads can never
+      // be routed into the wrong Telegram chat.
+      const relinkedDestinationIds = await relinkOrphanedTelegramDestinations(db, {
+        userId: ctx.user.id,
+        connectionId: id,
+        chatId: input.chatId.trim(),
+      });
+
       void appendConnectionEvent(db, {
         connectionId: id,
         userId: ctx.user.id,
         eventType: "created",
         source: "user",
-        details: { type: "telegram_bot", displayName: input.displayName },
+        details: {
+          type: "telegram_bot",
+          displayName: input.displayName,
+          ...(relinkedDestinationIds.length > 0
+            ? { relinkedDestinationIds }
+            : {}),
+        },
       });
 
       await log.info("CONNECTIONS", "telegram connection created", {
         userId: ctx.user.id,
         connectionId: id,
+        relinkedDestinations: relinkedDestinationIds.length,
       });
 
-      return { success: true, id };
+      return {
+        success: true,
+        id,
+        relinkedDestinations: relinkedDestinationIds.length,
+      };
     }),
 
   /**

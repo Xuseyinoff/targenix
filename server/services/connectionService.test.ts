@@ -10,6 +10,7 @@ import {
   insertTelegramConnection,
   mapConnectionUsage,
   relinkOrphanedDestinationsToConnection,
+  relinkOrphanedTelegramDestinations,
   resolveGoogleAccountForConnection,
   upsertGoogleConnection,
 } from "./connectionService";
@@ -201,6 +202,42 @@ describe("connectionService.relinkOrphanedDestinationsToConnection", () => {
       userId: 1,
       templateId: 3,
       connectionId: 9,
+    });
+
+    expect(relinked).toEqual([]);
+    expect(db.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("connectionService.relinkOrphanedTelegramDestinations", () => {
+  it("re-links orphaned telegram destinations matched by chatId", async () => {
+    // "disconnect old bot → create new bot": a Mode-A telegram destination
+    // is left with connectionId = NULL and no inline token. The chatId-match
+    // filter is applied in SQL; the mock returns the rows that matched.
+    const updates: Array<Record<string, unknown>> = [];
+    const db = makeDb({
+      selectResults: [[{ id: 7001 }]],
+      updatedRows: updates as never,
+    });
+
+    const relinked = await relinkOrphanedTelegramDestinations(db, {
+      userId: 1893798,
+      connectionId: 44,
+      chatId: "-100123456",
+    });
+
+    expect(relinked).toEqual([7001]);
+    expect(db.update).toHaveBeenCalledTimes(1);
+    expect(updates).toContainEqual({ id: -1, connectionId: 44 });
+  });
+
+  it("is a no-op (no UPDATE) when no telegram destination matches the chat", async () => {
+    const db = makeDb({ selectResults: [[]] });
+
+    const relinked = await relinkOrphanedTelegramDestinations(db, {
+      userId: 1,
+      connectionId: 9,
+      chatId: "-100999",
     });
 
     expect(relinked).toEqual([]);
