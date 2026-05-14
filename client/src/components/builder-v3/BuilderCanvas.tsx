@@ -131,14 +131,31 @@ function AddBetweenEdge(props: EdgeProps) {
 }
 
 // ─── Trigger node ────────────────────────────────────────────────────────────
+//
+// Important: the outer card uses a <div role="button"> (NOT a real <button>)
+// because the kebab + connection picker + filter icon each render their own
+// <button>. Nesting buttons is invalid HTML and Chrome silently drops the
+// inner click handlers — which is why "trigger ustiga bossam hech narsa
+// bo'lmayapti" symptoms appeared. The div+role+keyDown gives us the same
+// accessibility surface without the nesting trap.
 
 function TriggerCanvasNode({ data }: NodeProps) {
   const d = data as TriggerNodeData;
 
+  const onCardClick = (e: React.MouseEvent | React.KeyboardEvent) => {
+    // Bail if the click started inside an interactive child (kebab,
+    // connection picker, filter badge). Those children call
+    // stopPropagation themselves, so this is a defence-in-depth — without
+    // it a click on the kebab icon's bounding-box edge could still hit
+    // the card.
+    if ((e.target as HTMLElement).closest("[data-no-card-click]")) return;
+    d.onClick();
+  };
+
   return (
     <div className="relative">
       {/* Hover badges above the card */}
-      <div className="absolute -top-6 left-0 right-0 flex items-center justify-between text-[10px]">
+      <div className="absolute -top-6 left-0 right-0 flex items-center justify-between text-[10px] pointer-events-none">
         <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-1.5 py-0.5 font-semibold uppercase tracking-wider text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
           <Lightbulb className="h-2.5 w-2.5" />
           Hint
@@ -149,54 +166,57 @@ function TriggerCanvasNode({ data }: NodeProps) {
         </span>
       </div>
 
-      {/* Card */}
+      {/* Card — div+role acting as a button (see note above on nesting) */}
       <div
+        role="button"
+        tabIndex={0}
+        onClick={onCardClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onCardClick(e);
+          }
+        }}
         className={cn(
-          "w-[280px] rounded-xl border bg-card shadow-sm overflow-hidden",
+          "w-[280px] rounded-xl border bg-card shadow-sm overflow-hidden cursor-pointer",
           "ring-1 ring-transparent hover:ring-emerald-200 dark:hover:ring-emerald-900 transition-all",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
         )}
       >
-        <button
-          type="button"
-          onClick={d.onClick}
-          className={cn(
-            "block w-full text-left",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
+        <div className="flex items-start gap-3 px-3 py-3">
+          {d.configured ? (
+            <span className={appBrandIconTileClass("h-9 w-9")}>
+              <AppIcon name={d.iconUrl} className="h-5 w-5" />
+            </span>
+          ) : (
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-dashed border-muted-foreground/40 bg-muted/40">
+              <Plus className="h-4 w-4 text-muted-foreground" />
+            </span>
           )}
-        >
-          <div className="flex items-start gap-3 px-3 py-3">
+
+          <div className="min-w-0 flex-1">
             {d.configured ? (
-              <span className={appBrandIconTileClass("h-9 w-9")}>
-                <AppIcon name={d.iconUrl} className="h-5 w-5" />
-              </span>
+              <>
+                <p className="text-[11px] text-muted-foreground truncate">
+                  1. {d.appName}: {d.eventLabel}
+                </p>
+                <p className="text-sm font-semibold text-foreground truncate mt-0.5">
+                  {d.appName}: {d.eventLabel}
+                </p>
+              </>
             ) : (
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-dashed border-muted-foreground/40 bg-muted/40">
-                <Plus className="h-4 w-4 text-muted-foreground" />
-              </span>
+              <>
+                <p className="text-sm font-semibold text-foreground">
+                  Add trigger
+                </p>
+                <p className="text-[11px] text-muted-foreground">
+                  1. When this happens in the selected app
+                </p>
+              </>
             )}
+          </div>
 
-            <div className="min-w-0 flex-1">
-              {d.configured ? (
-                <>
-                  <p className="text-[11px] text-muted-foreground truncate">
-                    1. {d.appName}: {d.eventLabel}
-                  </p>
-                  <p className="text-sm font-semibold text-foreground truncate mt-0.5">
-                    {d.appName}: {d.eventLabel}
-                  </p>
-                </>
-              ) : (
-                <>
-                  <p className="text-sm font-semibold text-foreground">
-                    Add trigger
-                  </p>
-                  <p className="text-[11px] text-muted-foreground">
-                    1. When this happens in the selected app
-                  </p>
-                </>
-              )}
-            </div>
-
+          <span data-no-card-click>
             <NodeMenu
               onRename={d.onRename}
               onFilter={d.onFilter}
@@ -204,18 +224,25 @@ function TriggerCanvasNode({ data }: NodeProps) {
               onErrorHandler={d.onErrorHandler}
               onDelete={d.onDelete}
             />
-          </div>
-        </button>
+          </span>
+        </div>
 
-        {/* Connection picker display (in-card) */}
+        {/* Connection picker display (in-card). data-no-card-click on the
+            wrapper so clicks on the dropdown don't bubble back to the card
+            click handler — for now the dropdown still re-opens the setup
+            modal, which is fine because the wrapper guards against a
+            double-fire. */}
         {d.configured && d.connectionLabel && (
-          <div className="border-t bg-muted/30 px-3 py-2">
+          <div className="border-t bg-muted/30 px-3 py-2" data-no-card-click>
             <button
               type="button"
-              onClick={d.onClick}
+              onClick={(e) => {
+                e.stopPropagation();
+                d.onClick();
+              }}
               className={cn(
                 "flex w-full items-center justify-between rounded-md border bg-card px-2.5 py-1.5",
-                "text-left text-xs hover:bg-accent/40 transition-colors",
+                "text-left text-xs hover:bg-accent/40 transition-colors cursor-pointer",
               )}
             >
               <span className="truncate text-foreground">
@@ -234,11 +261,17 @@ function TriggerCanvasNode({ data }: NodeProps) {
 
       {/* Filter badge below card */}
       {d.configured && (
-        <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 z-10">
+        <div
+          className="absolute -bottom-3 left-1/2 -translate-x-1/2 z-10"
+          data-no-card-click
+        >
           <button
             type="button"
-            onClick={(e) => e.stopPropagation()}
-            className="flex h-6 w-6 items-center justify-center rounded-full border bg-card text-muted-foreground shadow-sm hover:text-primary hover:border-primary transition-all"
+            onClick={(e) => {
+              e.stopPropagation();
+              d.onFilter?.();
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded-full border bg-card text-muted-foreground shadow-sm hover:text-primary hover:border-primary transition-all cursor-pointer"
             title="Add filter"
           >
             <Filter className="h-3 w-3" />
@@ -256,9 +289,17 @@ function TriggerCanvasNode({ data }: NodeProps) {
 }
 
 // ─── Action node ─────────────────────────────────────────────────────────────
+//
+// Same div+role trick as TriggerCanvasNode — see the note above. The
+// NodeMenu must NOT live inside a real <button> ancestor.
 
 function ActionCanvasNode({ data }: NodeProps) {
   const d = data as ActionNodeData;
+
+  const onCardClick = (e: React.MouseEvent | React.KeyboardEvent) => {
+    if ((e.target as HTMLElement).closest("[data-no-card-click]")) return;
+    d.onClick();
+  };
 
   return (
     <div className="relative">
@@ -268,11 +309,18 @@ function ActionCanvasNode({ data }: NodeProps) {
         className="!bg-emerald-500 !w-2.5 !h-2.5 !border-2 !border-white dark:!border-card !-top-1"
       />
 
-      <button
-        type="button"
-        onClick={d.onClick}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onCardClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onCardClick(e);
+          }
+        }}
         className={cn(
-          "w-[280px] rounded-xl border bg-card text-left shadow-sm overflow-hidden",
+          "w-[280px] rounded-xl border bg-card shadow-sm overflow-hidden cursor-pointer",
           "ring-1 ring-transparent hover:ring-emerald-200 dark:hover:ring-emerald-900 transition-all",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/30",
         )}
@@ -315,15 +363,17 @@ function ActionCanvasNode({ data }: NodeProps) {
             )}
           </div>
 
-          <NodeMenu
-            onRename={d.onRename}
-            onFilter={d.onFilter}
-            onTestStep={d.onTestStep}
-            onErrorHandler={d.onErrorHandler}
-            onDelete={d.onDelete}
-          />
+          <span data-no-card-click>
+            <NodeMenu
+              onRename={d.onRename}
+              onFilter={d.onFilter}
+              onTestStep={d.onTestStep}
+              onErrorHandler={d.onErrorHandler}
+              onDelete={d.onDelete}
+            />
+          </span>
         </div>
-      </button>
+      </div>
 
       <Handle
         type="source"
