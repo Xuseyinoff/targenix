@@ -119,6 +119,22 @@ export const loaderCache = {
     }
   },
 
+  /**
+   * Invalidate every cached result tied to a specific connection. Called on
+   * disconnect so a deleted connection's loader results (which were derived
+   * from now-revoked credentials) cannot be served from cache during the
+   * up-to-60s TTL window. The key embeds `:c<connectionId>:` — see buildKey.
+   */
+  invalidateByConnection(userId: number, connectionId: number): void {
+    const userPrefix = `u${userId}:`;
+    const connMarker = `:c${connectionId}:`;
+    for (const key of Array.from(store.keys())) {
+      if (key.startsWith(userPrefix) && key.includes(connMarker)) {
+        store.delete(key);
+      }
+    }
+  },
+
   /** Test helper — clears everything. */
   __clear(): void {
     store.clear();

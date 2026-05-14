@@ -49,6 +49,7 @@ import { log } from "../services/appLogger";
 import { listAppKeyOptionsForPicker } from "../integrations/listAppsSafe";
 import { validateConnectionType } from "../utils/validateConnectionType";
 import { appendConnectionEvent } from "../services/connectionEventsService";
+import { loaderCache } from "../integrations/loaders/cache";
 
 // ─── Types returned to the client ────────────────────────────────────────────
 
@@ -483,7 +484,17 @@ export const connectionsRouter = router({
       const usage = await countDestinationsUsingConnection(db, userId, input.id);
 
       let scrubbedKeysCount = 0;
+      let deletedOrphanToken = false;
       await db.transaction(async (tx) => {
+        // Snapshot the connection's oauthTokenId BEFORE deleting the row, so
+        // we can run the last-reference cleanup below.
+        const [conn] = await tx
+          .select({ oauthTokenId: connections.oauthTokenId })
+          .from(connections)
+          .where(and(eq(connections.id, input.id), eq(connections.userId, userId)))
+          .limit(1);
+        const oauthTokenId = conn?.oauthTokenId ?? null;
+
         // Per-row scrub: read each affected destination's templateConfig,
         // strip credential-shaped keys, write back. Bulk UPDATE can't
         // selectively edit JSON paths in MySQL 5.7-compatible way, and the
@@ -515,7 +526,33 @@ export const connectionsRouter = router({
           .where(
             and(eq(connections.id, input.id), eq(connections.userId, userId)),
           );
+
+        // Last-reference cleanup: oauth_tokens is a shared "library" layer —
+        // several connections can point at one token row. When the
+        // connection we just deleted was the LAST one referencing its
+        // oauth_token, that token is now orphaned and would otherwise sit
+        // decryptable in the DB indefinitely. Delete it once nothing points
+        // at it. (googleAccountsRouter.disconnect covers the "remove the
+        // whole Google account" path; this covers the "disconnect the last
+        // connection that used it" path.)
+        if (oauthTokenId != null) {
+          const stillReferenced = await tx
+            .select({ id: connections.id })
+            .from(connections)
+            .where(eq(connections.oauthTokenId, oauthTokenId))
+            .limit(1);
+          if (stillReferenced.length === 0) {
+            await tx
+              .delete(oauthTokens)
+              .where(and(eq(oauthTokens.id, oauthTokenId), eq(oauthTokens.userId, userId)));
+            deletedOrphanToken = true;
+          }
+        }
       });
+
+      // Drop any cached loader results derived from this connection's now-
+      // revoked credentials so they can't be served during the 60s TTL.
+      loaderCache.invalidateByConnection(userId, input.id);
 
       void appendConnectionEvent(db, {
         connectionId: input.id,
@@ -527,6 +564,7 @@ export const connectionsRouter = router({
           displayName: row.displayName,
           clearedDestinations: usage,
           scrubbedSecretKeys: scrubbedKeysCount,
+          deletedOrphanToken,
         },
       });
 
@@ -536,6 +574,7 @@ export const connectionsRouter = router({
         type: row.type,
         clearedDestinations: usage,
         scrubbedSecretKeys: scrubbedKeysCount,
+        deletedOrphanToken,
       });
 
       return { success: true, clearedDestinations: usage };
