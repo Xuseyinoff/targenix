@@ -367,6 +367,15 @@ export const destinationsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Abuse guard: a real user setting up destinations creates a handful
+      // per session — 30/min is generous headroom while still blocking a
+      // script that would otherwise insert thousands of rows.
+      checkUserRateLimit(ctx.user.id, "destinationCreate", {
+        max: 30,
+        windowMs: 60_000,
+        message: "Too many destinations created. Max 30 per minute.",
+      });
+
       const db = await getDb();
       if (!db) throw new Error("DB not available");
 
@@ -612,6 +621,14 @@ export const destinationsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Updates are more frequent than creates (rename, toggle, re-map) —
+      // 60/min is comfortable for legitimate editing yet still bounded.
+      checkUserRateLimit(ctx.user.id, "destinationUpdate", {
+        max: 60,
+        windowMs: 60_000,
+        message: "Too many destination updates. Max 60 per minute.",
+      });
+
       const db = await getDb();
       if (!db) throw new Error("DB not available");
 
@@ -973,6 +990,14 @@ export const destinationsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Same abuse guard as `create` — this path also inserts a destination
+      // row (plus encrypts secrets), so it carries the same 30/min ceiling.
+      checkUserRateLimit(ctx.user.id, "destinationCreate", {
+        max: 30,
+        windowMs: 60_000,
+        message: "Too many destinations created. Max 30 per minute.",
+      });
+
       const db = await getDb();
       if (!db) throw new Error("DB not available");
 

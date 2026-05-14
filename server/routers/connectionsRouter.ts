@@ -50,6 +50,7 @@ import { listAppKeyOptionsForPicker } from "../integrations/listAppsSafe";
 import { validateConnectionType } from "../utils/validateConnectionType";
 import { appendConnectionEvent } from "../services/connectionEventsService";
 import { loaderCache } from "../integrations/loaders/cache";
+import { checkUserRateLimit } from "../lib/userRateLimit";
 
 // ─── Types returned to the client ────────────────────────────────────────────
 
@@ -594,6 +595,14 @@ export const connectionsRouter = router({
       }),
     )
     .mutation(async ({ ctx, input }) => {
+      // Each call fires a live Telegram API probe — tighter ceiling than a
+      // plain DB insert. 10/min covers legitimate retries on a bad token.
+      checkUserRateLimit(ctx.user.id, "connectionCreate", {
+        max: 10,
+        windowMs: 60_000,
+        message: "Too many connection attempts. Max 10 per minute.",
+      });
+
       const db = await getDb();
       if (!db) {
         throw new TRPCError({
@@ -688,6 +697,14 @@ export const connectionsRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const userId = ctx.user.id;
+      // Shares the `connectionCreate` bucket with createTelegramBot so a
+      // user can't sidestep the limit by alternating connection types.
+      checkUserRateLimit(userId, "connectionCreate", {
+        max: 10,
+        windowMs: 60_000,
+        message: "Too many connection attempts. Max 10 per minute.",
+      });
+
       const db = await getDb();
       if (!db) {
         throw new TRPCError({

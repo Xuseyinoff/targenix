@@ -21,6 +21,7 @@ import { adminAuditProcedureMiddleware, protectedProcedure, router } from "../_c
 import { getDb, type DbClient } from "../db";
 import { appActions, apps, destinationTemplates } from "../../drizzle/schema";
 import { and, eq } from "drizzle-orm";
+import { checkUserRateLimit } from "../lib/userRateLimit";
 import { listDestinationTemplatesWithMirrorOverlay } from "../integrations/dynamicTemplateSource";
 import {
   validateTemplateContract,
@@ -295,7 +296,16 @@ export const adminTemplatesRouter = router({
   /** Create a new destination template. */
   create: templateEditorProcedure
     .input(templateInputSchema)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      // Template editors are trusted, but a runaway script still shouldn't
+      // be able to insert hundreds of rows. Generous shared ceiling across
+      // all three template-write paths (create / createAffiliate / update).
+      checkUserRateLimit(ctx.user.id, "adminTemplateWrite", {
+        max: 60,
+        windowMs: 60_000,
+        message: "Too many template writes. Max 60 per minute.",
+      });
+
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
 
@@ -339,7 +349,13 @@ export const adminTemplatesRouter = router({
    */
   createAffiliate: templateEditorProcedure
     .input(affiliateInputSchema)
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      checkUserRateLimit(ctx.user.id, "adminTemplateWrite", {
+        max: 60,
+        windowMs: 60_000,
+        message: "Too many template writes. Max 60 per minute.",
+      });
+
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
 
@@ -422,7 +438,13 @@ export const adminTemplatesRouter = router({
   /** Update a destination template. */
   update: templateEditorProcedure
     .input(templateInputSchema.partial().extend({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      checkUserRateLimit(ctx.user.id, "adminTemplateWrite", {
+        max: 60,
+        windowMs: 60_000,
+        message: "Too many template writes. Max 60 per minute.",
+      });
+
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
 

@@ -135,6 +135,14 @@ export const integrationsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Abuse guard: a real user wires up a handful of integrations per
+      // session — 30/min is generous while blocking bulk-insert scripts.
+      checkUserRateLimit(ctx.user.id, "integrationCreate", {
+        max: 30,
+        windowMs: 60_000,
+        message: "Too many integrations created. Max 30 per minute.",
+      });
+
       // Ownership guard: ensure every destinationId belongs to this user.
       // The wizard only surfaces owned destinations, so a mismatch here
       // indicates a tampering attempt — silently filter to owned IDs.
@@ -206,6 +214,13 @@ export const integrationsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      // Updates (toggle active, rename, re-map) run more often than creates.
+      checkUserRateLimit(ctx.user.id, "integrationUpdate", {
+        max: 60,
+        windowMs: 60_000,
+        message: "Too many integration updates. Max 60 per minute.",
+      });
+
       const list = await getIntegrations(ctx.user.id);
       const owned = list.find((i) => i.id === input.id);
       if (!owned) throw new Error("Integration not found");
