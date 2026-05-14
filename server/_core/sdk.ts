@@ -15,6 +15,30 @@ export type SessionPayload = {
   name: string;
 };
 
+// ─── lastSignedIn throttle ────────────────────────────────────────────────────
+// authenticateRequest() runs on EVERY tRPC call + every webhook auth check.
+// Writing `users.lastSignedIn = NOW()` on each one means an active user with
+// a polling UI burns ~50 writes/min on the users table, which dominates
+// replication lag SLOs and shows up as a top write source on slow-query
+// reports. The actual product requirement ("last seen within ~minutes") is
+// fine with a 5-minute granularity.
+//
+// In-memory throttle: per-replica Map<openId, lastWriteMs>. Multi-replica
+// production may still write up to (replica count) times per window, which
+// is still 50-100x better than per-request. Map is bounded by active user
+// count (~10k entries ≈ 1 MB at typical scale) and resets cleanly on
+// process restart — no persistence needed.
+const LAST_SIGNED_IN_THROTTLE_MS = 5 * 60 * 1000;
+const lastSignedInThrottleMap = new Map<string, number>();
+
+async function maybeUpdateLastSignedIn(openId: string): Promise<void> {
+  const now = Date.now();
+  const last = lastSignedInThrottleMap.get(openId);
+  if (last !== undefined && now - last < LAST_SIGNED_IN_THROTTLE_MS) return;
+  lastSignedInThrottleMap.set(openId, now);
+  await db.upsertUser({ openId, lastSignedIn: new Date() });
+}
+
 class SDKServer {
   private parseCookies(cookieHeader: string | undefined) {
     if (!cookieHeader) return new Map<string, string>();
@@ -122,7 +146,9 @@ class SDKServer {
       }
     }
 
-    await db.upsertUser({ openId: user.openId, lastSignedIn: new Date() });
+    // Throttled — at most one DB write per user per 5-minute window per
+    // replica. See maybeUpdateLastSignedIn() above for rationale.
+    await maybeUpdateLastSignedIn(user.openId);
 
     return user;
   }
