@@ -449,20 +449,36 @@ export const authRouter = router({
 
     const userId = ctx.user.id;
 
-    await db.delete(orders).where(eq(orders.userId, userId));
-    await db.delete(leads).where(eq(leads.userId, userId));
-    await db.delete(integrations).where(eq(integrations.userId, userId));
-    await db.delete(destinations).where(eq(destinations.userId, userId));
-    await db.delete(facebookForms).where(eq(facebookForms.userId, userId));
-    await db.delete(facebookConnections).where(eq(facebookConnections.userId, userId));
-    await db.delete(facebookAccounts).where(eq(facebookAccounts.userId, userId));
-    // Clear any in-flight OAuth states this user initiated in the universal
-    // table (FB / Google / future providers).
-    await db.delete(oauthStates).where(eq(oauthStates.userId, userId));
-    await db.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, userId));
-    await db.delete(appLogs).where(eq(appLogs.userId, userId));
-    await db.delete(users).where(eq(users.id, userId));
+    // All 11 deletes run inside a single transaction. Without this, a
+    // failure mid-sequence (FK violation, deadlock, network blip) leaves
+    // the account half-deleted — orphan orders/leads/etc with a userId
+    // that no longer references a row. The transaction guarantees the
+    // account either fully disappears or stays intact for retry.
+    //
+    // Order is parent-first within each FK chain, then ends with the
+    // users row itself. Tables not listed here either CASCADE from their
+    // parent (integrationRoutes ← integrations, orderEvents ← orders,
+    // connectionEvents ← connections) or get a separate cleanup (long
+    // tail like cache tables, workflows — out of scope for this fix).
+    await db.transaction(async (tx) => {
+      await tx.delete(orders).where(eq(orders.userId, userId));
+      await tx.delete(leads).where(eq(leads.userId, userId));
+      await tx.delete(integrations).where(eq(integrations.userId, userId));
+      await tx.delete(destinations).where(eq(destinations.userId, userId));
+      await tx.delete(facebookForms).where(eq(facebookForms.userId, userId));
+      await tx.delete(facebookConnections).where(eq(facebookConnections.userId, userId));
+      await tx.delete(facebookAccounts).where(eq(facebookAccounts.userId, userId));
+      // Clear any in-flight OAuth states this user initiated in the universal
+      // table (FB / Google / future providers).
+      await tx.delete(oauthStates).where(eq(oauthStates.userId, userId));
+      await tx.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, userId));
+      await tx.delete(appLogs).where(eq(appLogs.userId, userId));
+      await tx.delete(users).where(eq(users.id, userId));
+    });
 
+    // Cookie clearing must happen AFTER the transaction commits — if the
+    // tx rolls back, the user is still authenticated and the cookie
+    // should stay valid for retry.
     const cookieOptions = getSessionCookieOptions(ctx.req);
     ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
 
