@@ -7,6 +7,7 @@
  *   - disconnect: clears all Telegram fields from the user record
  *
  * Delivery chats:
+ *   - getBotLinks: native "add to group / channel" deep-links (request admin)
  *   - linkDeliveryChatById: manual fallback — link a chat by pasted Chat ID
  *   - listDeliveryChats: linked DELIVERY chats owned by the user
  *   - listPendingChats: chats the bot was auto-resolved into but isn't admin in yet
@@ -391,6 +392,25 @@ export const telegramRouter = router({
       await db.update(destinations).set({ telegramChatId: chat.chatId }).where(eq(destinations.id, input.destinationId));
       return { success: true };
     }),
+
+  /**
+   * Telegram deep-links that open the native "select group / select channel"
+   * picker AND request admin rights in one tap — the user never has to search
+   * for the bot or promote it by hand. Once the bot lands in the chat as an
+   * administrator, the my_chat_member webhook auto-links it (see Phase 1).
+   *
+   * - groups:   admin=delete_messages+pin_messages — enough to grant the
+   *             `administrator` status the webhook auto-link requires.
+   * - channels: admin=post_messages — the essential right; a channel admin
+   *             without it cannot post.
+   */
+  getBotLinks: protectedProcedure.query(async () => {
+    return {
+      botUsername: BOT_USERNAME,
+      addToGroupUrl: `https://t.me/${BOT_USERNAME}?startgroup&admin=delete_messages+pin_messages`,
+      addToChannelUrl: `https://t.me/${BOT_USERNAME}?startchannel&admin=post_messages`,
+    };
+  }),
 
   /**
    * List chats the bot was added to by this user (resolved via my_chat_member

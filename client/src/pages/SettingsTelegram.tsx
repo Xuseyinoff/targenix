@@ -27,6 +27,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import {
   Send,
@@ -36,6 +41,10 @@ import {
   ExternalLink,
   RefreshCw,
   Users,
+  Megaphone,
+  Clock,
+  ChevronDown,
+  SendHorizonal,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useT } from "@/hooks/useT";
@@ -60,6 +69,8 @@ export default function SettingsTelegram() {
   const [deliveryChatIdInput, setDeliveryChatIdInput] = useState("");
   const [deliveryLinking, setDeliveryLinking] = useState(false);
   const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
+  const [showManualLink, setShowManualLink] = useState(false);
+  const [testingChatId, setTestingChatId] = useState<string | null>(null);
 
   const generateTokenMutation = trpc.telegram.generateConnectToken.useMutation({
     onSuccess: (data) => {
@@ -81,8 +92,18 @@ export default function SettingsTelegram() {
     onError: (err) => toast.error(err.message),
   });
 
+  // Native "add to group / channel" deep-links (request admin in one tap).
+  const { data: botLinks } = trpc.telegram.getBotLinks.useQuery(undefined, {
+    staleTime: 60 * 60_000,
+  });
+
+  // Poll delivery + pending chats so a channel the user just added shows up
+  // here automatically (the my_chat_member webhook auto-links it server-side).
   const { data: deliveryChats, refetch: refetchDeliveryChats, isFetching: deliveryFetching } =
-    trpc.telegram.listDeliveryChats.useQuery(undefined, { staleTime: 5_000 });
+    trpc.telegram.listDeliveryChats.useQuery(undefined, { staleTime: 5_000, refetchInterval: 8_000 });
+
+  const { data: pendingChats, refetch: refetchPendingChats } =
+    trpc.telegram.listPendingChats.useQuery(undefined, { staleTime: 5_000, refetchInterval: 8_000 });
 
   const { data: destinationMappings, refetch: refetchMappings, isFetching: mappingsFetching } =
     trpc.telegram.listDestinationMappings.useQuery(undefined, { staleTime: 5_000 });
@@ -119,7 +140,7 @@ export default function SettingsTelegram() {
     onSuccess: async () => {
       setDeliveryChatIdInput("");
       setDeliveryLinking(false);
-      await refetchDeliveryChats();
+      await Promise.all([refetchDeliveryChats(), refetchPendingChats()]);
       toast.success(t("telegram.deliveryChatLinked"));
     },
     onError: (err) => {
@@ -127,6 +148,22 @@ export default function SettingsTelegram() {
       setDeliveryLinking(false);
     },
   });
+
+  const testMessageMutation = trpc.telegram.sendTestMessage.useMutation({
+    onSuccess: () => {
+      setTestingChatId(null);
+      toast.success(t("telegram.testSent"));
+    },
+    onError: (err) => {
+      setTestingChatId(null);
+      toast.error(err.message);
+    },
+  });
+
+  const handleSendTest = (chatId: string) => {
+    setTestingChatId(chatId);
+    testMessageMutation.mutate({ chatId });
+  };
 
   // When status switches to connected, clear the connect URL and show toast
   useEffect(() => {
@@ -326,52 +363,127 @@ export default function SettingsTelegram() {
                       </CardDescription>
                     </div>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => refetchDeliveryChats()} disabled={deliveryFetching}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => { void refetchDeliveryChats(); void refetchPendingChats(); }}
+                    disabled={deliveryFetching}
+                  >
                     <RefreshCw className={`h-4 w-4 mr-1.5 ${deliveryFetching ? "animate-spin" : ""}`} />
                     Refresh
                   </Button>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="rounded-lg bg-violet-50 dark:bg-violet-950/20 border border-violet-200 dark:border-violet-800 p-4 space-y-2">
-                  <p className="text-sm font-medium text-violet-800 dark:text-violet-300">{t("telegram.stepsTitle")}</p>
-                  <ol className="text-sm text-violet-700 dark:text-violet-400 space-y-1 list-decimal list-inside">
-                    <li>{t("telegram.deliveryStep1")}</li>
-                    <li>{t("telegram.deliveryStep2")}</li>
-                    <li>{t("telegram.deliveryStep3")}</li>
-                    <li>{t("telegram.deliveryStep4")}</li>
-                  </ol>
+                {/* Primary: one-tap deep links. Telegram opens its native
+                    group/channel picker AND requests admin rights — once the
+                    bot lands as an admin the webhook auto-links it here. */}
+                <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+                  <div>
+                    <p className="text-sm font-medium">{t("telegram.addChannelTitle")}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">{t("telegram.addChannelHint")}</p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Button asChild className="flex-1 bg-[#229ED9] hover:bg-[#1a8bbf] text-white">
+                      <a href={botLinks?.addToChannelUrl ?? "#"} target="_blank" rel="noopener noreferrer">
+                        <Megaphone className="h-4 w-4 mr-2" />
+                        {t("telegram.addToChannel")}
+                        <ExternalLink className="h-3.5 w-3.5 ml-2 opacity-70" />
+                      </a>
+                    </Button>
+                    <Button asChild variant="outline" className="flex-1">
+                      <a href={botLinks?.addToGroupUrl ?? "#"} target="_blank" rel="noopener noreferrer">
+                        <Users className="h-4 w-4 mr-2" />
+                        {t("telegram.addToGroup")}
+                        <ExternalLink className="h-3.5 w-3.5 ml-2 opacity-70" />
+                      </a>
+                    </Button>
+                  </div>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <Input
-                    placeholder={t("telegram.chatIdPlaceholder")}
-                    value={deliveryChatIdInput}
-                    onChange={(e) => setDeliveryChatIdInput(e.target.value)}
-                  />
-                  <Button onClick={handleLinkDeliveryChat} disabled={deliveryLinking || !deliveryChatIdInput.trim()}>
-                    {deliveryLinking ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Users className="h-4 w-4 mr-2" />}
-                    Link
-                  </Button>
-                </div>
+                {/* Pending: the bot is in the chat but not an admin yet. */}
+                {!!pendingChats?.length && (
+                  <div className="space-y-2">
+                    {pendingChats.map((p) => (
+                      <div
+                        key={p.chatId}
+                        className="flex items-center justify-between gap-3 rounded-md border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/20 px-3 py-2"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate">{p.title ?? `Chat ${p.chatId}`}</p>
+                          <p className="text-xs text-amber-700 dark:text-amber-500">
+                            {t("telegram.pendingNeedsAdmin")}
+                          </p>
+                        </div>
+                        <Badge className="gap-1 shrink-0 bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 border-0">
+                          <Clock className="h-3 w-3" />
+                          {t("telegram.pendingBadge")}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
+                {/* Linked delivery chats. */}
                 <div className="space-y-2">
                   {!deliveryChats?.length ? (
                     <p className="text-sm text-muted-foreground">{t("telegram.noDeliveryChats")}</p>
                   ) : (
                     <div className="space-y-2">
-                      {deliveryChats.map((c) => (
-                        <div key={c.id} className="flex items-center justify-between border rounded-md px-3 py-2">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium truncate">{c.title ?? `Chat ${c.chatId}`}</p>
-                            <p className="text-xs text-muted-foreground font-mono truncate">{c.chatId}</p>
+                      {deliveryChats.map((c) => {
+                        const cid = String(c.chatId);
+                        const isTesting = testingChatId === cid;
+                        return (
+                          <div key={c.id} className="flex items-center justify-between gap-3 border rounded-md px-3 py-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-medium truncate">{c.title ?? `Chat ${c.chatId}`}</p>
+                              <p className="text-xs text-muted-foreground font-mono truncate">{c.chatId}</p>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8"
+                                onClick={() => handleSendTest(cid)}
+                                disabled={isTesting}
+                              >
+                                {isTesting ? (
+                                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                                ) : (
+                                  <SendHorizonal className="h-3.5 w-3.5 mr-1.5" />
+                                )}
+                                {t("telegram.sendTest")}
+                              </Button>
+                              <Badge variant="secondary" className="font-mono text-xs">DELIVERY</Badge>
+                            </div>
                           </div>
-                          <Badge variant="secondary" className="font-mono text-xs">DELIVERY</Badge>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
+
+                {/* Advanced fallback: manual Chat ID entry. */}
+                <Collapsible open={showManualLink} onOpenChange={setShowManualLink}>
+                  <CollapsibleTrigger className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                    <ChevronDown className={`h-3.5 w-3.5 transition-transform ${showManualLink ? "" : "-rotate-90"}`} />
+                    {t("telegram.manualLinkToggle")}
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="pt-3 space-y-2">
+                    <p className="text-xs text-muted-foreground">{t("telegram.manualLinkHint")}</p>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        placeholder={t("telegram.chatIdPlaceholder")}
+                        value={deliveryChatIdInput}
+                        onChange={(e) => setDeliveryChatIdInput(e.target.value)}
+                      />
+                      <Button onClick={handleLinkDeliveryChat} disabled={deliveryLinking || !deliveryChatIdInput.trim()}>
+                        {deliveryLinking ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Users className="h-4 w-4 mr-2" />}
+                        {t("telegram.link")}
+                      </Button>
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               </CardContent>
             </Card>
 
