@@ -3,15 +3,17 @@
  *
  * Minimal flow:
  * - /start <token> (private): links a Telegram user to a Targenix user (system chat)
- * - my_chat_member (group/channel): bot posts Chat ID for copy/paste linking on the website
- *
- * Delivery chat linking is done on the website by entering chatId and verifying bot admin.
+ * - my_chat_member (group/channel): auto-discovery — the bot resolves the
+ *   Telegram user who added it (`from`) back to a Targenix account and, once
+ *   the bot is an administrator, links the chat as a DELIVERY chat with no
+ *   copy/paste. If the adder can't be tied to an account, it falls back to
+ *   posting the Chat ID for manual linking on the website.
  */
 
 import type { Request, Response } from "express";
 import { getDb } from "../db";
-import { telegramPendingChats, users } from "../../drizzle/schema";
-import { eq } from "drizzle-orm";
+import { telegramChats, telegramPendingChats, users } from "../../drizzle/schema";
+import { eq, or } from "drizzle-orm";
 import { log } from "../services/appLogger";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
@@ -206,7 +208,7 @@ export async function handleTelegramWebhook(req: Request, res: Response): Promis
     if (text === "/start") {
       await sendTelegramMessage(
         chatId,
-        "👋 Salom! Targenix.uz botiga xush kelibsiz.\n\n1) <b>System chat</b> ulandi.\n\n<b>Delivery chat ulash</b>:\n- Botni kerakli guruh/kanalga qo‘shing\n- Botni <b>administrator</b> qiling\n- Bot o‘sha chatning <b>Chat ID</b> sini yozib beradi\n\nKeyin Targenix.uz saytidan <b>Settings → Telegram → Delivery Chats</b> bo‘limiga kirib Chat ID ni kiriting.",
+        "👋 Salom! Targenix.uz botiga xush kelibsiz.\n\n1) <b>System chat</b> ulandi.\n\n<b>Kanal ulash</b>:\n- Botni kerakli guruh/kanalga qo‘shing\n- Botni <b>administrator</b> qiling\n- Kanal Targenix.uz hisobingizda <b>avtomatik</b> paydo bo‘ladi — hech narsa ko‘chirib yozish shart emas.",
         "HTML",
       );
       return;
@@ -282,7 +284,7 @@ async function handleStartWithToken(chatId: string, token: string, from?: Telegr
 
   await sendTelegramMessage(
     chatId,
-    "✅ <b>Targenix.uz ga muvaffaqiyatli ulandi!</b>\n\nBu <b>System chat</b> hisoblanadi: bu yerga faqat alert/error/statistika keladi.\n\nDelivery chat ulash: botni kerakli guruh/kanalga qo‘shing va <b>admin</b> qiling — bot u chatning <b>Chat ID</b> sini yozib beradi. Keyin saytda (Settings → Telegram → Delivery Chats) chatId ni kiriting.",
+    "✅ <b>Targenix.uz ga muvaffaqiyatli ulandi!</b>\n\nBu <b>System chat</b> hisoblanadi: bu yerga faqat alert/error/statistika keladi.\n\n<b>Kanal ulash</b>: botni kerakli guruh/kanalga qo‘shing va <b>admin</b> qiling — kanal Targenix.uz hisobingizda <b>avtomatik</b> paydo bo‘ladi. Hech qanday Chat ID ko‘chirish shart emas.",
     "HTML",
   );
 }
@@ -295,49 +297,163 @@ async function handleMyChatMember(evt: TelegramChatMemberUpdated): Promise<void>
   if (evt.chat.type === "private") return;
   if (!newStatus) return;
 
-  // Keep a best-effort pending chat cache (useful for support/debugging)
   const db = await getDb();
-  if (db) {
+  if (!db) return;
+
+  const title = evt.chat.title ?? null;
+  const username = (evt.chat as any)?.username ?? null;
+  const chatType = evt.chat.type;
+  const chatLabel = escapeHtml(evt.chat.title ?? (evt.chat as any)?.username ?? "N/A");
+
+  // ── Resolve which Targenix account added the bot ──────────────────────────
+  // The my_chat_member `from` is the Telegram user who added/promoted the bot.
+  // Match it against users.telegramUserId (set on /start <token>) and, for
+  // accounts connected before that column existed, users.telegramChatId — a
+  // private chat's id equals the Telegram user's id, so it works as a fallback.
+  let claimedByUserId: number | null = null;
+  const fromId = evt.from?.id != null ? String(evt.from.id) : null;
+  if (fromId) {
     try {
-      const title = evt.chat.title ?? null;
-      const username = (evt.chat as any)?.username ?? null;
-      const chatType = evt.chat.type;
-
-      const [existing] = await db
-        .select({ id: telegramPendingChats.id })
-        .from(telegramPendingChats)
-        .where(eq(telegramPendingChats.chatId, chatId))
+      const [owner] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(or(eq(users.telegramUserId, fromId), eq(users.telegramChatId, fromId)))
         .limit(1);
-
-      if (existing) {
-        await db
-          .update(telegramPendingChats)
-          .set({ title, username, chatType, botStatus: newStatus, lastSeenAt: new Date() })
-          .where(eq(telegramPendingChats.id, existing.id));
-      } else {
-        await db.insert(telegramPendingChats).values({
-          chatId,
-          chatType,
-          title,
-          username,
-          botStatus: newStatus,
-          firstSeenAt: new Date(),
-          lastSeenAt: new Date(),
-        });
-      }
+      claimedByUserId = owner?.id ?? null;
     } catch (err) {
-      await log.warn("TELEGRAM", "Failed to upsert pending chat", { chatId, error: String(err) });
+      await log.warn("TELEGRAM", "Failed to resolve chat owner", { chatId, error: String(err) });
     }
   }
 
-  // If bot is removed/left, don't spam.
+  // ── Upsert the pending-chat cache; capture the previous status so we only
+  //    message on real transitions (my_chat_member fires on every permission
+  //    tweak). Never downgrade a known owner back to NULL.
+  let prevBotStatus: string | null = null;
+  try {
+    const [existing] = await db
+      .select({
+        id: telegramPendingChats.id,
+        botStatus: telegramPendingChats.botStatus,
+        claimedByUserId: telegramPendingChats.claimedByUserId,
+      })
+      .from(telegramPendingChats)
+      .where(eq(telegramPendingChats.chatId, chatId))
+      .limit(1);
+
+    if (existing) {
+      prevBotStatus = existing.botStatus;
+      await db
+        .update(telegramPendingChats)
+        .set({
+          title,
+          username,
+          chatType,
+          botStatus: newStatus,
+          claimedByUserId: claimedByUserId ?? existing.claimedByUserId ?? null,
+          lastSeenAt: new Date(),
+        })
+        .where(eq(telegramPendingChats.id, existing.id));
+    } else {
+      await db.insert(telegramPendingChats).values({
+        chatId,
+        chatType,
+        title,
+        username,
+        botStatus: newStatus,
+        claimedByUserId,
+        firstSeenAt: new Date(),
+        lastSeenAt: new Date(),
+      });
+    }
+  } catch (err) {
+    await log.warn("TELEGRAM", "Failed to upsert pending chat", { chatId, error: String(err) });
+  }
+
+  // If the bot was removed/left/kicked, don't message.
   if (newStatus !== "member" && newStatus !== "administrator") return;
 
-  await sendTelegramMessage(
-    chatId,
-    `👋 Salom! Bot qo‘shildi.\n\n<b>Chat:</b> ${escapeHtml(evt.chat.title ?? (evt.chat as any)?.username ?? "N/A")}\n<b>Chat ID:</b> <code>${escapeHtml(chatId)}</code>\n\n1) Botga <b>admin</b> huquq bering.\n2) Shu Chat ID ni copy qiling.\n3) Targenix.uz → Settings → Telegram → Delivery Chats bo‘limida Chat ID ni kiriting.`,
-    "HTML",
-  );
+  const statusChanged = prevBotStatus !== newStatus;
+
+  // ── Admin: the bot can post — try to auto-link as a DELIVERY chat ─────────
+  if (newStatus === "administrator") {
+    if (claimedByUserId != null) {
+      let alreadyOwnerId: number | null = null;
+      try {
+        const [already] = await db
+          .select({ userId: telegramChats.userId })
+          .from(telegramChats)
+          .where(eq(telegramChats.chatId, chatId))
+          .limit(1);
+        alreadyOwnerId = already?.userId ?? null;
+
+        if (alreadyOwnerId == null) {
+          await db.insert(telegramChats).values({
+            userId: claimedByUserId,
+            chatId,
+            type: "DELIVERY",
+            title,
+            username,
+            connectedAt: new Date(),
+            createdAt: new Date(),
+          });
+          await log.info("TELEGRAM", "Auto-linked delivery chat", { chatId, userId: claimedByUserId });
+          await sendTelegramMessage(
+            chatId,
+            `✅ <b>${chatLabel}</b> kanali Targenix hisobingizga ulandi.\n\nEndi bu kanalga lead'lar avtomatik yuboriladi. Sozlamalarni <b>Targenix.uz → Settings → Telegram</b> bo‘limidan boshqarishingiz mumkin.`,
+            "HTML",
+          );
+          return;
+        }
+      } catch (err) {
+        // Unique-constraint race or DB error — stay quiet; the website's
+        // manual "enter Chat ID" path still works.
+        await log.warn("TELEGRAM", "Auto-link delivery chat failed", { chatId, error: String(err) });
+      }
+
+      if (statusChanged) {
+        if (alreadyOwnerId === claimedByUserId) {
+          await sendTelegramMessage(
+            chatId,
+            `ℹ️ <b>${chatLabel}</b> allaqachon Targenix hisobingizga ulangan.`,
+            "HTML",
+          );
+        } else if (alreadyOwnerId != null) {
+          await sendTelegramMessage(
+            chatId,
+            `⚠️ Bu kanal boshqa Targenix hisobiga ulangan. Agar bu xato bo‘lsa, support bilan bog‘laning.`,
+            "HTML",
+          );
+        }
+      }
+      return;
+    }
+
+    // Admin, but we can't tie the adder to an account — manual fallback.
+    if (statusChanged) {
+      await sendTelegramMessage(
+        chatId,
+        `✅ Bot <b>${chatLabel}</b> da admin qilindi.\n\nAgar kanal Targenix.uz saytida avtomatik ko‘rinmasa, quyidagi Chat ID ni <b>Settings → Telegram</b> bo‘limiga kiriting:\n<b>Chat ID:</b> <code>${escapeHtml(chatId)}</code>`,
+        "HTML",
+      );
+    }
+    return;
+  }
+
+  // ── Member: added but not an admin yet — it can't post until promoted ─────
+  if (!statusChanged) return;
+  if (claimedByUserId != null) {
+    await sendTelegramMessage(
+      chatId,
+      `👋 Rahmat! <b>${chatLabel}</b> ga qo‘shildim.\n\n⚠️ Lead'larni yuborishim uchun meni <b>administrator</b> qiling. Admin huquq berilishi bilan kanal Targenix hisobingizda avtomatik paydo bo‘ladi.`,
+      "HTML",
+    );
+  } else {
+    await sendTelegramMessage(
+      chatId,
+      `👋 Salom! Bot qo‘shildi.\n\n⚠️ Meni <b>administrator</b> qiling.\n\nAgar kanal Targenix.uz saytida avtomatik ko‘rinmasa, quyidagi Chat ID ni <b>Settings → Telegram</b> bo‘limiga kiriting:\n<b>Chat ID:</b> <code>${escapeHtml(chatId)}</code>`,
+      "HTML",
+    );
+  }
 }
 
 function escapeHtml(s: string): string {

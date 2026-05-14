@@ -1,18 +1,29 @@
 /**
  * Telegram tRPC Router
  *
- * Procedures:
+ * Connection:
  *   - getStatus: returns current Telegram connection state for the logged-in user
  *   - generateConnectToken: creates a one-time token and returns the bot deep-link URL
  *   - disconnect: clears all Telegram fields from the user record
+ *
+ * Delivery chats:
+ *   - linkDeliveryChatById: manual fallback — link a chat by pasted Chat ID
+ *   - listDeliveryChats: linked DELIVERY chats owned by the user
+ *   - listPendingChats: chats the bot was auto-resolved into but isn't admin in yet
+ *   - sendTestMessage: send a test message to a DELIVERY chat
+ *
+ * Routing:
+ *   - listDestinationMappings / getDestinationDeliverySettings /
+ *     setDestinationDeliverySettings / setDestinationChat
  */
 
 import { z } from "zod";
 import { protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
-import { integrations, telegramChats, destinations, users } from "../../drizzle/schema";
+import { integrations, telegramChats, telegramPendingChats, destinations, users } from "../../drizzle/schema";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import crypto from "crypto";
+import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 
 const BOT_USERNAME = process.env.TELEGRAM_BOT_USERNAME ?? "Targenixbot";
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
@@ -378,6 +389,78 @@ export const telegramRouter = router({
       if (!chat || chat.userId !== ctx.user.id || chat.type !== "DELIVERY") throw new Error("Chat not found");
 
       await db.update(destinations).set({ telegramChatId: chat.chatId }).where(eq(destinations.id, input.destinationId));
+      return { success: true };
+    }),
+
+  /**
+   * List chats the bot was added to by this user (resolved via my_chat_member
+   * `from` → telegram_pending_chats.claimedByUserId) that are NOT yet linked
+   * as DELIVERY chats — i.e. the bot is in the chat but still waiting to be
+   * made administrator. The UI shows these as "waiting for admin rights" so
+   * the user never has to copy/paste a Chat ID.
+   */
+  listPendingChats: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+
+    const linked = await db
+      .select({ chatId: telegramChats.chatId })
+      .from(telegramChats)
+      .where(eq(telegramChats.userId, ctx.user.id));
+    const linkedIds = new Set(linked.map((c) => c.chatId));
+
+    const rows = await db
+      .select({
+        chatId: telegramPendingChats.chatId,
+        chatType: telegramPendingChats.chatType,
+        title: telegramPendingChats.title,
+        username: telegramPendingChats.username,
+        botStatus: telegramPendingChats.botStatus,
+        lastSeenAt: telegramPendingChats.lastSeenAt,
+      })
+      .from(telegramPendingChats)
+      .where(eq(telegramPendingChats.claimedByUserId, ctx.user.id))
+      .orderBy(desc(telegramPendingChats.lastSeenAt));
+
+    // Only chats where the bot is still present and not already a delivery chat.
+    return rows.filter(
+      (r) =>
+        !linkedIds.has(r.chatId) &&
+        (r.botStatus === "member" || r.botStatus === "administrator"),
+    );
+  }),
+
+  /**
+   * Send a test message to one of the user's DELIVERY chats — powers the
+   * "Test xabar yuborish" button on each channel card.
+   */
+  sendTestMessage: protectedProcedure
+    .input(z.object({ chatId: z.string().trim().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+
+      const [chat] = await db
+        .select({ chatId: telegramChats.chatId })
+        .from(telegramChats)
+        .where(
+          and(
+            eq(telegramChats.chatId, input.chatId),
+            eq(telegramChats.userId, ctx.user.id),
+            eq(telegramChats.type, "DELIVERY"),
+          ),
+        )
+        .limit(1);
+      if (!chat) throw new Error("Delivery chat not found");
+
+      const ok = await sendTelegramMessage(
+        chat.chatId,
+        "🔔 <b>Targenix test xabari</b>\n\nBu kanal lead'larni qabul qilishga tayyor. Agar bu xabarni ko‘rsangiz — hammasi joyida ✅",
+        "HTML",
+      );
+      if (!ok) {
+        throw new Error("Failed to send — make sure the bot is still an administrator in this chat.");
+      }
       return { success: true };
     }),
 });

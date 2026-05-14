@@ -81,11 +81,19 @@ export const telegramPendingChats = mysqlTable("telegram_pending_chats", {
   username: varchar("username", { length: 128 }),
   /** Bot's current status per my_chat_member: member | administrator | left | kicked | ... */
   botStatus: varchar("botStatus", { length: 32 }),
+  /**
+   * Targenix user this chat belongs to, resolved from the my_chat_member
+   * `from` field (the Telegram user who added the bot) matched against
+   * users.telegramUserId / users.telegramChatId. NULL = added by someone we
+   * can't tie to an account — falls back to the manual "enter Chat ID" path.
+   */
+  claimedByUserId: int("claimedByUserId"),
   firstSeenAt: timestamp("firstSeenAt").defaultNow().notNull(),
   lastSeenAt: timestamp("lastSeenAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
   uqChatId: uniqueIndex("uq_telegram_pending_chats_chat_id").on(t.chatId),
   idxLastSeen: index("idx_telegram_pending_chats_last_seen").on(t.lastSeenAt),
+  idxClaimedBy: index("idx_telegram_pending_chats_claimed_by").on(t.claimedByUserId),
 }));
 
 export type TelegramPendingChat = typeof telegramPendingChats.$inferSelect;
