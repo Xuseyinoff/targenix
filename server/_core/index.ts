@@ -3,6 +3,10 @@ import "../oauth/register";
 import "../integrations";
 import { validateEnv } from "./validateEnv";
 validateEnv();
+import { installGlobalErrorHandlers } from "./globalErrorHandlers";
+// Install before anything async can run so a stray rejection during boot
+// is caught too.
+installGlobalErrorHandlers("Server");
 import express from "express";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";

@@ -13,6 +13,10 @@
  */
 
 import "dotenv/config";
+import { installGlobalErrorHandlers } from "../_core/globalErrorHandlers";
+// Install before any scheduler/worker boot so a stray rejection during
+// startup is caught too.
+installGlobalErrorHandlers("Worker");
 import { startLeadWorker } from "./leadWorker";
 import { startRetryScheduler } from "../services/retryScheduler";
 import { startLogRetentionScheduler } from "../services/logRetentionScheduler";

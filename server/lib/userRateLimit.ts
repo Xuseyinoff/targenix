@@ -25,20 +25,21 @@ setInterval(() => {
 }, 5 * 60 * 1000).unref();
 
 /**
- * Per-user rate limiter for tRPC procedures.
- * Each (userId + label) pair has its own independent bucket.
+ * Generic fixed-window rate limiter keyed by an arbitrary string.
  *
- * Usage in routers:
- *   import { checkUserRateLimit } from "../lib/userRateLimit";
- *   // inside mutation:
- *   checkUserRateLimit(ctx.user.id, "testIntegration", { max: 5, windowMs: 60_000 });
+ * Used directly for pre-auth endpoints (login / register / forgotPassword)
+ * where there is no `userId` yet — the caller composes a key from IP and/or
+ * email. `checkUserRateLimit` is a thin wrapper over this for the common
+ * `userId:label` case.
+ *
+ * In-memory + per-replica: a multi-replica deployment allows up to
+ * (replica count) × `max` requests per window. Acceptable — it still caps
+ * brute-force by orders of magnitude and needs no shared store.
  */
-export function checkUserRateLimit(
-  userId: number,
-  label: string,
+export function checkRateLimitByKey(
+  key: string,
   config: UserRateLimitConfig
 ): void {
-  const key = `${userId}:${label}`;
   const now = Date.now();
 
   let entry = buckets.get(key);
@@ -56,4 +57,21 @@ export function checkUserRateLimit(
       message: config.message ?? `Too many requests. Please wait ${retryAfterSec} seconds.`,
     });
   }
+}
+
+/**
+ * Per-user rate limiter for tRPC procedures.
+ * Each (userId + label) pair has its own independent bucket.
+ *
+ * Usage in routers:
+ *   import { checkUserRateLimit } from "../lib/userRateLimit";
+ *   // inside mutation:
+ *   checkUserRateLimit(ctx.user.id, "testIntegration", { max: 5, windowMs: 60_000 });
+ */
+export function checkUserRateLimit(
+  userId: number,
+  label: string,
+  config: UserRateLimitConfig
+): void {
+  checkRateLimitByKey(`${userId}:${label}`, config);
 }

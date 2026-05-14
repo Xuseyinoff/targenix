@@ -36,9 +36,52 @@ import { sdk } from "../_core/sdk";
 import { getSessionCookieOptions } from "../_core/cookies";
 import { COOKIE_NAME, SESSION_EXPIRATION_MS } from "@shared/const";
 import { sendPasswordResetEmail } from "../services/emailService";
+import { checkRateLimitByKey } from "../lib/userRateLimit";
+import type { Request } from "express";
 
 function emailToOpenId(email: string): string {
   return `email:${email.toLowerCase().trim()}`;
+}
+
+/**
+ * Best-effort client IP. `trust proxy` is enabled in server/_core/index.ts
+ * so `req.ip` is the real client behind Railway's proxy; the X-Forwarded-For
+ * fallback mirrors the httpLogger helper for parity.
+ */
+function clientIp(req: Request | undefined): string {
+  if (!req) return "unknown";
+  const xff = req.headers["x-forwarded-for"];
+  const fromXff = typeof xff === "string" ? xff.split(",")[0]?.trim() : undefined;
+  return fromXff || req.ip || "unknown";
+}
+
+/**
+ * Brute-force guard for the pre-auth endpoints (login / register /
+ * forgotPassword). Two independent buckets per attempt:
+ *   • IP-only        — catches credential stuffing (one IP, many emails).
+ *   • IP+email       — catches password brute force (one account hammered).
+ * Both fixed-window, in-memory (server/lib/userRateLimit.ts).
+ */
+function guardAuthAttempt(
+  req: Request | undefined,
+  action: "login" | "register" | "forgotPassword",
+  email: string,
+): void {
+  const ip = clientIp(req);
+  const emailKey = email.toLowerCase().trim();
+  // IP-only: generous, blocks high-volume stuffing without locking out
+  // a shared office NAT doing a handful of real logins.
+  checkRateLimitByKey(`auth:${action}:ip:${ip}`, {
+    max: 30,
+    windowMs: 15 * 60_000,
+    message: "Too many attempts from this network. Please wait a few minutes.",
+  });
+  // IP+email: tight, this is the real brute-force surface.
+  checkRateLimitByKey(`auth:${action}:ipemail:${ip}:${emailKey}`, {
+    max: 8,
+    windowMs: 15 * 60_000,
+    message: "Too many attempts for this account. Please wait a few minutes.",
+  });
 }
 
 export const authRouter = router({
@@ -74,6 +117,8 @@ export const authRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      guardAuthAttempt(ctx.req, "register", input.email);
+
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
@@ -121,6 +166,8 @@ export const authRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      guardAuthAttempt(ctx.req, "login", input.email);
+
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
@@ -348,7 +395,11 @@ export const authRouter = router({
   // ── Forgot Password ──────────────────────────────────────────────────────────
   forgotPassword: publicProcedure
     .input(z.object({ email: z.string().email() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      // Rate-limited so the endpoint can't be turned into an email bomb
+      // (each call sends a real reset email).
+      guardAuthAttempt(ctx.req, "forgotPassword", input.email);
+
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
