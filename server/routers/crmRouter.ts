@@ -23,6 +23,11 @@ import {
   type OrderPageResult,
 } from "../services/crmService";
 import {
+  shouldSkipCrmAccount,
+  recordCrmFailure,
+  recordCrmSuccess,
+} from "../services/crmCircuitBreaker";
+import {
   isFinalStatus,
   mapSotuvchiRawToNormalized,
   mapHundredKRawToNormalized,
@@ -385,6 +390,20 @@ export async function performPaginationSync(): Promise<SyncResult> {
     return { synced: 0, errors: 0, total: 0, syncedAt: new Date().toISOString(), message: "Sotuvchi akkaunt topilmadi" };
   }
 
+  // Per-account circuit breaker — skip the entire sync if the CRM has been
+  // failing repeatedly. Prevents hammering a flapping endpoint every 5 min.
+  const skip = shouldSkipCrmAccount(acc.id);
+  if (skip.skip) {
+    console.warn(`[PaginationSync] Skipping sotuvchi account ${acc.id} — ${skip.reason}`);
+    return {
+      synced: 0,
+      errors: 0,
+      total: 0,
+      syncedAt: new Date().toISOString(),
+      message: `Skipped: ${skip.reason}`,
+    };
+  }
+
   // Find our oldest non-final Sotuvchi order — everything older than this can be skipped
   const [oldestRow] = await db
     .select({ createdAt: orders.createdAt })
@@ -533,6 +552,14 @@ export async function performPaginationSync(): Promise<SyncResult> {
     syncedAt: new Date().toISOString(),
     message: `${pagesProcessed} sahifa, ${synced} order yangilandi`,
   };
+  // Circuit breaker bookkeeping — a sync that synced zero rows AND had any
+  // errors is a "failed cycle" (auth bad, CRM down). One success wipes the
+  // failure streak; otherwise we tally toward cooldown.
+  if (errors > 0 && synced === 0) {
+    recordCrmFailure(acc.id);
+  } else {
+    recordCrmSuccess(acc.id);
+  }
   console.log(`[PaginationSync] Done — pages=${pagesProcessed} synced=${synced} errors=${errors}`);
   return result;
 }
@@ -567,6 +594,19 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
       total: 0,
       syncedAt: new Date().toISOString(),
       message: "100k platformUserId bo'sh",
+    };
+  }
+
+  // Per-account circuit breaker — see performPaginationSync (sotuvchi) for rationale.
+  const skip = shouldSkipCrmAccount(acc.id);
+  if (skip.skip) {
+    console.warn(`[PaginationSync/100k] Skipping 100k account ${acc.id} — ${skip.reason}`);
+    return {
+      synced: 0,
+      errors: 0,
+      total: 0,
+      syncedAt: new Date().toISOString(),
+      message: `Skipped: ${skip.reason}`,
     };
   }
 
@@ -825,6 +865,11 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
     syncedAt: new Date().toISOString(),
     message: `${pagesProcessed} sahifa (100k), ${synced} order yangilandi`,
   };
+  if (errors > 0 && synced === 0) {
+    recordCrmFailure(acc.id);
+  } else {
+    recordCrmSuccess(acc.id);
+  }
   console.log(`[PaginationSync/100k] Done — pages=${pagesProcessed} synced=${synced} errors=${errors}`);
   return result;
 }
