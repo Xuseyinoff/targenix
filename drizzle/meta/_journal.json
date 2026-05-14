@@ -547,6 +547,13 @@
       "when": 1779833280001,
       "tag": "0081_admin_audit_log",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "5",
+      "when": 1779833280002,
+      "tag": "0082_metric_snapshots",
+      "breakpoints": true
     }
   ]
 }

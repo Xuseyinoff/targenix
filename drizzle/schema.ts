@@ -1305,3 +1305,45 @@ export const adminAuditLogs = mysqlTable("admin_audit_log", {
 
 export type AdminAuditLog       = typeof adminAuditLogs.$inferSelect;
 export type InsertAdminAuditLog = typeof adminAuditLogs.$inferInsert;
+
+// ─── Metric snapshots ─────────────────────────────────────────────────────────
+//
+// Roadmap #7 phase C. Periodic captures of the in-process counters
+// (failed_orders, oauth_errors) and DB-side gauges (failed_orders_db,
+// retry_queue_size). Before this table, counters reset on process restart
+// and the only output was console.log under `METRICS_LOG=1` — no history,
+// no graphs, no recovery after a deploy.
+//
+// `kind` distinguishes interpretation:
+//   - "counter" — delta over the snapshot interval (counters are
+//                 read-and-reset by the capture scheduler, so each row
+//                 is the activity in [snapshotAt - interval, snapshotAt))
+//   - "gauge"   — point-in-time reading at snapshotAt (no reset)
+//
+// Retention: append-only. Volume is modest (4 metrics × 12/hour × 24h ≈
+// 1.2k rows/day, ~430k/year). A TTL prune can be added if needed.
+export const metricSnapshots = mysqlTable("metric_snapshots", {
+  id:         int("id").autoincrement().primaryKey(),
+  /** When the snapshot was taken. Default lets the DB stamp the row. */
+  snapshotAt: timestamp("snapshotAt").defaultNow().notNull(),
+  /** Canonical metric name — keep it snake_case for grep-friendliness:
+   *  "failed_orders", "oauth_errors", "retry_queue_size", "failed_orders_db". */
+  metric:     varchar("metric", { length: 64 }).notNull(),
+  /** "counter" (interval delta) or "gauge" (point-in-time). */
+  kind:       varchar("kind", { length: 16 }).notNull(),
+  /** The numeric reading. Counter values are always >= 0; gauges can be
+   *  any non-negative integer in practice (queue sizes, row counts). */
+  value:      int("value").notNull(),
+  /** Optional context — e.g. process replica id, environment tag,
+   *  diagnostic dimensions. Kept loose so new metrics don't need a
+   *  schema change to add per-metric attributes. */
+  meta:       json("meta").$type<Record<string, unknown> | null>(),
+}, (t) => ({
+  /** Primary access pattern: "graph metric X over time". */
+  idxMetricTime: index("idx_metric_snapshots_metric_time").on(t.metric, t.snapshotAt),
+  /** Cross-metric "what happened around 2:04am" forensic queries. */
+  idxTime:       index("idx_metric_snapshots_time").on(t.snapshotAt),
+}));
+
+export type MetricSnapshot       = typeof metricSnapshots.$inferSelect;
+export type InsertMetricSnapshot = typeof metricSnapshots.$inferInsert;

@@ -21,6 +21,31 @@ export function incOAuthErrors(n = 1): void {
   oauthErrorsCount += Math.max(0, Math.floor(n));
 }
 
+/**
+ * Atomically read the current cumulative counters AND reset them to zero.
+ * Used by the metric snapshot scheduler so each persisted row represents
+ * the activity in the interval `[previousSnapshot, now)` rather than the
+ * cumulative-since-boot value (which loses meaning across restarts).
+ *
+ * The reads + writes here are not protected by a mutex because Node's
+ * single-threaded event loop makes the +=/= sequence non-interleavable
+ * with itself. A worker thread future would need an Atomics-backed pair.
+ */
+export function readAndResetCounters(): {
+  failedOrders: number;
+  oauthErrors: number;
+} {
+  const snapshot = { failedOrders: failedOrdersCount, oauthErrors: oauthErrorsCount };
+  failedOrdersCount = 0;
+  oauthErrorsCount = 0;
+  return snapshot;
+}
+
+/** Read counters without mutating — useful for ad-hoc inspection and tests. */
+export function peekCounters(): { failedOrders: number; oauthErrors: number } {
+  return { failedOrders: failedOrdersCount, oauthErrors: oauthErrorsCount };
+}
+
 export async function getRetryQueueSize(db: DbClient): Promise<number> {
   const now = new Date();
   const rows = await db

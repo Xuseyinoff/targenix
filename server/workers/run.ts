@@ -23,6 +23,7 @@ import { startConnectionHealthScheduler } from "../services/connectionHealthSche
 import { startLeadPollingScheduler } from "../services/leadPollingService";
 import { startTriggerScheduler } from "../services/triggerScheduler";
 import { startOAuthStateCleanupScheduler } from "../services/oauthStateCleanupScheduler";
+import { startMetricSnapshotScheduler } from "../services/metricSnapshotScheduler";
 import { getDb } from "../db";
 
 if (!process.env.REDIS_URL) {
@@ -71,6 +72,9 @@ async function boot() {
   // Universal oauth_states: hourly sweep of expired CSRF rows. Replaces the
   // per-provider hourly intervals removed in Sprint B Step 4.
   startOAuthStateCleanupScheduler();
+  // Roadmap #7 phase C: persist failed_orders / oauth_errors / retry_queue
+  // / failed_orders_db every 5 min so AdminMetrics has graphable history.
+  startMetricSnapshotScheduler();
 
   console.log("[Worker] All systems running. Waiting for jobs...");
 
