@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { trpc } from "@/lib/trpc";
+import { VirtualTable } from "@/components/VirtualTable";
 import { Shield, Search, ChevronLeft, ChevronRight, RefreshCw, Users, Route, Clock } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
@@ -12,7 +13,10 @@ import { useLocation } from "wouter";
 type DataStatusFilter = "PENDING" | "ENRICHED" | "ERROR" | "";
 type DeliveryStatusFilter = "PENDING" | "PROCESSING" | "SUCCESS" | "FAILED" | "PARTIAL" | "";
 
-const PAGE_SIZE = 50;
+/** Per-page options. 50 is the default; 100/200 are where the row count
+ *  crosses VirtualTable's virtualizeThreshold and windowing kicks in. */
+const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
+const DEFAULT_PAGE_SIZE = 50;
 
 function statusBadge(status: string) {
   const map: Record<string, { label: string; cls: string }> = {
@@ -45,11 +49,12 @@ export default function AdminLeads() {
   const [deliveryStatus, setDeliveryStatus] = useState<DeliveryStatusFilter>("");
   const [onlyRouted, setOnlyRouted] = useState(false);
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
 
   const queryInput = useMemo(() => {
     return {
-      limit: PAGE_SIZE,
-      offset: page * PAGE_SIZE,
+      limit: pageSize,
+      offset: page * pageSize,
       ...(search.trim() ? { search: search.trim() } : {}),
       ...(userId.trim() ? { userId: parseInt(userId.trim(), 10) } : {}),
       ...(pageId.trim() ? { pageId: pageId.trim() } : {}),
@@ -59,14 +64,14 @@ export default function AdminLeads() {
       ...(deliveryStatus ? { deliveryStatus } : {}),
       onlyRouted,
     };
-  }, [search, userId, pageId, formId, integrationId, dataStatus, deliveryStatus, onlyRouted, page]);
+  }, [search, userId, pageId, formId, integrationId, dataStatus, deliveryStatus, onlyRouted, page, pageSize]);
 
   const { data, isLoading, isFetching, refetch } = trpc.adminLeads.list.useQuery(queryInput, {
     enabled: user?.role === "admin",
     refetchInterval: 15_000,
   });
 
-  const totalPages = data ? Math.ceil(data.total / PAGE_SIZE) : 0;
+  const totalPages = data ? Math.ceil(data.total / pageSize) : 0;
 
   if (!user || user.role !== "admin") {
     return (
@@ -208,132 +213,151 @@ export default function AdminLeads() {
             ) : !data?.leads?.length ? (
               <div className="py-16 text-center text-muted-foreground">No leads found</div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="text-xs text-muted-foreground border-b">
-                    <tr>
-                      <th className="text-left p-3">Lead</th>
-                      <th className="text-left p-3">User</th>
-                      <th className="text-left p-3">Page / Form</th>
-                      <th className="text-left p-3">Integration</th>
-                      <th className="text-left p-3">Deliveries</th>
-                      <th className="text-left p-3">Status</th>
-                      <th className="text-left p-3">Created</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {data.leads.map((row) => (
-                      <tr key={row.leadId} className="hover:bg-muted/30">
-                        <td className="p-3 align-top">
-                          <button
-                            className="font-mono text-xs underline text-blue-600 dark:text-blue-400"
-                            onClick={() => setLocation(`/leads/${row.leadId}`)}
-                            title="Open lead detail"
-                          >
-                            #{row.leadId}
-                          </button>
-                          <div className="text-xs text-muted-foreground font-mono mt-1">
-                            {row.leadgenId}
-                          </div>
-                          <div className="mt-1 text-xs">
-                            {row.fullName ?? "—"} {row.phone ? <span className="text-muted-foreground">· {row.phone}</span> : null}
-                          </div>
-                        </td>
-                        <td className="p-3 align-top">
-                          <div className="text-xs font-mono">uid:{row.user.id}</div>
-                          <div className="text-xs">{row.user.email ?? row.user.name ?? "—"}</div>
-                        </td>
-                        <td className="p-3 align-top">
-                          <div className="text-xs font-mono">{row.pageId}</div>
-                          <div className="text-xs font-mono">{row.formId}</div>
-                          {(row.pageName || row.formName) && (
-                            <div className="text-xs text-muted-foreground mt-1">
-                              {row.pageName ?? "—"} / {row.formName ?? "—"}
-                            </div>
-                          )}
-                        </td>
-                        <td className="p-3 align-top">
-                          <div className="text-xs font-mono">
-                            {row.deliveries.lastIntegrationId != null ? `#${row.deliveries.lastIntegrationId}` : "—"}
-                          </div>
-                          <div className="text-xs">
-                            {row.deliveries.lastIntegrationName ?? "—"}
-                          </div>
-                          {row.deliveries.lastDestinationName && (
-                            <div className="text-xs text-muted-foreground mt-1">
-                              → {row.deliveries.lastDestinationName}
-                            </div>
-                          )}
-                        </td>
-                        <td className="p-3 align-top">
-                          <div className="flex flex-wrap gap-1">
-                            <Badge variant="secondary" className="text-[11px] font-mono">
-                              total {row.deliveries.total}
-                            </Badge>
-                            <Badge variant="secondary" className="text-[11px] font-mono">
-                              sent {row.deliveries.sent}
-                            </Badge>
-                            <Badge variant="secondary" className="text-[11px] font-mono">
-                              failed {row.deliveries.failed}
-                            </Badge>
-                            <Badge variant="secondary" className="text-[11px] font-mono">
-                              max att {row.deliveries.attemptsMax}
-                            </Badge>
-                          </div>
-                          {row.deliveries.lastOrderAt && (
-                            <div className="text-xs text-muted-foreground mt-1">
-                              last: {new Date(row.deliveries.lastOrderAt).toLocaleString()}
-                            </div>
-                          )}
-                        </td>
-                        <td className="p-3 align-top">
-                          <div className="flex flex-wrap gap-1">
-                            {statusBadge(row.dataStatus)}
-                            {statusBadge(row.deliveryStatus)}
-                          </div>
-                          <div className="text-xs text-muted-foreground mt-1">
-                            {row.platform.toUpperCase()}
-                          </div>
-                        </td>
-                        <td className="p-3 align-top text-xs text-muted-foreground">
-                          {new Date(row.createdAt).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              <VirtualTable
+                rows={data.leads}
+                rowKey={(row) => row.leadId}
+                columnCount={7}
+                estimateRowHeight={96}
+                tableClassName="w-full text-sm"
+                theadClassName="text-xs text-muted-foreground border-b"
+                tbodyClassName="divide-y"
+                rowClassName="hover:bg-muted/30"
+                renderHeader={() => (
+                  <tr>
+                    <th className="text-left p-3">Lead</th>
+                    <th className="text-left p-3">User</th>
+                    <th className="text-left p-3">Page / Form</th>
+                    <th className="text-left p-3">Integration</th>
+                    <th className="text-left p-3">Deliveries</th>
+                    <th className="text-left p-3">Status</th>
+                    <th className="text-left p-3">Created</th>
+                  </tr>
+                )}
+                renderRow={(row) => (
+                  <>
+                    <td className="p-3 align-top">
+                      <button
+                        className="font-mono text-xs underline text-blue-600 dark:text-blue-400"
+                        onClick={() => setLocation(`/leads/${row.leadId}`)}
+                        title="Open lead detail"
+                      >
+                        #{row.leadId}
+                      </button>
+                      <div className="text-xs text-muted-foreground font-mono mt-1">
+                        {row.leadgenId}
+                      </div>
+                      <div className="mt-1 text-xs">
+                        {row.fullName ?? "—"} {row.phone ? <span className="text-muted-foreground">· {row.phone}</span> : null}
+                      </div>
+                    </td>
+                    <td className="p-3 align-top">
+                      <div className="text-xs font-mono">uid:{row.user.id}</div>
+                      <div className="text-xs">{row.user.email ?? row.user.name ?? "—"}</div>
+                    </td>
+                    <td className="p-3 align-top">
+                      <div className="text-xs font-mono">{row.pageId}</div>
+                      <div className="text-xs font-mono">{row.formId}</div>
+                      {(row.pageName || row.formName) && (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {row.pageName ?? "—"} / {row.formName ?? "—"}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3 align-top">
+                      <div className="text-xs font-mono">
+                        {row.deliveries.lastIntegrationId != null ? `#${row.deliveries.lastIntegrationId}` : "—"}
+                      </div>
+                      <div className="text-xs">
+                        {row.deliveries.lastIntegrationName ?? "—"}
+                      </div>
+                      {row.deliveries.lastDestinationName && (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          → {row.deliveries.lastDestinationName}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3 align-top">
+                      <div className="flex flex-wrap gap-1">
+                        <Badge variant="secondary" className="text-[11px] font-mono">
+                          total {row.deliveries.total}
+                        </Badge>
+                        <Badge variant="secondary" className="text-[11px] font-mono">
+                          sent {row.deliveries.sent}
+                        </Badge>
+                        <Badge variant="secondary" className="text-[11px] font-mono">
+                          failed {row.deliveries.failed}
+                        </Badge>
+                        <Badge variant="secondary" className="text-[11px] font-mono">
+                          max att {row.deliveries.attemptsMax}
+                        </Badge>
+                      </div>
+                      {row.deliveries.lastOrderAt && (
+                        <div className="text-xs text-muted-foreground mt-1">
+                          last: {new Date(row.deliveries.lastOrderAt).toLocaleString()}
+                        </div>
+                      )}
+                    </td>
+                    <td className="p-3 align-top">
+                      <div className="flex flex-wrap gap-1">
+                        {statusBadge(row.dataStatus)}
+                        {statusBadge(row.deliveryStatus)}
+                      </div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {row.platform.toUpperCase()}
+                      </div>
+                    </td>
+                    <td className="p-3 align-top text-xs text-muted-foreground">
+                      {new Date(row.createdAt).toLocaleString()}
+                    </td>
+                  </>
+                )}
+              />
             )}
           </CardContent>
         </Card>
 
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="flex items-center justify-between">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => Math.max(0, p - 1))}
-              disabled={page === 0}
+        {/* Footer — rows-per-page selector + pagination */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <label className="flex items-center gap-2 text-sm text-muted-foreground">
+            Rows per page
+            <select
+              className="border rounded-md bg-background px-2 py-1 text-sm"
+              value={pageSize}
+              onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
             >
-              <ChevronLeft className="h-4 w-4 mr-1" />
-              Previous
-            </Button>
-            <span className="text-sm text-muted-foreground">
-              Page {page + 1} of {totalPages}
-              {data ? ` — ${data.total.toLocaleString()} total` : ""}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
-              disabled={page >= totalPages - 1}
-            >
-              Next
-              <ChevronRight className="h-4 w-4 ml-1" />
-            </Button>
-          </div>
-        )}
+              {PAGE_SIZE_OPTIONS.map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </label>
+
+          {totalPages > 1 && (
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0}
+              >
+                <ChevronLeft className="h-4 w-4 mr-1" />
+                Previous
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                Page {page + 1} of {totalPages}
+                {data ? ` — ${data.total.toLocaleString()} total` : ""}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                disabled={page >= totalPages - 1}
+              >
+                Next
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
     </DashboardLayout>
   );

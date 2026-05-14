@@ -14,8 +14,13 @@ import {
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
+import { VirtualTable } from "@/components/VirtualTable";
 
-const PAGE_SIZE = 50;
+/** Per-page options. 50 is the default; 100/200 cross VirtualTable's
+ *  virtualizeThreshold so windowing engages — meaningful here because
+ *  every row mounts an IntegrationMarquee (ResizeObserver + animation). */
+const PAGE_SIZE_OPTIONS = [50, 100, 200] as const;
+const DEFAULT_PAGE_SIZE = 50;
 
 const PLATFORM_LABELS: Record<string, string> = {
   sotuvchi: "Sotuvchi.com",
@@ -193,6 +198,7 @@ export default function AdminCrmOrders() {
   }, [user, setLocation]);
 
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [platformFilter, setPlatformFilter] = useState<PlatformKey | "">("");
   const [statusFilter, setStatusFilter] = useState("");
   const [userFilter, setUserFilter] = useState<number | "">("");
@@ -204,8 +210,8 @@ export default function AdminCrmOrders() {
 
   const { data, isLoading, isFetching } = trpc.adminCrm.listOrders.useQuery(
     {
-      limit: PAGE_SIZE,
-      offset: page * PAGE_SIZE,
+      limit: pageSize,
+      offset: page * pageSize,
       platform: platformFilter || undefined,
       crmStatus: statusFilter || undefined,
       userId: userFilter === "" ? undefined : userFilter,
@@ -215,7 +221,7 @@ export default function AdminCrmOrders() {
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
-  const totalPages = Math.ceil(total / PAGE_SIZE);
+  const totalPages = Math.ceil(total / pageSize);
 
   return (
     <DashboardLayout>
@@ -286,9 +292,31 @@ export default function AdminCrmOrders() {
 
         {/* Table */}
         <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
+          {isLoading || isFetching ? (
+            <div className="px-4 py-10 text-center text-muted-foreground">
+              <RefreshCw className="w-4 h-4 animate-spin inline mr-2" />
+              Yuklanmoqda...
+            </div>
+          ) : items.length === 0 ? (
+            <div className="px-4 py-12 text-center">
+              <div className="space-y-2">
+                <ClipboardList className="w-8 h-8 mx-auto text-muted-foreground/40" />
+                <p className="text-sm text-muted-foreground">
+                  {platformFilter || statusFilter
+                    ? "Filtr bo'yicha order topilmadi"
+                    : "Hali yetkazilgan order yo'q"}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <VirtualTable
+              rows={items}
+              rowKey={(row) => row.orderId}
+              columnCount={6}
+              estimateRowHeight={64}
+              tableClassName="w-full text-sm"
+              rowClassName="border-b last:border-0 hover:bg-muted/30 transition-colors"
+              renderHeader={() => (
                 <tr className="border-b text-xs text-muted-foreground">
                   <th className="px-4 py-3 text-left font-medium">Lead</th>
                   <th className="px-4 py-3 text-left font-medium">Platforma</th>
@@ -302,131 +330,119 @@ export default function AdminCrmOrders() {
                   <th className="px-4 py-3 text-left font-medium">Sync</th>
                   <th className="px-4 py-3 text-left font-medium">Yuborilgan</th>
                 </tr>
-              </thead>
-              <tbody>
-                {isLoading || isFetching ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-10 text-center text-muted-foreground">
-                      <RefreshCw className="w-4 h-4 animate-spin inline mr-2" />
-                      Yuklanmoqda...
+              )}
+              renderRow={(row) => {
+                const externalId = extractExternalOrderId(row.responseData);
+                return (
+                  <>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <UserCircle className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+                        <div className="min-w-0">
+                          <p className="font-medium truncate max-w-[140px]">
+                            {row.leadName ?? "—"}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {row.leadPhone ?? ""}
+                          </p>
+                        </div>
+                      </div>
                     </td>
-                  </tr>
-                ) : items.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-12 text-center">
-                      <div className="space-y-2">
-                        <ClipboardList className="w-8 h-8 mx-auto text-muted-foreground/40" />
-                        <p className="text-sm text-muted-foreground">
-                          {platformFilter || statusFilter
-                            ? "Filtr bo'yicha order topilmadi"
-                            : "Hali yetkazilgan order yo'q"}
+                    <td className="px-4 py-3">
+                      <div className="min-w-0">
+                        <p className="font-medium truncate max-w-[140px]">
+                          {PLATFORM_LABELS[row.appKey ?? ""] ?? row.appKey ?? "—"}
+                        </p>
+                        <p className="font-mono text-xs text-muted-foreground truncate max-w-[140px]">
+                          {externalId ?? "—"}
                         </p>
                       </div>
                     </td>
-                  </tr>
-                ) : (
-                  items.map((row) => {
-                    const externalId = extractExternalOrderId(row.responseData);
-                    return (
-                      <tr
-                        key={row.orderId}
-                        className="border-b last:border-0 hover:bg-muted/30 transition-colors"
-                      >
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            <UserCircle className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                            <div className="min-w-0">
-                              <p className="font-medium truncate max-w-[140px]">
-                                {row.leadName ?? "—"}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {row.leadPhone ?? ""}
-                              </p>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="min-w-0">
-                            <p className="font-medium truncate max-w-[140px]">
-                              {PLATFORM_LABELS[row.appKey ?? ""] ?? row.appKey ?? "—"}
-                            </p>
-                            <p className="font-mono text-xs text-muted-foreground truncate max-w-[140px]">
-                              {externalId ?? "—"}
-                            </p>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <CrmStatusBadge status={row.crmStatus} />
-                            {row.crmRawStatus && row.crmRawStatus !== row.crmStatus && (
-                              <span
-                                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 font-mono"
-                                title="Platformadan kelgan original status"
-                              >
-                                {row.crmRawStatus}
-                              </span>
-                            )}
-                            {row.isFinal && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 font-medium">
-                                final
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td
-                          className="px-4 py-3 align-top overflow-hidden min-w-0 box-border"
-                          style={{ width: INTEGRATION_COL_W, maxWidth: INTEGRATION_COL_W }}
-                        >
-                          <IntegrationMarquee text={row.integrationName ?? "—"} />
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="text-xs text-muted-foreground">
-                            {timeAgo(row.crmSyncedAt)}
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <CrmStatusBadge status={row.crmStatus} />
+                        {row.crmRawStatus && row.crmRawStatus !== row.crmStatus && (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400 font-mono"
+                            title="Platformadan kelgan original status"
+                          >
+                            {row.crmRawStatus}
                           </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="text-xs text-muted-foreground">
-                            {row.createdAt
-                              ? new Date(row.createdAt).toLocaleDateString("uz-UZ")
-                              : "—"}
+                        )}
+                        {row.isFinal && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500 font-medium">
+                            final
                           </span>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <CardContent className="py-3 border-t flex items-center justify-between">
-              <span className="text-xs text-muted-foreground">
-                {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} / {total}
-              </span>
-              <div className="flex gap-1">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="w-7 h-7"
-                  disabled={page === 0}
-                  onClick={() => setPage((p) => p - 1)}
-                >
-                  <ChevronLeft className="w-3.5 h-3.5" />
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="w-7 h-7"
-                  disabled={page >= totalPages - 1}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  <ChevronRight className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            </CardContent>
+                        )}
+                      </div>
+                    </td>
+                    <td
+                      className="px-4 py-3 align-top overflow-hidden min-w-0 box-border"
+                      style={{ width: INTEGRATION_COL_W, maxWidth: INTEGRATION_COL_W }}
+                    >
+                      <IntegrationMarquee text={row.integrationName ?? "—"} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs text-muted-foreground">
+                        {timeAgo(row.crmSyncedAt)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs text-muted-foreground">
+                        {row.createdAt
+                          ? new Date(row.createdAt).toLocaleDateString("uz-UZ")
+                          : "—"}
+                      </span>
+                    </td>
+                  </>
+                );
+              }}
+            />
           )}
+
+          {/* Footer — rows-per-page selector + pagination */}
+          <CardContent className="py-3 border-t flex items-center justify-between gap-3 flex-wrap">
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              Sahifada
+              <select
+                className="border rounded-md bg-background px-2 py-1 text-xs"
+                value={pageSize}
+                onChange={(e) => { setPageSize(Number(e.target.value)); setPage(0); }}
+              >
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
+            </label>
+
+            {totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {page * pageSize + 1}–{Math.min((page + 1) * pageSize, total)} / {total}
+                </span>
+                <div className="flex gap-1">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="w-7 h-7"
+                    disabled={page === 0}
+                    onClick={() => setPage((p) => p - 1)}
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    className="w-7 h-7"
+                    disabled={page >= totalPages - 1}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
         </Card>
       </div>
     </DashboardLayout>
