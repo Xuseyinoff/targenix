@@ -51,7 +51,6 @@ import {
   Loader2,
   Lock,
   MessageSquare,
-  Pencil,
   Plus,
   Search,
   Sparkles,
@@ -95,6 +94,7 @@ import {
   iconForCategory,
   type DestinationCategory,
 } from "./lead-routing/categoryMeta";
+import { LoadingBar, EmptyHint } from "@/components/wizard/wizardPrimitives";
 
 // ─── Zapier-style step chrome ─────────────────────────────────────────────────
 
@@ -2089,43 +2089,6 @@ function FieldMappingsEditor({
           Static value
         </Button>
       </div>
-    </div>
-  );
-}
-
-// ─── Small utility subcomponents ──────────────────────────────────────────────
-
-function LoadingBar() {
-  return (
-    <div className="flex items-center gap-2 rounded-md border bg-muted/30 p-2 text-xs text-muted-foreground">
-      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-      Loading…
-    </div>
-  );
-}
-
-function EmptyHint({
-  message,
-  ctaLabel,
-  href,
-}: {
-  message: string;
-  ctaLabel?: string;
-  href?: string;
-}) {
-  return (
-    <div className="flex items-center gap-3 rounded-md border border-dashed bg-muted/10 p-3 text-xs">
-      <div className="flex-1 text-muted-foreground">{message}</div>
-      {ctaLabel && href && (
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 text-xs shrink-0"
-          onClick={() => window.open(href, "_blank")}
-        >
-          <Pencil className="h-3 w-3 mr-1" /> {ctaLabel}
-        </Button>
-      )}
     </div>
   );
 }
