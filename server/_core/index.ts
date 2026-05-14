@@ -23,6 +23,7 @@ import { triggerWebhookRouter } from "../routes/triggerWebhookRoute";
 import { log } from "../services/appLogger";
 import { getLeadDispatchMode } from "../services/leadDispatch";
 import { getDb } from "../db";
+import { ENV } from "./env";
 import { validateTemplatesAtBoot } from "../boot/validateTemplatesContract";
 import { newHttpTraceId, runWithRequestContext } from "../lib/requestContext";
 import type { Request, Response, NextFunction } from "express";
@@ -374,7 +375,20 @@ async function startServer() {
   const dispatchMode = getLeadDispatchMode();
   console.log(`[Server] Lead dispatch mode: ${dispatchMode}`);
   if (dispatchMode === "in-process") {
-    console.warn("[Server] WARNING: REDIS_URL not set — leads processed in-process (not durable). Set REDIS_URL for production.");
+    if (ENV.isProduction) {
+      // Production must run on the durable BullMQ queue. Booting in-process
+      // would silently drop every in-flight lead on each redeploy/crash and
+      // offers no retry — fail loudly instead of degrading quietly.
+      console.error(
+        "[Server] FATAL: REDIS_URL is not set in production. Lead processing " +
+          "requires the durable BullMQ queue. Aborting boot — set REDIS_URL.",
+      );
+      process.exit(1);
+    }
+    console.warn(
+      "[Server] WARNING: REDIS_URL not set — leads processed in-process (not durable). " +
+        "Acceptable for local development only.",
+    );
   }
 
   // If START_WORKER=true, run the BullMQ worker + schedulers inside this process.
