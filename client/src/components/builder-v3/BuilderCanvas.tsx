@@ -47,14 +47,22 @@ import { cn } from "@/lib/utils";
 import {
   Plus,
   ChevronDown,
-  MoreVertical,
   Filter,
   Lightbulb,
   Zap,
 } from "lucide-react";
 import { AppIcon, appBrandIconTileClass } from "@/components/destinations/appIcons";
+import { NodeMenu } from "./NodeMenu";
 
 // ─── Data shapes ─────────────────────────────────────────────────────────────
+
+type NodeMenuCallbacks = {
+  onRename?: () => void;
+  onFilter?: () => void;
+  onTestStep?: () => void;
+  onErrorHandler?: () => void;
+  onDelete?: () => void;
+};
 
 type TriggerNodeData = {
   configured: boolean;
@@ -66,7 +74,7 @@ type TriggerNodeData = {
   detail: string;
   onClick: () => void;
   iconUrl: string | null;
-};
+} & NodeMenuCallbacks;
 
 type ActionNodeData = {
   configured: boolean;
@@ -75,7 +83,7 @@ type ActionNodeData = {
   detail: string;
   onClick: () => void;
   iconUrl: string | null;
-};
+} & NodeMenuCallbacks;
 
 // ─── Add-between edge: a small ⊕ in the middle of the line ────────────────────
 
@@ -189,18 +197,13 @@ function TriggerCanvasNode({ data }: NodeProps) {
               )}
             </div>
 
-            <button
-              type="button"
-              onClick={(e) => {
-                // Stop click from re-opening the modal — the kebab is a no-op
-                // for now (Phase 1 doesn't show node options).
-                e.stopPropagation();
-              }}
-              className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-accent"
-              aria-label="More options"
-            >
-              <MoreVertical className="h-4 w-4" />
-            </button>
+            <NodeMenu
+              onRename={d.onRename}
+              onFilter={d.onFilter}
+              onTestStep={d.onTestStep}
+              onErrorHandler={d.onErrorHandler}
+              onDelete={d.onDelete}
+            />
           </div>
         </button>
 
@@ -312,7 +315,13 @@ function ActionCanvasNode({ data }: NodeProps) {
             )}
           </div>
 
-          <MoreVertical className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <NodeMenu
+            onRename={d.onRename}
+            onFilter={d.onFilter}
+            onTestStep={d.onTestStep}
+            onErrorHandler={d.onErrorHandler}
+            onDelete={d.onDelete}
+          />
         </div>
       </button>
 
@@ -380,6 +389,10 @@ export interface BuilderCanvasProps {
   };
   onOpenTrigger: () => void;
   onOpenAction: () => void;
+
+  /** Optional kebab-menu handlers. When omitted, that row is hidden. */
+  triggerMenu?: NodeMenuCallbacks;
+  actionMenu?: NodeMenuCallbacks;
 }
 
 export function BuilderCanvas(props: BuilderCanvasProps) {
@@ -389,7 +402,11 @@ export function BuilderCanvas(props: BuilderCanvasProps) {
         id: "trigger",
         type: "triggerCanvas",
         position: { x: 0, y: 0 },
-        data: { ...props.trigger, onClick: props.onOpenTrigger },
+        data: {
+          ...props.trigger,
+          ...(props.triggerMenu ?? {}),
+          onClick: props.onOpenTrigger,
+        },
         draggable: false,
         selectable: false,
       },
@@ -397,7 +414,11 @@ export function BuilderCanvas(props: BuilderCanvasProps) {
         id: "action",
         type: "actionCanvas",
         position: { x: 0, y: 220 },
-        data: { ...props.action, onClick: props.onOpenAction },
+        data: {
+          ...props.action,
+          ...(props.actionMenu ?? {}),
+          onClick: props.onOpenAction,
+        },
         draggable: false,
         selectable: false,
       },

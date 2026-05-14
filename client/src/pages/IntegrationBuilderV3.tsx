@@ -29,6 +29,8 @@ import { useT } from "@/hooks/useT";
 import {
   builderV3Reducer,
   INITIAL_STATE,
+  INITIAL_TRIGGER,
+  INITIAL_ACTION,
 } from "@/state/builderV3State";
 import { findTriggerApp, findTriggerEvent } from "@/components/builder-v3/catalog/triggerCatalog";
 import { trpc } from "@/lib/trpc";
@@ -41,6 +43,7 @@ import {
   Play,
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { toast } from "sonner";
 
 export default function IntegrationBuilderV3() {
   const t = useT();
@@ -219,6 +222,43 @@ export default function IntegrationBuilderV3() {
             }}
             onOpenTrigger={openTrigger}
             onOpenAction={openAction}
+            triggerMenu={
+              triggerConfigured
+                ? {
+                    onRename: () => toast.info("Inline rename — coming soon"),
+                    // Filter / Test / Error handler are real follow-up
+                    // features. We surface them as toasts in Phase 1.3 so
+                    // the menu structure matches Albato; real impl ships
+                    // alongside the conditions UI in a later commit.
+                    onFilter: () => toast.info("Filter conditions — coming soon"),
+                    onTestStep: () =>
+                      toast.info(
+                        "Test the step — webhook triggers need a real event",
+                      ),
+                    onErrorHandler: () =>
+                      toast.info("Error handler — coming soon"),
+                    onDelete: () => {
+                      dispatch({ type: "PATCH_TRIGGER", patch: INITIAL_TRIGGER });
+                      toast.success("Trigger removed");
+                    },
+                  }
+                : undefined
+            }
+            actionMenu={
+              actionConfigured
+                ? {
+                    onRename: () => toast.info("Inline rename — coming soon"),
+                    onFilter: () => toast.info("Filter conditions — coming soon"),
+                    onTestStep: () => toast.info("Test the step — coming soon"),
+                    onErrorHandler: () =>
+                      toast.info("Error handler — coming soon"),
+                    onDelete: () => {
+                      dispatch({ type: "PATCH_ACTION", patch: INITIAL_ACTION });
+                      toast.success("Action removed");
+                    },
+                  }
+                : undefined
+            }
           />
         </div>
       </div>
