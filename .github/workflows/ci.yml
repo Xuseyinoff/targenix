@@ -1,0 +1,57 @@
+name: CI
+
+# Why this exists:
+# Two production incidents on 2026-05-12 (column rename + raw-SQL string
+# rename) shipped because `pnpm check` / `pnpm test` weren't run before
+# push. This workflow makes those checks mandatory on every push and PR
+# to main. Local pre-commit hooks can be bypassed; CI cannot.
+#
+# Tests that need a DB (circuitBreaker.test.ts, circuitBreaker.evaluateClaim
+# .test.ts) self-skip when DATABASE_URL is absent, so we deliberately do NOT
+# provision a MySQL service here — keeps CI under a minute. The pure-logic
+# suites still cover ~500 of the 513 tests.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs when a newer commit is pushed to the same ref.
+# Saves minutes on rapid-fire pushes (we did 9 yesterday).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        # Reads packageManager field from package.json — pnpm@10.4.1 today.
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          # package.json engines.node = ">=22"; production runs Node 24 on
+          # Railway. 22 is the lowest supported LTS and what local devs use.
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type check
+        run: pnpm check
+
+      - name: Run tests
+        # DATABASE_URL intentionally unset — DB-backed test suites self-skip
+        # (see server/services/circuitBreaker.test.ts:86). The remaining
+        # ~500 tests are pure-logic and require no infrastructure.
+        run: pnpm test
