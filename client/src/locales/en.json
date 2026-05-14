@@ -808,5 +808,20 @@
     "close": "Close",
     "deleteDialogTitle": "Delete Integration",
     "deleteDialogBody": "This integration will stop forwarding leads."
+  },
+  "builderV3": {
+    "title": "Create automation",
+    "help": "Help",
+    "back": "Back",
+    "continue": "Continue",
+    "save": "Save",
+    "comingSoon": "Coming soon",
+    "trigger": {
+      "title": "Set up a trigger",
+      "subtitle": "A trigger is an event that starts your automation."
+    },
+    "action": {
+      "title": "Add an action"
+    }
   }
 }

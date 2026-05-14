@@ -808,5 +808,20 @@
     "close": "Yopish",
     "deleteDialogTitle": "Integratsiyani o‘chirish",
     "deleteDialogBody": "Bu integratsiya lidlarni yuborishni to‘xtatadi."
+  },
+  "builderV3": {
+    "title": "Avtomatlashtirish yaratish",
+    "help": "Yordam",
+    "back": "Orqaga",
+    "continue": "Davom etish",
+    "save": "Saqlash",
+    "comingSoon": "Tez orada",
+    "trigger": {
+      "title": "Triggerni sozlash",
+      "subtitle": "Trigger — avtomatlashtirishni boshlovchi hodisa."
+    },
+    "action": {
+      "title": "Amal qo‘shish"
+    }
   }
 }

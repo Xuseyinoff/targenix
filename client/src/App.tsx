@@ -24,6 +24,7 @@ const Register = lazyWithRetry(() => import("./pages/Register"));
 const ForgotPassword = lazyWithRetry(() => import("./pages/ForgotPassword"));
 const ResetPassword = lazyWithRetry(() => import("./pages/ResetPassword"));
 const IntegrationWizardV2 = lazyWithRetry(() => import("./pages/IntegrationWizardV2"));
+const IntegrationBuilderV3 = lazyWithRetry(() => import("./pages/IntegrationBuilderV3"));
 const Privacy = lazyWithRetry(() => import("./pages/Privacy"));
 const Terms = lazyWithRetry(() => import("./pages/Terms"));
 const DataDeletion = lazyWithRetry(() => import("./pages/DataDeletion"));
@@ -219,6 +220,10 @@ function Router() {
       <Route path="/integrations/edit-routing/:id" component={LegacyLeadRoutingEditRedirect} />
       <Route path="/integrations/new-v2" component={IntegrationWizardV2} />
       <Route path="/integrations/edit-v2/:id" component={IntegrationWizardV2} />
+      {/* Albato-style step-by-step builder — opt-in, non-destructive.
+          Lives alongside the V2 wizard above so the existing flow keeps
+          working untouched. Edit mode comes in a later phase. */}
+      <Route path="/integrations/builder-v3" component={IntegrationBuilderV3} />
       <Route path="/connections" component={Connections} />
       <Route path="/triggers" component={Triggers} />
       <Route path="/workflows" component={Workflows} />
