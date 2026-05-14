@@ -138,7 +138,9 @@
       "Bash(node -e 'JSON.parse\\(require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''client/src/locales/__TRACKED_VAR__.json'\\\\'','\\\\''utf8'\\\\''\\)\\); console.log\\('\\\\''__TRACKED_VAR__.json: valid'\\\\''\\)')",
       "Bash(grep -v '//')",
       "Bash(node -e \"const j=require\\('./client/src/locales/en.json'\\); console.log\\([...new Set\\(Object.keys\\(j.landing\\)\\)].sort\\(\\).join\\('\\\\n'\\)\\)\")",
-      "Bash(node -e 'const j=JSON.parse\\(require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''client/src/locales/__TRACKED_VAR__.json'\\\\'','\\\\''utf8'\\\\''\\)\\); console.log\\('\\\\''__TRACKED_VAR__.json valid, landing keys:'\\\\'', Object.keys\\(j.landing\\).length\\)')"
+      "Bash(node -e 'const j=JSON.parse\\(require\\('\\\\''fs'\\\\''\\).readFileSync\\('\\\\''client/src/locales/__TRACKED_VAR__.json'\\\\'','\\\\''utf8'\\\\''\\)\\); console.log\\('\\\\''__TRACKED_VAR__.json valid, landing keys:'\\\\'', Object.keys\\(j.landing\\).length\\)')",
+      "Bash(git fetch *)",
+      "Bash(grep -vE '\\\\.png$')"
     ]
   }
 }
