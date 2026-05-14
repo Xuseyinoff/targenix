@@ -180,7 +180,7 @@ export async function retryDueFailedOrders(options?: {
     concurrency = Math.min(concurrency + 5, 50);
   }
 
-  console.log({
+  void log.info("SYSTEM", "[OrderRetry] tick started", {
     stage: "retry_scheduler",
     queueSize,
     batchSize: limit,
@@ -229,7 +229,7 @@ export async function retryDueFailedOrders(options?: {
   });
 
   if (due.length === 0) {
-    console.log("[OrderRetry] No orders due for auto-retry");
+    void log.info("SYSTEM", "[OrderRetry] No orders due for auto-retry");
     return { retried: 0 };
   }
 
@@ -330,13 +330,19 @@ export async function retryDueFailedOrders(options?: {
   }
 
   if (cbBlocked > 0 || cbProbed > 0) {
-    console.log(
-      `[OrderRetry][CB] block=${cbBlocked} probe=${cbProbed} allow=${cbAllowed} enforced=${enforced}`,
-    );
+    void log.info("SYSTEM", "[OrderRetry] circuit-breaker decisions", {
+      blocked: cbBlocked,
+      probed: cbProbed,
+      allowed: cbAllowed,
+      enforced,
+    });
   }
 
-  console.log(
-    `[OrderRetry] ${new Date().toISOString()} — examined ${due.length} due order row(s), ${retried} delivery attempt(s) completed (concurrency=${concurrency}, rate=${ratePerSecond}/s)`,
-  );
+  void log.info("SYSTEM", "[OrderRetry] tick complete", {
+    examined: due.length,
+    retried,
+    concurrency,
+    ratePerSecond,
+  });
   return { retried };
 }

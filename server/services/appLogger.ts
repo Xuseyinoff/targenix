@@ -105,10 +105,28 @@ export async function logEvent(params: LogEventParams): Promise<void> {
   // Auto-assign logType: USER if userId present, SYSTEM otherwise
   const logType: LogType = params.logType ?? (userId != null ? "USER" : "SYSTEM");
 
+  // Pull the ambient trace id off the AsyncLocalStorage if one is active
+  // (set by the HTTP middleware, scheduler wrappers, or worker wrappers).
+  // Stamped on every emitted row so an operator can grep `app_logs.meta`
+  // for the entire chain of work behind a single request / tick / job.
+  // Import is lazy to keep the requestContext module out of any boot-time
+  // import cycles through appLogger.
+  let traceId: string | undefined;
+  try {
+    const { getTraceId } = await import("../lib/requestContext");
+    traceId = getTraceId();
+  } catch {
+    traceId = undefined;
+  }
+  const enrichedMeta: Record<string, unknown> | null = traceId
+    ? { ...(meta ?? {}), traceId }
+    : meta ?? null;
+
   // Always mirror to console for dev visibility
   const consoleFn =
     level === "ERROR" ? console.error : level === "WARN" ? console.warn : console.log;
-  consoleFn(`[${category}${eventType ? `/${eventType}` : ""}] ${message}`, meta ?? "");
+  const traceTag = traceId ? ` ${traceId}` : "";
+  consoleFn(`[${category}${eventType ? `/${eventType}` : ""}${traceTag}] ${message}`, meta ?? "");
 
   try {
     const db = await getDb();
@@ -121,7 +139,7 @@ export async function logEvent(params: LogEventParams): Promise<void> {
       source: source ?? null,
       duration: duration ?? null,
       message,
-      meta: meta ?? null,
+      meta: enrichedMeta,
       userId: userId ?? null,
       leadId: leadId ?? null,
       pageId: pageId ?? null,

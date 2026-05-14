@@ -24,7 +24,28 @@ import { log } from "../services/appLogger";
 import { getLeadDispatchMode } from "../services/leadDispatch";
 import { getDb } from "../db";
 import { validateTemplatesAtBoot } from "../boot/validateTemplatesContract";
+import { newHttpTraceId, runWithRequestContext } from "../lib/requestContext";
 import type { Request, Response, NextFunction } from "express";
+
+/**
+ * Trace-id middleware. Runs as early as possible in the chain so every
+ * subsequent middleware (httpLogger, body parsers, route handlers, the
+ * tRPC adapter, and anything they await) sees the same trace id via the
+ * AsyncLocalStorage in `lib/requestContext`.
+ *
+ * Honors an incoming `X-Request-Id` header up to a sane length so an
+ * upstream load balancer or correlation-id-aware client can preserve
+ * end-to-end traces; otherwise generates a fresh one. Always echoes the
+ * id back in the response header so clients can quote it in bug reports.
+ */
+function traceIdMiddleware(req: Request, res: Response, next: NextFunction): void {
+  const incoming = req.headers["x-request-id"];
+  const useIncoming =
+    typeof incoming === "string" && incoming.length > 0 && incoming.length <= 128;
+  const traceId = useIncoming ? (incoming as string) : newHttpTraceId();
+  res.setHeader("X-Request-Id", traceId);
+  runWithRequestContext({ traceId, kind: "http" }, () => next());
+}
 
 /**
  * HTTP request/response logging middleware.
@@ -125,6 +146,11 @@ async function startServer() {
   // We're behind a proxy (Railway / reverse proxy) in production, so enable trust proxy
   // to let express-rate-limit and req.ip behave correctly with X-Forwarded-For.
   app.set("trust proxy", 1);
+
+  // Trace-id assignment — must run before httpLogger and all route handlers
+  // so the request-scoped trace id is available to every downstream log
+  // call (including ones nested deep in tRPC procedures and async jobs).
+  app.use(traceIdMiddleware);
 
   // Security headers with Content Security Policy
   const analyticsHost = process.env.VITE_ANALYTICS_ENDPOINT

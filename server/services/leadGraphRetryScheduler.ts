@@ -115,8 +115,10 @@ export async function retryDueGraphErrorLeads(options?: {
     Array.from({ length: Math.min(concurrency, due.length) }, () => worker()),
   );
 
-  console.log(
-    `[LeadGraphRetry] ${new Date().toISOString()} — claimed ${due.length}, dispatched ${retried}`,
+  void log.info(
+    "SYSTEM",
+    "[LeadGraphRetry] tick complete",
+    { claimed: due.length, dispatched: retried },
   );
   return { retried };
 }

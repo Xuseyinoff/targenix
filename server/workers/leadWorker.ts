@@ -2,6 +2,8 @@ import { Worker, type Job } from "bullmq";
 import { getRedisConnection } from "../queues/redisConnection";
 import { processLead } from "../services/leadService";
 import type { LeadJobData } from "../queues/leadQueue";
+import { log } from "../services/appLogger";
+import { newWorkerTraceId, runWithRequestContext } from "../lib/requestContext";
 
 let _worker: Worker | undefined;
 
@@ -42,17 +44,38 @@ export function startLeadWorker(): Worker {
     "lead-processing",
     async (job: Job<LeadJobData>) => {
       const { leadId, leadgenId, userId } = job.data;
-      console.log(`[Worker:${replicaId}] ▶ START job=${job.id} leadId=${leadId} userId=${userId} leadgenId=${leadgenId}`);
+      // Wrap the entire processLead chain in a request context so every
+      // log emitted inside (lead enrichment, deliveries, workflow fires)
+      // carries the same trace id back up through appLogger.
+      await runWithRequestContext(
+        {
+          traceId: newWorkerTraceId("lead-processing", job.id ?? "noid"),
+          kind: "worker",
+          name: "lead-processing",
+        },
+        async () => {
+          void log.info("SYSTEM", `Job ${job.id} started`, {
+            replicaId,
+            jobId: job.id,
+            leadId,
+            leadgenId,
+          }, leadId, job.data.pageId, userId);
 
-      await processLead({
-        leadId,
-        leadgenId,
-        pageId: job.data.pageId,
-        formId: job.data.formId ?? "",
-        userId,
-      });
+          await processLead({
+            leadId,
+            leadgenId,
+            pageId: job.data.pageId,
+            formId: job.data.formId ?? "",
+            userId,
+          });
 
-      console.log(`[Worker:${replicaId}] ✓ DONE  job=${job.id} leadId=${leadId}`);
+          void log.info("SYSTEM", `Job ${job.id} done`, {
+            replicaId,
+            jobId: job.id,
+            leadId,
+          }, leadId, job.data.pageId, userId);
+        },
+      );
     },
     {
       connection: getRedisConnection() as any,
@@ -61,15 +84,26 @@ export function startLeadWorker(): Worker {
   );
 
   _worker.on("completed", (job) => {
-    console.log(`[Worker:${replicaId}] ✓ Job ${job.id} completed leadId=${job.data.leadId}`);
+    void log.info("SYSTEM", `Job ${job.id} completed`, {
+      replicaId,
+      jobId: job.id,
+      leadId: job.data.leadId,
+    });
   });
 
   _worker.on("failed", (job, err) => {
     const cause = (err as { cause?: unknown }).cause;
-    console.error(
-      `[Worker:${replicaId}] ✗ Job ${job?.id} failed (attempt ${job?.attemptsMade}):`,
-      err.message,
-      cause ? `| cause: ${(cause as Error).message ?? String(cause)}` : "",
+    void log.error(
+      "SYSTEM",
+      `Job ${job?.id} failed (attempt ${job?.attemptsMade})`,
+      {
+        replicaId,
+        jobId: job?.id,
+        attemptsMade: job?.attemptsMade,
+        error: err.message,
+        cause: cause ? (cause as Error).message ?? String(cause) : null,
+        leadId: job?.data.leadId,
+      },
     );
     // Sprint 5 / Item 5.1 — escalate sustained failures to Sentry. BullMQ
     // already retried `attemptsMade` times, so a failed event means the
@@ -77,7 +111,7 @@ export function startLeadWorker(): Worker {
     if (job && job.attemptsMade >= 3) {
       void import("../monitoring/sentry").then(({ captureCritical }) => {
         captureCritical(err, {
-          tags: { category: "WORKER", replicaId, attemptsMade: job.attemptsMade },
+          tags: { category: "SYSTEM", replicaId, attemptsMade: job.attemptsMade },
           user: { id: job.data.userId },
           extra: { leadId: job.data.leadId, leadgenId: job.data.leadgenId, jobId: job.id },
         });
@@ -86,13 +120,17 @@ export function startLeadWorker(): Worker {
   });
 
   _worker.on("error", (err) => {
-    console.error(`[Worker:${replicaId}] Worker error:`, err.message);
+    void log.error("SYSTEM", "Worker error", {
+      replicaId,
+      error: err.message,
+    });
   });
 
-  console.log(
-    `[Worker:${replicaId}] Lead worker started — concurrency=${concurrency}` +
-      (process.env.RAILWAY_REPLICA_ID ? ` replica=${process.env.RAILWAY_REPLICA_ID}` : ""),
-  );
+  void log.info("SYSTEM", "Lead worker started", {
+    replicaId,
+    concurrency,
+    railwayReplica: process.env.RAILWAY_REPLICA_ID ?? null,
+  });
   return _worker;
 }
 
@@ -100,6 +138,6 @@ export async function stopLeadWorker(): Promise<void> {
   if (_worker) {
     await _worker.close();
     _worker = undefined;
-    console.log("[Worker] Lead worker stopped");
+    void log.info("SYSTEM", "Lead worker stopped");
   }
 }

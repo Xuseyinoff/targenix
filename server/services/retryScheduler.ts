@@ -24,6 +24,7 @@ import { retryDueFailedOrders } from "./orderRetryScheduler";
 import { retryDueGraphErrorLeads } from "./leadGraphRetryScheduler";
 import { autoPromoteExpiredCooldowns } from "./circuitBreaker";
 import { log } from "./appLogger";
+import { newSchedulerTraceId, runWithRequestContext } from "../lib/requestContext";
 
 import { envInt } from "../lib/envHelpers";
 
@@ -66,7 +67,7 @@ export async function retryStuckPendingLeads(): Promise<{ retried: number }> {
     .where(and(eq(leads.dataStatus, "PENDING"), lt(leads.createdAt, cutoff)));
 
   if (stuckLeads.length === 0) {
-    console.log("[RetryScheduler] No stuck PENDING leads to re-queue");
+    void log.info("SYSTEM", "[RetryScheduler] No stuck PENDING leads to re-queue");
     return { retried: 0 };
   }
 
@@ -105,8 +106,13 @@ export async function retryStuckPendingLeads(): Promise<{ retried: number }> {
     }, delayMs);
   }
 
-  console.log(
-    `[RetryScheduler] ${new Date().toISOString()} — re-queued ${toRetry.length} stuck PENDING lead(s) (older than ${STUCK_PENDING_THRESHOLD_MS / 60000} min)`,
+  void log.info(
+    "SYSTEM",
+    "[RetryScheduler] Re-queued stuck PENDING leads",
+    {
+      retried: toRetry.length,
+      thresholdMinutes: STUCK_PENDING_THRESHOLD_MS / 60000,
+    },
   );
   return { retried: toRetry.length };
 }
@@ -121,8 +127,14 @@ export async function retryAllFailedLeads(): Promise<{ retried: number }> {
   const ordersResult = await retryDueFailedOrders();
   const retried = graph.retried + stuck.retried + ordersResult.retried;
   if (retried > 0) {
-    console.log(
-      `[RetryScheduler] Hourly job summary — graph errors: ${graph.retried}, stuck pending: ${stuck.retried}, order deliveries: ${ordersResult.retried}`,
+    void log.info(
+      "SYSTEM",
+      "[RetryScheduler] Hourly job summary",
+      {
+        graphErrors: graph.retried,
+        stuckPending: stuck.retried,
+        orderDeliveries: ordersResult.retried,
+      },
     );
   }
   return { retried };
@@ -169,56 +181,63 @@ export function startRetryScheduler(): void {
   if (orderTickTimer !== null) return;
 
   // 1. Order retry tick (per-minute, small batch)
-  console.log(
-    `[RetryScheduler] Starting per-minute order tick (batch=${ORDER_TICK_BATCH})`,
-  );
+  void log.info("SYSTEM", "[RetryScheduler] Starting per-minute order tick", {
+    batch: ORDER_TICK_BATCH,
+  });
   orderTickTimer = setInterval(() => {
-    void (async () => {
-      // Promote any OPEN destinations whose cooldown has elapsed BEFORE
-      // claiming retries, so the next delivery (initial or retry) sees
-      // HALF_OPEN and runs a probe instead of getting filed under another
-      // consecutiveFailure on an already-open row. Without this step the
-      // breaker can deadlock — see autoPromoteExpiredCooldowns comment.
-      try {
-        const db = await getDb();
-        if (db) {
-          const promoted = await autoPromoteExpiredCooldowns(db);
-          if (promoted > 0) {
-            console.log(`[RetryScheduler] CB auto-promoted ${promoted} OPEN→HALF_OPEN`);
+    void runWithRequestContext(
+      { traceId: newSchedulerTraceId("retry"), kind: "scheduler", name: "retry" },
+      async () => {
+        // Promote any OPEN destinations whose cooldown has elapsed BEFORE
+        // claiming retries, so the next delivery (initial or retry) sees
+        // HALF_OPEN and runs a probe instead of getting filed under another
+        // consecutiveFailure on an already-open row. Without this step the
+        // breaker can deadlock — see autoPromoteExpiredCooldowns comment.
+        try {
+          const db = await getDb();
+          if (db) {
+            const promoted = await autoPromoteExpiredCooldowns(db);
+            if (promoted > 0) {
+              void log.info(
+                "SYSTEM",
+                "[RetryScheduler] CB auto-promoted destinations OPEN→HALF_OPEN",
+                { promoted },
+              );
+            }
           }
+        } catch (err) {
+          await log.error(
+            "SYSTEM",
+            "[RetryScheduler] CB auto-promote tick failed",
+            { error: err instanceof Error ? err.message : String(err) },
+          );
         }
-      } catch (err) {
-        await log.error(
-          "SYSTEM",
-          "[RetryScheduler] CB auto-promote tick failed",
-          { error: err instanceof Error ? err.message : String(err) },
-        );
-      }
 
-      try {
-        await retryDueFailedOrders({ limit: ORDER_TICK_BATCH });
-      } catch (err) {
-        await log.error(
-          "SYSTEM",
-          "[RetryScheduler] Order tick failed",
-          { error: err instanceof Error ? err.message : String(err) },
-        );
-      }
+        try {
+          await retryDueFailedOrders({ limit: ORDER_TICK_BATCH });
+        } catch (err) {
+          await log.error(
+            "SYSTEM",
+            "[RetryScheduler] Order tick failed",
+            { error: err instanceof Error ? err.message : String(err) },
+          );
+        }
 
-      // Graph enrichment retries piggy-back on the same per-minute tick.
-      // Smooth steady-state load on Facebook (no top-of-hour spike) and the
-      // policy classifier in `leadEnrichmentRetryPolicy` keeps
-      // permanently-missing leadgenIds (code 100/33) out of the rotation.
-      try {
-        await retryDueGraphErrorLeads();
-      } catch (err) {
-        await log.error(
-          "SYSTEM",
-          "[RetryScheduler] Graph-retry tick failed",
-          { error: err instanceof Error ? err.message : String(err) },
-        );
-      }
-    })();
+        // Graph enrichment retries piggy-back on the same per-minute tick.
+        // Smooth steady-state load on Facebook (no top-of-hour spike) and the
+        // policy classifier in `leadEnrichmentRetryPolicy` keeps
+        // permanently-missing leadgenIds (code 100/33) out of the rotation.
+        try {
+          await retryDueGraphErrorLeads();
+        } catch (err) {
+          await log.error(
+            "SYSTEM",
+            "[RetryScheduler] Graph-retry tick failed",
+            { error: err instanceof Error ? err.message : String(err) },
+          );
+        }
+      },
+    );
   }, ORDER_TICK_INTERVAL_MS);
   (orderTickTimer as unknown as { unref?: () => void })?.unref?.();
 
@@ -229,26 +248,36 @@ export function startRetryScheduler(): void {
   const scheduleHourly = () => {
     const delay = msUntilNextHour();
     const nextRun = new Date(Date.now() + delay);
-    console.log(
-      `[RetryScheduler] Next hourly stuck-pending tick at ${nextRun.toISOString()} (in ${Math.round(delay / 60000)} min)`,
-    );
+    void log.info("SYSTEM", "[RetryScheduler] Next hourly stuck-pending tick scheduled", {
+      nextRunAt: nextRun.toISOString(),
+      delayMinutes: Math.round(delay / 60000),
+    });
 
     hourlyTimer = setTimeout(() => {
-      void (async () => {
-        const stuck = await retryStuckPendingLeads().catch((err: unknown) => {
-          void log.error(
-            "SYSTEM",
-            "[RetryScheduler] stuck-pending tick failed",
-            { error: err instanceof Error ? err.message : String(err) },
-          );
-          return { retried: 0 };
-        });
-        if (stuck.retried > 0) {
-          console.log(
-            `[RetryScheduler] Hourly stuck-pending summary — re-queued: ${stuck.retried}`,
-          );
-        }
-      })();
+      void runWithRequestContext(
+        {
+          traceId: newSchedulerTraceId("retry-stuck-pending"),
+          kind: "scheduler",
+          name: "retry-stuck-pending",
+        },
+        async () => {
+          const stuck = await retryStuckPendingLeads().catch((err: unknown) => {
+            void log.error(
+              "SYSTEM",
+              "[RetryScheduler] stuck-pending tick failed",
+              { error: err instanceof Error ? err.message : String(err) },
+            );
+            return { retried: 0 };
+          });
+          if (stuck.retried > 0) {
+            void log.info(
+              "SYSTEM",
+              "[RetryScheduler] Hourly stuck-pending summary",
+              { retried: stuck.retried },
+            );
+          }
+        },
+      );
       hourlyTimer = null;
       scheduleHourly();
     }, delay);

@@ -28,6 +28,7 @@ import { connections } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { verifyConnectionHealth } from "./connectionHealthService";
 import { log } from "./appLogger";
+import { newSchedulerTraceId, runWithRequestContext } from "../lib/requestContext";
 
 import { envInt } from "../lib/envHelpers";
 
@@ -45,7 +46,7 @@ let _running = false;
 
 export async function runConnectionHealthSweep(): Promise<{ checked: number }> {
   if (_running) {
-    console.log("[ConnectionHealth] Skipping — previous sweep still in progress");
+    void log.info("CONNECTIONS", "[ConnectionHealth] Skipping — previous sweep still in progress");
     return { checked: 0 };
   }
   _running = true;
@@ -78,7 +79,7 @@ export async function runConnectionHealthSweep(): Promise<{ checked: number }> {
       return { checked: 0 };
     }
 
-    console.log(`[ConnectionHealth] Sweeping ${due.length} connection(s)`);
+    void log.info("CONNECTIONS", "[ConnectionHealth] Sweep starting", { dueCount: due.length });
     let checked = 0;
     // Simple bounded concurrency — N workers draining a shared queue. Each
     // worker catches its own per-connection errors so they never escape;
@@ -126,7 +127,7 @@ export async function runConnectionHealthSweep(): Promise<{ checked: number }> {
       }
     }
 
-    console.log(`[ConnectionHealth] Sweep done — checked=${checked}`);
+    void log.info("CONNECTIONS", "[ConnectionHealth] Sweep done", { checked });
     return { checked };
   } finally {
     _running = false;
@@ -135,18 +136,29 @@ export async function runConnectionHealthSweep(): Promise<{ checked: number }> {
 
 function scheduleNext(): void {
   _timer = setTimeout(() => {
-    void runConnectionHealthSweep().finally(() => {
-      _timer = null;
-      scheduleNext();
-    });
+    void runWithRequestContext(
+      {
+        traceId: newSchedulerTraceId("conn-health"),
+        kind: "scheduler",
+        name: "conn-health",
+      },
+      () =>
+        runConnectionHealthSweep().finally(() => {
+          _timer = null;
+          scheduleNext();
+        }),
+    );
   }, SWEEP_INTERVAL_MS);
 }
 
 export function startConnectionHealthScheduler(): void {
   if (_timer !== null) return; // idempotent
-  console.log(
-    `[ConnectionHealth] Starting — stale=${STALE_THRESHOLD_MS / 1000 / 60}min, sweep every ${SWEEP_INTERVAL_MS / 1000 / 60}min, batch=${SWEEP_BATCH}, concurrency=${SWEEP_CONCURRENCY}`,
-  );
+  void log.info("CONNECTIONS", "[ConnectionHealth] Starting", {
+    staleThresholdMinutes: STALE_THRESHOLD_MS / 1000 / 60,
+    sweepIntervalMinutes: SWEEP_INTERVAL_MS / 1000 / 60,
+    batch: SWEEP_BATCH,
+    concurrency: SWEEP_CONCURRENCY,
+  });
   // Stagger the first run so it doesn't compete with boot-time work.
   _timer = setTimeout(() => {
     void runConnectionHealthSweep().finally(() => {
