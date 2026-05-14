@@ -506,6 +506,28 @@ export function BuilderCanvas(props: BuilderCanvasProps) {
 
   return (
     <ReactFlowProvider>
+      {/* xyflow's default styles inherit cursor: grab from `.react-flow__pane`
+          down to children via CSS inheritance, which leaves the trigger/
+          action cards with a grab cursor and makes them look un-clickable.
+          xyflow also has its own pointer-events rules that can swallow
+          clicks on certain wrapper divs depending on transform state.
+          Override both here so OUR custom nodes always render as ordinary
+          clickable cards. The pane (background) keeps its grab cursor so
+          pan-to-scroll is still discoverable. */}
+      <style>{`
+        .react-flow__node-triggerCanvas,
+        .react-flow__node-actionCanvas {
+          cursor: pointer !important;
+          pointer-events: auto !important;
+        }
+        .react-flow__node-triggerCanvas *,
+        .react-flow__node-actionCanvas * {
+          pointer-events: auto;
+        }
+        .react-flow__node-sinkNode {
+          cursor: default;
+        }
+      `}</style>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -516,6 +538,7 @@ export function BuilderCanvas(props: BuilderCanvasProps) {
         proOptions={{ hideAttribution: true }}
         nodesDraggable={false}
         nodesConnectable={false}
+        nodesFocusable={false}
         elementsSelectable={false}
         zoomOnDoubleClick={false}
         panOnDrag
