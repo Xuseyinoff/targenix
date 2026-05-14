@@ -780,6 +780,18 @@ export const orders = mysqlTable("orders", {
   // Used by per-destination retry scheduling (Commit 6b) and destination
   // deletion clean-up.
   idxDestination: index("idx_orders_destination").on(t.destinationId),
+  // Covering index for the "has this lead been routed?" EXISTS subquery
+  // that runs on every leads.list / leads.count / leads.stats call:
+  //   EXISTS (SELECT 1 FROM orders WHERE leadId = ? AND userId = ? AND attempts > 0)
+  // Column order: userId FIRST — MySQL drives the semi-join from the
+  // orders side filtered on userId, so a leadId-first index gets ignored
+  // by the optimizer. (userId, leadId, attempts) makes it a covering
+  // "Using index" LooseScan: getLeadsCount 691ms → 372ms on local.
+  idxLeadUserAttempts: index("idx_orders_lead_user_attempts").on(
+    t.userId,
+    t.leadId,
+    t.attempts,
+  ),
 }));
 
 export type Order = typeof orders.$inferSelect;
