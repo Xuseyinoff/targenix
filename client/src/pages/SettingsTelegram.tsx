@@ -46,6 +46,7 @@ import {
   ChevronDown,
   SendHorizonal,
   Plus,
+  Copy,
 } from "lucide-react";
 import { useT } from "@/hooks/useT";
 
@@ -64,6 +65,11 @@ export default function SettingsTelegram() {
   });
 
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
+  // Raw token behind connectUrl — also exposed as a copyable `/start <token>`
+  // command. The `?start=` deep link only shows a START button in a *fresh*
+  // bot chat; if the user has opened the bot before, the link just reopens the
+  // existing chat and the token is never sent. Pasting the command always works.
+  const [connectToken, setConnectToken] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [deliveryChatIdInput, setDeliveryChatIdInput] = useState("");
   const [deliveryLinking, setDeliveryLinking] = useState(false);
@@ -76,6 +82,7 @@ export default function SettingsTelegram() {
   const generateTokenMutation = trpc.telegram.generateConnectToken.useMutation({
     onSuccess: (data) => {
       setConnectUrl(data.botUrl);
+      setConnectToken(data.token);
       setConnecting(false);
     },
     onError: (err) => {
@@ -87,6 +94,7 @@ export default function SettingsTelegram() {
   const disconnectMutation = trpc.telegram.disconnect.useMutation({
     onSuccess: () => {
       setConnectUrl(null);
+      setConnectToken(null);
       utils.telegram.getStatus.invalidate();
       toast.success(t("telegram.disconnected"));
     },
@@ -170,6 +178,7 @@ export default function SettingsTelegram() {
   useEffect(() => {
     if (telegramStatus?.connected && connectUrl) {
       setConnectUrl(null);
+      setConnectToken(null);
       toast.success(
         `✅ Telegram ulandi! @${telegramStatus.username ?? telegramStatus.chatId}`
       );
@@ -350,6 +359,31 @@ export default function SettingsTelegram() {
                       {t("telegram.checkStatus")}
                     </Button>
                   </div>
+
+                  {/* Bulletproof fallback: the `?start=` deep link only shows
+                      a START button in a fresh chat. If the user has opened the
+                      bot before, they paste this command into the chat instead. */}
+                  {connectToken && (
+                    <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5">
+                      <p className="text-xs text-muted-foreground">{t("telegram.startCommandHint")}</p>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 min-w-0 truncate rounded-md bg-background border px-3 py-2 text-xs font-mono">
+                          /start {connectToken}
+                        </code>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(`/start ${connectToken}`);
+                            toast.success(t("telegram.startCommandCopied"));
+                          }}
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  )}
 
                   <p className="text-xs text-muted-foreground">
                     {t("telegram.waitingConnection")}
