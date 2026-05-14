@@ -98,10 +98,15 @@ export const telegramRouter = router({
     const db = await getDb();
     if (!db) throw new Error("DB unavailable");
 
-    // 32-byte random token (URL-safe base64) + embedded expiry timestamp (ms)
-    // Format: <random>.<expiresAtMs>. This allows enforcing token expiry without schema changes.
+    // 32-byte random token (URL-safe base64) + embedded expiry timestamp (ms).
+    // Format: <random>_<expiresAtMs> — the separator MUST stay inside Telegram's
+    // deep-link charset (A-Z a-z 0-9 _ -). An earlier "." separator was silently
+    // dropped by Telegram, so `?start=` opened the bot without sending /start.
+    // base64url already uses "_"; the parser splits on the LAST "_" (the expiry
+    // segment is pure digits, so it is unambiguous). 43 + 1 + 13 = 57 chars,
+    // within Telegram's 64-char start-parameter limit.
     const expiresAtMs = Date.now() + 10 * 60 * 1000; // 10 minutes
-    const token = `${crypto.randomBytes(32).toString("base64url")}.${expiresAtMs}`;
+    const token = `${crypto.randomBytes(32).toString("base64url")}_${expiresAtMs}`;
 
     await db
       .update(users)

@@ -236,10 +236,13 @@ async function handleStartWithToken(chatId: string, token: string, from?: Telegr
   const db = await getDb();
   if (!db) return;
 
-  // Token replay/expiry protection (format: <random>.<expiresAtMs>)
-  const parts = token.split(".");
-  if (parts.length >= 2) {
-    const expiresAtMs = Number(parts[parts.length - 1]);
+  // Token replay/expiry protection. Format: <random>_<expiresAtMs>. The expiry
+  // segment is pure digits, so the separator is the LAST "_". Older tokens used
+  // "." — still parsed here (they can only arrive via the pasted /start command,
+  // since Telegram drops a "." from `?start=` deep links).
+  const sepIdx = Math.max(token.lastIndexOf("_"), token.lastIndexOf("."));
+  if (sepIdx > 0) {
+    const expiresAtMs = Number(token.slice(sepIdx + 1));
     const expiresValid = Number.isFinite(expiresAtMs) && expiresAtMs > 0;
     if (expiresValid && Date.now() > expiresAtMs) {
       await log.warn("TELEGRAM", "Connect token expired", { token: token.slice(0, 8) + "..." });
