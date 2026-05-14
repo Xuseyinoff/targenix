@@ -376,26 +376,46 @@ export interface FbLeadForm {
   created_time?: string;
 }
 
+/** Max Graph pages × limit(100) — safety cap so a buggy cursor cannot loop forever */
+const LEAD_FORMS_MAX_PAGES = 50;
+
 /**
- * List all lead gen forms on a Facebook Page.
+ * List all lead gen forms on a Facebook Page (follows cursor pagination).
+ * Without paging, only the first 100 edges are returned — older forms stay hidden.
  */
 export async function listPageLeadForms(
   pageId: string,
   pageAccessToken: string
 ): Promise<FbLeadForm[]> {
-  const result = await graphRequest<{ data: FbLeadForm[] }>(
-    "GET",
-    `/${pageId}/leadgen_forms`,
-    {
-      params: {
-        access_token: pageAccessToken,
-        fields: "id,name,status,created_time",
-        limit: 100,
-      },
-      logLabel: `listPageLeadForms(${pageId})`,
-    }
-  );
-  return result.data ?? [];
+  const all: FbLeadForm[] = [];
+  let after: string | undefined;
+
+  for (let pageIdx = 0; pageIdx < LEAD_FORMS_MAX_PAGES; pageIdx++) {
+    const params: Record<string, unknown> = {
+      access_token: pageAccessToken,
+      fields: "id,name,status,created_time",
+      limit: 100,
+    };
+    if (after) params.after = after;
+
+    const result = await graphRequest<{
+      data: FbLeadForm[];
+      paging?: { cursors?: { before?: string; after?: string }; next?: string };
+    }>("GET", `/${pageId}/leadgen_forms`, {
+      params,
+      logLabel: `listPageLeadForms(${pageId},page=${pageIdx})`,
+    });
+
+    const batch = result.data ?? [];
+    all.push(...batch);
+
+    const nextAfter = result.paging?.cursors?.after;
+    if (batch.length === 0) break;
+    if (!nextAfter || nextAfter === after) break;
+    after = nextAfter;
+  }
+
+  return all;
 }
 
 // ─── Form Questions / Fields ──────────────────────────────────────────────────

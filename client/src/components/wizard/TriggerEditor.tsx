@@ -158,7 +158,6 @@ export function TriggerEditor({
                 {forms.map((f) => (
                   <SelectItem key={f.id} value={f.id}>
                     {f.name}
-                    {f.status ? ` · ${f.status}` : ""}
                   </SelectItem>
                 ))}
               </SelectContent>

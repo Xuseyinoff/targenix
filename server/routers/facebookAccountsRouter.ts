@@ -633,7 +633,18 @@ export const facebookAccountsRouter = router({
       if (!conn) throw new Error("Page not found in your connections");
       const pageToken = decrypt(conn.accessToken);
       const forms = await listPageLeadForms(input.pageId, pageToken);
-      return forms;
+      // Integration / trigger pickers: hide terminal Meta statuses (still listed in Graph).
+      // Full list (incl. archived) remains in `facebook_forms` via refresh upsert for lead labels.
+      const visible = forms.filter((f) => {
+        const s = (f.status ?? "ACTIVE").trim().toUpperCase();
+        return s !== "ARCHIVED" && s !== "DELETED";
+      });
+      visible.sort((a, b) => {
+        const ta = a.created_time ? Date.parse(a.created_time) : 0;
+        const tb = b.created_time ? Date.parse(b.created_time) : 0;
+        return tb - ta;
+      });
+      return visible;
     }),
 
   // ── List fields for a form ────────────────────────────────────────────────
