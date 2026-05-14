@@ -77,7 +77,12 @@ const requireUser = t.middleware(async opts => {
   });
 });
 
-export const protectedProcedure = t.procedure.use(requireUser);
+// Chain off `publicProcedure` so the logger middleware runs for every
+// authenticated call too. Pre-fix this was `t.procedure.use(requireUser)`,
+// which bypassed `trpcLogger` → slow-query / mutation logs only fired for
+// public endpoints (login/register/forgotPassword). Authenticated procedures
+// (the vast majority of traffic) wrote zero audit rows.
+export const protectedProcedure = publicProcedure.use(requireUser);
 
 /**
  * Forensic audit middleware — wraps every admin-protected mutation with a
@@ -201,19 +206,24 @@ async function writeAuditRow(p: AuditWriteParams): Promise<void> {
 
 export const adminAuditProcedureMiddleware = adminAuditMiddleware;
 
-export const adminProcedure = t.procedure.use(
-  t.middleware(async opts => {
-    const { ctx, next } = opts;
+// Same rationale as protectedProcedure: chain off `publicProcedure` so the
+// trpcLogger middleware records admin calls too. The role check + forensic
+// audit then stack on top.
+export const adminProcedure = publicProcedure
+  .use(
+    t.middleware(async opts => {
+      const { ctx, next } = opts;
 
-    if (!ctx.user || ctx.user.role !== 'admin') {
-      throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
-    }
+      if (!ctx.user || ctx.user.role !== 'admin') {
+        throw new TRPCError({ code: "FORBIDDEN", message: NOT_ADMIN_ERR_MSG });
+      }
 
-    return next({
-      ctx: {
-        ...ctx,
-        user: ctx.user,
-      },
-    });
-  }),
-).use(adminAuditMiddleware);
+      return next({
+        ctx: {
+          ...ctx,
+          user: ctx.user,
+        },
+      });
+    }),
+  )
+  .use(adminAuditMiddleware);
