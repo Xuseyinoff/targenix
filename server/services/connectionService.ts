@@ -17,7 +17,7 @@
  *      templateConfig (see telegramAdapter / googleSheetsAdapter).
  */
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { connections, oauthTokens, destinations } from "../../drizzle/schema";
 import type { DbClient } from "../db";
 import { validateConnectionType } from "../utils/validateConnectionType";
@@ -300,6 +300,52 @@ export async function insertApiKeyConnection(
     lastVerifiedAt: new Date(),
   });
   return (inserted as unknown as { insertId: number }).insertId;
+}
+
+/**
+ * Re-link destinations that a previous `disconnect` left orphaned.
+ *
+ * When a user disconnects an api_key connection, the `disconnect` mutation
+ * nulls `destinations.connectionId` on every destination that used it (and
+ * scrubs the inline secrets). Creating a *replacement* connection for the
+ * same template must re-attach those orphaned destinations — otherwise the
+ * common "disconnect old key → add new key" flow silently leaves the
+ * destination undeliverable: every lead fails with `CONNECTION_REQUIRED`
+ * until someone re-picks the connection by hand in the destination editor.
+ *
+ * Scope is deliberately tight — only destinations that are
+ *   • owned by the SAME user,
+ *   • on the SAME template, and
+ *   • CURRENTLY orphaned (`connectionId IS NULL`)
+ * are touched. A destination already wired to a working connection is never
+ * reassigned, so this can only heal a broken state, never break a healthy
+ * one. `templateId` is the PK of `destination_templates` (globally unique),
+ * so the match can never cross into another app's destinations.
+ *
+ * Returns the ids of the destinations that were re-linked (empty when none).
+ */
+export async function relinkOrphanedDestinationsToConnection(
+  db: DbClient,
+  params: { userId: number; templateId: number; connectionId: number },
+): Promise<number[]> {
+  const orphanFilter = and(
+    eq(destinations.userId, params.userId),
+    eq(destinations.templateId, params.templateId),
+    isNull(destinations.connectionId),
+  );
+
+  const orphaned = await db
+    .select({ id: destinations.id })
+    .from(destinations)
+    .where(orphanFilter);
+  if (orphaned.length === 0) return [];
+
+  await db
+    .update(destinations)
+    .set({ connectionId: params.connectionId })
+    .where(orphanFilter);
+
+  return orphaned.map((d) => d.id);
 }
 
 // ─── Shared read helpers ─────────────────────────────────────────────────────

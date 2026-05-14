@@ -37,6 +37,7 @@ import {
   insertApiKeyConnection,
   insertTelegramConnection,
   mapConnectionUsage,
+  relinkOrphanedDestinationsToConnection,
 } from "../services/connectionService";
 import {
   verifyConnectionHealth,
@@ -682,6 +683,17 @@ export const connectionsRouter = router({
         secretsEncrypted,
       });
 
+      // Heal destinations orphaned by a prior `disconnect` of this template's
+      // previous connection. Without this, "disconnect old key → add new key"
+      // leaves the destination with connectionId = NULL and every lead fails
+      // with CONNECTION_REQUIRED until the user re-picks the connection by
+      // hand. Tightly scoped — see relinkOrphanedDestinationsToConnection.
+      const relinkedDestinationIds = await relinkOrphanedDestinationsToConnection(db, {
+        userId,
+        templateId: tpl.id,
+        connectionId: id,
+      });
+
       void appendConnectionEvent(db, {
         connectionId: id,
         userId,
@@ -692,6 +704,9 @@ export const connectionsRouter = router({
           displayName: input.displayName,
           templateId: tpl.id,
           templateName: tpl.name,
+          ...(relinkedDestinationIds.length > 0
+            ? { relinkedDestinationIds }
+            : {}),
         },
       });
 
@@ -700,9 +715,14 @@ export const connectionsRouter = router({
         connectionId: id,
         templateId: tpl.id,
         templateName: tpl.name,
+        relinkedDestinations: relinkedDestinationIds.length,
       });
 
-      return { success: true, id };
+      return {
+        success: true,
+        id,
+        relinkedDestinations: relinkedDestinationIds.length,
+      };
     }),
 
   /**

@@ -9,6 +9,7 @@ import {
   countDestinationsUsingConnection,
   insertTelegramConnection,
   mapConnectionUsage,
+  relinkOrphanedDestinationsToConnection,
   resolveGoogleAccountForConnection,
   upsertGoogleConnection,
 } from "./connectionService";
@@ -168,6 +169,42 @@ describe("connectionService.mapConnectionUsage", () => {
     expect(map.get(10)).toBe(2);
     expect(map.get(20)).toBe(1);
     expect(map.get(30)).toBeUndefined();
+  });
+});
+
+describe("connectionService.relinkOrphanedDestinationsToConnection", () => {
+  it("re-links every orphaned destination for the same user + template", async () => {
+    // Mirrors the production incident: user disconnected the old Sotuvchi
+    // connection (destination left with connectionId = NULL) then created a
+    // replacement — these orphaned destinations must be re-attached to it.
+    const updates: Array<Record<string, unknown>> = [];
+    const db = makeDb({
+      selectResults: [[{ id: 60014 }, { id: 60020 }]],
+      updatedRows: updates as never,
+    });
+
+    const relinked = await relinkOrphanedDestinationsToConnection(db, {
+      userId: 1893631,
+      templateId: 3,
+      connectionId: 46,
+    });
+
+    expect(relinked).toEqual([60014, 60020]);
+    expect(db.update).toHaveBeenCalledTimes(1);
+    expect(updates).toContainEqual({ id: -1, connectionId: 46 });
+  });
+
+  it("is a no-op (no UPDATE) when no destination is orphaned", async () => {
+    const db = makeDb({ selectResults: [[]] });
+
+    const relinked = await relinkOrphanedDestinationsToConnection(db, {
+      userId: 1,
+      templateId: 3,
+      connectionId: 9,
+    });
+
+    expect(relinked).toEqual([]);
+    expect(db.update).not.toHaveBeenCalled();
   });
 });
 
