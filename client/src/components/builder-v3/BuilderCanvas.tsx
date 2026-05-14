@@ -384,36 +384,9 @@ function ActionCanvasNode({ data }: NodeProps) {
   );
 }
 
-// ─── Sink edge: drag handle for "next action" hint ───────────────────────────
-// xyflow needs at least one target for every source; we render a tiny invisible
-// node below the action so the bottom-handle has somewhere to point. This also
-// gives us a clean spot to render the bottom ⊕ button.
-
-function SinkNode({ data }: NodeProps) {
-  const d = data as { onAdd: () => void };
-  return (
-    <div>
-      <Handle type="target" position={Position.Top} className="!opacity-0" />
-      <button
-        type="button"
-        onClick={d.onAdd}
-        className={cn(
-          "flex h-6 w-6 items-center justify-center rounded-full",
-          "border bg-card text-muted-foreground shadow-sm",
-          "hover:border-primary hover:text-primary hover:scale-110 transition-all",
-        )}
-        title="Add next step"
-      >
-        <Plus className="h-3.5 w-3.5" />
-      </button>
-    </div>
-  );
-}
-
 const nodeTypes = {
   triggerCanvas: TriggerCanvasNode,
   actionCanvas: ActionCanvasNode,
-  sinkNode: SinkNode,
 };
 const edgeTypes = {
   addBetween: AddBetweenEdge,
@@ -472,14 +445,6 @@ export function BuilderCanvas(props: BuilderCanvasProps) {
         draggable: false,
         selectable: false,
       },
-      {
-        id: "sink",
-        type: "sinkNode",
-        position: { x: 137, y: 380 },
-        data: { onAdd: props.onOpenAction },
-        draggable: false,
-        selectable: false,
-      },
     ],
     [props],
   );
@@ -490,13 +455,6 @@ export function BuilderCanvas(props: BuilderCanvasProps) {
         id: "trigger-action",
         source: "trigger",
         target: "action",
-        type: "addBetween",
-        data: { onAdd: props.onOpenAction },
-      },
-      {
-        id: "action-sink",
-        source: "action",
-        target: "sink",
         type: "addBetween",
         data: { onAdd: props.onOpenAction },
       },
@@ -523,9 +481,6 @@ export function BuilderCanvas(props: BuilderCanvasProps) {
         .react-flow__node-triggerCanvas *,
         .react-flow__node-actionCanvas * {
           pointer-events: auto;
-        }
-        .react-flow__node-sinkNode {
-          cursor: default;
         }
       `}</style>
       <ReactFlow
