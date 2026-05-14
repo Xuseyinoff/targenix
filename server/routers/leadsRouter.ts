@@ -371,55 +371,72 @@ export const leadsRouter = router({
         .where(and(eq(orders.leadId, input.id), eq(orders.userId, userId)))
         .orderBy(orders.createdAt);
 
-      // Enrich each order with integration name, type, and target website
-      const enrichedOrders = await Promise.all(
-        orderRows.map(async (order) => {
-          // Include userId filter: prevents reading another user's integration details
-          // if an order's integrationId were ever mismatched.
-          const [intg] = await db
-            .select({
-              id: integrations.id,
-              name: integrations.name,
-              type: integrations.type,
-              destinationId: integrations.destinationId,
-              config: integrations.config,
-            })
-            .from(integrations)
-            .where(and(eq(integrations.id, order.integrationId), eq(integrations.userId, userId)))
-            .limit(1);
-
-          let targetWebsiteName: string | null = null;
-          let targetWebsiteUrl: string | null = null;
-
-          if (intg?.destinationId) {
-            const [tw] = await db
-              .select({ name: destinations.name, url: destinations.url })
-              .from(destinations)
-              .where(eq(destinations.id, intg.destinationId))
-              .limit(1);
-            targetWebsiteName = tw?.name ?? null;
-            targetWebsiteUrl = tw?.url ?? null;
-          }
-
-          return {
-            id: order.id,
-            leadId: order.leadId,
-            userId: order.userId,
-            integrationId: order.integrationId,
-            status: order.status,
-            attempts:      order.attempts,
-            lastAttemptAt: order.lastAttemptAt,
-            nextRetryAt:   order.nextRetryAt,
-            responseData: order.responseData as Record<string, unknown> | null,
-            createdAt: order.createdAt,
-            updatedAt: order.updatedAt,
-            integrationName: intg?.name ?? "Unknown Integration",
-            integrationType: intg?.type ?? null,
-            targetWebsiteName: targetWebsiteName,
-            targetWebsiteUrl: targetWebsiteUrl,
-          };
-        })
+      // Enrich each order with integration name, type, and destination.
+      // Previously this ran 2 queries PER order (N+1) — 10 round-trips for
+      // a 5-destination lead. Now it's 2 batched queries total.
+      //
+      // Batch 1 — all referenced integrations, scoped to userId for
+      // defense-in-depth (an order with a mismatched integrationId can't
+      // leak another user's integration details).
+      const integrationIds = Array.from(
+        new Set(orderRows.map((o) => o.integrationId).filter((id): id is number => id != null)),
       );
+      const intgById = new Map<
+        number,
+        { id: number; name: string; type: string; destinationId: number | null; config: unknown }
+      >();
+      if (integrationIds.length > 0) {
+        const intgRows = await db
+          .select({
+            id: integrations.id,
+            name: integrations.name,
+            type: integrations.type,
+            destinationId: integrations.destinationId,
+            config: integrations.config,
+          })
+          .from(integrations)
+          .where(and(inArray(integrations.id, integrationIds), eq(integrations.userId, userId)));
+        for (const i of intgRows) intgById.set(i.id, i);
+      }
+
+      // Batch 2 — all destinations referenced by those integrations.
+      const destIds = Array.from(
+        new Set(
+          Array.from(intgById.values())
+            .map((i) => i.destinationId)
+            .filter((id): id is number => id != null),
+        ),
+      );
+      const destById = new Map<number, { name: string; url: string | null }>();
+      if (destIds.length > 0) {
+        const destRows = await db
+          .select({ id: destinations.id, name: destinations.name, url: destinations.url })
+          .from(destinations)
+          .where(inArray(destinations.id, destIds));
+        for (const d of destRows) destById.set(d.id, { name: d.name, url: d.url });
+      }
+
+      const enrichedOrders = orderRows.map((order) => {
+        const intg = intgById.get(order.integrationId);
+        const dest = intg?.destinationId != null ? destById.get(intg.destinationId) : undefined;
+        return {
+          id: order.id,
+          leadId: order.leadId,
+          userId: order.userId,
+          integrationId: order.integrationId,
+          status: order.status,
+          attempts:      order.attempts,
+          lastAttemptAt: order.lastAttemptAt,
+          nextRetryAt:   order.nextRetryAt,
+          responseData: order.responseData as Record<string, unknown> | null,
+          createdAt: order.createdAt,
+          updatedAt: order.updatedAt,
+          integrationName: intg?.name ?? "Unknown Integration",
+          integrationType: intg?.type ?? null,
+          targetWebsiteName: dest?.name ?? null,
+          targetWebsiteUrl: dest?.url ?? null,
+        };
+      });
 
       return { lead, orders: enrichedOrders };
     }),

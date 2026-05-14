@@ -26,39 +26,74 @@ export const integrationsRouter = router({
     const list = await getIntegrations(ctx.user.id);
     const db = await getDb();
     if (!db) return list;
-    // Enrich LEAD_ROUTING integrations with targetWebsiteName from DB (using dedicated column)
-    return Promise.all(
-      list.map(async (integration) => {
-        if (integration.type !== "LEAD_ROUTING") return integration;
-        const cfg = integration.config as Record<string, unknown> | null;
-        if (!integration.destinationId) return integration;
-        const [tw] = await db
-          .select({ id: destinations.id, name: destinations.name })
-          .from(destinations)
-          .where(and(
-            eq(destinations.id, integration.destinationId),
-            eq(destinations.userId, ctx.user.id),
-          ))
-          .limit(1);
-        // Also enrich with ordered destinationIds from integration_routes
-        const destRows = await db
-          .select({ destinationId: integrationRoutes.destinationId })
-          .from(integrationRoutes)
-          .where(and(
-            eq(integrationRoutes.integrationId, integration.id),
-            eq(integrationRoutes.enabled, true),
-          ))
-          .orderBy(asc(integrationRoutes.position), asc(integrationRoutes.id));
-        const destinationIds = destRows.map((r) => r.destinationId);
-        return {
-          ...integration,
-          // `targetWebsiteName` has no dedicated column — falls back to JSON
-          // for legacy rows where the destinations row was deleted.
-          targetWebsiteName: tw?.name ?? (cfg?.targetWebsiteName as string | undefined) ?? null,
-          destinationIds,
-        };
-      })
+
+    // Enrich LEAD_ROUTING integrations with destination name + ordered
+    // route ids. Previously this ran 2 queries PER integration (N+1):
+    // ~101 round-trips for a 50-integration user. Now it's exactly 2
+    // batched queries regardless of integration count.
+    const leadRouting = list.filter((i) => i.type === "LEAD_ROUTING" && i.destinationId);
+    if (leadRouting.length === 0) return list;
+
+    // Batch 1 — destination names for the dedicated destinationId column.
+    const destIds = Array.from(
+      new Set(
+        leadRouting
+          .map((i) => i.destinationId)
+          .filter((id): id is number => id != null),
+      ),
     );
+    const destNameById = new Map<number, string>();
+    if (destIds.length > 0) {
+      const destRows = await db
+        .select({ id: destinations.id, name: destinations.name })
+        .from(destinations)
+        .where(and(
+          inArray(destinations.id, destIds),
+          eq(destinations.userId, ctx.user.id),
+        ));
+      for (const d of destRows) destNameById.set(d.id, d.name);
+    }
+
+    // Batch 2 — ordered route destinationIds, grouped by integrationId.
+    // One query + in-memory group-by replaces N per-integration SELECTs.
+    const integrationIds = leadRouting.map((i) => i.id);
+    const routesByIntegration = new Map<number, number[]>();
+    const routeRows = await db
+      .select({
+        integrationId: integrationRoutes.integrationId,
+        destinationId: integrationRoutes.destinationId,
+      })
+      .from(integrationRoutes)
+      .where(and(
+        inArray(integrationRoutes.integrationId, integrationIds),
+        eq(integrationRoutes.enabled, true),
+      ))
+      .orderBy(asc(integrationRoutes.position), asc(integrationRoutes.id));
+    for (const r of routeRows) {
+      const arr = routesByIntegration.get(r.integrationId) ?? [];
+      arr.push(r.destinationId);
+      routesByIntegration.set(r.integrationId, arr);
+    }
+
+    return list.map((integration) => {
+      // Preserve original behaviour exactly: only LEAD_ROUTING rows that
+      // have a dedicated destinationId get enriched; everything else is
+      // returned bare.
+      if (integration.type !== "LEAD_ROUTING" || !integration.destinationId) {
+        return integration;
+      }
+      const cfg = integration.config as Record<string, unknown> | null;
+      return {
+        ...integration,
+        // `targetWebsiteName` has no dedicated column — falls back to JSON
+        // for legacy rows where the destinations row was deleted.
+        targetWebsiteName:
+          destNameById.get(integration.destinationId) ??
+          (cfg?.targetWebsiteName as string | undefined) ??
+          null,
+        destinationIds: routesByIntegration.get(integration.id) ?? [],
+      };
+    });
   }),
 
   /**
