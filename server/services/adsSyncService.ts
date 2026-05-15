@@ -24,6 +24,7 @@ import {
   adAccounts,
   campaigns,
   campaignInsights,
+  campaignDailyInsights,
   adSets,
 } from "../../drizzle/schema";
 import { decrypt } from "../encryption";
@@ -80,6 +81,42 @@ interface RawCampaignInsight {
   actions?: RawInsightAction[];
 }
 
+/**
+ * Daily-granularity insight row from `/{ad_account}/insights?time_increment=1`.
+ * date_start / date_stop are identical when time_increment=1 — each row
+ * represents exactly one day.
+ */
+interface RawDailyInsight {
+  campaign_id: string;
+  date_start: string;
+  date_stop: string;
+  spend: string;
+  impressions: string;
+  clicks: string;
+  actions?: RawInsightAction[];
+}
+
+/**
+ * Convert FB's decimal-string spend ("12.34" / "35000.00") into the
+ * SMALLEST unit of the currency. Mirrors the storage convention used in
+ * fact_attribution_daily.spendAmount and campaign_daily_insights.spend.
+ *
+ *  - USD / fractional currencies: multiply by 100 → cents.
+ *  - UZS / no-subunit currencies: round to integer → so'm.
+ *
+ * We only need to support the v1 currency set (USD + UZS); future
+ * currencies inherit the integer-rounding default until v2 adds a proper
+ * subunit table.
+ */
+function spendToSmallestUnit(rawSpend: string, currency: string): number {
+  const n = parseFloat(rawSpend ?? "0");
+  if (!Number.isFinite(n) || n < 0) return 0;
+  if (currency === "USD" || currency === "EUR" || currency === "GBP") {
+    return Math.round(n * 100);
+  }
+  return Math.round(n);
+}
+
 interface RawAdSet {
   id: string;
   name: string;
@@ -116,7 +153,7 @@ export async function syncFbAccountData(
   userId: number,
   facebookAccountId: number,
   accessToken: string
-): Promise<{ accounts: number; campaigns: number; insights: number }> {
+): Promise<{ accounts: number; campaigns: number; insights: number; dailyInsights: number }> {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
 
@@ -127,6 +164,7 @@ const appsecretProof = generateAppSecretProof(token);
   let accountsSynced = 0;
   let campaignsSynced = 0;
   let insightsSynced = 0;
+  let dailyInsightsSynced = 0;
 
   // ── 1. Fetch & upsert ad accounts ──────────────────────────────────────────
   let adAccountsList: RawAdAccount[] = [];
@@ -328,13 +366,94 @@ const appsecretProof = generateAppSecretProof(token);
         insightsSynced++;
       }
     }
+
+    // 2c. Fetch DAILY-grain insights for the rollup (Phase 2).
+    //
+    // `time_increment=1` makes FB return one row per day instead of the
+    // preset-aggregated total — that's exactly what fact_attribution_daily
+    // needs. We always ask for last_7d so the data matches the rollup
+    // worker's 7-day rebuild window. One call per ad account; the response
+    // contains N campaigns × 7 days of rows.
+    let rawDaily: RawDailyInsight[] = [];
+    try {
+      const res = await graphMarketingFormPost<GraphDataList<RawDailyInsight>>(
+        `/${adAccountId}/insights`,
+        {
+          fields: "campaign_id,date_start,date_stop,spend,impressions,clicks,actions",
+          level: "campaign",
+          time_increment: "1",
+          date_preset: "last_7d",
+          action_breakdowns: "action_type",
+          access_token: token,
+          appsecret_proof: appsecretProof,
+          limit: "1000",
+        },
+        45000,
+      );
+      rawDaily = res.data ?? [];
+    } catch (err: unknown) {
+      const e = err as { response?: { status?: number; data?: { error?: { message?: string; code?: unknown; type?: string } } }; message?: string };
+      await log.warn(
+        "FACEBOOK",
+        `[adsSyncService] Daily insights failed for ${adAccountId}: ${e?.response?.data?.error?.message ?? e?.message ?? "unknown"}`,
+        {
+          adAccountId,
+          fbError: e?.response?.data?.error?.message ?? null,
+          fbCode: e?.response?.data?.error?.code ?? null,
+          httpStatus: e?.response?.status ?? null,
+        },
+      );
+      rawDaily = [];
+    }
+
+    for (const raw of rawDaily) {
+      // date_start === date_stop when time_increment=1, so use either.
+      const date = raw.date_start;
+      if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+      const spendUnits = spendToSmallestUnit(raw.spend, currency);
+      const impressions = parseInt(raw.impressions ?? "0", 10) || 0;
+      const clicks = parseInt(raw.clicks ?? "0", 10) || 0;
+      const leadAction = (raw.actions ?? []).find(
+        (a) => a.action_type === "lead" || a.action_type === "onsite_conversion.lead_grouped",
+      );
+      const leadsReported = leadAction ? parseInt(leadAction.value, 10) || 0 : 0;
+
+      await db
+        .insert(campaignDailyInsights)
+        .values({
+          userId,
+          fbAdAccountId: adAccountId,
+          fbCampaignId: raw.campaign_id,
+          date,
+          spend: String(spendUnits),
+          currency,
+          impressions,
+          clicks,
+          leadsReported,
+        })
+        .onDuplicateKeyUpdate({
+          set: {
+            spend: String(spendUnits),
+            currency,
+            impressions,
+            clicks,
+            leadsReported,
+          },
+        });
+      dailyInsightsSynced++;
+    }
   }
 
   console.log(
     `[adsSyncService] userId=${userId} fbAccountId=${facebookAccountId}: ` +
-    `${accountsSynced} accounts, ${campaignsSynced} campaigns, ${insightsSynced} insights`
+    `${accountsSynced} accounts, ${campaignsSynced} campaigns, ${insightsSynced} insights, ${dailyInsightsSynced} daily-rows`
   );
-  return { accounts: accountsSynced, campaigns: campaignsSynced, insights: insightsSynced };
+  return {
+    accounts: accountsSynced,
+    campaigns: campaignsSynced,
+    insights: insightsSynced,
+    dailyInsights: dailyInsightsSynced,
+  };
 }
 
 // ─── Sync ad sets for a specific campaign (on-demand) ────────────────────────

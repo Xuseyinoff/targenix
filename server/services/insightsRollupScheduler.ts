@@ -100,9 +100,15 @@ async function rebuildOneDay(
     // exactly once. NULL on the orders side (no order yet) contributes 0
     // to every order counter — the CASE returns 0 for NULL inputs.
     //
-    // Money: revenueAmount sums payoutAmount only for delivered orders.
-    // spendAmount stays 0 in Phase 1 (campaign_insights is preset-aggregated,
-    // not daily — Phase 2 will widen the FB sync).
+    // Money:
+    //   • revenueAmount sums payoutAmount only for delivered orders.
+    //   • spendAmount is allocated proportionally — campaign_daily_insights
+    //     gives us the FB spend per (campaign, date), and each rollup row
+    //     within that campaign+date claims spend × (row_leads / campaign_leads).
+    //     The currency-mismatch guard short-circuits to 0 when the ad
+    //     account's currency differs from the user's reporting currency
+    //     (v1: no FX). Fan-out leads can slightly over-attribute spend
+    //     across offer slices — same caveat that affects leads counters.
     await tx.execute(sql`
       INSERT INTO fact_attribution_daily (
         userId, date,
@@ -137,7 +143,17 @@ async function rebuildOneDay(
         SUM(CASE WHEN o.crmStatus IN ('cancelled','returned','not_delivered','not_sold') THEN 1 ELSE 0 END) AS rejected,
         SUM(CASE WHEN o.crmStatus = 'trash'                                      THEN 1 ELSE 0 END)   AS trash,
 
-        0                                                                                             AS spendAmount,
+        -- Proportional spend allocation. cs.spend & clt.total_leads are
+        -- constants across the GROUP BY rows for the same campaign+date,
+        -- so the per-row share is exact for non-fan-out leads.
+        COALESCE(
+          CASE
+            WHEN cs.currency = ${currency} AND clt.totalLeads > 0
+            THEN ROUND(CAST(cs.spend AS UNSIGNED) * COUNT(DISTINCT l.id) / clt.totalLeads)
+            ELSE 0
+          END,
+          0
+        )                                                                                             AS spendAmount,
         COALESCE(SUM(CASE WHEN o.crmStatus = 'delivered' AND o.payoutAmount IS NOT NULL
                            THEN o.payoutAmount ELSE 0 END), 0)                                        AS revenueAmount,
 
@@ -146,6 +162,20 @@ async function rebuildOneDay(
       LEFT JOIN orders      o  ON o.leadId = l.id        AND o.userId = l.userId
       LEFT JOIN campaigns   c  ON c.userId = l.userId    AND c.fbCampaignId   = l.campaignId
       LEFT JOIN ad_accounts aa ON aa.userId = l.userId   AND aa.fbAdAccountId = c.fbAdAccountId
+      LEFT JOIN campaign_daily_insights cs
+                                ON cs.userId      = l.userId
+                                AND cs.fbCampaignId = l.campaignId
+                                AND cs.date        = ${date}
+      LEFT JOIN (
+        SELECT userId, campaignId, COUNT(DISTINCT id) AS totalLeads
+          FROM leads
+         WHERE userId = ${userId}
+           AND DATE(createdAt) = ${date}
+           AND campaignId IS NOT NULL
+           AND campaignId != ''
+         GROUP BY userId, campaignId
+      ) clt              ON clt.userId       = l.userId
+                         AND clt.campaignId   = l.campaignId
       WHERE l.userId = ${userId}
         AND DATE(l.createdAt) = ${date}
       GROUP BY
@@ -153,7 +183,8 @@ async function rebuildOneDay(
         bmId, adAccountId,
         l.campaignId, l.adsetId, l.adId,
         l.pageId, l.formId,
-        offerId
+        offerId,
+        cs.spend, cs.currency, clt.totalLeads
     `);
   });
 }
