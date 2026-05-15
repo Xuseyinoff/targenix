@@ -162,19 +162,25 @@ export const adAnalyticsRouter = router({
     const fbAccounts = await getUserFbAccounts(userId);
 
     if (cached.length === 0 && fbAccounts.length > 0) {
-      // ── First load: cache empty → sync synchronously so user sees data immediately ──
-      for (const fbAccount of fbAccounts) {
-        try {
-          const accessToken = decrypt(fbAccount.accessToken);
-          await syncFbAccountData(userId, fbAccount.id, accessToken);
-        } catch (err) {
-          await log.error(
-            "FACEBOOK",
-            `[adAnalytics] initial sync failed for fbacc=${fbAccount.id}`,
-            { fbAccountId: fbAccount.id, userId, error: err instanceof Error ? err.message : String(err) },
-          );
-        }
-      }
+      // ── First load: cache empty → sync so user sees data immediately ──
+      // Sync each FB account in PARALLEL — they hit independent Graph
+      // endpoints with their own tokens, so serializing them just stacks
+      // network latency (multi-second tRPC call with N accounts). Per-
+      // account try/catch isolates failures, mirrors the bg loop below.
+      await Promise.all(
+        fbAccounts.map(async (fbAccount) => {
+          try {
+            const accessToken = decrypt(fbAccount.accessToken);
+            await syncFbAccountData(userId, fbAccount.id, accessToken);
+          } catch (err) {
+            await log.error(
+              "FACEBOOK",
+              `[adAnalytics] initial sync failed for fbacc=${fbAccount.id}`,
+              { fbAccountId: fbAccount.id, userId, error: err instanceof Error ? err.message : String(err) },
+            );
+          }
+        }),
+      );
       // Re-read from cache after sync
       const fresh = await db
         .select({
