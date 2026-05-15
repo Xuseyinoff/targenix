@@ -560,6 +560,16 @@ export const integrations = mysqlTable("integrations", {
   facebookAccountId: int("facebookAccountId"),
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  /**
+   * Soft-delete timestamp. NULL = live row; NOT NULL = deleted via UI.
+   *
+   * Hard delete was orphaning historical orders (verified 2026-05-15: 11,139
+   * orphaned rows, ~3,711 in the May 1-15 window alone, invisible to CRM
+   * queries that INNER JOIN integrations). Soft-delete keeps the row so
+   * order JOINs continue to resolve; live-integration queries should
+   * filter `deletedAt IS NULL`.
+   */
+  deletedAt: timestamp("deletedAt"),
 }, (t) => ({
   // Hot-path index: processLead queries WHERE userId=? AND isActive=1 AND pageId=? AND formId=?
   idxUserPageForm: index("idx_integrations_user_page_form").on(t.userId, t.isActive, t.pageId, t.formId),

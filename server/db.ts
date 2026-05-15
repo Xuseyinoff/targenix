@@ -1,4 +1,4 @@
-import { eq, desc, count, and, sql, inArray, gte, lt, or, ne } from "drizzle-orm";
+import { eq, desc, count, and, sql, inArray, gte, lt, or, ne, isNull } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2";
@@ -413,7 +413,11 @@ export async function getTodayIntegrationLeadStats(userId: number) {
 export async function getIntegrations(userId: number): Promise<Integration[]> {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(integrations).where(eq(integrations.userId, userId)).orderBy(desc(integrations.createdAt));
+  return db
+    .select()
+    .from(integrations)
+    .where(and(eq(integrations.userId, userId), isNull(integrations.deletedAt)))
+    .orderBy(desc(integrations.createdAt));
 }
 
 /**
@@ -735,10 +739,21 @@ export async function updateIntegration(
 export async function deleteIntegration(id: number): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  // The FK on integration_routes.integrationId CASCADEs, so the
-  // delete below implicitly wipes the mapping rows. Explicit safeSync with
-  // an empty list would only duplicate that work — we let the DB handle it.
-  await db.delete(integrations).where(eq(integrations.id, id));
+  // Soft delete: previously this issued DELETE FROM integrations, which
+  // orphaned every order whose `integrationId` pointed at the removed row —
+  // CRM / analytics queries INNER JOIN on integrations, so the orders
+  // silently vanished from dashboards (verified 2026-05-15: 11,139 orphaned
+  // rows in prod, primarily from users who deleted an integration after
+  // sending leads through it). Setting `deletedAt` + clearing `isActive`
+  // keeps the row alive so order JOINs still resolve, while every existing
+  // "active integration" filter (which already checks `isActive`) naturally
+  // skips it. integration_routes rows are left in place too; they're inert
+  // because the row is inactive, and the new integration the user creates
+  // gets its own routes.
+  await db
+    .update(integrations)
+    .set({ deletedAt: new Date(), isActive: false })
+    .where(eq(integrations.id, id));
 }
 
 // ─── Webhook Events ───────────────────────────────────────────────────────────
