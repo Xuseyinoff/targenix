@@ -565,7 +565,16 @@ export const adAnalyticsRouter = router({
         last_30d:  gte(leads.createdAt, new Date(todayBounds.start.getTime() - 29 * 24 * 60 * 60 * 1000)),
       }[dateRange];
 
-      // 1. Lead counts per campaignId broken down by deliveryStatus — scoped to this user only
+      // 1. Lead counts per campaignId broken down by deliveryStatus — scoped to this user only.
+      //
+      // The EXISTS-on-campaigns filter restricts spend attribution to lead-form
+      // campaigns. Without it, a website/conversion campaign that happens to
+      // fire our leadgen webhook (Meta occasionally backfills cross-objective
+      // leads or admins re-attach a lead form to a non-LEADS campaign) would
+      // pull its full ad spend into the CPL aggregate even though most of that
+      // spend went to site traffic, not forms. OUTCOME_LEADS is the current
+      // Meta enum; LEAD_GENERATION is the legacy value still present on older
+      // rows in this account (21 of them as of 2026-05-15).
       const leadCounts = await db
         .select({
           campaignId:   leads.campaignId,
@@ -579,7 +588,13 @@ export const adAnalyticsRouter = router({
           eq(leads.userId, userId),
           isNotNull(leads.campaignId),
           dateCondition,
-          sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
+          sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`,
+          sql`EXISTS (
+            SELECT 1 FROM ${campaigns}
+            WHERE ${campaigns.fbCampaignId} = ${leads.campaignId}
+              AND ${campaigns.userId} = ${userId}
+              AND ${campaigns.objective} IN ('OUTCOME_LEADS', 'LEAD_GENERATION')
+          )`,
         ))
         .groupBy(leads.campaignId);
 
