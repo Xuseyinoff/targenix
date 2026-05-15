@@ -1486,3 +1486,45 @@ export const factAttributionDaily = mysqlTable("fact_attribution_daily", {
 
 export type FactAttributionDaily       = typeof factAttributionDaily.$inferSelect;
 export type InsertFactAttributionDaily = typeof factAttributionDaily.$inferInsert;
+
+// ─── Insights — campaign_daily_insights (Phase 2 spend cache) ────────────────
+//
+// Per-day spend granularity from the FB Marketing API insights endpoint
+// (called with `time_increment=1`). The rollup worker joins this table by
+// (userId, fbCampaignId, date) to fill fact_attribution_daily.spendAmount
+// — the existing `campaign_insights` table only stores preset-aggregated
+// totals (today / yesterday / last_7d / last_30d), which the rollup's
+// daily grain cannot use.
+//
+// `currency` is a snapshot of the source ad_account's currency. The
+// rollup compares it to the user's baseCurrency and skips rows that
+// don't match (v1: no FX conversion).
+export const campaignDailyInsights = mysqlTable("campaign_daily_insights", {
+  id:              int("id").autoincrement().primaryKey(),
+  userId:          int("userId").notNull(),
+  fbAdAccountId:   varchar("fbAdAccountId", { length: 64 }).notNull(),
+  fbCampaignId:    varchar("fbCampaignId",  { length: 64 }).notNull(),
+  /** YYYY-MM-DD; string mode for the same midnight-UTC reasons as
+   *  fact_attribution_daily.date. */
+  date:            date("date", { mode: "string" }).notNull(),
+  /** Smallest-unit integer in `currency` (UZS so'm units / USD cents). */
+  spend:           varchar("spend", { length: 32 }).default("0").notNull(),
+  currency:        varchar("currency", { length: 8 }).default("USD").notNull(),
+  impressions:     int("impressions").default(0).notNull(),
+  clicks:          int("clicks").default(0).notNull(),
+  /** Lead count as FB reports it (independent of our leads table). */
+  leadsReported:   int("leadsReported").default(0).notNull(),
+  syncedAt:        timestamp("syncedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  /** UPSERT target — one row per (user, campaign, day). */
+  uniqCampaignDay: uniqueIndex("uniq_campaign_day").on(t.userId, t.fbCampaignId, t.date),
+  /** Rollup join hot-path: WHERE userId=? AND date BETWEEN ? AND ?. */
+  idxUserDate:     index("idx_user_date").on(t.userId, t.date),
+  /** Per-campaign drill: WHERE userId=? AND fbCampaignId=? AND date IN (…). */
+  idxUserCampaignDate: index("idx_user_campaign_date").on(t.userId, t.fbCampaignId, t.date),
+  /** Per-ad-account ops queries (rare). */
+  idxUserAdAccount: index("idx_user_ad_account").on(t.userId, t.fbAdAccountId),
+}));
+
+export type CampaignDailyInsights       = typeof campaignDailyInsights.$inferSelect;
+export type InsertCampaignDailyInsights = typeof campaignDailyInsights.$inferInsert;
