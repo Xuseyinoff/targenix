@@ -29,6 +29,7 @@ import { startTriggerScheduler } from "../services/triggerScheduler";
 import { startOAuthStateCleanupScheduler } from "../services/oauthStateCleanupScheduler";
 import { startMetricSnapshotScheduler } from "../services/metricSnapshotScheduler";
 import { startInsightsRollupScheduler } from "../services/insightsRollupScheduler";
+import { startFxRateScheduler } from "../services/fxRateScheduler";
 import { getDb } from "../db";
 
 if (!process.env.REDIS_URL) {
@@ -84,6 +85,9 @@ async function boot() {
   // 7-day window. Reads leads/orders/campaign_insights → writes only the
   // rollup table; never modifies the source tables.
   startInsightsRollupScheduler();
+  // Insights Phase 4: pull CBU USD/UZS rate every 6 hours so the rollup
+  // worker has fresh FX data to convert cross-currency Revenue / Spend.
+  startFxRateScheduler();
 
   console.log("[Worker] All systems running. Waiting for jobs...");
 

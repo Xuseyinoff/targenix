@@ -410,6 +410,7 @@ async function startServer() {
     const { startOAuthStateCleanupScheduler } = await import("../services/oauthStateCleanupScheduler");
     const { startMetricSnapshotScheduler } = await import("../services/metricSnapshotScheduler");
     const { startInsightsRollupScheduler } = await import("../services/insightsRollupScheduler");
+    const { startFxRateScheduler } = await import("../services/fxRateScheduler");
     startLeadWorker();
     startRetryScheduler();
     startLogRetentionScheduler();
@@ -421,6 +422,7 @@ async function startServer() {
     startOAuthStateCleanupScheduler();
     startMetricSnapshotScheduler();
     startInsightsRollupScheduler();
+    startFxRateScheduler();
     console.log("[Server] Embedded worker + schedulers started.");
   }
 
