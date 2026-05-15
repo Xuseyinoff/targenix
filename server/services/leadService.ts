@@ -821,6 +821,22 @@ async function deliverOneDestination(params: {
   let prevAttempts: number;
 
   if (!existingOrder) {
+    // Snapshot the destination's offer_id at creation time so Insights
+    // analytics can GROUP BY offer without joining through destinations and
+    // parsing JSON. Read from the canonical
+    // `templateConfig.variables.offer_id` slot used by every template that
+    // declares offer_id in `variableFields` (sotuvchi, 100k, …). NULL when
+    // the destination has no offer concept (telegram, plain webhooks, etc.).
+    const tplCfg = params.preResolvedDestination?.targetWebsite?.templateConfig as
+      | { variables?: Record<string, unknown> }
+      | null
+      | undefined;
+    const rawOfferId = tplCfg?.variables?.offer_id;
+    const offerIdSnapshot =
+      rawOfferId != null && String(rawOfferId).trim() !== ""
+        ? String(rawOfferId).slice(0, 64)
+        : null;
+
     await db.insert(orders).values({
       leadId,
       userId,
@@ -828,6 +844,7 @@ async function deliverOneDestination(params: {
       destinationId,
       status: "PENDING",
       attempts: 0,
+      offerId: offerIdSnapshot,
     });
     const [row] = await db
       .select({ id: orders.id, attempts: orders.attempts })
