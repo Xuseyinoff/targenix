@@ -16,6 +16,7 @@ import {
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 import { getDashboardDayUtcBounds } from "./lib/dashboardTimezone";
+import { envInt } from "./lib/envHelpers";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 let _pool: mysql.Pool | null = null;
@@ -62,12 +63,22 @@ export async function getDb() {
         // NOW()`-style server-side comparisons (see circuitBreaker.ts).
         // Internally MySQL stores TIMESTAMPs as UTC ms regardless of session
         // TZ, so this change preserves the absolute moment of existing data.
+        // Explicit pool sizing. mysql2's default connectionLimit is 10 —
+        // too low once the worker runs WORKER_CONCURRENCY in-flight jobs
+        // (recommended 10-20) alongside schedulers + the embedded web
+        // process. An undersized pool silently queues queries and, under
+        // load, looks like a hang. `queueLimit: 0` keeps the (bounded)
+        // wait rather than throwing — callers already tolerate slow
+        // queries, not rejected ones. Tune via DB_POOL_LIMIT.
+        const connectionLimit = envInt("DB_POOL_LIMIT", 20);
         _pool = mysql.createPool({
           uri: url,
           charset: "utf8mb4",
           timezone: "Z",
           // Keep behavior predictable across environments.
           decimalNumbers: true,
+          connectionLimit,
+          queueLimit: 0,
         });
         // Pin every pooled connection's MySQL SESSION timezone to UTC. Without
         // this, `SET time_zone='SYSTEM'` lets the server interpret the UTC
