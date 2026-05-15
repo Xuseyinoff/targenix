@@ -30,7 +30,7 @@
  */
 
 import { z } from "zod";
-import { and, between, eq, inArray, sql } from "drizzle-orm";
+import { and, between, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
 import { getDb } from "../db";
 import {
@@ -39,6 +39,7 @@ import {
   campaigns,
   facebookForms,
   factAttributionDaily,
+  orders,
 } from "../../drizzle/schema";
 import { runInsightsRollupOnce } from "../services/insightsRollupScheduler";
 
@@ -417,9 +418,27 @@ async function resolveLabels(
       for (const r of rows) out.set(r.id, r.name);
       return out;
     }
-    case "offer":
-      // No label table for offers in v1 — the ID is the label.
+    case "offer": {
+      // Offer names are denormalised onto `orders.offerName` by the
+      // sotuvchi pagination sync (Phase 4 follow-up). Pick the most
+      // recently synced label per offerId so renames propagate. Scoped
+      // to userId for tenant isolation.
+      const rows = await db
+        .select({ id: orders.offerId, name: sql<string>`MAX(${orders.offerName})` })
+        .from(orders)
+        .where(
+          and(
+            eq(orders.userId, userId),
+            inArray(orders.offerId, ids),
+            isNotNull(orders.offerName),
+          ),
+        )
+        .groupBy(orders.offerId);
+      for (const r of rows) {
+        if (r.id && r.name) out.set(r.id, r.name);
+      }
       return out;
+    }
   }
 }
 
