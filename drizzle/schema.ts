@@ -1468,6 +1468,13 @@ export const factAttributionDaily = mysqlTable("fact_attribution_daily", {
   // to Number when the value is known small.
   spendAmount:   varchar("spendAmount",   { length: 32 }).default("0").notNull(),
   revenueAmount: varchar("revenueAmount", { length: 32 }).default("0").notNull(),
+  /** "In-flight" money — orders with sotuvchi pay_for committed whose
+   *  crmStatus is past `new` but not yet `delivered`. Surfaces in the
+   *  Insights breakdown table as a Pipeline column so users see the
+   *  amount expected to land on top of the realised Revenue. Does NOT
+   *  feed Profit (we stay conservative on Profit = Revenue − Spend).
+   *  Phase 4 addition (migration 0089). */
+  pipelineAmount: varchar("pipelineAmount", { length: 32 }).default("0").notNull(),
 
   /** Snapshot of users.baseCurrency at the moment this row was written. */
   currency:     varchar("currency", { length: 8 }).default("USD").notNull(),
@@ -1535,3 +1542,41 @@ export const campaignDailyInsights = mysqlTable("campaign_daily_insights", {
 
 export type CampaignDailyInsights       = typeof campaignDailyInsights.$inferSelect;
 export type InsertCampaignDailyInsights = typeof campaignDailyInsights.$inferInsert;
+
+// ─── Insights — fx_rates (Phase 4: USD/UZS exchange rates) ───────────────────
+//
+// Daily snapshot of UZS-per-USD from the Central Bank of Uzbekistan (CBU)
+// JSON API. The rollup worker joins this by `date` so it can express
+// Revenue / Spend in the user's chosen baseCurrency even when the source
+// transaction is in another currency.
+//
+// Storage choice: DECIMAL(10,4) keeps the rate precise without depending
+// on JS float quirks. mysql2 returns DECIMAL as a string by default; the
+// rollup SQL keeps math in MySQL via CAST so JS never sees the raw value.
+//
+// "Last-known-rate" fallback: the rollup picks the rate for the lead's
+// date, or the most recent rate ≤ that date if the CBU sync hasn't run
+// for that day yet. Audit-friendly: a 2026-05-15 lead always uses the
+// 2026-05-15 rate (or the closest earlier day), never the rate at
+// rollup-read time.
+export const fxRates = mysqlTable("fx_rates", {
+  id:           int("id").autoincrement().primaryKey(),
+  date:         date("date", { mode: "string" }).notNull(),
+  /** How many UZS so'm equal 1 USD on `date`. CBU publishes this daily;
+   *  exposed as a numeric string at the drizzle boundary to avoid JS
+   *  float precision surprises (matches the existing money-column
+   *  convention used in fact_attribution_daily). */
+  uzsPerUsd:    varchar("uzs_per_usd", { length: 16 }).notNull(),
+  /** Where the rate came from. 'CBU' for the official Central Bank pull;
+   *  'manual' if an admin overrode it. */
+  source:       varchar("source", { length: 32 }).default("CBU").notNull(),
+  fetchedAt:    timestamp("fetched_at").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  /** One rate per day — UPSERT target. */
+  uniqDate: uniqueIndex("uniq_fx_date").on(t.date),
+  /** Range lookups for rollup fallback. */
+  idxDate:  index("idx_fx_date").on(t.date),
+}));
+
+export type FxRate       = typeof fxRates.$inferSelect;
+export type InsertFxRate = typeof fxRates.$inferInsert;
