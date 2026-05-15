@@ -166,10 +166,10 @@ async function rebuildOneDay(
         SUM(CASE WHEN o.status    = 'SENT'   THEN 1 ELSE 0 END)                                       AS sent,
         SUM(CASE WHEN o.status    = 'FAILED' THEN 1 ELSE 0 END)                                       AS failed,
 
-        SUM(CASE WHEN o.crmStatus IN ('contacted','in_progress','sent','callback','success','delivered') THEN 1 ELSE 0 END) AS accepted,
+        SUM(CASE WHEN o.crmStatus IN ('contacted','in_progress','sent','callback','not_delivered','out_of_stock','success','delivered') THEN 1 ELSE 0 END) AS accepted,
         SUM(CASE WHEN o.crmStatus = 'delivered'                                  THEN 1 ELSE 0 END)   AS delivered,
-        SUM(CASE WHEN o.crmStatus IN ('callback','in_progress')                  THEN 1 ELSE 0 END)   AS held,
-        SUM(CASE WHEN o.crmStatus IN ('cancelled','returned','not_delivered','not_sold') THEN 1 ELSE 0 END) AS rejected,
+        SUM(CASE WHEN o.crmStatus IN ('callback','in_progress','not_delivered','out_of_stock')  THEN 1 ELSE 0 END) AS held,
+        SUM(CASE WHEN o.crmStatus IN ('cancelled','returned','not_sold')          THEN 1 ELSE 0 END) AS rejected,
         SUM(CASE WHEN o.crmStatus = 'trash'                                      THEN 1 ELSE 0 END)   AS trash,
 
         -- Phase 4: proportional spend allocation WITH FX conversion. The

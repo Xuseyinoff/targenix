@@ -8,8 +8,11 @@
  */
 import mysql from "mysql2/promise";
 
+// Must mirror FINAL_STATUSES in shared/crmStatuses.ts.
+// `not_delivered` is intentionally NOT here — Sotuvchi labels it "Qayta ishlash"
+// and orders routinely re-flow through it back to sent/delivered.
 const FINAL_STATUSES = [
-  "delivered", "not_delivered", "cancelled",
+  "delivered", "cancelled", "returned",
   "client_returned", "trash", "not_sold", "not_sold_group", "archived",
 ];
 

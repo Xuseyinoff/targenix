@@ -32,35 +32,41 @@ const PLATFORM_LABELS: Record<string, string> = {
 const PLATFORM_KEYS = ["sotuvchi", "100k", "alijahon", "inbaza", "mgoods"] as const;
 type PlatformKey = (typeof PLATFORM_KEYS)[number];
 
-// Badge colors match Sotuvchi.com frontend labels exactly
+// Badge labels match Sotuvchi.com frontend (status_name field) — verified
+// 2026-05-15 against live API. "Tayyorlanmoqda" replaces "Jarayonda" for
+// in_progress; not_delivered shows "Qayta ishlash" (not "Yetkazilmadi");
+// product_out_of_stock has its own "Mahsulot yetmadi" label.
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   // ── Canonical statuses ──────────────────────────────────────────────────────
   new:           { label: "Yangi",              cls: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300" },
   contacted:     { label: "Qabul qilindi",      cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" },
-  in_progress:   { label: "Jarayonda",          cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
+  in_progress:   { label: "Tayyorlanmoqda",     cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
   sent:          { label: "Yuborildi",           cls: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300" },
-  callback:      { label: "Qayta qo’ng’iroq",   cls: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300" },
+  callback:      { label: "Qayta qo‘ng‘iroq",   cls: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300" },
+  not_delivered: { label: "Qayta ishlash",       cls: "bg-amber-100 text-amber-800 dark:bg-amber-900/25 dark:text-amber-300" },
+  out_of_stock:  { label: "Mahsulot yetmadi",   cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/25 dark:text-rose-300" },
   success:       { label: "Sotildi",            cls: "bg-teal-100 text-teal-800 dark:bg-teal-900/25 dark:text-teal-300" },
   delivered:     { label: "Yetkazildi",          cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" },
   cancelled:     { label: "Bekor qilindi",      cls: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300" },
   returned:      { label: "Mijoz qaytardi",      cls: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300" },
-  not_delivered: { label: "Yetkazilmadi",       cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/25 dark:text-rose-300" },
   trash:         { label: "Trash",              cls: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300" },
   not_sold:      { label: "Sotilmadi",          cls: "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
   archived:      { label: "Arxivlandi",          cls: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400" },
   unknown:       { label: "Noma’lum (API)",      cls: "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200" },
-  // ── Legacy DB values (until re-sync updates them to canonical) ──────────────
-  accepted:      { label: "Qabul qilindi",      cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" },
-  filling:       { label: "Qabul qilindi",      cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" },
-  order:         { label: "Qabul qilindi",      cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" },
-  booked:        { label: "Jarayonda",           cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
-  preparing:     { label: "Jarayonda",           cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
-  recycling:     { label: "Qayta qo’ng’iroq",   cls: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300" },
-  on_argue:      { label: "Qayta qo’ng’iroq",   cls: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300" },
-  sold:          { label: "Sotildi",            cls: "bg-teal-100 text-teal-800 dark:bg-teal-900/25 dark:text-teal-300" },
+  // ── Raw API values (display directly when crmRawStatus is shown) ────────────
+  request:         { label: "Yangi",            cls: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300" },
+  order:           { label: "Qabul qilindi",    cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" },
+  preparing:       { label: "Tayyorlanmoqda",   cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
+  recycling:       { label: "Qayta qo‘ng‘iroq", cls: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300" },
+  sold:            { label: "Sotildi",          cls: "bg-teal-100 text-teal-800 dark:bg-teal-900/25 dark:text-teal-300" },
+  product_out_of_stock: { label: "Mahsulot yetmadi", cls: "bg-rose-100 text-rose-800 dark:bg-rose-900/25 dark:text-rose-300" },
+  // ── Legacy DB values (no longer emitted by Sotuvchi v3, kept for old rows) ──
+  accepted:        { label: "Qabul qilindi",    cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" },
+  filling:         { label: "Qabul qilindi",    cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" },
+  booked:          { label: "Tayyorlanmoqda",   cls: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-300" },
+  on_argue:        { label: "Bahsli masala",    cls: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300" },
   client_returned: { label: "Mijoz qaytardi",   cls: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300" },
   not_sold_group:  { label: "Sotilmadi",        cls: "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300" },
-  request:         { label: "Yangi",            cls: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300" },
 };
 
 function CrmStatusBadge({ status }: { status: string | null | undefined }) {

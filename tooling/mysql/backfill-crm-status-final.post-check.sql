@@ -30,7 +30,8 @@ WHERE crmStatus = 'cancelled'
 LIMIT 50;
 
 -- 4) isFinal rows: terminal normalized statuses only (same check as script assertFinalRowsTerminal)
--- Expected: 0 “suspicious” rows after healthy sync + mapping. (Archived is terminal in FINAL_STATUSES.)
+-- Expected: 0 “suspicious” rows after healthy sync + mapping.
+-- NOTE: not_delivered removed 2026-05-15 — Sotuvchi labels it "Qayta ishlash" (retry, MID).
 SELECT COUNT(*) AS suspicious_isFinal_non_terminal
 FROM orders
 WHERE isFinal = 1
@@ -38,11 +39,17 @@ WHERE isFinal = 1
     'delivered',
     'cancelled',
     'returned',
-    'not_delivered',
     'trash',
     'not_sold',
     'archived'
   );
+
+-- 4b) Rows that were INCORRECTLY marked isFinal because old mapping treated
+-- not_delivered as terminal. Run AUTO_FIX_FINAL=1 in the backfill script to unstick.
+SELECT COUNT(*) AS stale_isfinal_not_delivered
+FROM orders
+WHERE isFinal = 1
+  AND crmStatus IN ('not_delivered', 'out_of_stock');
 
 -- 5) Optional: Sotuvchi-oriented “already matches CASE(raw)” (not 100k-accurate without appKey join — use for ballpark only;
 --    keep CASE in sync with shared/crmStatuses mapSotuvchiRawToNormalized).
@@ -55,11 +62,13 @@ WHERE o.isFinal = 1
     CASE
       WHEN LOWER(TRIM(o.crmRawStatus)) IN ('request', 'new') THEN 'new'
       WHEN LOWER(TRIM(o.crmRawStatus)) IN ('accepted', 'filling', 'order') THEN 'contacted'
-      WHEN LOWER(TRIM(o.crmRawStatus)) IN ('sent', 'booked', 'preparing', 'recycling', 'on_argue', 'callback') THEN 'in_progress'
+      WHEN LOWER(TRIM(o.crmRawStatus)) IN ('booked', 'preparing') THEN 'in_progress'
+      WHEN LOWER(TRIM(o.crmRawStatus)) = 'sent' THEN 'sent'
+      WHEN LOWER(TRIM(o.crmRawStatus)) IN ('recycling', 'on_argue', 'callback') THEN 'callback'
       WHEN LOWER(TRIM(o.crmRawStatus)) = 'sold' THEN 'success'
       WHEN LOWER(TRIM(o.crmRawStatus)) = 'delivered' THEN 'delivered'
       WHEN LOWER(TRIM(o.crmRawStatus)) IN ('cancelled', 'canceled') THEN 'cancelled'
-      WHEN LOWER(TRIM(o.crmRawStatus)) = 'product_out_of_stock' THEN 'not_sold'
+      WHEN LOWER(TRIM(o.crmRawStatus)) = 'product_out_of_stock' THEN 'out_of_stock'
       WHEN LOWER(TRIM(o.crmRawStatus)) = 'client_returned' THEN 'returned'
       WHEN LOWER(TRIM(o.crmRawStatus)) = 'not_delivered' THEN 'not_delivered'
       WHEN LOWER(TRIM(o.crmRawStatus)) = 'trash' THEN 'trash'

@@ -18,6 +18,7 @@ export type CrmNormalizedStatus =
   | "cancelled"
   | "returned"
   | "not_delivered"
+  | "out_of_stock"
   | "trash"
   | "not_sold"
   | "archived"
@@ -39,31 +40,53 @@ export const CANONICAL_CRM_STATUS_ORDER = [
   "cancelled",
   "returned",
   "not_delivered",
+  "out_of_stock",
   "trash",
   "not_sold",
   "archived",
 ] as const satisfies readonly CrmNormalizedStatus[];
 
-/** Sotuvchi API raw → normalized (analytics / funnel). */
+/**
+ * Sotuvchi API raw → normalized (analytics / funnel).
+ *
+ * Verified 2026-05-15 against live API (samanhusanov11 webmaster account):
+ *   request                → new          (UI: "Yangi")
+ *   order                  → contacted    (UI: "Qabul qilindi")
+ *   preparing              → in_progress  (UI: "Tayyorlanmoqda")
+ *   sent                   → sent         (UI: "Yuborildi")
+ *   recycling              → callback     (UI: "Qayta qo'ng'iroq")
+ *   not_delivered          → retry        (UI: "Qayta ishlash" — NOT terminal!)
+ *   sold                   → success      (UI: "Sotildi")
+ *   delivered              → delivered    (UI: "Yetkazildi", terminal)
+ *   cancelled              → cancelled    (UI: "Bekor qilindi", terminal)
+ *   product_out_of_stock   → out_of_stock (UI: "Mahsulot yetmadi")
+ *   trash                  → trash        (UI: "Trash", terminal)
+ *
+ * Legacy codes (accepted, filling, booked, callback, on_argue, client_returned,
+ * not_sold, not_sold_group, archived) kept for backward compatibility with
+ * historical DB rows — Sotuvchi v3 API no longer emits them.
+ */
 export function mapSotuvchiRawToNormalized(raw: string): CrmNormalizedStatus | string {
   const k = raw.trim().toLowerCase();
   switch (k) {
     case "request":
     case "new":
       return "new";
+    case "order":
     case "accepted":
     case "filling":
-    case "order":
       return "contacted";
-    case "booked":
     case "preparing":
+    case "booked":
       return "in_progress";
     case "sent":
       return "sent";
     case "recycling":
-    case "on_argue":
     case "callback":
+    case "on_argue":
       return "callback";
+    case "not_delivered":
+      return "not_delivered";
     case "sold":
       return "success";
     case "delivered":
@@ -72,11 +95,9 @@ export function mapSotuvchiRawToNormalized(raw: string): CrmNormalizedStatus | s
     case "canceled":
       return "cancelled";
     case "product_out_of_stock":
-      return "not_sold";
+      return "out_of_stock";
     case "client_returned":
       return "returned";
-    case "not_delivered":
-      return "not_delivered";
     case "trash":
       return "trash";
     case "not_sold":
@@ -115,7 +136,7 @@ export function mapHundredKRawToNormalized(raw: string): CrmNormalizedStatus | s
     case "canceled":
       return "cancelled";
     case "product_out_of_stock":
-      return "not_sold";
+      return "out_of_stock";
     case "client_returned":
       return "returned";
     case "not_delivered":
@@ -136,14 +157,17 @@ export function mapHundredKRawToNormalized(raw: string): CrmNormalizedStatus | s
  * FINAL — terminal; sync skips these rows once is_final is set.
  * Only normalized values (no legacy aliases); old rows re-sync to canonical crmStatus.
  *
- * Note: some CRMs use `archived` as “hidden in UI” only; if you need rare re-validation,
+ * Note: some CRMs use `archived` as "hidden in UI" only; if you need rare re-validation,
  * add a separate slow job (e.g. 24h) — not enabled here.
+ *
+ * `not_delivered` is NOT here: verified 2026-05-15 that Sotuvchi labels it
+ * "Qayta ishlash" (retry) and orders routinely transition from not_delivered
+ * back to sent/delivered. Treating it as terminal would freeze orders mid-flight.
  */
 export const FINAL_STATUSES = new Set<string>([
   "delivered",
   "cancelled",
   "returned",
-  "not_delivered",
   "trash",
   "not_sold",
   "archived",
@@ -158,6 +182,8 @@ export const MID_STATUSES = new Set<string>([
   "sent",
   "callback",
   "success",
+  "not_delivered",
+  "out_of_stock",
   "unknown",
   "booked",
   "preparing",
