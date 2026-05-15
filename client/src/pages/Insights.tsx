@@ -134,8 +134,8 @@ export default function Insights() {
           </div>
         </div>
 
-        {/* KPI strip — 6 tiles incl. CPL (derived from spend + leads) */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {/* KPI strip — 7 tiles incl. CPL + Pipeline (in-flight money) */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
           <KpiTile
             label="Leads"
             value={cur ? formatNumber(cur.leads) : "—"}
@@ -159,6 +159,13 @@ export default function Insights() {
             value={cur ? formatMoney(cur.revenue, currency) : "—"}
             delta={cur && prev ? deltaPct(cur.revenue, prev.revenue) : null}
             loading={overview.isLoading}
+          />
+          <KpiTile
+            label="Pipeline"
+            value={cur ? formatMoney(cur.pipeline, currency) : "—"}
+            delta={cur && prev ? deltaPct(cur.pipeline, prev.pipeline) : null}
+            loading={overview.isLoading}
+            valueClass="text-amber-600 dark:text-amber-400"
           />
           <KpiTile
             label="CPL"
@@ -280,6 +287,7 @@ export default function Insights() {
                       <th className="text-right py-2 px-3">CPL</th>
                       <th className="text-right py-2 px-3">Spend</th>
                       <th className="text-right py-2 px-3">Revenue</th>
+                      <th className="text-right py-2 px-3" title="In-flight money: orders past 'new' but not yet 'delivered'. Not counted in Profit.">Pipeline</th>
                       <th className="text-right py-2 px-3">ROAS</th>
                       <th className="text-right py-2 px-3">Profit</th>
                     </tr>
@@ -298,6 +306,9 @@ export default function Insights() {
                           <td className="text-right py-2 px-3 tabular-nums">{cpl !== null ? formatMoney(cpl, currency) : "—"}</td>
                           <td className="text-right py-2 px-3 tabular-nums">{formatMoney(r.spend, currency)}</td>
                           <td className="text-right py-2 px-3 tabular-nums">{formatMoney(r.revenue, currency)}</td>
+                          <td className="text-right py-2 px-3 tabular-nums text-amber-600 dark:text-amber-400">
+                            {r.pipeline > 0 ? formatMoney(r.pipeline, currency) : "—"}
+                          </td>
                           <td className="text-right py-2 px-3 tabular-nums">
                             {roas !== null ? `${roas.toFixed(2)}×` : "—"}
                           </td>

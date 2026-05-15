@@ -134,6 +134,7 @@ export const insightsRouter = router({
           sent: sql<number>`SUM(${factAttributionDaily.sent})`,
           delivered: sql<number>`SUM(${factAttributionDaily.delivered})`,
           revenue: sql<number>`SUM(${factAttributionDaily.revenueAmount})`,
+          pipeline: sql<number>`SUM(${factAttributionDaily.pipelineAmount})`,
           spend: sql<number>`SUM(${factAttributionDaily.spendAmount})`,
         })
         .from(factAttributionDaily)
@@ -204,6 +205,7 @@ export const insightsRouter = router({
           rejected: sql<number>`SUM(${factAttributionDaily.rejected})`,
           trash: sql<number>`SUM(${factAttributionDaily.trash})`,
           revenue: sql<number>`SUM(${factAttributionDaily.revenueAmount})`,
+          pipeline: sql<number>`SUM(${factAttributionDaily.pipelineAmount})`,
           spend: sql<number>`SUM(${factAttributionDaily.spendAmount})`,
         })
         .from(factAttributionDaily)
@@ -252,6 +254,7 @@ export const insightsRouter = router({
           rejected: Number(r.rejected) || 0,
           trash: Number(r.trash) || 0,
           revenue,
+          pipeline: Number(r.pipeline) || 0,
           spend,
           profit: revenue - spend,
           deliveryRate: sent > 0 ? delivered / sent : 0,
@@ -285,6 +288,10 @@ interface Totals {
   rejected: number;
   trash: number;
   revenue: number;
+  /** In-flight money — sotuvchi has committed pay_for for an order whose
+   *  crmStatus is past `new` but not yet `delivered`. Reported separately
+   *  from `revenue`; intentionally NOT added to `profit`. */
+  pipeline: number;
   spend: number;
   profit: number;
 }
@@ -310,7 +317,7 @@ interface BreakdownRow extends Totals {
 function emptyTotals(): Totals {
   return {
     leads: 0, sent: 0, accepted: 0, delivered: 0, held: 0,
-    rejected: 0, trash: 0, revenue: 0, spend: 0, profit: 0,
+    rejected: 0, trash: 0, revenue: 0, pipeline: 0, spend: 0, profit: 0,
   };
 }
 
@@ -433,6 +440,7 @@ async function sumTotals(
       rejected: sql<number>`COALESCE(SUM(${factAttributionDaily.rejected}), 0)`,
       trash: sql<number>`COALESCE(SUM(${factAttributionDaily.trash}), 0)`,
       revenue: sql<number>`COALESCE(SUM(${factAttributionDaily.revenueAmount}), 0)`,
+      pipeline: sql<number>`COALESCE(SUM(${factAttributionDaily.pipelineAmount}), 0)`,
       spend: sql<number>`COALESCE(SUM(${factAttributionDaily.spendAmount}), 0)`,
     })
     .from(factAttributionDaily)
@@ -454,6 +462,7 @@ async function sumTotals(
     rejected: Number(r?.rejected) || 0,
     trash: Number(r?.trash) || 0,
     revenue,
+    pipeline: Number(r?.pipeline) || 0,
     spend,
     profit: revenue - spend,
   };
