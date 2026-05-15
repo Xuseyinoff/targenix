@@ -134,18 +134,12 @@ export default function Insights() {
           </div>
         </div>
 
-        {/* KPI strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        {/* KPI strip — 6 tiles incl. CPL (derived from spend + leads) */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <KpiTile
             label="Leads"
             value={cur ? formatNumber(cur.leads) : "—"}
             delta={cur && prev ? deltaPct(cur.leads, prev.leads) : null}
-            loading={overview.isLoading}
-          />
-          <KpiTile
-            label="Sent"
-            value={cur ? formatNumber(cur.sent) : "—"}
-            delta={cur && prev ? deltaPct(cur.sent, prev.sent) : null}
             loading={overview.isLoading}
           />
           <KpiTile
@@ -155,9 +149,25 @@ export default function Insights() {
             loading={overview.isLoading}
           />
           <KpiTile
+            label="Spend"
+            value={cur ? formatMoney(cur.spend, currency) : "—"}
+            delta={cur && prev ? deltaPct(cur.spend, prev.spend) : null}
+            loading={overview.isLoading}
+          />
+          <KpiTile
             label="Revenue"
             value={cur ? formatMoney(cur.revenue, currency) : "—"}
             delta={cur && prev ? deltaPct(cur.revenue, prev.revenue) : null}
+            loading={overview.isLoading}
+          />
+          <KpiTile
+            label="CPL"
+            value={cur && cur.leads > 0 ? formatMoney(cur.spend / cur.leads, currency) : "—"}
+            delta={
+              cur && prev && cur.leads > 0 && prev.leads > 0
+                ? deltaPct(cur.spend / cur.leads, prev.spend / prev.leads)
+                : null
+            }
             loading={overview.isLoading}
           />
           <KpiTile
@@ -266,34 +276,40 @@ export default function Insights() {
                     <tr className="border-b">
                       <th className="text-left py-2 pr-3">{GROUP_BY_LABELS[groupBy]}</th>
                       <th className="text-right py-2 px-3">Leads</th>
-                      <th className="text-right py-2 px-3">Sent</th>
-                      <th className="text-right py-2 px-3">Accepted</th>
                       <th className="text-right py-2 px-3">Delivered</th>
-                      <th className="text-right py-2 px-3">Hold</th>
-                      <th className="text-right py-2 px-3">Trash</th>
+                      <th className="text-right py-2 px-3">CPL</th>
+                      <th className="text-right py-2 px-3">Spend</th>
                       <th className="text-right py-2 px-3">Revenue</th>
+                      <th className="text-right py-2 px-3">ROAS</th>
                       <th className="text-right py-2 px-3">Profit</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(breakdown.data?.rows ?? []).map((r) => (
-                      <tr key={r.key} className="border-b last:border-0 hover:bg-muted/40">
-                        <td className="py-2 pr-3 max-w-[280px] truncate" title={r.label}>{r.label}</td>
-                        <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.leads)}</td>
-                        <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.sent)}</td>
-                        <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.accepted)}</td>
-                        <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.delivered)}</td>
-                        <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.held)}</td>
-                        <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.trash)}</td>
-                        <td className="text-right py-2 px-3 tabular-nums">{formatMoney(r.revenue, currency)}</td>
-                        <td className={
-                          "text-right py-2 px-3 tabular-nums " +
-                          (r.profit < 0 ? "text-red-600 dark:text-red-400" : r.profit > 0 ? "text-emerald-600 dark:text-emerald-400" : "")
-                        }>
-                          {formatMoney(r.profit, currency)}
-                        </td>
-                      </tr>
-                    ))}
+                    {(breakdown.data?.rows ?? []).map((r) => {
+                      // Derived metrics. Each is undefined when its
+                      // denominator is 0; the table renders "—" in that case.
+                      const cpl = r.leads > 0 ? r.spend / r.leads : null;
+                      const roas = r.spend > 0 ? r.revenue / r.spend : null;
+                      return (
+                        <tr key={r.key} className="border-b last:border-0 hover:bg-muted/40">
+                          <td className="py-2 pr-3 max-w-[280px] truncate" title={r.label}>{r.label}</td>
+                          <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.leads)}</td>
+                          <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.delivered)}</td>
+                          <td className="text-right py-2 px-3 tabular-nums">{cpl !== null ? formatMoney(cpl, currency) : "—"}</td>
+                          <td className="text-right py-2 px-3 tabular-nums">{formatMoney(r.spend, currency)}</td>
+                          <td className="text-right py-2 px-3 tabular-nums">{formatMoney(r.revenue, currency)}</td>
+                          <td className="text-right py-2 px-3 tabular-nums">
+                            {roas !== null ? `${roas.toFixed(2)}×` : "—"}
+                          </td>
+                          <td className={
+                            "text-right py-2 px-3 tabular-nums " +
+                            (r.profit < 0 ? "text-red-600 dark:text-red-400" : r.profit > 0 ? "text-emerald-600 dark:text-emerald-400" : "")
+                          }>
+                            {formatMoney(r.profit, currency)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
