@@ -774,10 +774,17 @@ export const orders = mysqlTable("orders", {
   offerId: varchar("offerId", { length: 64 }),
   /** Insights: payout per delivered order, in the SMALLEST unit of the
    *  source platform's currency (sotuvchi today: integer UZS so'm, captured
-   *  from the /getOrderDetails `order.pay_for` field). NULL until the CRM
-   *  sync adapter is widened in Phase 3. Revenue analytics
-   *  use SUM(payoutAmount WHERE crmStatus='delivered'). */
+   *  from the /getOrderDetails `order.pay_for` field). NULL when the CRM
+   *  sync hasn't seen this order in delivered state yet. Revenue analytics
+   *  use SUM(payoutAmount WHERE crmStatus='delivered' AND payoutCurrency
+   *  matches the user's baseCurrency). */
   payoutAmount: int("payoutAmount"),
+  /** ISO-4217 currency code of `payoutAmount`. 'UZS' for sotuvchi orders;
+   *  set by the CRM sync adapter at the same time as payoutAmount. NULL
+   *  when payoutAmount is NULL. Drives the cross-currency safety check in
+   *  the rollup worker — revenue is only summed when this matches the
+   *  user's baseCurrency (v1 has no FX conversion). */
+  payoutCurrency: varchar("payoutCurrency", { length: 8 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({

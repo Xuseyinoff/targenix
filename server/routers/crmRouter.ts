@@ -238,12 +238,23 @@ export async function performCrmSync(
       consecutiveHits.set(plat, 0);
       const terminal = isFinalStatus(statusResult.status);
       const statusChanged = statusResult.status !== row.crmStatus;
+      // Phase 3: capture payout when the adapter surfaces it (sotuvchi:
+      // order.pay_for). Only write when present; null leaves any prior
+      // captured value untouched.
+      const payoutPatch =
+        statusResult.payoutAmount != null && statusResult.payoutCurrency
+          ? {
+              payoutAmount: statusResult.payoutAmount,
+              payoutCurrency: statusResult.payoutCurrency,
+            }
+          : {};
       await db!.update(orders)
         .set({
           crmStatus: statusResult.status,
           crmRawStatus: statusResult.rawStatus,
           crmSyncedAt: new Date(),
           ...(statusChanged ? { isFinal: terminal } : {}),
+          ...payoutPatch,
         })
         .where(eq(orders.id, row.orderId));
       if (statusChanged) {

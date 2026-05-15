@@ -17,6 +17,14 @@ export interface OrderStatusResult {
   externalId: string;
   status: string;
   rawStatus: string;
+  /** Payout amount in the SMALLEST unit of `payoutCurrency`. Captured when
+   *  the platform's status response includes it (sotuvchi → order.pay_for,
+   *  integer UZS so'm). null when the platform doesn't expose it or the
+   *  order isn't in a payout-eligible state. */
+  payoutAmount?: number | null;
+  /** ISO-4217 currency of payoutAmount. 'UZS' for sotuvchi; null when
+   *  payoutAmount is null. */
+  payoutCurrency?: string | null;
 }
 
 export interface OrderPageItem {
@@ -93,11 +101,24 @@ async function sotuvchiGetOrderStatus(
     timeout: 10_000,
   });
 
-  const raw: string = res.data?.order?.status ?? res.data?.data?.status ?? res.data?.status ?? "";
+  const order = res.data?.order ?? res.data?.data ?? res.data ?? {};
+  const raw: string = order?.status ?? "";
+
+  // pay_for is sotuvchi's per-order payout in UZS so'm (verified via probe
+  // tooling/probe-sotuvchi-payout.ts on 2026-05-15). Integer on the wire —
+  // UZS has no fractional subunit in practice. Null/missing for non-payable
+  // states (cancelled, trash, etc.); we capture whatever the platform
+  // reports and let the rollup filter by delivered status downstream.
+  const payRaw = order?.pay_for;
+  const payNum = typeof payRaw === "number" ? payRaw : parseInt(String(payRaw ?? ""), 10);
+  const payoutAmount = Number.isFinite(payNum) && payNum > 0 ? Math.round(payNum) : null;
+
   return {
     externalId: orderId,
     status: mapSotuvchiRawToNormalized(raw),
     rawStatus: raw,
+    payoutAmount,
+    payoutCurrency: payoutAmount !== null ? "UZS" : null,
   };
 }
 
@@ -170,10 +191,16 @@ async function hundredKGetOrderStatus(
     res.data?.status ??
     "";
 
+  // 100k.uz response shape not yet probed for payout — Phase 3.1 once a
+  // delivered 100k order is available to inspect. Returning null (rather
+  // than omitting the field) keeps the downstream sync from confusing
+  // "not yet checked" with "checked and absent" when destructuring.
   return {
     externalId: orderId,
     status: mapHundredKRawToNormalized(raw),
     rawStatus: raw,
+    payoutAmount: null,
+    payoutCurrency: null,
   };
 }
 

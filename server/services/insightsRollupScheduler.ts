@@ -154,7 +154,9 @@ async function rebuildOneDay(
           END,
           0
         )                                                                                             AS spendAmount,
-        COALESCE(SUM(CASE WHEN o.crmStatus = 'delivered' AND o.payoutAmount IS NOT NULL
+        COALESCE(SUM(CASE WHEN o.crmStatus = 'delivered'
+                            AND o.payoutAmount IS NOT NULL
+                            AND o.payoutCurrency = ${currency}
                            THEN o.payoutAmount ELSE 0 END), 0)                                        AS revenueAmount,
 
         ${currency}                                                                                   AS currency
