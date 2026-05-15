@@ -83,6 +83,20 @@ async function rebuildOneDay(
   date: string,
   currency: string,
 ): Promise<void> {
+  // Phase 4: pre-fetch the FX rate for this day. We use "most recent rate
+  // on or before `date`" so weekends/holidays inherit the prior business
+  // day's CBU publish (CBU does the same fallback on its own endpoint).
+  // null means we have no rate yet → cross-currency CASE branches return 0,
+  // which matches the v1 "no FX = skip" safety guard.
+  const fxRowRaw = await db.execute(sql`
+    SELECT uzs_per_usd FROM fx_rates
+    WHERE \`date\` <= ${date}
+    ORDER BY \`date\` DESC
+    LIMIT 1
+  `);
+  const fxList = ((fxRowRaw as unknown as [Array<{ uzs_per_usd?: string }>, unknown])?.[0] ?? []) as Array<{ uzs_per_usd?: string }>;
+  const fxRate = fxList[0]?.uzs_per_usd ?? null;
+
   await db.transaction(async (tx) => {
     // Wipe today's slate.
     await tx.execute(sql`
@@ -109,6 +123,19 @@ async function rebuildOneDay(
     //     account's currency differs from the user's reporting currency
     //     (v1: no FX). Fan-out leads can slightly over-attribute spend
     //     across offer slices — same caveat that affects leads counters.
+    // Phase 4 rollup SQL changes vs Phase 2:
+    //   • leads counter: COUNT(DISTINCT) now gated on o.status='SENT' so
+    //     leads that never made it past dispatch don't inflate the funnel
+    //     top. The "real leads we sent to the CRM" definition.
+    //   • pipelineAmount: new money column summing sotuvchi pay_for for
+    //     orders past `new` but not yet `delivered` (contacted /
+    //     in_progress / sent / callback / success). Surfaces on the UI
+    //     as "in-flight" revenue; intentionally excluded from Profit.
+    //   • FX conversion: revenueAmount, spendAmount and pipelineAmount now
+    //     pass through a same-currency / UZS→USD / USD→UZS branch each.
+    //     The fxRate variable is pre-fetched from fx_rates above; null
+    //     means "no rate on file" → the conversion branches return 0,
+    //     matching the v1 "no FX = skip" safety guard.
     await tx.execute(sql`
       INSERT INTO fact_attribution_daily (
         userId, date,
@@ -116,7 +143,7 @@ async function rebuildOneDay(
         leads, enriched, enrichErrors,
         sent, failed,
         accepted, delivered, held, rejected, trash,
-        spendAmount, revenueAmount, currency
+        spendAmount, revenueAmount, pipelineAmount, currency
       )
       SELECT
         l.userId,
@@ -130,7 +157,9 @@ async function rebuildOneDay(
         COALESCE(l.formId,            '')                    AS formId,
         COALESCE(o.offerId,           '')                    AS offerId,
 
-        COUNT(DISTINCT l.id)                                                                          AS leads,
+        -- Phase 4: leads = only those that made it to SENT. PENDING /
+        -- FAILED dispatches don't count toward "leads received by the CRM".
+        COUNT(DISTINCT CASE WHEN o.status = 'SENT' THEN l.id END)                                     AS leads,
         COUNT(DISTINCT CASE WHEN l.dataStatus = 'ENRICHED' THEN l.id END)                             AS enriched,
         COUNT(DISTINCT CASE WHEN l.dataStatus = 'ERROR'    THEN l.id END)                             AS enrichErrors,
 
@@ -143,21 +172,58 @@ async function rebuildOneDay(
         SUM(CASE WHEN o.crmStatus IN ('cancelled','returned','not_delivered','not_sold') THEN 1 ELSE 0 END) AS rejected,
         SUM(CASE WHEN o.crmStatus = 'trash'                                      THEN 1 ELSE 0 END)   AS trash,
 
-        -- Proportional spend allocation. cs.spend & clt.total_leads are
-        -- constants across the GROUP BY rows for the same campaign+date,
-        -- so the per-row share is exact for non-fan-out leads.
+        -- Phase 4: proportional spend allocation WITH FX conversion. The
+        -- conversion happens BEFORE the per-row allocation, then the
+        -- allocation ratio splits the converted spend across the rollup
+        -- rows under that campaign+date. Same-currency case is the fast
+        -- path (no math). Cross-currency rounds to the target currency's
+        -- smallest unit.
         COALESCE(
-          CASE
-            WHEN cs.currency = ${currency} AND clt.totalLeads > 0
-            THEN ROUND(CAST(cs.spend AS UNSIGNED) * COUNT(DISTINCT l.id) / clt.totalLeads)
-            ELSE 0
-          END,
+          ROUND(
+            (CASE
+               WHEN cs.currency = ${currency} THEN CAST(cs.spend AS UNSIGNED)
+               WHEN cs.currency = 'UZS' AND ${currency} = 'USD' AND ${fxRate} IS NOT NULL
+                 THEN CAST(cs.spend AS UNSIGNED) * 100.0 / ${fxRate}
+               WHEN cs.currency = 'USD' AND ${currency} = 'UZS' AND ${fxRate} IS NOT NULL
+                 THEN CAST(cs.spend AS UNSIGNED) / 100.0 * ${fxRate}
+               ELSE NULL
+             END)
+            * COUNT(DISTINCT l.id) / NULLIF(clt.totalLeads, 0)
+          ),
           0
         )                                                                                             AS spendAmount,
-        COALESCE(SUM(CASE WHEN o.crmStatus = 'delivered'
-                            AND o.payoutAmount IS NOT NULL
-                            AND o.payoutCurrency = ${currency}
-                           THEN o.payoutAmount ELSE 0 END), 0)                                        AS revenueAmount,
+
+        -- Phase 4: revenue = SUM(payout) for delivered orders, with FX.
+        COALESCE(SUM(
+          CASE WHEN o.crmStatus = 'delivered' AND o.payoutAmount IS NOT NULL THEN
+            CASE
+              WHEN o.payoutCurrency = ${currency} THEN o.payoutAmount
+              WHEN o.payoutCurrency = 'UZS' AND ${currency} = 'USD' AND ${fxRate} IS NOT NULL
+                THEN ROUND(o.payoutAmount * 100.0 / ${fxRate})
+              WHEN o.payoutCurrency = 'USD' AND ${currency} = 'UZS' AND ${fxRate} IS NOT NULL
+                THEN ROUND(o.payoutAmount / 100.0 * ${fxRate})
+              ELSE 0
+            END
+          ELSE 0 END
+        ), 0)                                                                                         AS revenueAmount,
+
+        -- Phase 4: pipelineAmount = SUM(payout) for in-flight orders, with FX.
+        -- Same FX logic as revenue. Status set is "past new, not yet
+        -- delivered" — these have a committed pay_for but haven't fully
+        -- converted to cash. Excluded from Profit by design.
+        COALESCE(SUM(
+          CASE WHEN o.crmStatus IN ('contacted','in_progress','sent','callback','success')
+                AND o.payoutAmount IS NOT NULL THEN
+            CASE
+              WHEN o.payoutCurrency = ${currency} THEN o.payoutAmount
+              WHEN o.payoutCurrency = 'UZS' AND ${currency} = 'USD' AND ${fxRate} IS NOT NULL
+                THEN ROUND(o.payoutAmount * 100.0 / ${fxRate})
+              WHEN o.payoutCurrency = 'USD' AND ${currency} = 'UZS' AND ${fxRate} IS NOT NULL
+                THEN ROUND(o.payoutAmount / 100.0 * ${fxRate})
+              ELSE 0
+            END
+          ELSE 0 END
+        ), 0)                                                                                         AS pipelineAmount,
 
         ${currency}                                                                                   AS currency
       FROM leads l
