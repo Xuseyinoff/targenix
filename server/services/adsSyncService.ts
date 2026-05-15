@@ -52,6 +52,9 @@ interface RawAdAccount {
   balance: string;
   amount_spent: string;
   min_daily_budget: string;
+  /** Business Manager that owns the ad account. Absent for personal ad
+   *  accounts that aren't linked to a BM. Captured for Insights grouping. */
+  business?: { id: string; name?: string };
 }
 
 interface RawCampaign {
@@ -131,7 +134,7 @@ const appsecretProof = generateAppSecretProof(token);
     const res = await graphMarketingFormPost<GraphDataList<RawAdAccount>>(
       "/me/adaccounts",
       {
-        fields: "id,name,account_id,account_status,currency,timezone_name,balance,amount_spent,min_daily_budget",
+        fields: "id,name,account_id,account_status,currency,timezone_name,balance,amount_spent,min_daily_budget,business{id,name}",
         access_token: token,
         appsecret_proof: appsecretProof,
         limit: "200",
@@ -149,6 +152,11 @@ const appsecretProof = generateAppSecretProof(token);
   }
 
   for (const raw of adAccountsList) {
+    // BM is absent for personal ad accounts not linked to a Business Manager.
+    // Trim to column lengths so a long custom BM name doesn't blow up the upsert.
+    const bmId = raw.business?.id ? String(raw.business.id).slice(0, 64) : null;
+    const bmName = raw.business?.name ? String(raw.business.name).slice(0, 255) : null;
+
     await db
       .insert(adAccounts)
       .values({
@@ -163,6 +171,8 @@ const appsecretProof = generateAppSecretProof(token);
         balance: raw.balance ?? "0",
         amountSpent: raw.amount_spent ?? "0",
         minDailyBudget: raw.min_daily_budget ?? "0",
+        bmId,
+        bmName,
         lastSyncedAt: now,
       })
       .onDuplicateKeyUpdate({
@@ -175,6 +185,8 @@ const appsecretProof = generateAppSecretProof(token);
           balance: raw.balance ?? "0",
           amountSpent: raw.amount_spent ?? "0",
           minDailyBudget: raw.min_daily_budget ?? "0",
+          bmId,
+          bmName,
           lastSyncedAt: now,
         },
       });
