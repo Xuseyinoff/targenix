@@ -346,16 +346,26 @@ function KpiTile({
   loading: boolean;
   valueClass?: string;
 }) {
+  // text-2xl + p-4 + 7-column grid + currency strings like "$-3,281.66" was
+  // overflowing the card edge. Shrink font at lg (where 7 cards squeeze the
+  // tightest), trim padding, and truncate as a last-resort fallback with a
+  // tooltip preserving the full value.
   return (
     <Card>
-      <CardContent className="p-4">
-        <div className="text-xs text-muted-foreground">{label}</div>
-        <div className={"mt-1 text-2xl font-semibold tabular-nums " + (valueClass ?? "")}>
+      <CardContent className="p-3">
+        <div className="text-xs text-muted-foreground truncate">{label}</div>
+        <div
+          title={loading || typeof value !== "string" ? undefined : value}
+          className={
+            "mt-1 text-xl lg:text-lg xl:text-xl font-semibold tabular-nums truncate " +
+            (valueClass ?? "")
+          }
+        >
           {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : value}
         </div>
         {delta !== null && !loading && (
           <div className={
-            "mt-1 inline-flex items-center gap-0.5 text-xs " +
+            "mt-1 inline-flex items-center gap-0.5 text-[10px] lg:text-[11px] " +
             (delta > 0
               ? "text-emerald-600 dark:text-emerald-400"
               : delta < 0
@@ -364,7 +374,7 @@ function KpiTile({
           }>
             {delta > 0 ? <ArrowUp className="h-3 w-3" /> : delta < 0 ? <ArrowDown className="h-3 w-3" /> : null}
             {Math.abs(delta).toFixed(1)}%
-            <span className="text-muted-foreground ml-1">vs prev</span>
+            <span className="text-muted-foreground ml-1 hidden xl:inline">vs prev</span>
           </div>
         )}
       </CardContent>
