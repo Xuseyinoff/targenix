@@ -357,7 +357,7 @@ function KpiTile({
         <div
           title={loading || typeof value !== "string" ? undefined : value}
           className={
-            "mt-1 text-xl lg:text-lg xl:text-xl font-semibold tabular-nums truncate " +
+            "mt-1 text-lg lg:text-base xl:text-lg font-semibold tabular-nums truncate " +
             (valueClass ?? "")
           }
         >
