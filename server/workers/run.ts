@@ -28,6 +28,7 @@ import { startLeadPollingScheduler } from "../services/leadPollingService";
 import { startTriggerScheduler } from "../services/triggerScheduler";
 import { startOAuthStateCleanupScheduler } from "../services/oauthStateCleanupScheduler";
 import { startMetricSnapshotScheduler } from "../services/metricSnapshotScheduler";
+import { startInsightsRollupScheduler } from "../services/insightsRollupScheduler";
 import { getDb } from "../db";
 
 if (!process.env.REDIS_URL) {
@@ -79,6 +80,10 @@ async function boot() {
   // Roadmap #7 phase C: persist failed_orders / oauth_errors / retry_queue
   // / failed_orders_db every 5 min so AdminMetrics has graphable history.
   startMetricSnapshotScheduler();
+  // Insights Phase 1: rebuild fact_attribution_daily every 15 min over a
+  // 7-day window. Reads leads/orders/campaign_insights → writes only the
+  // rollup table; never modifies the source tables.
+  startInsightsRollupScheduler();
 
   console.log("[Worker] All systems running. Waiting for jobs...");
 

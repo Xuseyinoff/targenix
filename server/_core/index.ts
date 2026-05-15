@@ -409,6 +409,7 @@ async function startServer() {
     const { startLeadPollingScheduler } = await import("../services/leadPollingService");
     const { startOAuthStateCleanupScheduler } = await import("../services/oauthStateCleanupScheduler");
     const { startMetricSnapshotScheduler } = await import("../services/metricSnapshotScheduler");
+    const { startInsightsRollupScheduler } = await import("../services/insightsRollupScheduler");
     startLeadWorker();
     startRetryScheduler();
     startLogRetentionScheduler();
@@ -419,6 +420,7 @@ async function startServer() {
     startLeadPollingScheduler();
     startOAuthStateCleanupScheduler();
     startMetricSnapshotScheduler();
+    startInsightsRollupScheduler();
     console.log("[Server] Embedded worker + schedulers started.");
   }
 
