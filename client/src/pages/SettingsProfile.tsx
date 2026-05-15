@@ -18,8 +18,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "sonner";
-import { Loader2, Lock, Mail, Trash2, User } from "lucide-react";
+import { Coins, Loader2, Lock, Mail, Trash2, User } from "lucide-react";
 import { useT } from "@/hooks/useT";
 
 export default function SettingsProfile() {
@@ -33,11 +40,17 @@ export default function SettingsProfile() {
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  // Reporting currency for the Insights dashboards. Locally tracked so the
+  // dropdown updates immediately on change; persisted via updateProfile.
+  const [baseCurrency, setBaseCurrency] = useState<"USD" | "UZS">("USD");
 
   useEffect(() => {
     setName(me?.name ?? "");
     setEmail(me?.email ?? "");
-  }, [me?.name, me?.email]);
+    if (me?.baseCurrency === "UZS" || me?.baseCurrency === "USD") {
+      setBaseCurrency(me.baseCurrency);
+    }
+  }, [me?.name, me?.email, me?.baseCurrency]);
 
   const updateProfileMutation = trpc.auth.updateProfile.useMutation({
     onSuccess: async () => {
@@ -186,6 +199,47 @@ export default function SettingsProfile() {
             >
               {changePasswordMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {t("profile.updatePassword")}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Coins className="h-4 w-4" />
+            Reporting currency
+          </CardTitle>
+          <CardDescription>
+            Used to display revenue, spend, and profit on the Insights pages.
+            Switching only affects how numbers are formatted — historical
+            rollup rows keep the currency they were written in.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Select
+            value={baseCurrency}
+            onValueChange={(v) => setBaseCurrency(v as "USD" | "UZS")}
+          >
+            <SelectTrigger className="w-full sm:w-[240px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="USD">USD — US Dollar</SelectItem>
+              <SelectItem value="UZS">UZS — O‘zbek so‘mi</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="flex justify-end">
+            <Button
+              variant="outline"
+              onClick={() => updateProfileMutation.mutate({ baseCurrency })}
+              disabled={
+                updateProfileMutation.isPending ||
+                baseCurrency === (me?.baseCurrency ?? "USD")
+              }
+            >
+              {updateProfileMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Save currency
             </Button>
           </div>
         </CardContent>

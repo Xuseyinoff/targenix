@@ -96,6 +96,7 @@ export const authRouter = router({
       email: u.email,
       loginMethod: u.loginMethod,
       role: u.role,
+      baseCurrency: u.baseCurrency,
       createdAt: u.createdAt,
     };
   }),
@@ -211,12 +212,15 @@ export const authRouter = router({
       return { success: true, email: normalizedEmail, name: user.name };
     }),
 
-  // ── Update Profile (Name / Email) ────────────────────────────────────────────
+  // ── Update Profile (Name / Email / Base currency) ────────────────────────────
   updateProfile: protectedProcedure
     .input(
       z.object({
         name: z.string().trim().min(1).max(128).optional(),
         email: z.string().trim().email().optional(),
+        // Insights reporting currency. Constrained to the two values v1
+        // supports — every other currency lives in v2 with FX conversion.
+        baseCurrency: z.enum(["USD", "UZS"]).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -225,8 +229,9 @@ export const authRouter = router({
 
       const nextName = input.name !== undefined ? input.name.trim() : undefined;
       const nextEmail = input.email !== undefined ? input.email.toLowerCase().trim() : undefined;
+      const nextBaseCurrency = input.baseCurrency;
 
-      if (nextName === undefined && nextEmail === undefined) {
+      if (nextName === undefined && nextEmail === undefined && nextBaseCurrency === undefined) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "No changes provided." });
       }
 
@@ -253,6 +258,10 @@ export const authRouter = router({
 
       if (nextName !== undefined) {
         await db.update(users).set({ name: nextName }).where(eq(users.id, user.id));
+      }
+
+      if (nextBaseCurrency !== undefined && nextBaseCurrency !== user.baseCurrency) {
+        await db.update(users).set({ baseCurrency: nextBaseCurrency }).where(eq(users.id, user.id));
       }
 
       // Re-issue session cookie to reflect updated openId/name
