@@ -772,6 +772,12 @@ export const orders = mysqlTable("orders", {
    *  has to reach into JSON at query time. NULL on legacy rows / destinations
    *  with no offer variable. */
   offerId: varchar("offerId", { length: 64 }),
+  /** Insights: offer display name captured from the CRM platform's
+   *  /getOrders response (sotuvchi: `offer.name`). Denormalised so the
+   *  Insights breakdown can render "Yurak ursa bas" instead of the raw
+   *  numeric offer id. Captured at sync time — historical names stay even
+   *  if sotuvchi later renames the offer. Phase 4 follow-up (migration 0090). */
+  offerName: varchar("offerName", { length: 255 }),
   /** Insights: payout per delivered order, in the SMALLEST unit of the
    *  source platform's currency (sotuvchi today: integer UZS so'm, captured
    *  from the /getOrderDetails `order.pay_for` field). NULL when the CRM

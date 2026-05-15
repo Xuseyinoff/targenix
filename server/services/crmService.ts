@@ -31,6 +31,21 @@ export interface OrderPageItem {
   id: number;
   status: string;
   created_at: string;
+  /** Per-order payout in the platform's currency (sotuvchi: integer UZS
+   *  so'm from `pay_for`). Captured directly from /getOrders so the
+   *  pagination sync can populate Pipeline / Revenue without a
+   *  separate per-order /getOrderDetails call. Null when the row didn't
+   *  surface it. */
+  payoutAmount?: number | null;
+  payoutCurrency?: string | null;
+  /** Sotuvchi's internal offer id (`offer_id`). Useful for label
+   *  resolution when our local `orders.offerId` snapshot is missing
+   *  (e.g. legacy orders that pre-date the offer-capture wire-up). */
+  offerId?: string | null;
+  /** Human-readable offer name (`offer.name` on sotuvchi's response).
+   *  Captured so the Insights UI can render real names instead of raw
+   *  numeric ids in the offer breakdown. */
+  offerName?: string | null;
 }
 
 export interface OrderPageResult {
@@ -134,11 +149,31 @@ export async function sotuvchiGetOrdersPage(
   });
   const o = res.data?.orders;
   return {
-    data: (o?.data ?? []).map((item: Record<string, unknown>) => ({
-      id: Number(item.id),
-      status: String(item.status ?? ""),
-      created_at: String(item.created_at ?? ""),
-    })),
+    data: (o?.data ?? []).map((item: Record<string, unknown>) => {
+      // pay_for arrives as a JSON number (probe 2026-05-15). UZS has no
+      // fractional subunit in practice, so we just round and clamp.
+      const rawPay = item.pay_for;
+      const payNum = typeof rawPay === "number" ? rawPay : parseInt(String(rawPay ?? ""), 10);
+      const payoutAmount = Number.isFinite(payNum) && payNum > 0 ? Math.round(payNum) : null;
+      const offerId = item.offer_id != null ? String(item.offer_id) : null;
+      // `offer.name` is nested under the `offer` object on the /getOrders
+      // response (probe 2026-05-15). Truncate to the column width so a
+      // long custom name can't break the UPDATE.
+      const offerObj = item.offer as { name?: unknown } | undefined;
+      const offerNameRaw = offerObj?.name;
+      const offerName = typeof offerNameRaw === "string" && offerNameRaw.trim() !== ""
+        ? offerNameRaw.slice(0, 255)
+        : null;
+      return {
+        id: Number(item.id),
+        status: String(item.status ?? ""),
+        created_at: String(item.created_at ?? ""),
+        payoutAmount,
+        payoutCurrency: payoutAmount !== null ? "UZS" : null,
+        offerId,
+        offerName,
+      };
+    }),
     current_page: Number(o?.current_page ?? page),
     last_page: Number(o?.last_page ?? page),
     total: Number(o?.total ?? 0),

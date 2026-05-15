@@ -515,12 +515,37 @@ export async function performPaginationSync(): Promise<SyncResult> {
         const normalized = mapSotuvchiRawToNormalized(so.status);
         const terminal = isFinalStatus(normalized);
         const statusChanged = normalized !== match.crmStatus;
+        // Phase 4 follow-up: /getOrders now surfaces pay_for + offer.id +
+        // offer.name per order (verified via probe 2026-05-15). Capture
+        // them here so the pagination sync — which already touches every
+        // non-final order every 5 min — fills Pipeline / Revenue and the
+        // offer-name label without a separate per-order round-trip.
+        // ~85 pagination calls cover ~17k in-flight orders vs. ~17k
+        // individual calls before.
+        //
+        // offerName always written when present (sotuvchi is the source of
+        // truth for the display label).
+        //
+        // offerId from sotuvchi is the same numeric id we snapshot at order
+        // creation from `destination.templateConfig.variables.offer_id`, so
+        // we just overwrite — keeps the column consistent for legacy rows
+        // that pre-date the snapshot wire-up. Drop the patch if sotuvchi
+        // didn't surface one (rare).
+        const payoutPatch =
+          so.payoutAmount != null && so.payoutCurrency
+            ? { payoutAmount: so.payoutAmount, payoutCurrency: so.payoutCurrency }
+            : {};
+        const offerNamePatch = so.offerName ? { offerName: so.offerName } : {};
+        const offerIdPatch = so.offerId ? { offerId: so.offerId } : {};
         await db.update(orders)
           .set({
             crmStatus: normalized,
             crmRawStatus: so.status,
             crmSyncedAt: new Date(),
             ...(statusChanged ? { isFinal: terminal } : {}),
+            ...payoutPatch,
+            ...offerNamePatch,
+            ...offerIdPatch,
           })
           .where(eq(orders.id, match.orderId));
         if (statusChanged) {
