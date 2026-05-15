@@ -119,7 +119,7 @@ export async function sendTelegramMessage(
       await log.error("TELEGRAM", `sendMessage failed: ${data.description}`, { chatId });
       return false;
     } catch (err) {
-      await log.error("TELEGRAM", "sendMessage threw", { chatId, error: String(err) });
+      await log.error("TELEGRAM", "sendMessage threw", { chatId, error: formatError(err) });
       return false;
     }
   }
@@ -160,7 +160,7 @@ export async function registerTelegramWebhook(appUrl: string): Promise<void> {
       allowedUpdates: [...allowedUpdates],
     });
   } catch (err) {
-    await log.error("TELEGRAM", "setWebhook threw", { error: String(err) });
+    await log.error("TELEGRAM", "setWebhook threw", { error: formatError(err) });
   }
 }
 
@@ -324,7 +324,7 @@ async function handleMyChatMember(evt: TelegramChatMemberUpdated): Promise<void>
         .limit(1);
       claimedByUserId = owner?.id ?? null;
     } catch (err) {
-      await log.warn("TELEGRAM", "Failed to resolve chat owner", { chatId, error: String(err) });
+      await log.warn("TELEGRAM", "Failed to resolve chat owner", { chatId, error: formatError(err) });
     }
   }
 
@@ -369,7 +369,7 @@ async function handleMyChatMember(evt: TelegramChatMemberUpdated): Promise<void>
       });
     }
   } catch (err) {
-    await log.warn("TELEGRAM", "Failed to upsert pending chat", { chatId, error: String(err) });
+    await log.warn("TELEGRAM", "Failed to upsert pending chat", { chatId, error: formatError(err) });
   }
 
   // If the bot was removed/left/kicked, don't message.
@@ -410,7 +410,7 @@ async function handleMyChatMember(evt: TelegramChatMemberUpdated): Promise<void>
       } catch (err) {
         // Unique-constraint race or DB error — stay quiet; the website's
         // manual "enter Chat ID" path still works.
-        await log.warn("TELEGRAM", "Auto-link delivery chat failed", { chatId, error: String(err) });
+        await log.warn("TELEGRAM", "Auto-link delivery chat failed", { chatId, error: formatError(err) });
       }
 
       if (statusChanged) {
@@ -456,6 +456,26 @@ async function handleMyChatMember(evt: TelegramChatMemberUpdated): Promise<void>
       `👋 Salom! Bot qo‘shildi.\n\n⚠️ Meni <b>administrator</b> qiling.\n\nAgar kanal Targenix.uz saytida avtomatik ko‘rinmasa, quyidagi Chat ID ni <b>Settings → Telegram</b> bo‘limiga kiriting:\n<b>Chat ID:</b> <code>${escapeHtml(chatId)}</code>`,
       "HTML",
     );
+  }
+}
+
+/**
+ * Stringify an unknown error for log meta. `formatError(err)` on a plain object
+ * (e.g. some DB-driver / fetch rejections that aren't `Error` instances)
+ * returns the literal `"[object Object]"`, which is what was showing up in
+ * Railway logs. This helper falls back to JSON for non-Error values so the
+ * actual fields (code, errno, message, etc.) survive into the log entry.
+ */
+function formatError(err: unknown): string {
+  if (err instanceof Error) {
+    return err.stack ?? `${err.name}: ${err.message}`;
+  }
+  if (typeof err === "string") return err;
+  if (err == null) return formatError(err);
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return Object.prototype.toString.call(err);
   }
 }
 
