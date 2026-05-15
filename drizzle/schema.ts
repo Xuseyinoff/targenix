@@ -1,5 +1,6 @@
 import {
   boolean,
+  date,
   index,
   int,
   json,
@@ -39,6 +40,11 @@ export const users = mysqlTable("users", {
     .notNull(),
   /** Default DELIVERY chat id used when mode = ALL. */
   telegramDestinationDefaultChatId: varchar("telegramDestinationDefaultChatId", { length: 64 }),
+  /** Reporting currency for the Insights dashboards (ISO-4217). UZS or USD
+   *  today; v2 may add more. Rollup rows snapshot this value at write time so
+   *  a user changing their base currency later does not retroactively
+   *  re-interpret historical numbers. */
+  baseCurrency: varchar("baseCurrency", { length: 8 }).default("USD").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -761,6 +767,17 @@ export const orders = mysqlTable("orders", {
   crmSyncedAt: timestamp("crmSyncedAt"),
   /** CRM: true once crmStatus reaches a terminal state — sync is skipped for these rows */
   isFinal: boolean("isFinal").default(false).notNull(),
+  /** Insights: snapshot of the destination's offer_id at order creation time
+   *  (read from destination.templateConfig). Denormalised so analytics never
+   *  has to reach into JSON at query time. NULL on legacy rows / destinations
+   *  with no offer variable. */
+  offerId: varchar("offerId", { length: 64 }),
+  /** Insights: payout per delivered order, in the SMALLEST unit of the
+   *  source platform's currency (sotuvchi today: integer UZS so'm, captured
+   *  from the /getOrderDetails `order.pay_for` field). NULL until the CRM
+   *  sync adapter is widened in Phase 3. Revenue analytics
+   *  use SUM(payoutAmount WHERE crmStatus='delivered'). */
+  payoutAmount: int("payoutAmount"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
@@ -799,6 +816,14 @@ export const orders = mysqlTable("orders", {
     t.userId,
     t.leadId,
     t.attempts,
+  ),
+  /** Insights drill-down: per-offer time-series and "top offers" queries
+   *  scan (userId, offerId, createdAt). Lets the rollup worker pull a
+   *  single user's orders for one offer over the rebuild window cheaply. */
+  idxUserOfferCreated: index("idx_orders_user_offer_created").on(
+    t.userId,
+    t.offerId,
+    t.createdAt,
   ),
 }));
 
@@ -921,6 +946,12 @@ export const adAccounts = mysqlTable("ad_accounts", {
   /** Total lifetime spend in cents as string */
   amountSpent: varchar("amountSpent", { length: 32 }).notNull().default("0"),
   minDailyBudget: varchar("minDailyBudget", { length: 32 }).notNull().default("0"),
+  /** Business Manager ID this ad account belongs to. Pulled via Graph
+   *  `?fields=business{id,name}`. NULL = no BM (personal ad account) OR
+   *  not yet back-filled. Phase 1 Insights uses this for top-level
+   *  grouping in the FB-attribution dropdown. */
+  bmId: varchar("bmId", { length: 64 }),
+  bmName: varchar("bmName", { length: 255 }),
   /** When this record was last synced from Facebook */
   lastSyncedAt: timestamp("lastSyncedAt"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -928,6 +959,8 @@ export const adAccounts = mysqlTable("ad_accounts", {
 }, (t) => ({
   uqUserAccount: uniqueIndex("uq_ad_accounts_user_account").on(t.userId, t.fbAdAccountId),
   idxFbAccount: index("idx_ad_accounts_fb_account").on(t.facebookAccountId),
+  /** Insights drill-down: "all ad accounts under BM X". */
+  idxBmId: index("idx_ad_accounts_bm_id").on(t.bmId),
 }));
 
 export type AdAccount = typeof adAccounts.$inferSelect;
@@ -1367,3 +1400,89 @@ export const metricSnapshots = mysqlTable("metric_snapshots", {
 
 export type MetricSnapshot       = typeof metricSnapshots.$inferSelect;
 export type InsertMetricSnapshot = typeof metricSnapshots.$inferInsert;
+
+// ─── Insights — fact_attribution_daily ────────────────────────────────────────
+//
+// Phase 1 rollup table for the /insights surface. One row per
+// (user, date, full FB attribution chain, offer). Refreshed every 15 min by
+// insightsRollupScheduler with a 7-day rebuild window (covers sotuvchi's
+// 3–5 day delivery lag). Reads are O(rows in date range) and join-free;
+// writes are batched UPSERTs against the composite UNIQUE.
+//
+// All dimension columns are NOT NULL with an empty-string sentinel so the
+// UNIQUE index treats "unknown" rows as mergeable (MySQL otherwise treats
+// NULLs as distinct, which would defeat the UPSERT). The rollup writer
+// must normalise NULL → '' before INSERT.
+//
+// Money columns are BIGINT in the SMALLEST unit of `currency` (UZS so'm /
+// USD cents). Each row is self-consistent — no cross-row currency mixing.
+// `currency` snapshots users.baseCurrency at write time so a later change
+// to that setting does not retroactively reinterpret historical rows.
+export const factAttributionDaily = mysqlTable("fact_attribution_daily", {
+  id:           int("id").autoincrement().primaryKey(),
+  userId:       int("userId").notNull(),
+  /** YYYY-MM-DD. `mode: "string"` keeps the JS side string-typed — the
+   *  rollup writer and read sites always compare/format strings, never
+   *  Date objects, which avoids timezone surprises around midnight UTC. */
+  date:         date("date", { mode: "string" }).notNull(),
+
+  // Dimension columns — '' sentinel for "unknown / not applicable".
+  bmId:         varchar("bmId",         { length: 64  }).default("").notNull(),
+  adAccountId:  varchar("adAccountId",  { length: 64  }).default("").notNull(),
+  campaignId:   varchar("campaignId",   { length: 100 }).default("").notNull(),
+  adsetId:      varchar("adsetId",      { length: 100 }).default("").notNull(),
+  adId:         varchar("adId",         { length: 100 }).default("").notNull(),
+  pageId:       varchar("pageId",       { length: 128 }).default("").notNull(),
+  formId:       varchar("formId",       { length: 128 }).default("").notNull(),
+  offerId:      varchar("offerId",      { length: 64  }).default("").notNull(),
+
+  // Lead-funnel counters (from leads table).
+  leads:        int("leads").default(0).notNull(),
+  enriched:     int("enriched").default(0).notNull(),
+  enrichErrors: int("enrichErrors").default(0).notNull(),
+
+  // Delivery-funnel counters (from orders table).
+  sent:         int("sent").default(0).notNull(),
+  failed:       int("failed").default(0).notNull(),
+
+  // CRM-funnel counters (from orders.crmStatus).
+  accepted:     int("accepted").default(0).notNull(),
+  delivered:    int("delivered").default(0).notNull(),
+  held:         int("held").default(0).notNull(),
+  rejected:     int("rejected").default(0).notNull(),
+  trash:        int("trash").default(0).notNull(),
+
+  // Money — in the smallest unit of `currency` (UZS so'm / USD cents).
+  // Drizzle's `int` maps to MySQL INT; we use it for the small counters above.
+  // The two money columns are BIGINT in SQL; drizzle-orm has no first-class
+  // bigint type for mysql-core today, so we expose them as `varchar` of
+  // numeric strings to avoid JS-precision-loss surprises at the boundary.
+  // (The SQL column itself is BIGINT — see migration 0085.) Read sites cast
+  // to Number when the value is known small.
+  spendAmount:   varchar("spendAmount",   { length: 32 }).default("0").notNull(),
+  revenueAmount: varchar("revenueAmount", { length: 32 }).default("0").notNull(),
+
+  /** Snapshot of users.baseCurrency at the moment this row was written. */
+  currency:     varchar("currency", { length: 8 }).default("USD").notNull(),
+
+  updatedAt:    timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  /** UPSERT target — full grain. */
+  uniqGrain: uniqueIndex("uniq_fact_attribution").on(
+    t.userId, t.date,
+    t.bmId, t.adAccountId,
+    t.campaignId, t.adsetId, t.adId,
+    t.pageId, t.formId, t.offerId,
+  ),
+  /** Primary access pattern — "everything for user X over date range". */
+  idxUserDate:     index("idx_fact_attr_user_date").on(t.userId, t.date),
+  /** Group-by-campaign drill-down. */
+  idxUserCampaign: index("idx_fact_attr_user_campaign").on(t.userId, t.campaignId, t.date),
+  /** Group-by-offer drill-down. */
+  idxUserOffer:    index("idx_fact_attr_user_offer").on(t.userId, t.offerId, t.date),
+  /** Group-by-BM drill-down. */
+  idxUserBm:       index("idx_fact_attr_user_bm").on(t.userId, t.bmId, t.date),
+}));
+
+export type FactAttributionDaily       = typeof factAttributionDaily.$inferSelect;
+export type InsertFactAttributionDaily = typeof factAttributionDaily.$inferInsert;
