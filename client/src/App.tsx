@@ -16,6 +16,7 @@ import NotFound from "@/pages/NotFound";
 // Lazily loaded — only downloaded when the user navigates to these routes
 const Home = lazyWithRetry(() => import("./pages/Home"));
 const Leads = lazyWithRetry(() => import("./pages/Leads"));
+const Insights = lazyWithRetry(() => import("./pages/Insights"));
 const WebhookHealth = lazyWithRetry(() => import("./pages/WebhookHealth"));
 const Integrations = lazyWithRetry(() => import("./pages/Integrations"));
 const Connections = lazyWithRetry(() => import("./pages/Connections"));
@@ -214,6 +215,7 @@ function Router() {
       {/* Dashboard routes — /overview is the main dashboard */}
       <Route path="/overview" component={Home} />
       <Route path="/leads" component={Leads} />
+      <Route path="/insights" component={Insights} />
       <Route path="/webhook" component={WebhookHealth} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/integrations/new-routing" component={LegacyLeadRoutingNewRedirect} />

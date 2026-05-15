@@ -23,6 +23,7 @@ import { adminDlqRouter } from "./routers/adminDlqRouter";
 import { triggersRouter } from "./routers/triggersRouter";
 import { workflowsRouter } from "./routers/workflowsRouter";
 import { metricsRouter } from "./routers/metricsRouter";
+import { insightsRouter } from "./routers/insightsRouter";
 
 export const appRouter = router({
   system: systemRouter,
@@ -49,6 +50,7 @@ export const appRouter = router({
   triggers: triggersRouter,
   workflows: workflowsRouter,
   metrics: metricsRouter,
+  insights: insightsRouter,
 });
 
 export type AppRouter = typeof appRouter;

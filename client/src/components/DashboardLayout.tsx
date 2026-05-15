@@ -79,6 +79,7 @@ function buildNavGroups(t: (k: string) => string, isAdmin = false): NavGroup[] {
       items: [
         { icon: LayoutDashboard, label: t("nav.overview"), path: "/overview" },
         { icon: Zap, label: t("nav.leads"), path: "/leads" },
+        { icon: BarChart3, label: "Insights", path: "/insights" },
         ...(isAdmin ? [{ icon: GitBranch, label: t("nav.workflows"), path: "/workflows" }] : []),
       ],
     },
