@@ -1,5 +1,28 @@
 # Targenix.uz — Audit Summary
 
+> **2026-05-17 Corrections.** Re-verification while applying the fixes revealed
+> that the original "5 CRITICAL findings" count was overstated:
+>
+> - **Finding 5 (`affiliateService.ts:928` SSRF)** — **FALSE POSITIVE.** Re-read
+>   showed [server/services/affiliateService.ts:859](server/services/affiliateService.ts#L859) already calls
+>   `await assertSafeOutboundUrl(template.endpointUrl)` inside the same try
+>   block as the axios.request at line 928. Guard added by commit `9bfc19bd`
+>   (xuseyinoff, 2026-04-16). The Section D.6 sub-agent missed it.
+> - **Finding for `httpRequestAdapter.ts:220` (MEDIUM in D.6)** — **FALSE POSITIVE.**
+>   [server/integrations/adapters/httpRequestAdapter.ts:189](server/integrations/adapters/httpRequestAdapter.ts#L189) already
+>   awaits `assertSafeOutboundUrl(finalUrl)`. Also already protected.
+> - **Findings 1–4 (tenant UPDATE leaks)** — DEFENSIVE GAPS, not actively
+>   exploitable. The SELECT-then-throw pattern at each call site blocks
+>   cross-tenant writes today. Fixed anyway as defense-in-depth (commit
+>   `5cf047a`) — narrowed UPDATE WHERE clauses, added `ownedBy()` helper.
+>
+> **Revised CRITICAL count: 0** as of commit `5cf047a` (tenant gaps closed).
+> The only real SSRF migration was `workflowExecutor.ts` (MEDIUM, weak inline
+> regex) — fixed alongside `appLogger.redactSecrets()`.
+>
+> Sections below remain as originally written for historical traceability;
+> Section D.6 has been amended inline.
+
 **Overall health score: 7.0 / 10.** A well-architected TypeScript monolith with clean layering, end-to-end types, and surprisingly disciplined adapter/registry patterns — but multi-tenancy is enforced per-procedure (no central guard), the worker process runs without Sentry, and 22 rollback-paired migrations + a journal/disk mismatch reflect real production turbulence over the last 30 days.
 
 **Top 5 wins to act on this week:**
@@ -366,25 +389,64 @@ setInterval(() => void tick(), INTERVAL_MS);
 - ✓ Calls `process.exit(1)` on `uncaughtException` (via `setTimeout(() => process.exit(1), 100)` to flush logs).
 - ✗ Does **NOT** report to Sentry. Recommended: add `Sentry.captureException(err)` before exit, with a 2s flush window.
 
-## D.6 — SSRF and secret-handling (CRITICAL)
+## D.6 — SSRF and secret-handling (CRITICAL → resolved)
 
-**SSRF audit — outbound HTTP calls:**
+> **Amended 2026-05-17.** Two of three findings below were false positives —
+> they were already guarded by `assertSafeOutboundUrl` at the time of the
+> audit and the sub-agent missed it. See corrections at the top of this
+> file. The remaining MEDIUM (workflowExecutor) was fixed alongside the
+> appLogger redaction. Both are now closed.
 
-CRITICAL (user-supplied URL bypassing `urlSafety`):
-- [server/services/affiliateService.ts:928](server/services/affiliateService.ts#L928) — `axios.request({ url: template.endpointUrl, ... })`. URL is editable via destinations templateConfig. **Add `assertSafeOutboundUrl(template.endpointUrl)` immediately above.**
+**SSRF audit — outbound HTTP calls (re-verified state):**
 
-MEDIUM (user-supplied URL with inline SSRF guard — weaker than `urlSafety.ts`):
-- [server/services/workflowExecutor.ts:86](server/services/workflowExecutor.ts#L86) — `fetch(url)` with local `isSafeUrl()` regex. Replace with `assertSafeOutboundUrl`.
-- [server/integrations/adapters/httpRequestAdapter.ts:220](server/integrations/adapters/httpRequestAdapter.ts#L220) — same local guard. Replace.
+~~CRITICAL~~ → **ALREADY PROTECTED** (false positive):
+- [server/services/affiliateService.ts:928](server/services/affiliateService.ts#L928) — protected by
+  `assertSafeOutboundUrl(template.endpointUrl)` at
+  [line 859](server/services/affiliateService.ts#L859) (same try block, runs before the axios call).
+  Guard added 2026-04-16 by commit `9bfc19bd`. The Section D.6 sub-agent
+  grepped line 928 in isolation and missed the call 69 lines above.
 
-LOW (fixed-domain URLs — Facebook Graph, Telegram Bot API, Google Sheets API, Eskiz, PlayMobile): safe; no user input controls the hostname.
+~~MEDIUM~~ → **ALREADY PROTECTED** (false positive):
+- [server/integrations/adapters/httpRequestAdapter.ts:220](server/integrations/adapters/httpRequestAdapter.ts#L220) — protected by
+  `assertSafeOutboundUrl(finalUrl)` at
+  [line 189](server/integrations/adapters/httpRequestAdapter.ts#L189) (runs after URL render, before the axios call).
+  No inline guard ever existed here — the audit conflated this with the
+  workflowExecutor pattern.
+
+~~MEDIUM~~ → **FIXED 2026-05-17**:
+- [server/services/workflowExecutor.ts:82](server/services/workflowExecutor.ts#L82) (formerly :86) — was
+  protected by a local `isSafeUrl()` + `BLOCKED_HOSTS` regex that allowed
+  `http:` and did NOT resolve DNS (rebinding-bypass possible). Migrated
+  to `await assertSafeOutboundUrl(url)` from `lib/urlSafety` in this
+  commit. Behaviour change: workflow `http_request` steps now require
+  HTTPS, blocking any legacy step using `http://`. Correct security
+  posture; an HTTP step would have always been a footgun.
+
+LOW (fixed-domain URLs — Facebook Graph, Telegram Bot API, Google Sheets
+API, Eskiz, PlayMobile): safe; no user input controls the hostname.
+**One outstanding follow-up:** [server/routes/brandIconsRouter.ts:75](server/routes/brandIconsRouter.ts#L75) fetches
+favicons from an arbitrary `domain` — trace whether `domain` is admin-
+or user-supplied and add a guard if user-controlled.
 
 **Secret logging audit:**
-- `appLogger.ts` has **no built-in redaction**. Caller discipline only.
-- HTTP request logger in [server/_core/index.ts:86-93](server/_core/index.ts#L86) DOES redact `password`, `currentPassword`, `newPassword`, `confirmNewPassword`, `token`, `secret`, `accessToken` in body previews. Good.
-- Real findings: zero call sites observed that log a full token or password. The webhook logger truncates tokens to 8 chars + `...`. The OAuth error logger logs `oauthTokenId` (DB primary key, safe).
+- ~~`appLogger.ts` has **no built-in redaction**.~~ → **FIXED 2026-05-17.**
+  `appLogger.ts` now exports `redactSecrets(value)` and applies it
+  automatically to every `meta` payload before console/DB/Sentry sinks
+  receive it. Redacts keys matching
+  `/password|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|cookie|bearer|client[_-]?secret/i`
+  — superset of the existing HTTP-request-body redaction list.
+- HTTP request logger in [server/_core/index.ts:86-93](server/_core/index.ts#L86) DOES redact `password`,
+  `currentPassword`, `newPassword`, `confirmNewPassword`, `token`,
+  `secret`, `accessToken` in body previews. Good — and consistent with
+  the new appLogger list.
+- Real findings: zero call sites observed that log a full token or
+  password. The webhook logger truncates tokens to 8 chars + `...`. The
+  OAuth error logger logs `oauthTokenId` (DB primary key, safe).
 
-**Verdict:** SSRF has 1 critical hole; secret-logging is generally well-handled but lacks a defense-in-depth redaction helper in `appLogger.ts`. Add one.
+**Verdict:** SSRF — closed (1 false positive cleared, 1 false positive
+unchanged, 1 real MEDIUM fixed). Secret-logging — closed (defense-in-
+depth redaction now automatic). `brandIconsRouter.ts` remains as the
+only outstanding LOW item.
 
 ## D.7 — Express 4 → 5 readiness
 

@@ -6,7 +6,12 @@
  *
  * Snapshots are written per-step in workflow_step_executions.
  *
- * SSRF protection: http_request step blocks private/internal IP ranges.
+ * SSRF protection: http_request step routes the user-supplied URL through
+ * `assertSafeOutboundUrl` (`lib/urlSafety`), which enforces HTTPS, blocks
+ * numeric IP bypasses, and resolves the hostname to verify it does NOT
+ * land on a private/internal address (DNS-rebinding-resistant). This is
+ * a tightening over the previous inline regex guard, which allowed `http:`
+ * and could be bypassed via DNS rebinding or decimal/hex/octal IP forms.
  */
 
 import { eq, asc } from "drizzle-orm";
@@ -24,21 +29,7 @@ import {
   type TemplateContext,
 } from "./templateEngine";
 import { evaluateFilter, type FilterOperator } from "./filterEngine";
-
-// ─── SSRF guard ───────────────────────────────────────────────────────────────
-
-const BLOCKED_HOSTS = /^(localhost|127\.|0\.0\.0\.0|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|::1|fc00:|fd[0-9a-f]{2}:|.*\.railway\.internal$|.*\.local$)/i;
-
-function isSafeUrl(raw: string): boolean {
-  try {
-    const u = new URL(raw);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
-    if (BLOCKED_HOSTS.test(u.hostname)) return false;
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { assertSafeOutboundUrl } from "../lib/urlSafety";
 
 // ─── Step result shape ────────────────────────────────────────────────────────
 
@@ -62,7 +53,12 @@ async function runHttpRequest(config: Record<string, unknown>): Promise<StepResu
   const timeout = Math.min(Number(config.timeout ?? 10_000), 30_000);
 
   if (!url) return { success: false, output: {}, error: "URL required", durationMs: 0 };
-  if (!isSafeUrl(url)) return { success: false, output: {}, error: `Blocked URL: ${url}`, durationMs: 0 };
+  try {
+    await assertSafeOutboundUrl(url);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return { success: false, output: {}, error: `Refused outbound URL: ${reason}`, durationMs: 0 };
+  }
 
   const headers: Record<string, string> = {};
   if (config.headers && typeof config.headers === "object") {
