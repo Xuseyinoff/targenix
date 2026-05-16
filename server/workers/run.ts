@@ -30,7 +30,7 @@ import { startCrmSyncScheduler } from "../services/crmSyncScheduler";
 import { startConnectionHealthScheduler } from "../services/connectionHealthScheduler";
 import { startLeadPollingScheduler } from "../services/leadPollingService";
 import { startTriggerScheduler } from "../services/triggerScheduler";
-import { startOAuthStateCleanupScheduler } from "../services/oauthStateCleanupScheduler";
+import { startOAuthStateCleanupScheduler, stopOAuthStateCleanupScheduler } from "../services/oauthStateCleanupScheduler";
 import { startMetricSnapshotScheduler } from "../services/metricSnapshotScheduler";
 import { startInsightsRollupScheduler } from "../services/insightsRollupScheduler";
 import { startFxRateScheduler } from "../services/fxRateScheduler";
@@ -178,6 +178,12 @@ async function boot() {
   // Graceful shutdown
   async function shutdown(signal: string) {
     console.log(`[Worker] Received ${signal}, shutting down gracefully...`);
+    // Cancel pending scheduler timers BEFORE worker.close() so an
+    // in-flight setTimeout can't fire a cleanup query against a closing
+    // DB. The other schedulers' timers are unref()'d and exit cleanly
+    // when the process does; oauthStateCleanup uses an active timer
+    // tied to msUntilNextHour() and needs explicit cancellation.
+    stopOAuthStateCleanupScheduler();
     await worker.close();
     // Flush any in-flight Sentry events before exit so a deploy-triggered
     // SIGTERM doesn't drop the last few errors. Capped at 2s so a hung

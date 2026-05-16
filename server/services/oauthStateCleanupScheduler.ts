@@ -54,3 +54,15 @@ export function startOAuthStateCleanupScheduler(): void {
   // process, then schedule the recurring on-the-hour cadence.
   void runOnce().then(scheduleNext);
 }
+
+/**
+ * Cancel any pending sweep and mark the scheduler stopped. Idempotent.
+ * Wired into the worker SIGTERM/SIGINT handler so a deploy doesn't leave
+ * a dangling setTimeout running after `worker.close()` returns.
+ */
+export function stopOAuthStateCleanupScheduler(): void {
+  if (cleanupTimer !== null) {
+    clearTimeout(cleanupTimer);
+    cleanupTimer = null;
+  }
+}
