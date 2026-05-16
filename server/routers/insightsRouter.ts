@@ -36,6 +36,7 @@ import { getDb } from "../db";
 import {
   adAccounts,
   adSets,
+  campaignInsights,
   campaigns,
   facebookForms,
   factAttributionDaily,
@@ -98,24 +99,25 @@ export const insightsRouter = router({
         };
       }
 
-      const [current, previous] = await Promise.all([
-        sumTotals(db, userId, input.start, input.end),
-        sumTotals(
-          db,
-          userId,
-          shiftDate(input.start, -daysBetween(input.start, input.end)),
-          shiftDate(input.start, -1),
-        ),
-      ]);
-
-      // Pull the user's reporting currency. The rollup itself stamps the
-      // currency on every row, but for an empty range we still want to show
-      // a sensible currency label.
+      // Currency is needed up-front: sumTotals's preset overlay converts
+      // campaign_insights.spend (decimal-string in ad-account currency) into
+      // baseCurrency's smallest unit, which depends on this value.
       const [u] = await db.execute(sql`
         SELECT baseCurrency FROM users WHERE id = ${userId}
       `);
       const currencyRow = ((u as unknown as { baseCurrency?: string }[])?.[0]) ?? { baseCurrency: "USD" };
       const currency = currencyRow.baseCurrency ?? "USD";
+
+      const [current, previous] = await Promise.all([
+        sumTotals(db, userId, input.start, input.end, currency),
+        sumTotals(
+          db,
+          userId,
+          shiftDate(input.start, -daysBetween(input.start, input.end)),
+          shiftDate(input.start, -1),
+          currency,
+        ),
+      ]);
 
       return { current, previous, currency };
     }),
@@ -442,36 +444,123 @@ async function resolveLabels(
   }
 }
 
+/**
+ * Convert a decimal-currency-string from `campaign_insights.spend` (e.g.
+ * "12.34" for USD, "100000.00" for UZS) into the same smallest-unit integer
+ * the rollup stores in `fact_attribution_daily.spendAmount`.
+ *
+ * Matches the convention in adsSyncService.spendToSmallestUnit():
+ *   USD / EUR / GBP → cents (multiply by 100).
+ *   UZS / no-subunit → so'm (identity, rounded).
+ */
+function presetSpendToRollupUnit(decimalString: string, baseCurrency: string): number {
+  const n = parseFloat(decimalString ?? "0");
+  if (!Number.isFinite(n) || n < 0) return 0;
+  if (baseCurrency === "USD" || baseCurrency === "EUR" || baseCurrency === "GBP") {
+    return Math.round(n * 100);
+  }
+  return Math.round(n);
+}
+
+/**
+ * Hybrid spend overlay for today/yesterday.
+ *
+ * FB Marketing API's `time_increment=1` daily breakdown lags the preset
+ * aggregate by 24-48h while attribution settles — so `campaign_daily_insights`
+ * (and therefore the rollup's `spendAmount`) shows $0 for the current day and
+ * frequently the previous day too, even though `campaign_insights`
+ * (preset=today/yesterday) is freshly synced every hour. Replace the rollup's
+ * stale per-day spend with the preset value whenever today or yesterday falls
+ * inside the requested range. Cross-currency case: we filter by the joined
+ * ad_account.currency = baseCurrency, mirroring the rollup's same-currency-
+ * only join, so a UZS ad account in a USD user's range stays excluded
+ * consistently. Verified against samanhusanov11's "Today" view on 2026-05-15:
+ * before the fix Insights showed Spend=$0 while Lead Cost Summary (same
+ * source) showed $2,251 — after, both match.
+ */
+async function spendOverlayDelta(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  userId: number,
+  start: string,
+  end: string,
+  baseCurrency: string,
+): Promise<number> {
+  const today = new Date().toISOString().slice(0, 10);
+  const yesterday = shiftDate(today, -1);
+
+  const targets: Array<{ date: string; preset: "today" | "yesterday" }> = [];
+  if (today >= start && today <= end) targets.push({ date: today, preset: "today" });
+  if (yesterday >= start && yesterday <= end) targets.push({ date: yesterday, preset: "yesterday" });
+  if (targets.length === 0) return 0;
+
+  let delta = 0;
+  for (const { date, preset } of targets) {
+    const [rollupRow] = await db
+      .select({
+        spend: sql<number>`COALESCE(SUM(${factAttributionDaily.spendAmount}), 0)`,
+      })
+      .from(factAttributionDaily)
+      .where(
+        and(
+          eq(factAttributionDaily.userId, userId),
+          eq(factAttributionDaily.date, date),
+          eq(factAttributionDaily.currency, baseCurrency),
+        ),
+      );
+
+    const presetRows = await db.execute(sql`
+      SELECT COALESCE(SUM(CAST(ci.spend AS DECIMAL(20,2))), 0) AS spend
+      FROM campaign_insights ci
+      INNER JOIN ad_accounts aa
+        ON aa.userId = ci.userId AND aa.fbAdAccountId = ci.fbAdAccountId
+      WHERE ci.userId = ${userId}
+        AND ci.datePreset = ${preset}
+        AND aa.currency = ${baseCurrency}
+    `);
+    const freshDecimal = String(
+      (presetRows as unknown as Array<{ spend?: string | number }>)?.[0]?.spend ?? "0",
+    );
+    const freshUnits = presetSpendToRollupUnit(freshDecimal, baseCurrency);
+    const staleUnits = Number(rollupRow?.spend) || 0;
+    delta += freshUnits - staleUnits;
+  }
+  return delta;
+}
+
 async function sumTotals(
   db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
   userId: number,
   start: string,
   end: string,
+  baseCurrency: string,
 ): Promise<Totals> {
   if (daysBetween(start, end) === 0) return emptyTotals();
-  const rows = await db
-    .select({
-      leads: sql<number>`COALESCE(SUM(${factAttributionDaily.leads}), 0)`,
-      sent: sql<number>`COALESCE(SUM(${factAttributionDaily.sent}), 0)`,
-      accepted: sql<number>`COALESCE(SUM(${factAttributionDaily.accepted}), 0)`,
-      delivered: sql<number>`COALESCE(SUM(${factAttributionDaily.delivered}), 0)`,
-      held: sql<number>`COALESCE(SUM(${factAttributionDaily.held}), 0)`,
-      rejected: sql<number>`COALESCE(SUM(${factAttributionDaily.rejected}), 0)`,
-      trash: sql<number>`COALESCE(SUM(${factAttributionDaily.trash}), 0)`,
-      revenue: sql<number>`COALESCE(SUM(${factAttributionDaily.revenueAmount}), 0)`,
-      pipeline: sql<number>`COALESCE(SUM(${factAttributionDaily.pipelineAmount}), 0)`,
-      spend: sql<number>`COALESCE(SUM(${factAttributionDaily.spendAmount}), 0)`,
-    })
-    .from(factAttributionDaily)
-    .where(
-      and(
-        eq(factAttributionDaily.userId, userId),
-        between(factAttributionDaily.date, start, end),
+  const [rows, spendDelta] = await Promise.all([
+    db
+      .select({
+        leads: sql<number>`COALESCE(SUM(${factAttributionDaily.leads}), 0)`,
+        sent: sql<number>`COALESCE(SUM(${factAttributionDaily.sent}), 0)`,
+        accepted: sql<number>`COALESCE(SUM(${factAttributionDaily.accepted}), 0)`,
+        delivered: sql<number>`COALESCE(SUM(${factAttributionDaily.delivered}), 0)`,
+        held: sql<number>`COALESCE(SUM(${factAttributionDaily.held}), 0)`,
+        rejected: sql<number>`COALESCE(SUM(${factAttributionDaily.rejected}), 0)`,
+        trash: sql<number>`COALESCE(SUM(${factAttributionDaily.trash}), 0)`,
+        revenue: sql<number>`COALESCE(SUM(${factAttributionDaily.revenueAmount}), 0)`,
+        pipeline: sql<number>`COALESCE(SUM(${factAttributionDaily.pipelineAmount}), 0)`,
+        spend: sql<number>`COALESCE(SUM(${factAttributionDaily.spendAmount}), 0)`,
+      })
+      .from(factAttributionDaily)
+      .where(
+        and(
+          eq(factAttributionDaily.userId, userId),
+          between(factAttributionDaily.date, start, end),
+        ),
       ),
-    );
+    spendOverlayDelta(db, userId, start, end, baseCurrency),
+  ]);
   const r = rows[0];
   const revenue = Number(r?.revenue) || 0;
-  const spend = Number(r?.spend) || 0;
+  const spend = Math.max(0, (Number(r?.spend) || 0) + spendDelta);
   return {
     leads: Number(r?.leads) || 0,
     sent: Number(r?.sent) || 0,
