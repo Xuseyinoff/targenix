@@ -15,8 +15,10 @@
 import "dotenv/config";
 import { installGlobalErrorHandlers } from "../_core/globalErrorHandlers";
 // Install before any scheduler/worker boot so a stray rejection during
-// startup is caught too.
+// startup is caught too. The handlers themselves no-op on Sentry calls
+// until initSentry() runs inside boot() below.
 installGlobalErrorHandlers("Worker");
+import { initSentry, flushSentry } from "../monitoring/sentry";
 import { createServer as createHttpServer } from "http";
 import { sql } from "drizzle-orm";
 import { startLeadWorker } from "./leadWorker";
@@ -106,6 +108,14 @@ function startHealthServer(): void {
 }
 
 async function boot() {
+  // Initialize Sentry FIRST so any boot-time error (DB connect failure,
+  // scheduler arming, etc.) flows to telemetry. Without this, the
+  // captureCritical() calls inside leadWorker.ts and the schedulers
+  // would be silent no-ops in production — every BullMQ job error and
+  // scheduler crash was being lost prior to this fix.
+  // No-op when SENTRY_DSN is unset (local dev keeps working).
+  await initSentry({ processTag: "worker" });
+
   // Verify DB is actually reachable before starting — if not, exit so Railway restarts us.
   // createPool/drizzle are lazy; this SELECT 1 proves the connection works.
   const db = await getDb();
@@ -169,6 +179,10 @@ async function boot() {
   async function shutdown(signal: string) {
     console.log(`[Worker] Received ${signal}, shutting down gracefully...`);
     await worker.close();
+    // Flush any in-flight Sentry events before exit so a deploy-triggered
+    // SIGTERM doesn't drop the last few errors. Capped at 2s so a hung
+    // Sentry never blocks Railway from cycling us.
+    await flushSentry(2000);
     console.log("[Worker] Worker closed. Exiting.");
     process.exit(0);
   }

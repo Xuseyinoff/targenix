@@ -32,10 +32,16 @@ export function isSentryEnabled(): boolean {
   return _initialized && _Sentry !== null;
 }
 
-export async function initSentry(): Promise<void> {
+/**
+ * `processTag` lets the caller distinguish web vs worker events in the
+ * Sentry UI (Tag filter: `process:worker`). Defaults to "web" because
+ * the web entrypoint historically called this without arguments.
+ */
+export async function initSentry(opts?: { processTag?: "web" | "worker" }): Promise<void> {
+  const processTag = opts?.processTag ?? "web";
   const dsn = process.env.SENTRY_DSN?.trim();
   if (!dsn) {
-    console.log("[Sentry] SENTRY_DSN not set — telemetry disabled.");
+    console.log(`[Sentry] SENTRY_DSN not set — telemetry disabled (process=${processTag}).`);
     return;
   }
   if (_initialized) return;
@@ -53,11 +59,33 @@ export async function initSentry(): Promise<void> {
       // Don't tag any field that could leak credentials.
       sendDefaultPii: false,
     });
+    // Stamp every event with which process produced it so the same DSN
+    // can serve both web and worker without losing the distinction.
+    Sentry.setTag("process", processTag);
     _Sentry = Sentry;
     _initialized = true;
-    console.log(`[Sentry] initialized — env=${process.env.NODE_ENV}, release=${process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 12) ?? "n/a"}`);
+    console.log(`[Sentry] initialized — process=${processTag}, env=${process.env.NODE_ENV}, release=${process.env.RAILWAY_GIT_COMMIT_SHA?.slice(0, 12) ?? "n/a"}`);
   } catch (err) {
     console.error("[Sentry] init failed:", err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * Flush in-flight Sentry events. Safe to call when Sentry isn't initialized
+ * (returns true immediately). Capped at `timeoutMs` so a hung Sentry never
+ * blocks worker / web shutdown indefinitely. Resolves with whether all
+ * events were sent within the timeout.
+ *
+ * Use in:
+ *   • SIGTERM / SIGINT handlers — flush before `process.exit(0)`.
+ *   • uncaughtException handler — flush before the forced `process.exit(1)`.
+ */
+export async function flushSentry(timeoutMs = 2000): Promise<boolean> {
+  if (!_initialized || !_Sentry) return true;
+  try {
+    return await _Sentry.close(timeoutMs);
+  } catch {
+    return false;
   }
 }
 
