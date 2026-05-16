@@ -9,6 +9,7 @@ import {
 } from "../../drizzle/schema";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { executeWorkflow } from "../services/workflowExecutor";
+import { ownedBy } from "../lib/assertUserOwns";
 
 // ─── Step config schemas ──────────────────────────────────────────────────────
 
@@ -173,10 +174,19 @@ export const workflowsRouter = router({
       if (input.triggerId     !== undefined) patch.triggerId     = input.triggerId;
 
       if (Object.keys(patch).length) {
-        await db.update(workflows).set(patch).where(eq(workflows.id, input.id));
+        const [res] = await db
+          .update(workflows)
+          .set(patch)
+          .where(ownedBy(workflows, input.id, ctx.user.id));
+        if ((res as { affectedRows?: number })?.affectedRows === 0) {
+          throw new Error("Workflow topilmadi");
+        }
       }
 
       if (input.steps !== undefined) {
+        // child-table delete is safe: the SELECT above already confirmed
+        // user owns this workflow id, and workflow_steps has no userId
+        // column of its own — ownership flows through workflowId.
         await db.delete(workflowSteps).where(eq(workflowSteps.workflowId, input.id));
         if (input.steps.length > 0) {
           await db.insert(workflowSteps).values(
@@ -234,14 +244,19 @@ export const workflowsRouter = router({
         .limit(1);
       if (!wf) throw new Error("Workflow topilmadi");
 
-      await db.update(workflows).set({
+      const [updRes] = await db.update(workflows).set({
         name:          input.name,
         isActive:      input.isActive,
         triggerOnLead: input.triggerOnLead,
         triggerId:     input.triggerId ?? null,
         canvasJson:    input.canvasJson,
-      }).where(eq(workflows.id, input.id));
+      }).where(ownedBy(workflows, input.id, ctx.user.id));
+      if ((updRes as { affectedRows?: number })?.affectedRows === 0) {
+        throw new Error("Workflow topilmadi");
+      }
 
+      // child-table delete is safe: parent SELECT confirmed ownership and
+      // workflow_steps has no userId of its own (scoped via workflowId).
       await db.delete(workflowSteps).where(eq(workflowSteps.workflowId, input.id));
       if (input.steps.length > 0) {
         await db.insert(workflowSteps).values(
