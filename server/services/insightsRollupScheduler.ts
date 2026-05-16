@@ -43,7 +43,26 @@ import { log } from "./appLogger";
 // ── Cadence ─────────────────────────────────────────────────────────────────
 const ROLLUP_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
 const INITIAL_DELAY_MS = 2 * 60 * 1000; // delay first run so CRM sync goes first
-const REBUILD_WINDOW_DAYS = 7;
+/**
+ * Recurring window — every 15-min tick rebuilds today + yesterday only.
+ * Two days are enough to catch same-day status flips AND status changes
+ * that arrived after yesterday's UTC midnight (sotuvchi often updates an
+ * order within a few hours of delivery).
+ */
+const RECURRING_WINDOW_DAYS = 2;
+/**
+ * Nightly window — once per day rebuild the full 7-day window to catch
+ * Sotuvchi's 3–5 day delivery lag (a status that flips from 'sent' →
+ * 'delivered' three days after the lead is rolled up here at the next
+ * nightly tick).
+ */
+const NIGHTLY_REBUILD_WINDOW_DAYS = 7;
+/**
+ * UTC hour at which the nightly full-window rebuild runs. 02:00 UTC = 07:00
+ * Tashkent (UZB+5) — before the marketer day starts, after the previous
+ * day's CRM final statuses have settled.
+ */
+const NIGHTLY_HOUR_UTC = 2;
 
 // ── Concurrency guard ───────────────────────────────────────────────────────
 let schedulerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -55,15 +74,27 @@ let running = false;
  * (MySQL TIMESTAMP) and DATE() returns its UTC date; mixing local
  * timezones here would silently mis-bucket rows around midnight.
  */
-function rebuildDates(): string[] {
+function rebuildDates(windowDays: number): string[] {
   const out: string[] = [];
   const today = new Date();
-  for (let i = 0; i < REBUILD_WINDOW_DAYS; i++) {
+  for (let i = 0; i < windowDays; i++) {
     const d = new Date(today);
     d.setUTCDate(d.getUTCDate() - i);
     out.push(d.toISOString().slice(0, 10));
   }
   return out;
+}
+
+/**
+ * Pick the rebuild window for this tick. 02:00 UTC tick → full 7-day
+ * reconciliation; every other tick → today + yesterday only. Reduces RAM /
+ * CPU spikes ~4-5× at the cost of a one-day reconciliation lag for status
+ * changes 2-7 days old (next 02:00 UTC tick catches them).
+ */
+function pickWindowForThisTick(now: Date): number {
+  return now.getUTCHours() === NIGHTLY_HOUR_UTC
+    ? NIGHTLY_REBUILD_WINDOW_DAYS
+    : RECURRING_WINDOW_DAYS;
 }
 
 /**
@@ -257,8 +288,12 @@ async function rebuildOneDay(
   });
 }
 
-/** One full pass — every user with activity in the window, every date in the window. */
-async function runRollup(): Promise<void> {
+/**
+ * One full pass — every user with activity in the window, every date in the
+ * window. `forceFullWindow` overrides the time-of-day check so admin
+ * tooling (runInsightsRollupOnce) always rebuilds the full 7 days.
+ */
+async function runRollup(opts: { forceFullWindow?: boolean } = {}): Promise<void> {
   if (running) {
     console.log("[InsightsRollup] Skipping — previous run still in progress");
     return;
@@ -273,8 +308,15 @@ async function runRollup(): Promise<void> {
       return;
     }
 
-    const dates = rebuildDates();
+    const windowDays = opts.forceFullWindow
+      ? NIGHTLY_REBUILD_WINDOW_DAYS
+      : pickWindowForThisTick(new Date());
+    const dates = rebuildDates(windowDays);
     const earliest = dates[dates.length - 1];
+    console.log(
+      `[InsightsRollup] Tick — windowDays=${windowDays} ` +
+        `(${windowDays === NIGHTLY_REBUILD_WINDOW_DAYS ? "nightly/forced" : "recurring"})`,
+    );
 
     // Pick the set of users with any lead activity in the window. Avoids
     // scanning users with zero leads — they have nothing to roll up.
@@ -341,7 +383,8 @@ function scheduleNext(): void {
 export function startInsightsRollupScheduler(): void {
   if (schedulerTimer !== null) return;
   console.log(
-    `[InsightsRollup] Scheduler armed — first run in ${INITIAL_DELAY_MS / 1000}s, then every ${ROLLUP_INTERVAL_MS / 1000}s, window=${REBUILD_WINDOW_DAYS}d`,
+    `[InsightsRollup] Scheduler armed — first run in ${INITIAL_DELAY_MS / 1000}s, then every ${ROLLUP_INTERVAL_MS / 1000}s, ` +
+      `window=${RECURRING_WINDOW_DAYS}d recurring / ${NIGHTLY_REBUILD_WINDOW_DAYS}d at ${NIGHTLY_HOUR_UTC.toString().padStart(2, "0")}:00 UTC`,
   );
   schedulerTimer = setTimeout(() => {
     void runRollup().finally(() => {
@@ -359,7 +402,11 @@ export function stopInsightsRollupScheduler(): void {
   }
 }
 
-/** Manual single-pass trigger — exported for admin tooling and tests. */
+/**
+ * Manual single-pass trigger — exported for admin tooling and tests. Always
+ * rebuilds the full 7-day window since the caller's intent is explicit
+ * "reconcile now", regardless of the time-of-day window split.
+ */
 export async function runInsightsRollupOnce(): Promise<void> {
-  await runRollup();
+  await runRollup({ forceFullWindow: true });
 }

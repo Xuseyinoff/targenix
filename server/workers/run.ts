@@ -17,6 +17,8 @@ import { installGlobalErrorHandlers } from "../_core/globalErrorHandlers";
 // Install before any scheduler/worker boot so a stray rejection during
 // startup is caught too.
 installGlobalErrorHandlers("Worker");
+import { createServer as createHttpServer } from "http";
+import { sql } from "drizzle-orm";
 import { startLeadWorker } from "./leadWorker";
 import { startRetryScheduler } from "../services/retryScheduler";
 import { startLogRetentionScheduler } from "../services/logRetentionScheduler";
@@ -31,10 +33,76 @@ import { startMetricSnapshotScheduler } from "../services/metricSnapshotSchedule
 import { startInsightsRollupScheduler } from "../services/insightsRollupScheduler";
 import { startFxRateScheduler } from "../services/fxRateScheduler";
 import { getDb } from "../db";
+import { getRedisConnection } from "../queues/redisConnection";
 
 if (!process.env.REDIS_URL) {
   console.error("[Worker] FATAL: REDIS_URL is required. Worker process cannot run without Redis.");
   process.exit(1);
+}
+
+/**
+ * Minimal HTTP health server so Railway can detect hangs (not just crashes).
+ * Uses Node's built-in `http` to avoid pulling Express into the worker
+ * bundle. Honors `PORT` (Railway injects it) and falls back to
+ * `WORKER_HEALTH_PORT` or 8080 for local dev. Logs but does NOT exit on
+ * bind failure — a degraded health endpoint is preferable to a worker that
+ * refuses to process jobs because port 8080 is taken locally.
+ */
+function startHealthServer(): void {
+  const portRaw = process.env.PORT ?? process.env.WORKER_HEALTH_PORT ?? "8080";
+  const port = Number.parseInt(portRaw, 10);
+  if (!Number.isFinite(port) || port <= 0) {
+    console.warn(`[Worker] Health server disabled — invalid port "${portRaw}"`);
+    return;
+  }
+
+  const server = createHttpServer(async (req, res) => {
+    if (req.url !== "/health" && req.url !== "/api/health" && req.url !== "/") {
+      res.statusCode = 404;
+      res.end();
+      return;
+    }
+
+    let dbOk = false;
+    let redisOk = false;
+    try {
+      const db = await getDb();
+      if (db) {
+        await db.execute(sql`SELECT 1`);
+        dbOk = true;
+      }
+    } catch {
+      dbOk = false;
+    }
+    try {
+      const conn = getRedisConnection();
+      redisOk = (await conn.ping()) === "PONG";
+    } catch {
+      redisOk = false;
+    }
+
+    const healthy = dbOk && redisOk;
+    res.statusCode = healthy ? 200 : 503;
+    res.setHeader("Content-Type", "application/json");
+    res.end(
+      JSON.stringify({
+        status: healthy ? "ok" : "degraded",
+        role: "worker",
+        dbConnected: dbOk,
+        redisConnected: redisOk,
+        uptime: Math.floor(process.uptime()),
+        timestamp: new Date().toISOString(),
+      }),
+    );
+  });
+
+  server.on("error", (err) => {
+    console.error("[Worker] Health server error:", err instanceof Error ? err.message : err);
+  });
+
+  server.listen(port, () => {
+    console.log(`[Worker] Health endpoint listening on :${port}/health`);
+  });
 }
 
 async function boot() {
@@ -56,6 +124,12 @@ async function boot() {
     process.exit(1);
   }
   console.log("[Worker] Database connection verified.");
+
+  // Bring up the health endpoint BEFORE workers/schedulers so Railway can
+  // probe it during the rest of the boot sequence — avoids a race where
+  // Railway thinks the service is unhealthy while schedulers are still
+  // arming.
+  startHealthServer();
 
   console.log("[Worker] Starting lead processing worker...");
   const worker = startLeadWorker();

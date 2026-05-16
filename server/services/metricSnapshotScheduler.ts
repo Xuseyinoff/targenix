@@ -39,6 +39,7 @@ import { newSchedulerTraceId, runWithRequestContext } from "../lib/requestContex
 const SNAPSHOT_INTERVAL_MS = envInt("METRIC_SNAPSHOT_INTERVAL_MS", 5 * 60 * 1000);
 
 let _timer: ReturnType<typeof setInterval> | null = null;
+let _running = false;
 
 /**
  * Capture one row per metric. Exported separately from the scheduler
@@ -101,6 +102,15 @@ export function startMetricSnapshotScheduler(): void {
   });
 
   _timer = setInterval(() => {
+    // Overlap guard — without it, a slow gauge read (failed_orders_db can
+    // span several seconds under load) lets a second tick start before the
+    // first finishes, doubling DB+heap pressure during the 5-min cycle.
+    // Matches the pattern used by connectionHealth, insightsRollup, fxRate.
+    if (_running) {
+      void log.info("SYSTEM", "[MetricSnapshot] Skipping — previous tick still running");
+      return;
+    }
+    _running = true;
     void runWithRequestContext(
       {
         traceId: newSchedulerTraceId("metrics"),
@@ -121,6 +131,8 @@ export function startMetricSnapshotScheduler(): void {
             "[MetricSnapshot] tick failed",
             { error: err instanceof Error ? err.message : String(err) },
           );
+        } finally {
+          _running = false;
         }
       },
     );

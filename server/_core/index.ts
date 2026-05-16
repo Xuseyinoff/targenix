@@ -244,8 +244,12 @@ async function startServer() {
   });
   app.use("/api", globalApiLimiter);
 
-  // Capture raw body for webhook signature verification BEFORE json parsing
-  app.use((req, _res, next) => {
+  // Capture raw body ONLY for webhook routes — needed for HMAC signature
+  // verification. Scoping avoids doubling memory on every tRPC / static
+  // request: the previous global middleware buffered every request body into
+  // a Buffer array even when the route had no need for rawBody, which is the
+  // only consumer (facebookWebhook.ts walks `(req as any).rawBody`).
+  app.use("/api/webhooks", (req, _res, next) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => {

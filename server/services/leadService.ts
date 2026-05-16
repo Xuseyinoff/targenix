@@ -1204,10 +1204,21 @@ export async function processLead(params: {
   const [leadRow] = await db.select().from(leads).where(eq(leads.id, params.leadId)).limit(1);
   if (!leadRow) throw new Error("Lead row missing after enrichment");
 
+  // Filter at SQL level: the loop body below only acts on active LEAD_ROUTING
+  // integrations that match this lead's pageId+formId — push that predicate
+  // into the WHERE clause so a tenant with hundreds of integrations doesn't
+  // load + discard all of them per lead. Mirrors the `allIntegrations` query
+  // ~100 lines above which already filters this way.
   const activeIntegrations = await db
     .select()
     .from(integrations)
-    .where(and(eq(integrations.userId, params.userId), eq(integrations.isActive, true)));
+    .where(and(
+      eq(integrations.userId, params.userId),
+      eq(integrations.isActive, true),
+      eq(integrations.type, "LEAD_ROUTING"),
+      eq(integrations.pageId, params.pageId),
+      eq(integrations.formId, params.formId),
+    ));
 
   const leadPayload = {
     leadgenId: params.leadgenId,
@@ -1220,16 +1231,6 @@ export async function processLead(params: {
   };
 
   for (const integration of activeIntegrations) {
-    if (integration.type === "LEAD_ROUTING") {
-      const intPageId = integration.pageId ?? "";
-      const intFormId = integration.formId ?? "";
-      if (intPageId !== params.pageId || intFormId !== params.formId) continue;
-    }
-
-    if (integration.type !== "LEAD_ROUTING") {
-      continue;
-    }
-
     // ── Multi-destination fan-out (LEAD_ROUTING) ────────────────────────────
     // Resolve the full destination list and dispatch to each one independently.
     // Each destination gets its own `orders` row keyed by
