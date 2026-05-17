@@ -568,6 +568,62 @@
       "when": 1779833280004,
       "tag": "0084_telegram_pending_chats_claimed_by",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "5",
+      "when": 1779833280005,
+      "tag": "0054_drop_connection_app_specs",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "5",
+      "when": 1779833280006,
+      "tag": "0060_drop_connections_google_account_id_final",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "5",
+      "when": 1779833280007,
+      "tag": "0085_insights_phase1",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "5",
+      "when": 1779833280008,
+      "tag": "0086_campaign_daily_insights",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "5",
+      "when": 1779833280009,
+      "tag": "0087_insights_fix_collation",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "5",
+      "when": 1779833280010,
+      "tag": "0088_orders_payout_currency",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "5",
+      "when": 1779833280011,
+      "tag": "0089_insights_phase4_fx_and_pipeline",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "5",
+      "when": 1779833280012,
+      "tag": "0090_orders_offer_name",
+      "breakpoints": true
     }
   ]
 }

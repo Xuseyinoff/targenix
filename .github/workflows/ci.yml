@@ -50,6 +50,11 @@ jobs:
       - name: Type check
         run: pnpm check
 
+      - name: Migration journal integrity
+        # Guards against drift between drizzle/*.sql and _journal.json.
+        # See drizzle/MIGRATION_HISTORY.md for the reconciliation history.
+        run: pnpm check:journal
+
       - name: Run tests
         # DATABASE_URL intentionally unset — DB-backed test suites self-skip
         # (see server/services/circuitBreaker.test.ts:86). The remaining
