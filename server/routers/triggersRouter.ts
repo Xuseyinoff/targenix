@@ -4,6 +4,7 @@ import { getDb } from "../db";
 import { triggers, triggerExecutions } from "../../drizzle/schema";
 import { and, count, desc, eq, sql } from "drizzle-orm";
 import { randomBytes } from "crypto";
+import { ownedBy } from "../lib/assertUserOwns";
 
 // ─── Input schemas ────────────────────────────────────────────────────────────
 
@@ -139,7 +140,13 @@ export const triggersRouter = router({
       }
 
       if (Object.keys(patch).length) {
-        await db.update(triggers).set(patch).where(eq(triggers.id, input.id));
+        const [res] = await db
+          .update(triggers)
+          .set(patch)
+          .where(ownedBy(triggers, input.id, ctx.user.id));
+        if ((res as { affectedRows?: number })?.affectedRows === 0) {
+          throw new Error("Trigger topilmadi");
+        }
       }
 
       return { ok: true };
@@ -251,7 +258,13 @@ export const triggersRouter = router({
       }
 
       const newKey = generateWebhookKey();
-      await db.update(triggers).set({ webhookKey: newKey }).where(eq(triggers.id, input.id));
+      const [res] = await db
+        .update(triggers)
+        .set({ webhookKey: newKey })
+        .where(ownedBy(triggers, input.id, ctx.user.id));
+      if ((res as { affectedRows?: number })?.affectedRows === 0) {
+        throw new Error("Trigger topilmadi");
+      }
 
       return { webhookKey: newKey };
     }),

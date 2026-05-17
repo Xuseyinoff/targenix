@@ -11,6 +11,7 @@
     "start:worker": "cross-env NODE_ENV=production node dist/worker.js",
     "check": "tsc --noEmit",
     "check:bundle-size": "node tooling/check-bundle-size.mjs",
+    "check:journal": "node tooling/audit/check-journal-integrity.mjs",
     "format": "prettier --write .",
     "test": "vitest run",
     "db:push": "drizzle-kit generate && drizzle-kit migrate",

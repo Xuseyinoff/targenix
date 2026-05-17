@@ -135,7 +135,7 @@ async function startServer() {
   // boot-time exception flows to telemetry. No-op when SENTRY_DSN is unset
   // (local dev + pre-DSN production keep working unchanged).
   const { initSentry } = await import("../monitoring/sentry");
-  await initSentry();
+  await initSentry({ processTag: "web" });
 
   // Stage 1 — admin template contract check. Runs BEFORE express is
   // constructed so that a drifting DB/code pair aborts the deploy

@@ -21,11 +21,24 @@ import { getDb } from "../db";
 import { triggers, triggerExecutions, workflows } from "../../drizzle/schema";
 import { and, eq } from "drizzle-orm";
 import { log } from "./appLogger";
+import { captureCritical } from "../monitoring/sentry";
 
 let schedulerTimer: ReturnType<typeof setInterval> | null = null;
+/**
+ * Overlap guard. Without this, a tick that takes longer than
+ * SCHEDULER_INTERVAL_MS (60s — possible when many active schedule
+ * triggers fan out to workflows that hit slow HTTP steps) would let
+ * setInterval fire the NEXT tick mid-loop. Result: the same cron
+ * minute matches twice, the 45-second dedupe guard catches most of it
+ * but workflow-fan-out work doubles up under the same trace id.
+ * Skipping the overlap is always safe — the trigger-table state is
+ * authoritative and the next tick will pick up anything we missed.
+ */
+let runInFlight = false;
 
 /** Minimum gap between two consecutive fires of the same trigger. */
 const MIN_REFIRE_GAP_MS = 45_000;
+const SCHEDULER_INTERVAL_MS = 60_000;
 
 /** Checks whether a cron expression matches the current time (minute granularity). */
 function cronMatches(cron: string, now: Date): boolean {
@@ -50,8 +63,21 @@ function cronMatches(cron: string, now: Date): boolean {
 }
 
 async function runScheduledTriggers(): Promise<void> {
+  if (runInFlight) {
+    void log.warn(
+      "WORKFLOW",
+      "[TriggerScheduler] skipping tick — previous still in-flight",
+    );
+    return;
+  }
+  runInFlight = true;
+  const startedAt = Date.now();
+
   const db = await getDb();
-  if (!db) return;
+  if (!db) {
+    runInFlight = false;
+    return;
+  }
 
   try {
     const rows = await db
@@ -108,6 +134,17 @@ async function runScheduledTriggers(): Promise<void> {
       "[TriggerScheduler] Tick error",
       { error: err instanceof Error ? err.message : String(err) },
     );
+    captureCritical(err, { tags: { scheduler: "trigger" } });
+  } finally {
+    runInFlight = false;
+    const durationMs = Date.now() - startedAt;
+    if (durationMs > SCHEDULER_INTERVAL_MS) {
+      void log.warn(
+        "WORKFLOW",
+        "[TriggerScheduler] tick exceeded interval",
+        { durationMs, intervalMs: SCHEDULER_INTERVAL_MS },
+      );
+    }
   }
 }
 
@@ -123,7 +160,7 @@ export function startTriggerScheduler(): void {
     void runScheduledTriggers();
     schedulerTimer = setInterval(() => {
       void runScheduledTriggers();
-    }, 60_000);
+    }, SCHEDULER_INTERVAL_MS);
   }, msUntilNextMinute);
 
   console.log(`[TriggerScheduler] Starting — first tick in ${Math.round(msUntilNextMinute / 1000)}s`);

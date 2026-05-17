@@ -123,6 +123,23 @@ backup_*.json
 wapi-*.png
 snap-pipeline.md
 
+# Albato / audit / sotuvchi research screenshots (local exploration)
+albato-*.png
+audit-*.png
+sotuvchi-*.png
+
 # Playwright MCP server runtime
 .playwright-mcp/
 .mcp.json
+
+# Claude Code runtime state and ephemeral worktrees
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+
+# Local audit tool outputs (regenerable; not source)
+knip.human.txt
+knip.audit.json.new
+tsprune.audit.txt
+depcheck.audit.json
+depcheck.human.txt
+jscpd-report/

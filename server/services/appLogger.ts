@@ -10,9 +10,58 @@
  *   source    — origin: 'facebook' | 'retry' | 'manual' | 'system'
  *   duration  — elapsed ms for timed operations
  *   meta      — arbitrary JSON (request body, response, stack trace, etc.)
+ *
+ * Secret redaction: every `meta` payload is walked by `redactSecrets()`
+ * BEFORE it lands in the DB, the console, or Sentry. Any property whose
+ * KEY matches a sensitive-name pattern (password, secret, token, api_key,
+ * authorization, cookie, bearer, …) is replaced with `"[REDACTED]"`
+ * regardless of value type. This is defense in depth — today no caller
+ * deliberately logs secrets, but the redaction guarantees that an
+ * accidental `log.error("HTTP", "...", { headers })` cannot leak an
+ * Authorization header. Mirrors the redaction list in the HTTP request
+ * logger (`server/_core/index.ts`).
  */
 import { appLogs, type InsertAppLog } from "../../drizzle/schema";
 import { getDb } from "../db";
+
+/**
+ * Regex of property keys whose values must be redacted from logs.
+ * Union of the historical HTTP request-body redaction list
+ * (password / currentPassword / newPassword / confirmNewPassword / token /
+ * secret / accessToken) and AUDIT_REPORT.md F.6 recommended additions
+ * (apiKey / refreshToken / authorization / cookie / bearer /
+ * clientSecret). Case-insensitive, substring-match against the key name.
+ */
+const SECRET_KEY_RE =
+  /password|secret|token|api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|cookie|bearer|client[_-]?secret/i;
+
+/**
+ * Walks `value` and returns a deep copy with every secret-shaped key's
+ * value replaced by `"[REDACTED]"`. Pass-through for non-object inputs.
+ * Cycle-safe via a WeakSet.
+ */
+export function redactSecrets(value: unknown, _seen?: WeakSet<object>): unknown {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "object") return value;
+  const seen = _seen ?? new WeakSet<object>();
+  if (seen.has(value as object)) return "[CIRCULAR]";
+  seen.add(value as object);
+  if (Array.isArray(value)) {
+    return value.map((v) => redactSecrets(v, seen));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (SECRET_KEY_RE.test(k)) {
+      // Redact regardless of value type — an object literal under a
+      // secret-shaped key (e.g. `secrets: { aws: "..." }`) must NOT be
+      // walked into, or the secret leaks through the nested keys.
+      out[k] = "[REDACTED]";
+    } else {
+      out[k] = redactSecrets(v, seen);
+    }
+  }
+  return out;
+}
 
 export type LogLevel = "INFO" | "WARN" | "ERROR" | "DEBUG";
 export type LogCategory =
@@ -105,6 +154,12 @@ export async function logEvent(params: LogEventParams): Promise<void> {
   // Auto-assign logType: USER if userId present, SYSTEM otherwise
   const logType: LogType = params.logType ?? (userId != null ? "USER" : "SYSTEM");
 
+  // Redact secret-shaped keys from the caller's meta before any sink
+  // touches it. Defense in depth: today no caller deliberately logs a
+  // secret, but `log.error("HTTP", msg, { headers })` would otherwise
+  // smuggle an Authorization header through every path below.
+  const safeMeta = redactSecrets(meta ?? null) as Record<string, unknown> | null;
+
   // Pull the ambient trace id off the AsyncLocalStorage if one is active
   // (set by the HTTP middleware, scheduler wrappers, or worker wrappers).
   // Stamped on every emitted row so an operator can grep `app_logs.meta`
@@ -119,14 +174,14 @@ export async function logEvent(params: LogEventParams): Promise<void> {
     traceId = undefined;
   }
   const enrichedMeta: Record<string, unknown> | null = traceId
-    ? { ...(meta ?? {}), traceId }
-    : meta ?? null;
+    ? { ...(safeMeta ?? {}), traceId }
+    : safeMeta;
 
   // Always mirror to console for dev visibility
   const consoleFn =
     level === "ERROR" ? console.error : level === "WARN" ? console.warn : console.log;
   const traceTag = traceId ? ` ${traceId}` : "";
-  consoleFn(`[${category}${eventType ? `/${eventType}` : ""}${traceTag}] ${message}`, meta ?? "");
+  consoleFn(`[${category}${eventType ? `/${eventType}` : ""}${traceTag}] ${message}`, safeMeta ?? "");
 
   try {
     const db = await getDb();
@@ -159,7 +214,7 @@ export async function logEvent(params: LogEventParams): Promise<void> {
       captureSecurityEvent(message, {
         tags: { eventType: eventType ?? "unknown" },
         user: userId != null ? { id: userId } : undefined,
-        extra: { meta, leadId, pageId },
+        extra: { meta: safeMeta, leadId, pageId },
       });
     } catch {
       // ignore — telemetry never breaks the main flow

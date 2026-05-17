@@ -24,6 +24,7 @@ import { retryDueFailedOrders } from "./orderRetryScheduler";
 import { retryDueGraphErrorLeads } from "./leadGraphRetryScheduler";
 import { autoPromoteExpiredCooldowns } from "./circuitBreaker";
 import { log } from "./appLogger";
+import { captureCritical } from "../monitoring/sentry";
 import { newSchedulerTraceId, runWithRequestContext } from "../lib/requestContext";
 
 import { envInt } from "../lib/envHelpers";
@@ -150,6 +151,17 @@ function msUntilNextHour(): number {
 
 let hourlyTimer: ReturnType<typeof setTimeout> | null = null;
 let orderTickTimer: ReturnType<typeof setInterval> | null = null;
+/**
+ * Overlap guard for the per-minute order tick. Without this, a tick that
+ * takes longer than ORDER_TICK_INTERVAL_MS (60s — possible under DB lock
+ * contention or a slow burst of CB evaluations) would let setInterval
+ * fire the NEXT tick while the previous one is still mid-loop. Result:
+ * doubled claim contention on `orders.nextRetryAt`, doubled rate-limiter
+ * pressure on partner APIs, and memory growth. Skipping the overlap is
+ * always safe — the work the missed tick would have done is picked up
+ * by the next one (rows still match `nextRetryAt <= NOW()`).
+ */
+let orderTickInFlight = false;
 
 /** Per-minute tick cadence for the order-delivery retry loop. */
 const ORDER_TICK_INTERVAL_MS = 60 * 1000;
@@ -185,56 +197,80 @@ export function startRetryScheduler(): void {
     batch: ORDER_TICK_BATCH,
   });
   orderTickTimer = setInterval(() => {
+    if (orderTickInFlight) {
+      void log.warn(
+        "SYSTEM",
+        "[RetryScheduler] skipping order tick — previous still in-flight",
+      );
+      return;
+    }
+    orderTickInFlight = true;
+    const startedAt = Date.now();
     void runWithRequestContext(
       { traceId: newSchedulerTraceId("retry"), kind: "scheduler", name: "retry" },
       async () => {
-        // Promote any OPEN destinations whose cooldown has elapsed BEFORE
-        // claiming retries, so the next delivery (initial or retry) sees
-        // HALF_OPEN and runs a probe instead of getting filed under another
-        // consecutiveFailure on an already-open row. Without this step the
-        // breaker can deadlock — see autoPromoteExpiredCooldowns comment.
         try {
-          const db = await getDb();
-          if (db) {
-            const promoted = await autoPromoteExpiredCooldowns(db);
-            if (promoted > 0) {
-              void log.info(
-                "SYSTEM",
-                "[RetryScheduler] CB auto-promoted destinations OPEN→HALF_OPEN",
-                { promoted },
-              );
+          // Promote any OPEN destinations whose cooldown has elapsed BEFORE
+          // claiming retries, so the next delivery (initial or retry) sees
+          // HALF_OPEN and runs a probe instead of getting filed under another
+          // consecutiveFailure on an already-open row. Without this step the
+          // breaker can deadlock — see autoPromoteExpiredCooldowns comment.
+          try {
+            const db = await getDb();
+            if (db) {
+              const promoted = await autoPromoteExpiredCooldowns(db);
+              if (promoted > 0) {
+                void log.info(
+                  "SYSTEM",
+                  "[RetryScheduler] CB auto-promoted destinations OPEN→HALF_OPEN",
+                  { promoted },
+                );
+              }
             }
+          } catch (err) {
+            await log.error(
+              "SYSTEM",
+              "[RetryScheduler] CB auto-promote tick failed",
+              { error: err instanceof Error ? err.message : String(err) },
+            );
+            captureCritical(err, { tags: { scheduler: "retry", stage: "cb-auto-promote" } });
           }
-        } catch (err) {
-          await log.error(
-            "SYSTEM",
-            "[RetryScheduler] CB auto-promote tick failed",
-            { error: err instanceof Error ? err.message : String(err) },
-          );
-        }
 
-        try {
-          await retryDueFailedOrders({ limit: ORDER_TICK_BATCH });
-        } catch (err) {
-          await log.error(
-            "SYSTEM",
-            "[RetryScheduler] Order tick failed",
-            { error: err instanceof Error ? err.message : String(err) },
-          );
-        }
+          try {
+            await retryDueFailedOrders({ limit: ORDER_TICK_BATCH });
+          } catch (err) {
+            await log.error(
+              "SYSTEM",
+              "[RetryScheduler] Order tick failed",
+              { error: err instanceof Error ? err.message : String(err) },
+            );
+            captureCritical(err, { tags: { scheduler: "retry", stage: "order-tick" } });
+          }
 
-        // Graph enrichment retries piggy-back on the same per-minute tick.
-        // Smooth steady-state load on Facebook (no top-of-hour spike) and the
-        // policy classifier in `leadEnrichmentRetryPolicy` keeps
-        // permanently-missing leadgenIds (code 100/33) out of the rotation.
-        try {
-          await retryDueGraphErrorLeads();
-        } catch (err) {
-          await log.error(
-            "SYSTEM",
-            "[RetryScheduler] Graph-retry tick failed",
-            { error: err instanceof Error ? err.message : String(err) },
-          );
+          // Graph enrichment retries piggy-back on the same per-minute tick.
+          // Smooth steady-state load on Facebook (no top-of-hour spike) and the
+          // policy classifier in `leadEnrichmentRetryPolicy` keeps
+          // permanently-missing leadgenIds (code 100/33) out of the rotation.
+          try {
+            await retryDueGraphErrorLeads();
+          } catch (err) {
+            await log.error(
+              "SYSTEM",
+              "[RetryScheduler] Graph-retry tick failed",
+              { error: err instanceof Error ? err.message : String(err) },
+            );
+            captureCritical(err, { tags: { scheduler: "retry", stage: "graph-retry" } });
+          }
+        } finally {
+          orderTickInFlight = false;
+          const durationMs = Date.now() - startedAt;
+          if (durationMs > ORDER_TICK_INTERVAL_MS) {
+            void log.warn(
+              "SYSTEM",
+              "[RetryScheduler] order tick exceeded interval",
+              { durationMs, intervalMs: ORDER_TICK_INTERVAL_MS },
+            );
+          }
         }
       },
     );
