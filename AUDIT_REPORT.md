@@ -1,27 +1,38 @@
 # Targenix.uz — Audit Summary
 
-> **2026-05-17 Corrections.** Re-verification while applying the fixes revealed
-> that the original "5 CRITICAL findings" count was overstated:
+> # ✅ Sprint 2026-05-17 — FINAL STATUS: ALL CRITICAL RESOLVED
 >
-> - **Finding 5 (`affiliateService.ts:928` SSRF)** — **FALSE POSITIVE.** Re-read
->   showed [server/services/affiliateService.ts:859](server/services/affiliateService.ts#L859) already calls
->   `await assertSafeOutboundUrl(template.endpointUrl)` inside the same try
->   block as the axios.request at line 928. Guard added by commit `9bfc19bd`
->   (xuseyinoff, 2026-04-16). The Section D.6 sub-agent missed it.
-> - **Finding for `httpRequestAdapter.ts:220` (MEDIUM in D.6)** — **FALSE POSITIVE.**
->   [server/integrations/adapters/httpRequestAdapter.ts:189](server/integrations/adapters/httpRequestAdapter.ts#L189) already
->   awaits `assertSafeOutboundUrl(finalUrl)`. Also already protected.
-> - **Findings 1–4 (tenant UPDATE leaks)** — DEFENSIVE GAPS, not actively
->   exploitable. The SELECT-then-throw pattern at each call site blocks
->   cross-tenant writes today. Fixed anyway as defense-in-depth (commit
->   `5cf047a`) — narrowed UPDATE WHERE clauses, added `ownedBy()` helper.
+> Six commits on `critical-fixes/2026-05-17` close every CRITICAL finding from
+> this audit. Re-verification during the fix work revealed the original "5
+> CRITICAL" count was overstated by mixed false positives — the real
+> previously-unguarded surfaces were 3 + the migration journal drift.
 >
-> **Revised CRITICAL count: 0** as of commit `5cf047a` (tenant gaps closed).
-> The only real SSRF migration was `workflowExecutor.ts` (MEDIUM, weak inline
-> regex) — fixed alongside `appLogger.redactSecrets()`.
+> | # | Finding | Audit said | Reality | Commit |
+> |---|---|---|---|---|
+> | 1 | B.5 tenant UPDATE leaks (4) | CRITICAL | Defense-in-depth gaps (SELECT-then-throw blocked exploit today) | `5cf047a` |
+> | 2 | F.4 Sentry in worker | CRITICAL | TRUE — every BullMQ error silently dropped | `0f879a6` |
+> | 3 | D.6 SSRF `affiliateService.ts:928` | CRITICAL | **FALSE POSITIVE** — guard at line 859 since 2026-04-16 | n/a (closed by re-verify) |
+> | 4 | D.6 SSRF `httpRequestAdapter.ts:220` | MEDIUM | **FALSE POSITIVE** — guard at line 189 | n/a |
+> | 5 | D.6 SSRF `workflowExecutor.ts:86` | MEDIUM | TRUE — weak inline regex | `e93c170` |
+> | 6 | D.6 secret-logging | recommendation | Added `redactSecrets()` to appLogger | `e93c170` |
+> | 7 | D.4 scheduler overlap (7) | CRITICAL | **5 FALSE POSITIVE** (setTimeout self-reschedule); 2 real | `c3de5bc` |
+> | 8 | B.3 migration journal | CRITICAL | TRUE — 8 missing entries (audit said 8; 0054 turned out already-present, so 7 INSERTs) | `8d537cf` |
 >
-> Sections below remain as originally written for historical traceability;
-> Section D.6 has been amended inline.
+> **True CRITICAL count: 5 → 3 + migration journal drift.** All resolved.
+>
+> ## Next priorities (HIGH, not CRITICAL)
+>
+> - **Remove 5 deprecated `@types/*` packages** (A.1) — `pnpm remove @types/bcryptjs @types/node-telegram-bot-api @types/cors @types/express-rate-limit @types/google.maps`. ~5 min, zero risk.
+> - **Add `destinations` table indexes** (B.4) — currently zero secondary indexes; will hit ~50k rows soon. ~15 min + migration + apply.
+> - **Set up coverage + router-level integration tests** (E.1, E.3) — add `@vitest/coverage-v8`, wire `coverage` block, write `tenantIsolation.integration.test.ts` per high-LOC router.
+> - **Apply `ownedBy()` to 8 other UPDATE/DELETE patterns** (B.5 follow-up) — `triggers.fire`, `connections.rename/disconnect`, `destinations.update`, `leads.retry/bulkRetry`, `telegram.setDestinationChat`. Same defense-in-depth pattern as the 4 fixed in this sprint.
+> - **Backfill remaining 19 migration drift rows** (B.3 follow-up) — only needed if `pnpm db:push` is re-enabled as the primary migration path. Documented in [`drizzle/MIGRATION_HISTORY.md`](drizzle/MIGRATION_HISTORY.md).
+>
+> ## Sections below remain as originally written
+>
+> Historical traceability preserved. Sections D.4 and D.6 have been amended
+> inline with re-verification notes. Original "Critical security findings: 5"
+> list below is the AS-FOUND state, not current state.
 
 **Overall health score: 7.0 / 10.** A well-architected TypeScript monolith with clean layering, end-to-end types, and surprisingly disciplined adapter/registry patterns — but multi-tenancy is enforced per-procedure (no central guard), the worker process runs without Sentry, and 22 rollback-paired migrations + a journal/disk mismatch reflect real production turbulence over the last 30 days.
 
