@@ -508,7 +508,11 @@ export const destinations = mysqlTable("destinations", {
    */
   connectionId: int("connectionId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  idxUserId: index("idx_destinations_user_id").on(t.userId),
+  idxUserAppKey: index("idx_destinations_user_app").on(t.userId, t.appKey),
+  idxConnectionId: index("idx_destinations_connection_id").on(t.connectionId),
+}));
 
 export type Destination = typeof destinations.$inferSelect;
 export type InsertDestination = typeof destinations.$inferInsert;
