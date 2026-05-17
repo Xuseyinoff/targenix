@@ -71,7 +71,11 @@ import {
   Layers,
   Send,
   Table2,
+  Clock,
+  PauseCircle,
 } from "lucide-react";
+import { ScheduleDialog } from "@/components/destinations/ScheduleDialog";
+import { BulkSchedulesToolbar } from "@/components/destinations/BulkSchedulesToolbar";
 
 type TemplateType = "sotuvchi" | "100k" | "custom" | "telegram" | "google-sheets";
 type ContentType = "json" | "form-urlencoded" | "multipart";
@@ -443,10 +447,30 @@ export default function TargetWebsites() {
   const [sheetsFieldErrors, setSheetsFieldErrors] = useState<GoogleSheetsFieldErrors>({});
   const [sheetsLoadError, setSheetsLoadError] = useState<string | null>(null);
 
+  // Phase C (Yuboraman parity) — schedule editor: which destination's
+  // ScheduleDialog is currently open. null = closed. The dialog is rendered
+  // once at the bottom and driven by this id so we don't mount one per row.
+  const [scheduleEditFor, setScheduleEditFor] = useState<{ id: number; name: string } | null>(null);
+
   const utils = trpc.useUtils();
   const getSheetHeadersMutation = trpc.destinations.getSheetHeaders.useMutation();
   const { data: sites = [], isLoading } = trpc.destinations.list.useQuery();
   const { data: dynTemplates = [] } = trpc.destinations.getTemplates.useQuery();
+  // Phase C — one batched query feeds every row's status badge.
+  // Returns Array<DestinationSchedule>; we shape it into Maps below for O(1)
+  // per-row lookup.
+  const { data: schedulesList = [] } = trpc.destinationSchedules.listForUser.useQuery();
+  const { data: pendingCounts = [] } = trpc.destinationSchedules.listPendingCountsForUser.useQuery();
+  const schedulesByDestId = useMemo(() => {
+    const m = new Map<number, typeof schedulesList[number]>();
+    for (const s of schedulesList) m.set(s.destinationId, s);
+    return m;
+  }, [schedulesList]);
+  const pendingByDestId = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const p of pendingCounts) m.set(p.destinationId, p.count);
+    return m;
+  }, [pendingCounts]);
   const { data: googleIntegrationAccounts = [], isLoading: googleAccountsLoading } =
     trpc.googleAccounts.list.useQuery();
 
@@ -900,6 +924,11 @@ export default function TargetWebsites() {
           </Button>
         </div>
 
+        {/* Fleet-wide schedule toolbar (Phase C). Hidden when the list is
+            empty — the buttons would have no effect and would distract from
+            the empty-state CTA below. */}
+        {!isLoading && sites.length > 0 && <BulkSchedulesToolbar />}
+
         {/* Search + filters (mobile-first) */}
         {!isLoading && sites.length > 0 && (
           <div className="space-y-3">
@@ -983,6 +1012,37 @@ export default function TargetWebsites() {
               const config = (site.templateConfig ?? {}) as Record<string, unknown>;
               const isDynamic = !!(site as { templateId?: number | null }).templateId;
               const dynName = (site as { templateName?: string | null }).templateName;
+              // Phase C — pull this destination's schedule + pending count
+              // out of the page-level maps. Either may be undefined when the
+              // destination has no schedule / no queued leads.
+              const schedule = schedulesByDestId.get(site.id);
+              const pendingCount = pendingByDestId.get(site.id) ?? 0;
+              const scheduleStatusBadge = schedule
+                ? schedule.isPausedNow
+                  ? {
+                      label: t("destinations.schedule.statusPaused"),
+                      tooltip:
+                        schedule.startHour != null
+                          ? t("destinations.schedule.statusPausedTooltip", {
+                              hour: String(schedule.startHour).padStart(2, "0"),
+                            })
+                          : t("destinations.schedule.statusPausedTooltipNoStart"),
+                      classes:
+                        "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200",
+                      icon: <PauseCircle className="w-3 h-3 mr-0.5" />,
+                    }
+                  : schedule.pauseHour != null
+                    ? {
+                        label: t("destinations.schedule.statusScheduled"),
+                        tooltip: t("destinations.schedule.statusScheduledTooltip", {
+                          hour: String(schedule.pauseHour).padStart(2, "0"),
+                        }),
+                        classes:
+                          "border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-200",
+                        icon: <Clock className="w-3 h-3 mr-0.5" />,
+                      }
+                    : null
+                : null;
               return (
                 <Card key={site.id} className="hover:shadow-sm transition-shadow">
                   <CardContent className="p-3 flex items-center gap-3">
@@ -996,6 +1056,25 @@ export default function TargetWebsites() {
                         {!site.isActive && (
                           <Badge variant="outline" className="text-xs text-muted-foreground shrink-0">
                             {t("destinations.inactiveBadge")}
+                          </Badge>
+                        )}
+                        {scheduleStatusBadge && (
+                          <Badge
+                            variant="outline"
+                            title={scheduleStatusBadge.tooltip}
+                            className={`text-xs shrink-0 inline-flex items-center gap-0.5 ${scheduleStatusBadge.classes}`}
+                          >
+                            {scheduleStatusBadge.icon}
+                            {scheduleStatusBadge.label}
+                          </Badge>
+                        )}
+                        {pendingCount > 0 && (
+                          <Badge
+                            variant="outline"
+                            title={t("destinations.schedule.queuedLeadsNoSend", { count: pendingCount })}
+                            className="text-xs shrink-0 border-orange-300 bg-orange-50 text-orange-900 dark:border-orange-900/50 dark:bg-orange-950/40 dark:text-orange-200"
+                          >
+                            {pendingCount}
                           </Badge>
                         )}
                       </div>
@@ -1047,10 +1126,17 @@ export default function TargetWebsites() {
                             <MoreVertical className="w-5 h-5" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-44">
+                        <DropdownMenuContent align="end" className="w-48">
                           <DropdownMenuItem onClick={() => openEdit(site)} className="cursor-pointer">
                             <Pencil className="mr-2 h-4 w-4" />
                             {t("destinations.edit")}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => setScheduleEditFor({ id: site.id, name: site.name })}
+                            className="cursor-pointer"
+                          >
+                            <Clock className="mr-2 h-4 w-4 text-amber-600 dark:text-amber-400" />
+                            {t("destinations.schedule.menuItem")}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
@@ -1072,6 +1158,17 @@ export default function TargetWebsites() {
           </div>
         )}
       </div>
+
+      {scheduleEditFor && (
+        <ScheduleDialog
+          open={!!scheduleEditFor}
+          onOpenChange={(o) => {
+            if (!o) setScheduleEditFor(null);
+          }}
+          destinationId={scheduleEditFor.id}
+          destinationName={scheduleEditFor.name}
+        />
+      )}
 
       <WebsiteFlowDialog
         open={open}
