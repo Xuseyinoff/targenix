@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
   getIntegrations,
@@ -6,6 +7,7 @@ import {
   updateIntegration,
   deleteIntegration,
   getDb,
+  DuplicateIntegrationError,
 } from "../db";
 import { inArray, asc } from "drizzle-orm";
 import { injectVariables } from "../services/affiliateService";
@@ -163,20 +165,33 @@ export const integrationsRouter = router({
         }
       }
 
-      await createIntegration({
-        userId: ctx.user.id,
-        type: input.type,
-        name: input.name,
-        config: input.config,
-        telegramChatId: input.telegramChatId ?? null,
-        destinationIds: safeDestinationIds,
-        pageId: input.pageId,
-        formId: input.formId,
-        pageName: input.pageName,
-        formName: input.formName,
-        facebookAccountId: input.facebookAccountId,
-        destinationId: input.destinationId,
-      });
+      try {
+        await createIntegration({
+          userId: ctx.user.id,
+          type: input.type,
+          name: input.name,
+          config: input.config,
+          telegramChatId: input.telegramChatId ?? null,
+          destinationIds: safeDestinationIds,
+          pageId: input.pageId,
+          formId: input.formId,
+          pageName: input.pageName,
+          formName: input.formName,
+          facebookAccountId: input.facebookAccountId,
+          destinationId: input.destinationId,
+        });
+      } catch (err) {
+        if (err instanceof DuplicateIntegrationError) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message:
+              `This form is already routed to that destination. ` +
+              `Edit the existing integration "${err.existingName}" (id=${err.existingId}) instead.`,
+            cause: err,
+          });
+        }
+        throw err;
+      }
       return { success: true };
     }),
 

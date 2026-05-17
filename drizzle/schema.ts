@@ -581,6 +581,13 @@ export const integrations = mysqlTable("integrations", {
   idxDestination: index("idx_integrations_destination_id").on(t.destinationId),
   // Index for disconnect cleanup: find all integrations tied to a given FB account
   idxFbAccount: index("idx_integrations_fb_account_id").on(t.facebookAccountId),
+  // Note: a MySQL-8 functional UNIQUE index `uniq_integrations_live_form_dest`
+  // is also present in prod — added via migration 0092. It enforces
+  // uniqueness on (userId, formId, destinationId) for LIVE rows only
+  // (deletedAt IS NULL AND both ids NOT NULL). Drizzle has no native
+  // expression-index API, so the index is managed via the hand-written
+  // 0092 SQL migration and not declared here. Don't `pnpm db:push` —
+  // it would propose dropping the index.
 }));
 
 export type Integration = typeof integrations.$inferSelect;

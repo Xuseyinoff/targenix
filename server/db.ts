@@ -494,6 +494,38 @@ function warnIfLegacyWizardShape(
   }
 }
 
+/**
+ * Thrown by createIntegration when the user already owns a live integration
+ * for the same (formId, destinationId). Backed by the functional UNIQUE
+ * `uniq_integrations_live_form_dest` (migration 0092). Routers should map
+ * this to TRPCError code "CONFLICT".
+ */
+export class DuplicateIntegrationError extends Error {
+  readonly code = "DUPLICATE_INTEGRATION" as const;
+  readonly userId: number;
+  readonly formId: string;
+  readonly destinationId: number;
+  readonly existingId: number;
+  readonly existingName: string;
+  constructor(args: {
+    userId: number;
+    formId: string;
+    destinationId: number;
+    existingId: number;
+    existingName: string;
+  }) {
+    super(
+      `DUPLICATE_INTEGRATION: user=${args.userId} form=${args.formId} dest=${args.destinationId} existing=#${args.existingId}`,
+    );
+    this.name = "DuplicateIntegrationError";
+    this.userId = args.userId;
+    this.formId = args.formId;
+    this.destinationId = args.destinationId;
+    this.existingId = args.existingId;
+    this.existingName = args.existingName;
+  }
+}
+
 export async function createIntegration(data: {
   userId: number;
   type: "LEAD_ROUTING";
@@ -537,20 +569,90 @@ export async function createIntegration(data: {
     ? (data.destinationId ?? extractDestinationIdFromConfig(cfg))
     : null;
 
-  const [result] = await db.insert(integrations).values({
-    userId: data.userId,
-    type: data.type,
-    name: data.name,
-    config: data.config,
-    telegramChatId: data.telegramChatId ?? null,
-    isActive: true,
-    pageId,
-    formId,
-    pageName,
-    formName,
-    facebookAccountId,
-    destinationId,
-  });
+  // Duplicate-prevention pre-check (PR 1/4 — Yuboraman parity).
+  // The functional UNIQUE `uniq_integrations_live_form_dest` (migration 0092)
+  // is the source of truth at the DB layer; the pre-check exists to surface
+  // a friendly "edit existing instead" error instead of a raw ER_DUP_ENTRY.
+  // Only meaningful when both formId and destinationId are set — partial
+  // routings (one of them NULL) don't participate in dedup. The ER_DUP_ENTRY
+  // catch below covers the race where two concurrent creates slip past the
+  // pre-check.
+  if (isLR && formId !== null && destinationId !== null && destinationId > 0) {
+    const existing = await db
+      .select({ id: integrations.id, name: integrations.name })
+      .from(integrations)
+      .where(
+        and(
+          eq(integrations.userId, data.userId),
+          eq(integrations.formId, formId),
+          eq(integrations.destinationId, destinationId),
+          isNull(integrations.deletedAt),
+        ),
+      )
+      .limit(1);
+    if (existing.length > 0) {
+      throw new DuplicateIntegrationError({
+        userId: data.userId,
+        formId,
+        destinationId,
+        existingId: existing[0].id,
+        existingName: existing[0].name,
+      });
+    }
+  }
+
+  let result: { insertId?: number };
+  try {
+    [result] = await db.insert(integrations).values({
+      userId: data.userId,
+      type: data.type,
+      name: data.name,
+      config: data.config,
+      telegramChatId: data.telegramChatId ?? null,
+      isActive: true,
+      pageId,
+      formId,
+      pageName,
+      formName,
+      facebookAccountId,
+      destinationId,
+    });
+  } catch (err: unknown) {
+    // Race safety-net: the pre-check raced with another concurrent create.
+    // mysql2 surfaces ER_DUP_ENTRY as errno 1062 / code "ER_DUP_ENTRY".
+    const e = err as { errno?: number; code?: string; message?: string };
+    if (e?.errno === 1062 || e?.code === "ER_DUP_ENTRY") {
+      // Best-effort lookup so the error still carries the existing row's id.
+      let existingId = -1;
+      let existingName = "(unknown)";
+      if (isLR && formId !== null && destinationId !== null && destinationId > 0) {
+        const found = await db
+          .select({ id: integrations.id, name: integrations.name })
+          .from(integrations)
+          .where(
+            and(
+              eq(integrations.userId, data.userId),
+              eq(integrations.formId, formId),
+              eq(integrations.destinationId, destinationId),
+              isNull(integrations.deletedAt),
+            ),
+          )
+          .limit(1);
+        if (found.length > 0) {
+          existingId = found[0].id;
+          existingName = found[0].name;
+        }
+      }
+      throw new DuplicateIntegrationError({
+        userId: data.userId,
+        formId: formId ?? "(null)",
+        destinationId: destinationId ?? 0,
+        existingId,
+        existingName,
+      });
+    }
+    throw err;
+  }
 
   // Strict dual-write into the new join table. Since the legacy fallback
   // was retired (see services/integrationRoutes.ts:resolve…), the
