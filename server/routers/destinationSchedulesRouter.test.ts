@@ -110,8 +110,14 @@ function makeMockDb(opts: {
         return {
           where: vi.fn(() => ({
             limit: vi.fn(async () => rows),
+            // listForUser: `await db.select().from().where()` — no further chain.
             then: (resolve: (v: unknown[]) => unknown) => resolve(rows),
+            // listPendingCountsForUser: `.where(...).groupBy(...)` then await.
+            groupBy: vi.fn(async () => rows),
           })),
+          // resetSchedules etc: `.from(...)` then `.where(...)` is the leaf;
+          // some queries also `await db.select().from()` without .where().
+          then: (resolve: (v: unknown[]) => unknown) => resolve(rows),
         };
       }),
     })),
@@ -352,5 +358,68 @@ describe("destinationSchedulesRouter — global", () => {
     });
     expect(calls.deletes).toBe(1);
     expect(flushPendingForDestination).toHaveBeenCalledTimes(3);
+  });
+});
+
+// ─── Phase C batched-fetch procs ────────────────────────────────────────────
+
+describe("destinationSchedulesRouter — listForUser (Phase C)", () => {
+  it("13. returns every schedule the caller owns (the SQL scopes by userId)", async () => {
+    const ownedRows = [
+      { ...baseScheduleRow, id: 1, destinationId: 50 },
+      { ...baseScheduleRow, id: 2, destinationId: 51 },
+    ];
+    const { db } = makeMockDb({ selectReturns: [ownedRows] });
+    vi.mocked(getDb).mockResolvedValue(db);
+    const result = await userCaller(100).listForUser();
+    expect(result).toHaveLength(2);
+    expect(result.map((r) => r.destinationId).sort()).toEqual([50, 51]);
+  });
+
+  it("14. cross-tenant non-leak: empty result when the user has no schedules", async () => {
+    // Simulates the WHERE userId = caller.id filter collapsing all foreign
+    // rows. The router returns whatever the SQL returns.
+    const { db } = makeMockDb({ selectReturns: [[]] });
+    vi.mocked(getDb).mockResolvedValue(db);
+    const result = await userCaller(100).listForUser();
+    expect(result).toEqual([]);
+  });
+});
+
+describe("destinationSchedulesRouter — listPendingCountsForUser (Phase C)", () => {
+  it("15. returns one row per destination with numeric counts", async () => {
+    // Mock the GROUP BY result — each row is { destinationId, count }.
+    // MySQL/Drizzle returns count as a string in some driver versions, so
+    // the router does Number(r.count). We feed numeric to keep the test
+    // focused on the shape contract.
+    const rows = [
+      { destinationId: 50, count: 3 },
+      { destinationId: 51, count: 1 },
+    ];
+    const { db } = makeMockDb({ selectReturns: [rows] });
+    vi.mocked(getDb).mockResolvedValue(db);
+    const result = await userCaller(100).listPendingCountsForUser();
+    expect(result).toEqual([
+      { destinationId: 50, count: 3 },
+      { destinationId: 51, count: 1 },
+    ]);
+  });
+
+  it("16. coerces string counts (MySQL driver quirk) to numbers", async () => {
+    // Some node-mysql2 versions surface COUNT(*) as a string. The router
+    // wraps each row with Number(r.count) — this test pins that contract.
+    const rows = [{ destinationId: 50, count: "7" as unknown as number }];
+    const { db } = makeMockDb({ selectReturns: [rows] });
+    vi.mocked(getDb).mockResolvedValue(db);
+    const result = await userCaller(100).listPendingCountsForUser();
+    expect(result[0].count).toBe(7);
+    expect(typeof result[0].count).toBe("number");
+  });
+
+  it("17. empty result when the user has no pending leads", async () => {
+    const { db } = makeMockDb({ selectReturns: [[]] });
+    vi.mocked(getDb).mockResolvedValue(db);
+    const result = await userCaller(100).listPendingCountsForUser();
+    expect(result).toEqual([]);
   });
 });

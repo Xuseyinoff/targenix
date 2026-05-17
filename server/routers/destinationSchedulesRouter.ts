@@ -72,6 +72,50 @@ export const destinationSchedulesRouter = router({
       return schedule ?? null;
     }),
 
+  /**
+   * Batched fetch for the destinations list page (Phase C). Returns every
+   * schedule row the caller owns — the client builds a Map<destinationId,
+   * schedule> so per-row badges don't fire N independent queries.
+   *
+   * Tenant scope: WHERE userId = caller.id. No row leaks across tenants.
+   */
+  listForUser: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return [];
+    return db
+      .select()
+      .from(destinationSchedules)
+      .where(eq(destinationSchedules.userId, ctx.user.id));
+  }),
+
+  /**
+   * Batched fetch of undelivered pending-lead counts grouped by
+   * destinationId. Returns `Array<{ destinationId, count }>` — the client
+   * builds a Map for row-level badges + the dialog's "X leads queued"
+   * status row. Tenant scope: WHERE userId = caller.id.
+   */
+  listPendingCountsForUser: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return [] as Array<{ destinationId: number; count: number }>;
+    const rows = await db
+      .select({
+        destinationId: destinationPendingLeads.destinationId,
+        count: sql<number>`COUNT(*)`,
+      })
+      .from(destinationPendingLeads)
+      .where(
+        and(
+          eq(destinationPendingLeads.userId, ctx.user.id),
+          isNull(destinationPendingLeads.deliveredAt),
+        ),
+      )
+      .groupBy(destinationPendingLeads.destinationId);
+    return rows.map((r) => ({
+      destinationId: r.destinationId,
+      count: Number(r.count),
+    }));
+  }),
+
   setSchedule: protectedProcedure
     .input(
       z.object({
