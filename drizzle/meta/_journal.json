@@ -638,6 +638,13 @@
       "when": 1779833280014,
       "tag": "0092_integrations_unique_form_destination",
       "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "5",
+      "when": 1779833280015,
+      "tag": "0093_destination_schedules",
+      "breakpoints": true
     }
   ]
 }

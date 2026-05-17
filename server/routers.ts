@@ -4,6 +4,7 @@ import { leadsRouter } from "./routers/leadsRouter";
 import { integrationsRouter } from "./routers/integrationsRouter";
 import { facebookAccountsRouter } from "./routers/facebookAccountsRouter";
 import { destinationsRouter } from "./routers/destinationsRouter";
+import { destinationSchedulesRouter } from "./routers/destinationSchedulesRouter";
 import { webhookRouter } from "./routers/webhookRouter";
 import { logsRouter } from "./routers/logsRouter";
 import { telegramRouter } from "./routers/telegramRouter";
@@ -36,6 +37,7 @@ export const appRouter = router({
   googleAccounts: googleAccountsRouter,
   google: googleRouter,
   destinations: destinationsRouter,
+  destinationSchedules: destinationSchedulesRouter,
   webhook: webhookRouter,
   logs: logsRouter,
   telegram: telegramRouter,

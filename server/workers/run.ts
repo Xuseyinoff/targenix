@@ -31,6 +31,10 @@ import { startConnectionHealthScheduler } from "../services/connectionHealthSche
 import { startLeadPollingScheduler } from "../services/leadPollingService";
 import { startTriggerScheduler } from "../services/triggerScheduler";
 import { startOAuthStateCleanupScheduler, stopOAuthStateCleanupScheduler } from "../services/oauthStateCleanupScheduler";
+import {
+  startDestinationFlushScheduler,
+  stopDestinationFlushScheduler,
+} from "../services/destinationFlushScheduler";
 import { startMetricSnapshotScheduler } from "../services/metricSnapshotScheduler";
 import { startInsightsRollupScheduler } from "../services/insightsRollupScheduler";
 import { startFxRateScheduler } from "../services/fxRateScheduler";
@@ -172,6 +176,11 @@ async function boot() {
   // Insights Phase 4: pull CBU USD/UZS rate every 6 hours so the rollup
   // worker has fresh FX data to convert cross-currency Revenue / Spend.
   startFxRateScheduler();
+  // Yuboraman parity PR 4/4 Phase A: per-minute scan of
+  // destination_schedules. Applies pause/start transitions at hour
+  // boundaries; logs flush + TTL intent (Phase B will wire the actual
+  // lead dispatch).
+  startDestinationFlushScheduler();
 
   console.log("[Worker] All systems running. Waiting for jobs...");
 
@@ -184,6 +193,7 @@ async function boot() {
     // when the process does; oauthStateCleanup uses an active timer
     // tied to msUntilNextHour() and needs explicit cancellation.
     stopOAuthStateCleanupScheduler();
+    stopDestinationFlushScheduler();
     await worker.close();
     // Flush any in-flight Sentry events before exit so a deploy-triggered
     // SIGTERM doesn't drop the last few errors. Capped at 2s so a hung
