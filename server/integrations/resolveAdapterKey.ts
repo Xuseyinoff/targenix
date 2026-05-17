@@ -11,10 +11,6 @@
  * in `apps` / `app_actions` (see migration 0050) for DB catalogue; routing here
  * stays TS-defined for determinism. After migrations 0051/0052, `appKey` is NOT
  * NULL; `unknown` is a backfill sentinel treated like missing for routing.
- *
- * Logging: set `STAGE2_ADAPTER_LOG=1` only when debugging. Leave unset in
- * production to avoid per-delivery `console.log` volume. For resolved adapter
- * + appKey, see `STAGE2_APP_ROUTING_LOG=1` in `dispatchDelivery`.
  */
 /**
  * Phase 9 — app keys whose delivery is handled by the generic httpApiKeyAdapter.
@@ -62,14 +58,6 @@ export function resolveAdapterKey(
   const effectiveKey = appKeyNorm === "unknown" ? null : appKeyNorm;
 
   if (effectiveKey) {
-    if (process.env.STAGE2_ADAPTER_LOG === "1" || process.env.STAGE2_ADAPTER_LOG === "true") {
-      console.log({
-        stage: "adapter_resolution",
-        path: "NEW" as const,
-        appKey: effectiveKey,
-        templateId: tw.templateId,
-      });
-    }
     if (effectiveKey === "telegram") return "telegram";
     if (effectiveKey === "google-sheets" || effectiveKey === "google_sheets") return "google-sheets";
     // Universal HTTP — consolidates webhook-json / plain-url / crm-generic
@@ -104,14 +92,5 @@ export function resolveAdapterKey(
   // delivery falls into the safest default: plain-url with the
   // integration's config-supplied URL. No silent misroute, no
   // credential leak.
-  if (process.env.STAGE2_ADAPTER_LOG === "1" || process.env.STAGE2_ADAPTER_LOG === "true") {
-    console.log({
-      stage: "adapter_resolution",
-      path: "LEGACY_DEFAULT" as const,
-      appKey: tw.appKey ?? null,
-      templateId: tw.templateId,
-      note: "appKey missing — falling through to http-request default",
-    });
-  }
   return "http-request";
 }

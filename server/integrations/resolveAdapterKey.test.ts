@@ -1,14 +1,7 @@
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import { resolveAdapterKey } from "./resolveAdapterKey";
 
 describe("resolveAdapterKey — Stage 2 appKey", () => {
-  const orig = process.env.STAGE2_ADAPTER_LOG;
-
-  afterEach(() => {
-    if (orig === undefined) delete process.env.STAGE2_ADAPTER_LOG;
-    else process.env.STAGE2_ADAPTER_LOG = orig;
-  });
-
   it("LEAD no tw -> http-request", () => {
     expect(resolveAdapterKey("LEAD_ROUTING", null)).toBe("http-request");
   });
@@ -93,13 +86,5 @@ describe("resolveAdapterKey — Stage 2 appKey", () => {
     expect(
       resolveAdapterKey("LEAD_ROUTING", { templateId: null, templateType: "telegram", appKey: null }),
     ).toBe("http-request");
-  });
-
-  it("STAGE2_ADAPTER_LOG logs when set", () => {
-    process.env.STAGE2_ADAPTER_LOG = "1";
-    const spy = vi.spyOn(console, "log").mockImplementation(() => {});
-    resolveAdapterKey("LEAD_ROUTING", { templateId: 1, appKey: "x" });
-    expect(spy).toHaveBeenCalled();
-    spy.mockRestore();
   });
 });

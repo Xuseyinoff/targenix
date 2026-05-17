@@ -44,7 +44,6 @@ function appRow(partial: Partial<AppRow> & Pick<AppRow, "appKey" | "displayName"
 describe("resolveSpecSafe", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    delete process.env.STAGE2_SPEC_LOG;
   });
 
   it("uses DB when an active apps row exists", async () => {
@@ -93,23 +92,5 @@ describe("resolveSpecSafe", () => {
     const spec = await resolveSpecSafe(null, "mgoods");
 
     expect(spec).toBeNull();
-  });
-
-  it("logs spec source when STAGE2_SPEC_LOG=1", async () => {
-    process.env.STAGE2_SPEC_LOG = "1";
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const db = makeDbForResolveSpec([
-      appRow({ appKey: "100k", displayName: "100k from DB marker" }),
-    ]);
-
-    await resolveSpecSafe(db, "100k");
-
-    expect(log).toHaveBeenCalledWith(
-      expect.objectContaining({
-        stage: "spec_resolution",
-        source: "DB",
-        appKey: "100k",
-      }),
-    );
   });
 });
