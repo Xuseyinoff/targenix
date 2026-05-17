@@ -40,8 +40,22 @@ vi.mock("../db", async (importOriginal) => {
   };
 });
 
+// Phase B: clearSchedule / startAll / resetSchedules / flushPendingAll all
+// call into the queue's flush helper. The router tests assert the trigger
+// shape (was the flush called with the right destinationId?) — actual flush
+// behaviour is covered in destinationPendingQueue.test.ts.
+vi.mock("../services/destinationPendingQueue", () => ({
+  flushPendingForDestination: vi.fn(async () => ({
+    attempted: 0,
+    succeeded: 0,
+    failed: 0,
+    skippedRace: 0,
+  })),
+}));
+
 import { getDb } from "../db";
 import type { DbClient } from "../db";
+import { flushPendingForDestination } from "../services/destinationPendingQueue";
 import { destinationSchedulesRouter } from "./destinationSchedulesRouter";
 import type { TrpcContext } from "../_core/context";
 
@@ -225,12 +239,16 @@ describe("destinationSchedulesRouter — per-destination", () => {
     ).rejects.toThrow();
   });
 
-  it("7. clearSchedule executes a DELETE", async () => {
+  it("7. clearSchedule executes a DELETE AND triggers flushPendingForDestination", async () => {
     const { db, calls } = makeMockDb();
     vi.mocked(getDb).mockResolvedValue(db);
     const result = await userCaller(100).clearSchedule({ destinationId: 50 });
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({
+      ok: true,
+      flushed: { attempted: 0, succeeded: 0, failed: 0 },
+    });
     expect(calls.deletes).toBe(1);
+    expect(flushPendingForDestination).toHaveBeenCalledWith(db, 50);
   });
 });
 
@@ -267,28 +285,72 @@ describe("destinationSchedulesRouter — global", () => {
     }
   });
 
-  it("10. startAll executes an UPDATE that clears isPausedNow", async () => {
-    const { db, calls } = makeMockDb();
+  it("10. startAll clears isPausedNow AND flushes previously-paused destinations", async () => {
+    // First select returns the previously-paused snapshot (used to drive flushes).
+    const previouslyPaused = [{ destinationId: 50 }, { destinationId: 51 }];
+    const { db, calls } = makeMockDb({ selectReturns: [previouslyPaused] });
     vi.mocked(getDb).mockResolvedValue(db);
+
     const result = await userCaller(100).startAll();
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({
+      ok: true,
+      destinationsResumed: 2,
+      flushed: { attempted: 0, succeeded: 0, failed: 0 },
+    });
     expect(calls.updates).toBe(1);
     expect(calls.updateSets[0]).toEqual({ isPausedNow: false });
+    // Flush was called once per previously-paused destination.
+    expect(flushPendingForDestination).toHaveBeenCalledTimes(2);
+    expect(flushPendingForDestination).toHaveBeenCalledWith(db, 50);
+    expect(flushPendingForDestination).toHaveBeenCalledWith(db, 51);
   });
 
-  it("11. flushPendingAll returns the count of undelivered pending (Phase A stub)", async () => {
-    const pending = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
+  it("11. flushPendingAll groups by destinationId and calls flushPendingForDestination for each", async () => {
+    // Mixed destinations — two unique ids across four pending rows.
+    const pending = [
+      { destinationId: 50 },
+      { destinationId: 51 },
+      { destinationId: 50 },
+      { destinationId: 51 },
+    ];
     const { db } = makeMockDb({ selectReturns: [pending] });
     vi.mocked(getDb).mockResolvedValue(db);
+
     const result = await userCaller(100).flushPendingAll();
-    expect(result).toEqual({ ok: true, queued: 4 });
+    expect(result).toMatchObject({
+      ok: true,
+      queued: 4,
+      flushed: { attempted: 0, succeeded: 0, failed: 0 },
+    });
+    // Unique-by-destinationId — two flush calls, not four.
+    expect(flushPendingForDestination).toHaveBeenCalledTimes(2);
   });
 
-  it("12. resetSchedules executes a DELETE filtered by caller userId", async () => {
-    const { db, calls } = makeMockDb();
+  it("11b. flushPendingAll with 0 pending returns queued=0 and never calls flush", async () => {
+    const { db } = makeMockDb({ selectReturns: [[]] });
     vi.mocked(getDb).mockResolvedValue(db);
+    const result = await userCaller(100).flushPendingAll();
+    expect(result).toEqual({
+      ok: true,
+      queued: 0,
+      flushed: { attempted: 0, succeeded: 0, failed: 0 },
+    });
+    expect(flushPendingForDestination).not.toHaveBeenCalled();
+  });
+
+  it("12. resetSchedules deletes schedules AND flushes each previously-scheduled destination", async () => {
+    // First select returns the destinationId snapshot used to drive flushes.
+    const scheduled = [{ destinationId: 50 }, { destinationId: 51 }, { destinationId: 52 }];
+    const { db, calls } = makeMockDb({ selectReturns: [scheduled] });
+    vi.mocked(getDb).mockResolvedValue(db);
+
     const result = await userCaller(100).resetSchedules();
-    expect(result).toEqual({ ok: true });
+    expect(result).toMatchObject({
+      ok: true,
+      destinationsCleared: 3,
+      flushed: { attempted: 0, succeeded: 0, failed: 0 },
+    });
     expect(calls.deletes).toBe(1);
+    expect(flushPendingForDestination).toHaveBeenCalledTimes(3);
   });
 });

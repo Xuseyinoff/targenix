@@ -2,48 +2,63 @@
  * destinationFlushScheduler.ts — per-minute tick that drives per-destination
  * daily pause scheduling.
  *
- * Yuboraman parity sprint, PR 4/4 Phase A.
+ * Yuboraman parity sprint, PR 4/4. Phase A established the table + stub
+ * scheduler; Phase B turned the stubs into real dispatch by delegating
+ * to `destinationPendingQueue`. This file now stays focused on tick
+ * orchestration: pause/start transitions live here; flush, TTL, and
+ * orphan cleanup are one-line calls into the queue module.
  *
  * Three jobs run on each tick:
  *
  *   1. **Pause-state transitions.** For each row in destination_schedules,
- *      compute the current hour in that row's `timezone`. If we just entered
- *      the row's `pauseHour`, set `isPausedNow = true`. If we just entered
- *      its `startHour`, set `isPausedNow = false`. "Just entered" is tracked
- *      via an in-memory map keyed on the schedule id — on worker restart the
- *      map resets, which is harmless because both transitions are idempotent
- *      against the current value.
+ *      compute the current hour in that row's `timezone`. If we just
+ *      entered the row's `pauseHour`, set `isPausedNow = true`. If we
+ *      just entered its `startHour`, set `isPausedNow = false`. "Just
+ *      entered" is tracked via an in-memory map keyed on the schedule id
+ *      — on worker restart the map resets, which is harmless because
+ *      both transitions are idempotent against the current value.
  *
- *   2. **Flush at sendHour (Phase A: STUB).** For each row whose `sendHour`
- *      matches the current hour, log how many undelivered rows in
- *      destination_pending_leads it would have flushed. Phase B will replace
- *      the log with the actual lead dispatch + `deliveredAt = NOW()` write.
+ *   2. **Flush at sendHour.** For each schedule whose `sendHour` matches
+ *      the current hour, call `flushPendingForDestination` (Phase B) to
+ *      atomically claim every undelivered row and call `dispatchDelivery`
+ *      for each. Failures roll back the claim so the next tick retries.
  *
- *   3. **TTL stale-pending (Phase A: STUB).** Log any undelivered
- *      destination_pending_leads rows older than 24h so a misconfigured
- *      schedule doesn't blackhole leads. Phase B will force-send them.
+ *   3. **TTL stale-pending.** Any undelivered row older than 24h is
+ *      force-flushed via `flushStalePendingLeads` so a misconfigured
+ *      schedule cannot blackhole leads indefinitely.
+ *
+ *   4. **Orphan cleanup.** Rows whose destination has been hard-deleted
+ *      are marked `deliveredAt = NOW(), deliveryError = "destination_deleted"`
+ *      so the active set stays clean.
+ *
+ * Cycle note: this file is imported by destinationPendingQueue.ts for
+ * `currentHourInTimezone`, and imports flush helpers back from the
+ * queue. ESM resolves the cycle at runtime because both bindings are
+ * only accessed inside functions (never at module-init time).
  *
  * Overlap protection: setInterval cadence + module-level `inFlight` flag
- * (same pattern as retryScheduler.ts). Reset in `finally` so a thrown error
- * can't wedge the scheduler. Sentry escalation in the catch path so a
- * silent failure flows to telemetry.
+ * (same pattern as retryScheduler.ts). Reset in `finally` so a thrown
+ * error can't wedge the scheduler. Sentry escalation in the catch path
+ * so a silent failure flows to telemetry.
  *
- * Shutdown: `stopDestinationFlushScheduler()` clears the interval and resets
- * module-level state. Wired into workers/run.ts shutdown before flushSentry
- * (same pattern as stopOAuthStateCleanupScheduler).
+ * Shutdown: `stopDestinationFlushScheduler()` clears the interval and
+ * resets module-level state. Wired into workers/run.ts shutdown before
+ * flushSentry (same pattern as stopOAuthStateCleanupScheduler).
  */
 
-import { and, eq, isNull, lt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { getDb } from "../db";
-import { destinationSchedules, destinationPendingLeads } from "../../drizzle/schema";
+import { destinationSchedules } from "../../drizzle/schema";
 import { log } from "./appLogger";
 import { captureCritical } from "../monitoring/sentry";
+import {
+  flushPendingForDestination,
+  flushStalePendingLeads,
+  cleanupOrphanedPending,
+} from "./destinationPendingQueue";
 
 /** Cadence — every 60s. Hour-grain scheduling doesn't need finer. */
 const TICK_INTERVAL_MS = 60 * 1000;
-
-/** TTL for queued leads. Older than this gets force-sent in Phase B. */
-const STALE_LEAD_TTL_MS = 24 * 60 * 60 * 1000;
 
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let inFlight = false;
@@ -57,9 +72,9 @@ let inFlight = false;
  * In-memory: worker restart resets the map. Re-firing a transition after
  * restart is safe because both `isPausedNow := true` (at pauseHour) and
  * `isPausedNow := false` (at startHour) are idempotent against the row's
- * current value. The send-hour flush is Phase A stub-only so re-logging
- * has no side effect; Phase B will use `deliveredAt` to skip already-sent
- * rows.
+ * current value. A re-fired sendHour flush is also safe — the atomic
+ * claim inside flushPendingForDestination ensures every pending row is
+ * dispatched at most once.
  */
 const lastEvaluatedHour = new Map<number, number>();
 
@@ -101,20 +116,35 @@ export function currentHourInTimezone(timezone: string, now: Date = new Date()):
 export async function runFlushTick(now: Date = new Date()): Promise<{
   schedulesEvaluated: number;
   transitionsApplied: number;
-  flushStubs: number;
-  staleStubs: number;
+  sendHoursTriggered: number;
+  flushAttempted: number;
+  flushSucceeded: number;
+  flushFailed: number;
+  staleDestinations: number;
+  orphansCleaned: number;
 }> {
   const db = await getDb();
   if (!db) {
     void log.warn("SYSTEM", "[DestFlushScheduler] DB not available, skipping tick");
-    return { schedulesEvaluated: 0, transitionsApplied: 0, flushStubs: 0, staleStubs: 0 };
+    return {
+      schedulesEvaluated: 0,
+      transitionsApplied: 0,
+      sendHoursTriggered: 0,
+      flushAttempted: 0,
+      flushSucceeded: 0,
+      flushFailed: 0,
+      staleDestinations: 0,
+      orphansCleaned: 0,
+    };
   }
 
   const schedules = await db.select().from(destinationSchedules);
 
   let transitionsApplied = 0;
-  let flushStubs = 0;
-  let staleStubs = 0;
+  let sendHoursTriggered = 0;
+  let flushAttempted = 0;
+  let flushSucceeded = 0;
+  let flushFailed = 0;
 
   for (const sched of schedules) {
     const tzHour = currentHourInTimezone(sched.timezone, now);
@@ -139,7 +169,8 @@ export async function runFlushTick(now: Date = new Date()): Promise<{
       });
     }
 
-    // Start transition.
+    // Start transition. Triggers an immediate flush — same semantics as
+    // a manual startAll, since the destination is now accepting leads.
     if (sched.startHour !== null && sched.startHour === tzHour && sched.isPausedNow) {
       await db
         .update(destinationSchedules)
@@ -153,65 +184,43 @@ export async function runFlushTick(now: Date = new Date()): Promise<{
         timezone: sched.timezone,
         hour: tzHour,
       });
+      const startFlush = await flushPendingForDestination(db, sched.destinationId);
+      flushAttempted += startFlush.attempted;
+      flushSucceeded += startFlush.succeeded;
+      flushFailed += startFlush.failed;
     }
 
-    // Send-hour flush stub (Phase A).
+    // Send-hour flush (Phase B real dispatch).
     if (sched.sendHour !== null && sched.sendHour === tzHour) {
-      const undelivered = await db
-        .select({ id: destinationPendingLeads.id })
-        .from(destinationPendingLeads)
-        .where(
-          and(
-            eq(destinationPendingLeads.destinationId, sched.destinationId),
-            isNull(destinationPendingLeads.deliveredAt),
-          ),
-        );
-      flushStubs++;
-      void log.info("SYSTEM", "[DestFlushScheduler] would send leads at sendHour (Phase A stub)", {
-        scheduleId: sched.id,
-        destinationId: sched.destinationId,
-        userId: sched.userId,
-        timezone: sched.timezone,
-        hour: tzHour,
-        count: undelivered.length,
-      });
+      sendHoursTriggered++;
+      const sendFlush = await flushPendingForDestination(db, sched.destinationId);
+      flushAttempted += sendFlush.attempted;
+      flushSucceeded += sendFlush.succeeded;
+      flushFailed += sendFlush.failed;
     }
 
     lastEvaluatedHour.set(sched.id, tzHour);
   }
 
-  // TTL stub — any undelivered row older than 24h.
-  const cutoff = new Date(now.getTime() - STALE_LEAD_TTL_MS);
-  const stale = await db
-    .select({
-      id: destinationPendingLeads.id,
-      destinationId: destinationPendingLeads.destinationId,
-      userId: destinationPendingLeads.userId,
-      createdAt: destinationPendingLeads.createdAt,
-    })
-    .from(destinationPendingLeads)
-    .where(
-      and(
-        isNull(destinationPendingLeads.deliveredAt),
-        lt(destinationPendingLeads.createdAt, cutoff),
-      ),
-    );
+  // TTL force-send for anything older than 24h regardless of sendHour.
+  const stale = await flushStalePendingLeads(db, now);
+  flushAttempted += stale.attempted;
+  flushSucceeded += stale.succeeded;
+  flushFailed += stale.failed;
 
-  for (const row of stale) {
-    staleStubs++;
-    void log.warn("SYSTEM", "[DestFlushScheduler] stale lead detected, would force-send (Phase A stub)", {
-      pendingLeadId: row.id,
-      destinationId: row.destinationId,
-      userId: row.userId,
-      ageHours: Math.round((now.getTime() - row.createdAt.getTime()) / (60 * 60 * 1000)),
-    });
-  }
+  // Mark orphaned pending rows (destination hard-deleted) so the active
+  // set stays clean and the flush loop doesn't re-touch them next tick.
+  const orphans = await cleanupOrphanedPending(db);
 
   return {
     schedulesEvaluated: schedules.length,
     transitionsApplied,
-    flushStubs,
-    staleStubs,
+    sendHoursTriggered,
+    flushAttempted,
+    flushSucceeded,
+    flushFailed,
+    staleDestinations: stale.destinations,
+    orphansCleaned: orphans.cleaned,
   };
 }
 

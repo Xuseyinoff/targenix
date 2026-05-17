@@ -40,6 +40,7 @@ import {
 } from "../../drizzle/schema";
 import { ownedBy } from "../lib/assertUserOwns";
 import { log } from "../services/appLogger";
+import { flushPendingForDestination } from "../services/destinationPendingQueue";
 
 /** Shared input shape for hour fields and timezone. Reused across procs. */
 const hourInput = z.number().int().min(0).max(23);
@@ -148,7 +149,21 @@ export const destinationSchedulesRouter = router({
             eq(destinationSchedules.userId, ctx.user.id),
           ),
         );
-      return { ok: true };
+
+      // Phase B — schedule cleared means "deliver everything that was waiting".
+      // The flush helper is tenant-safe because pending rows for a destination
+      // owned by another user couldn't have been queued under this user's
+      // schedule in the first place (queue is tied to destinations.userId).
+      const flush = await flushPendingForDestination(db, input.destinationId);
+
+      return {
+        ok: true,
+        flushed: {
+          attempted: flush.attempted,
+          succeeded: flush.succeeded,
+          failed: flush.failed,
+        },
+      };
     }),
 
   // ─── Global (fleet-wide) ───────────────────────────────────────────────────
@@ -216,35 +231,68 @@ export const destinationSchedulesRouter = router({
 
   /**
    * Manual fleet-wide resume — clears `isPausedNow` on every schedule the
-   * caller owns. Does NOT remove the schedule; the next pauseHour will
-   * still re-pause unless the user clears the schedule too.
+   * caller owns AND immediately flushes any pending leads for those
+   * destinations. The schedule rows themselves are preserved; the next
+   * pauseHour will re-pause unless the user also clears the schedule.
    */
   startAll: protectedProcedure.mutation(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error("DB not available");
+
+    // Snapshot the destinations that were paused BEFORE the UPDATE so we
+    // know which ones to flush. If we read after the UPDATE, the snapshot
+    // would be empty.
+    const previouslyPaused = await db
+      .select({ destinationId: destinationSchedules.destinationId })
+      .from(destinationSchedules)
+      .where(
+        and(
+          eq(destinationSchedules.userId, ctx.user.id),
+          eq(destinationSchedules.isPausedNow, true),
+        ),
+      );
 
     await db
       .update(destinationSchedules)
       .set({ isPausedNow: false })
       .where(eq(destinationSchedules.userId, ctx.user.id));
 
-    void log.info("SYSTEM", "[destinationSchedules.startAll] cleared isPausedNow", {
+    let attempted = 0;
+    let succeeded = 0;
+    let failed = 0;
+    for (const row of previouslyPaused) {
+      const flush = await flushPendingForDestination(db, row.destinationId);
+      attempted += flush.attempted;
+      succeeded += flush.succeeded;
+      failed += flush.failed;
+    }
+
+    void log.info("SYSTEM", "[destinationSchedules.startAll] cleared isPausedNow + flushed", {
       userId: ctx.user.id,
+      destinationsResumed: previouslyPaused.length,
+      attempted,
+      succeeded,
+      failed,
     });
-    return { ok: true };
+    return {
+      ok: true,
+      destinationsResumed: previouslyPaused.length,
+      flushed: { attempted, succeeded, failed },
+    };
   }),
 
   /**
-   * Phase A stub — counts undelivered pending leads for this user and
-   * logs intent. Phase B will replace the log with the real dispatch
-   * loop (and set deliveredAt on success).
+   * Fleet-wide flush of undelivered pending leads (Phase B real dispatch).
+   * Groups by destinationId so each destination loads once; the per-row
+   * atomic claim inside `flushPendingForDestination` prevents a parallel
+   * scheduler tick from double-dispatching the same row.
    */
   flushPendingAll: protectedProcedure.mutation(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error("DB not available");
 
     const pending = await db
-      .select({ id: destinationPendingLeads.id })
+      .select({ destinationId: destinationPendingLeads.destinationId })
       .from(destinationPendingLeads)
       .where(
         and(
@@ -253,30 +301,81 @@ export const destinationSchedulesRouter = router({
         ),
       );
 
-    void log.info("SYSTEM", "[destinationSchedules.flushPendingAll] would flush (Phase A stub)", {
+    if (pending.length === 0) {
+      return { ok: true, queued: 0, flushed: { attempted: 0, succeeded: 0, failed: 0 } };
+    }
+
+    const uniqueDestIds = Array.from(new Set(pending.map((p) => p.destinationId)));
+    let attempted = 0;
+    let succeeded = 0;
+    let failed = 0;
+    for (const destId of uniqueDestIds) {
+      const flush = await flushPendingForDestination(db, destId);
+      attempted += flush.attempted;
+      succeeded += flush.succeeded;
+      failed += flush.failed;
+    }
+
+    void log.info("SYSTEM", "[destinationSchedules.flushPendingAll] complete", {
       userId: ctx.user.id,
       queued: pending.length,
+      destinations: uniqueDestIds.length,
+      attempted,
+      succeeded,
+      failed,
     });
 
-    return { ok: true, queued: pending.length };
+    return {
+      ok: true,
+      queued: pending.length,
+      flushed: { attempted, succeeded, failed },
+    };
   }),
 
   /**
-   * Yuboraman's "Reset auto-mode" — wipes every schedule the caller owns.
-   * Pending leads (destination_pending_leads) are preserved; only the
-   * schedule rows are deleted.
+   * Yuboraman's "Reset auto-mode" — wipes every schedule the caller owns
+   * AND flushes any pending leads for those destinations (Phase B). The
+   * pending row stays in the table until dispatched; resetting the
+   * schedule with leads still waiting would otherwise leave them
+   * orphaned until the 24h TTL force-flush.
    */
   resetSchedules: protectedProcedure.mutation(async ({ ctx }) => {
     const db = await getDb();
     if (!db) throw new Error("DB not available");
 
+    // Snapshot the destinations that had schedules BEFORE the delete so
+    // we know which ones to flush. After the delete the schedule rows
+    // are gone and we'd have no way to know.
+    const scheduled = await db
+      .select({ destinationId: destinationSchedules.destinationId })
+      .from(destinationSchedules)
+      .where(eq(destinationSchedules.userId, ctx.user.id));
+
     await db
       .delete(destinationSchedules)
       .where(eq(destinationSchedules.userId, ctx.user.id));
 
-    void log.info("SYSTEM", "[destinationSchedules.resetSchedules] cleared", {
+    let attempted = 0;
+    let succeeded = 0;
+    let failed = 0;
+    for (const row of scheduled) {
+      const flush = await flushPendingForDestination(db, row.destinationId);
+      attempted += flush.attempted;
+      succeeded += flush.succeeded;
+      failed += flush.failed;
+    }
+
+    void log.info("SYSTEM", "[destinationSchedules.resetSchedules] cleared + flushed", {
       userId: ctx.user.id,
+      destinationsCleared: scheduled.length,
+      attempted,
+      succeeded,
+      failed,
     });
-    return { ok: true };
+    return {
+      ok: true,
+      destinationsCleared: scheduled.length,
+      flushed: { attempted, succeeded, failed },
+    };
   }),
 });
