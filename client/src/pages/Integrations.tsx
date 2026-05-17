@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Filter,
   FlaskConical,
   Loader2,
@@ -389,6 +390,17 @@ export default function Integrations() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          className="text-muted-foreground hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 h-9 w-9 rounded-lg"
+                          title={t("integrations.cloneTooltip")}
+                          onClick={() =>
+                            navigate(`/integrations/new-v2?cloneFrom=${integration.id}`)
+                          }
+                        >
+                          <Copy className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
                           className="text-muted-foreground hover:text-primary hover:bg-emerald-50 dark:hover:bg-emerald-950/30 h-9 w-9 rounded-lg"
                           title={t("integrations.testLead")}
                           disabled={
@@ -476,6 +488,18 @@ export default function Integrations() {
                             >
                               <Pencil className="mr-1.5 h-3.5 w-3.5" />
                               {t("integrations.edit")}
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="wapi-button-hover h-9 text-xs rounded-full font-medium text-indigo-600 border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700 dark:border-indigo-800 dark:hover:bg-indigo-950/30"
+                              title={t("integrations.cloneTooltip")}
+                              onClick={() =>
+                                navigate(`/integrations/new-v2?cloneFrom=${integration.id}`)
+                              }
+                            >
+                              <Copy className="mr-1.5 h-3.5 w-3.5" />
+                              {t("integrations.clone")}
                             </Button>
                             <Button
                               variant="outline"

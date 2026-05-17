@@ -32,15 +32,30 @@ import {
 } from "./categoryMeta";
 
 export function useIntegrationWizardState() {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const params = useParams<{ id?: string }>();
   const editId = params?.id ? parseInt(params.id, 10) : null;
   const isEditMode = !!editId && !isNaN(editId);
 
+  // Clone mode (PR 3/3 — Yuboraman parity). Triggered by `?cloneFrom=<id>` on
+  // the new-integration URL. Pre-fills FB account + destinations + telegram
+  // chat + per-routing variables from the source row, but leaves page/form
+  // blank so the user picks a new target (and inherits PR 1's
+  // duplicate-prevention if they pick the same form+destination).
+  const cloneFromId = useMemo(() => {
+    if (isEditMode) return null;
+    const search = typeof window !== "undefined" ? window.location.search : "";
+    const m = /[?&]cloneFrom=(\d+)/.exec(search);
+    return m ? parseInt(m[1], 10) : null;
+    // location is included so route changes re-evaluate the URL.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location, isEditMode]);
+  const isCloneMode = cloneFromId !== null && !Number.isNaN(cloneFromId);
+
   const utils = trpc.useUtils();
   const [state, setState] = useState<WizardState>(INITIAL_STATE);
-  // Prevents re-initializing state on every render in edit mode.
-  const [stateInitialized, setStateInitialized] = useState(!isEditMode);
+  // Prevents re-initializing state on every render in edit OR clone mode.
+  const [stateInitialized, setStateInitialized] = useState(!isEditMode && !isCloneMode);
 
   // Zapier-style: which step is currently "focused" (highlighted header + open).
   // Step 1 = Trigger, Step 2 = Action.
@@ -70,6 +85,18 @@ export function useIntegrationWizardState() {
   const editIntegration = isEditMode
     ? integrationsList?.find((i) => i.id === editId)
     : undefined;
+
+  // ─── Clone mode: load source as a slim draft template (PR 3/3) ────────────
+  // Read-only fetch — does not mutate. Returns `{ template, clonedFrom,
+  // clonedFromName }` or throws NOT_FOUND. We pass `staleTime: 0` so
+  // re-clicking clone on a different source always re-fetches.
+  const { data: cloneDraft } = trpc.integrations.clone.useQuery(
+    { sourceId: cloneFromId ?? 0 },
+    {
+      enabled: isCloneMode,
+      staleTime: 0,
+    },
+  );
 
   // ─── tRPC data queries ─────────────────────────────────────────────────────
   const { data: accounts, isLoading: loadingAccounts } =
@@ -202,6 +229,60 @@ export function useIntegrationWizardState() {
     setActiveStep(2);
     setStateInitialized(true);
   }, [isEditMode, editIntegration, destinations, stateInitialized]);
+
+  // ─── Clone mode: populate wizard state from the draft template ────────────
+  // Parallel to edit-mode hydration, but BLANKS pageId/pageName/formId/formName
+  // and starts on Step 1 (Trigger) so the user is forced to pick a new form.
+  // The draft's destinationIds drive the destinations list; leadFields and
+  // customMappings are left empty for the per-destination auto-match effect
+  // below to fill in once the user picks a form.
+  useEffect(() => {
+    if (!isCloneMode || stateInitialized) return;
+    if (!cloneDraft || !destinations) return;
+
+    const t = cloneDraft.template;
+    const destIds =
+      t.destinationIds && t.destinationIds.length > 0
+        ? t.destinationIds
+        : t.destinationId
+          ? [t.destinationId]
+          : [];
+
+    const primaryTw = destinations.find((d) => d.id === destIds[0]);
+    const primaryType =
+      primaryTw?.appKey ?? t.targetTemplateType ?? "custom";
+
+    const destEntries: DestinationEntry[] = destIds.map((id, idx) => {
+      const tw = destinations.find((d) => d.id === id);
+      return {
+        id,
+        name: tw?.name ?? (idx === 0 ? t.targetWebsiteName ?? "" : ""),
+        templateType: tw?.appKey ?? (idx === 0 ? primaryType : "custom"),
+        leadFields: {}, // will be auto-filled once the new form is picked
+        // Per-routing user values (offer_id, stream, etc.) carry over to
+        // the primary destination — that's the whole point of clone.
+        staticValues: idx === 0 ? t.variableFields : {},
+        customMappings: [],
+      };
+    });
+
+    setState({
+      accountId: t.facebookAccountId ?? null,
+      accountName: "",
+      pageId: "", // blank — user must pick a new page
+      pageName: "",
+      formId: "", // blank — user must pick a new form
+      formName: "",
+      destinations: destEntries,
+      integrationName: t.name, // already includes " (copy)" suffix from server
+      integrationNameTouched: true, // suffix should survive the auto-fill effect
+    });
+    setActiveStep(1); // Force user back to Trigger step to pick new page+form
+    setStateInitialized(true);
+    toast.success(
+      `Cloned from "${cloneDraft.clonedFromName}". Pick a new form to continue.`,
+    );
+  }, [isCloneMode, cloneDraft, destinations, stateInitialized]);
 
   // ─── Auto-populate per-destination leadFields when form fields load ─────────
   // Runs after the FB form fields arrive (or the destination list updates with

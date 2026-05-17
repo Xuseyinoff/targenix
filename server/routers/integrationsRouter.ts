@@ -14,8 +14,9 @@ import { injectVariables } from "../services/affiliateService";
 import { sendLeadTelegramNotification } from "../services/leadService";
 import { sendTelegramRawMessage } from "../services/telegramService";
 import { decrypt } from "../encryption";
-import { destinations, integrationRoutes, type Destination } from "../../drizzle/schema";
-import { eq, and } from "drizzle-orm";
+import { destinations, integrationRoutes, integrations, type Destination } from "../../drizzle/schema";
+import { eq, and, isNull } from "drizzle-orm";
+import { ownedBy } from "../lib/assertUserOwns";
 import { checkUserRateLimit } from "../lib/userRateLimit";
 import { getAdapter } from "../integrations";
 import { loadConnectionForDelivery } from "../integrations/dispatch";
@@ -193,6 +194,101 @@ export const integrationsRouter = router({
         throw err;
       }
       return { success: true };
+    }),
+
+  /**
+   * Clone an existing integration as a DRAFT template for the create wizard
+   * (PR 3/3 — Yuboraman parity).
+   *
+   * Pure read — does NOT insert a row. Returns the source's policy fields
+   * (FB account, destinations, telegram chat, per-routing variables, name
+   * with " (copy)" suffix) so the wizard can pre-fill the create form. The
+   * user MUST pick a new page+form before submitting, so the new integration
+   * inherits PR 1's duplicate-prevention (CONFLICT if they accidentally
+   * re-route to the same form-destination pair).
+   *
+   * Excluded from the draft: id, userId, createdAt, deletedAt, pageId/Name,
+   * formId/Name, FROM_LEAD field mappings (depend on the new form's fields),
+   * and customMappings (same).
+   *
+   * Tenant scope: enforced via `ownedBy(integrations, sourceId, userId)` +
+   * `isNull(deletedAt)` in the WHERE clause. Throws NOT_FOUND for non-owned
+   * or non-existent sources — error message intentionally generic, so it
+   * does not leak whether the row belongs to another tenant.
+   */
+  clone: protectedProcedure
+    .input(z.object({ sourceId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) {
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      }
+
+      const [source] = await db
+        .select()
+        .from(integrations)
+        .where(and(ownedBy(integrations, input.sourceId, ctx.user.id), isNull(integrations.deletedAt)))
+        .limit(1);
+
+      if (!source) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Integration not found or access denied",
+        });
+      }
+
+      // Load fan-out destinations (multi-destination support). Order matters —
+      // the wizard renders them in this order.
+      const routeRows = await db
+        .select({ destinationId: integrationRoutes.destinationId })
+        .from(integrationRoutes)
+        .where(
+          and(
+            eq(integrationRoutes.integrationId, source.id),
+            eq(integrationRoutes.enabled, true),
+          ),
+        )
+        .orderBy(asc(integrationRoutes.position), asc(integrationRoutes.id));
+      const fanoutDestinationIds = routeRows.map((r) => r.destinationId);
+
+      const cfg = (source.config as Record<string, unknown> | null) ?? {};
+
+      return {
+        template: {
+          type: "LEAD_ROUTING" as const,
+          name: `${source.name} (copy)`,
+          facebookAccountId: source.facebookAccountId,
+          destinationId: source.destinationId,
+          /**
+           * The wizard prefers `destinationIds` (the fan-out list) when set;
+           * falls back to the single `destinationId` for legacy rows that
+           * predate integration_routes. Match the wizard's existing
+           * edit-mode hydration so the create path can reuse the same code
+           * path.
+           */
+          destinationIds: fanoutDestinationIds.length > 0
+            ? fanoutDestinationIds
+            : source.destinationId
+              ? [source.destinationId]
+              : [],
+          telegramChatId: source.telegramChatId,
+          /**
+           * Per-routing user-provided variables (e.g. {offer_id: "110566",
+           * stream: "abc"}). These are template-shape values the user picks
+           * once per integration — naturally carry over to the clone.
+           */
+          variableFields: (cfg.variableFields as Record<string, string> | undefined) ?? {},
+          /**
+           * Display-only labels for the destination. The wizard re-derives
+           * these from the destination row on hydration; included here for
+           * older callers that might short-circuit the lookup.
+           */
+          targetWebsiteName: (cfg.targetWebsiteName as string | null | undefined) ?? null,
+          targetTemplateType: (cfg.targetTemplateType as string | null | undefined) ?? null,
+        },
+        clonedFrom: source.id,
+        clonedFromName: source.name,
+      };
     }),
 
   update: protectedProcedure
