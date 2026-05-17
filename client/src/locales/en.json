@@ -815,6 +815,8 @@
     "testLead": "Test lead",
     "testLeadButton": "Test Lead",
     "edit": "Edit",
+    "clone": "Clone",
+    "cloneTooltip": "Clone this integration (pick a new form to keep its destination, fields, and settings)",
     "delete": "Delete",
     "added": "Added {{date}}",
     "page": "Page",

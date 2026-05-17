@@ -815,6 +815,8 @@
     "testLead": "Test lid",
     "testLeadButton": "Test lid yuborish",
     "edit": "Tahrirlash",
+    "clone": "Nusxa olish",
+    "cloneTooltip": "Ushbu integratsiyaning nusxasini oling (manzili, maydonlari va sozlamalari saqlanadi — yangi forma tanlashingiz kerak)",
     "delete": "O‘chirish",
     "added": "Qo‘shildi: {{date}}",
     "page": "Sahifa",

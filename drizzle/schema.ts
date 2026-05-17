@@ -517,6 +517,77 @@ export const destinations = mysqlTable("destinations", {
 export type Destination = typeof destinations.$inferSelect;
 export type InsertDestination = typeof destinations.$inferInsert;
 
+// ─── Destination Schedules (Yuboraman parity — PR 4/4 Phase A) ───────────────
+// One row per destination (1-to-1). Stores the user's daily pause/start/send
+// schedule. The flush scheduler in server/services/destinationFlushScheduler.ts
+// reads this every minute and either flips `isPausedNow` at the configured
+// hour boundaries or triggers a pending-leads flush at `sendHour`.
+//
+// Phase A wires the table + scheduler + tRPC procs only. Phase B integrates
+// pause/flush into the actual lead dispatch flow; Phase C adds the frontend
+// dialog + global toolbar.
+export const destinationSchedules = mysqlTable("destination_schedules", {
+  id: int("id").autoincrement().primaryKey(),
+  destinationId: int("destinationId").notNull(),
+  /** Denormalized from destinations.userId so global ("pause all", "reset all")
+   *  procs can scope without an extra JOIN. Must be kept in sync at insert. */
+  userId: int("userId").notNull(),
+  /** Hour-of-day (0-23) at which to flip isPausedNow=true. NULL = no pause. */
+  pauseHour: int("pauseHour"),
+  /** Hour-of-day (0-23) at which to flip isPausedNow=false. NULL = no auto-start. */
+  startHour: int("startHour"),
+  /** Hour-of-day (0-23) at which to flush queued pending leads. NULL = no batch send. */
+  sendHour: int("sendHour"),
+  /** IANA timezone used for the hour-of-day comparisons. Defaults to the
+   *  primary user market. Stored per-row so power users can schedule
+   *  destinations across markets independently. */
+  timezone: varchar("timezone", { length: 64 }).default("Asia/Tashkent").notNull(),
+  /** Current pause state. Maintained by the flush scheduler — flipped at
+   *  pauseHour/startHour transitions and by manual pauseAll / startAll. */
+  isPausedNow: boolean("isPausedNow").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  uniqueDestination: uniqueIndex("uniq_destination_schedules_destinationId").on(t.destinationId),
+  idxUserId: index("idx_destination_schedules_userId").on(t.userId),
+  idxPausedNow: index("idx_destination_schedules_paused").on(t.isPausedNow),
+}));
+
+export type DestinationSchedule = typeof destinationSchedules.$inferSelect;
+export type InsertDestinationSchedule = typeof destinationSchedules.$inferInsert;
+
+// ─── Destination Pending Leads (Yuboraman parity — PR 4/4 Phase A) ───────────
+// Leads queued during a destination pause window. The flush scheduler drains
+// these at `destination_schedules.sendHour` (Phase B will wire the actual
+// dispatch — Phase A only logs intent). Stale rows older than 24h are
+// force-sent so a misconfigured schedule never blackholes leads.
+export const destinationPendingLeads = mysqlTable("destination_pending_leads", {
+  id: int("id").autoincrement().primaryKey(),
+  destinationId: int("destinationId").notNull(),
+  leadId: int("leadId").notNull(),
+  /** Denormalized for tenant-scoped queries. */
+  userId: int("userId").notNull(),
+  /** Snapshot of the dispatch payload at queue time so the flush is replayable
+   *  even if upstream (lead row, template config) mutates in the interim. */
+  payload: json("payload").notNull(),
+  /** Computed next sendHour after queueing — when this row becomes eligible. */
+  scheduledFor: timestamp("scheduledFor"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  /** Set by the flush scheduler when the lead is actually dispatched (Phase B). */
+  deliveredAt: timestamp("deliveredAt"),
+  /** Last delivery error message, if any — for AdminLogs and operator triage. */
+  deliveryError: text("deliveryError"),
+  retryCount: int("retryCount").default(0).notNull(),
+}, (t) => ({
+  idxDestinationId: index("idx_destination_pending_leads_destinationId").on(t.destinationId),
+  idxScheduledFor: index("idx_destination_pending_leads_scheduledFor").on(t.scheduledFor),
+  idxUndelivered: index("idx_destination_pending_leads_undelivered").on(t.destinationId, t.deliveredAt),
+  idxUserId: index("idx_destination_pending_leads_userId").on(t.userId),
+}));
+
+export type DestinationPendingLead = typeof destinationPendingLeads.$inferSelect;
+export type InsertDestinationPendingLead = typeof destinationPendingLeads.$inferInsert;
+
 // ─── Integrations ─────────────────────────────────────────────────────────────
 // LEAD_ROUTING: full pipeline — FB account → page → form → field map → target website
 export const integrations = mysqlTable("integrations", {
@@ -581,6 +652,13 @@ export const integrations = mysqlTable("integrations", {
   idxDestination: index("idx_integrations_destination_id").on(t.destinationId),
   // Index for disconnect cleanup: find all integrations tied to a given FB account
   idxFbAccount: index("idx_integrations_fb_account_id").on(t.facebookAccountId),
+  // Note: a MySQL-8 functional UNIQUE index `uniq_integrations_live_form_dest`
+  // is also present in prod — added via migration 0092. It enforces
+  // uniqueness on (userId, formId, destinationId) for LIVE rows only
+  // (deletedAt IS NULL AND both ids NOT NULL). Drizzle has no native
+  // expression-index API, so the index is managed via the hand-written
+  // 0092 SQL migration and not declared here. Don't `pnpm db:push` —
+  // it would propose dropping the index.
 }));
 
 export type Integration = typeof integrations.$inferSelect;

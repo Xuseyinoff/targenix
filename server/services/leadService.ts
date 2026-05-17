@@ -24,6 +24,7 @@ import { incFailedOrders } from "../monitoring/metrics";
 import { executeWorkflow } from "./workflowExecutor";
 import { recordOutcome } from "./circuitBreaker";
 import { checkPhone, syntheticInvalidPhoneResult } from "../lib/phoneValidation";
+import { enqueuePendingLead, shouldQueueForPause } from "./destinationPendingQueue";
 
 // ─── Field extraction helpers ─────────────────────────────────────────────────
 
@@ -793,6 +794,46 @@ async function deliverOneDestination(params: {
   isAdmin?: boolean;
 }): Promise<void> {
   const { db, integration, destinationId, leadId, leadRow, leadPayload, userId, pageId } = params;
+
+  // Yuboraman PR 4/4 Phase B — pause check.
+  //
+  // When the destination has an active schedule with `isPausedNow = true`,
+  // queue the lead for later flush instead of dispatching now. Gated by
+  // the DESTINATION_SCHEDULES_ENABLED flag — when off, `shouldQueueForPause`
+  // returns null and the dispatch runs unchanged.
+  //
+  // We key the schedule on the actual `destinations.id` (the targetWebsite
+  // row), not on `destinationId` (which is the integration_routes.id in
+  // the multi-dest fan-out path). The pending row also stores the actual
+  // destinations.id so the flush can re-load the destination directly.
+  const targetWebsite = params.preResolvedDestination?.targetWebsite;
+  if (targetWebsite) {
+    const pausedSchedule = await shouldQueueForPause(db, targetWebsite.id);
+    if (pausedSchedule) {
+      const integrationConfig = (integration.config as Record<string, unknown>) ?? {};
+      const variableFields =
+        (integrationConfig.variableFields as Record<string, string> | undefined) ?? {};
+      await enqueuePendingLead({
+        db,
+        destinationId: targetWebsite.id,
+        leadId,
+        userId,
+        payload: {
+          leadPayload,
+          integrationId: integration.id,
+          integrationConfig,
+          variableFields,
+          pageName: leadRow.pageName ?? null,
+          formName: leadRow.formName ?? null,
+          leadCreatedAt: leadRow.createdAt
+            ? new Date(leadRow.createdAt).toISOString()
+            : undefined,
+        },
+        schedule: pausedSchedule,
+      });
+      return;
+    }
+  }
 
   const [existingOrder] = await db
     .select({
