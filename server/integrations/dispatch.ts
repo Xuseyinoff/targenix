@@ -118,24 +118,12 @@ export async function loadConnectionForDelivery(
  * Resolve + invoke the correct adapter for this integration + destination.
  * Never throws — any failure is converted to a DeliveryResult with success=false.
  */
-const APP_ROUTING_LOG =
-  process.env.STAGE2_APP_ROUTING_LOG === "1" || process.env.STAGE2_APP_ROUTING_LOG === "true";
-
 export async function dispatchDelivery(
   ctx: DispatchContext,
   leadPayload: LeadPayload,
 ): Promise<DispatchOutcome> {
   const tw = ctx.targetWebsite;
   const adapterKey = resolveAdapterKey(ctx.integrationType, tw);
-  if (APP_ROUTING_LOG) {
-    const raw = tw?.appKey;
-    const appKey = raw != null && String(raw).trim() !== "" ? String(raw).trim() : null;
-    console.log({
-      stage: "app_routing" as const,
-      appKey,
-      adapterUsed: adapterKey,
-    });
-  }
   const adapter = getAdapter(adapterKey);
   if (!adapter) {
     return {
@@ -195,7 +183,6 @@ export async function dispatchDelivery(
         } else if (tw?.templateId != null) {
           try {
             let ep: string | null | undefined;
-            let urlLogSource: "app_actions" | "destination_templates" = "destination_templates";
             if (tw.actionId != null) {
               const [a] = await ctx.db
                 .select({ endpointUrl: appActions.endpointUrl })
@@ -205,7 +192,6 @@ export async function dispatchDelivery(
               const fromA = a?.endpointUrl;
               if (fromA != null && typeof fromA === "string" && fromA.trim() !== "") {
                 ep = fromA;
-                urlLogSource = "app_actions";
               }
             }
             if (ep == null || (typeof ep === "string" && ep.trim() === "")) {
@@ -215,17 +201,6 @@ export async function dispatchDelivery(
                 .where(eq(destinationTemplates.id, tw.templateId))
                 .limit(1);
               ep = tplRow?.endpointUrl;
-              urlLogSource = "destination_templates";
-            }
-            if (
-              process.env.STAGE2_DYNAMIC_TEMPLATE_LOG === "1" ||
-              process.env.STAGE2_DYNAMIC_TEMPLATE_LOG === "true"
-            ) {
-              console.log("[stage2:dynamicTemplate] order log targetUrl source=", urlLogSource, {
-                targetId: tw.id,
-                templateId: tw.templateId,
-                actionId: tw.actionId,
-              });
             }
             targetUrlUsed =
               ep != null && typeof ep === "string" && ep.trim().length > 0

@@ -137,10 +137,15 @@ Future drift will fail CI immediately rather than accumulating.
    This creates `drizzle/NNNN_<tag>.sql` AND adds an entry to
    `_journal.json` AND writes a `drizzle/meta/NNNN_snapshot.json`.
 3. **Apply via dedicated script (current team practice):**
-   - Copy the pattern from `tooling/apply-0090-orders-offer-name.mjs`
-     (which describes the DDL + runs it idempotently)
-   - Save as `tooling/apply-NNNN-<tag>.mjs`
+   - Copy the pattern from `tooling/_archive/migrations/apply-0091-destinations-indexes.mjs`
+     (most recent example; describes the DDL, runs idempotently,
+     verifies post-state, and INSERTs the `__drizzle_migrations` row).
+     Earlier examples in the same folder are also useful templates.
+   - Save the new script as `tooling/apply-NNNN-<tag>.mjs` (root,
+     not `_archive/`).
    - Run: `railway run node tooling/apply-NNNN-<tag>.mjs`
+   - After the `__drizzle_migrations` row exists, move the script
+     to `tooling/_archive/migrations/` (see [tooling/_archive/README.md](../tooling/_archive/README.md)).
 4. **Backfill the migration row:**
    - After applying, INSERT into `__drizzle_migrations`:
      ```js

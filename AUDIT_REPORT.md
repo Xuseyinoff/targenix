@@ -27,12 +27,101 @@
 > - **Set up coverage + router-level integration tests** (E.1, E.3) — add `@vitest/coverage-v8`, wire `coverage` block, write `tenantIsolation.integration.test.ts` per high-LOC router.
 > - **Apply `ownedBy()` to 8 other UPDATE/DELETE patterns** (B.5 follow-up) — `triggers.fire`, `connections.rename/disconnect`, `destinations.update`, `leads.retry/bulkRetry`, `telegram.setDestinationChat`. Same defense-in-depth pattern as the 4 fixed in this sprint.
 > - **Backfill remaining 19 migration drift rows** (B.3 follow-up) — only needed if `pnpm db:push` is re-enabled as the primary migration path. Documented in [`drizzle/MIGRATION_HISTORY.md`](drizzle/MIGRATION_HISTORY.md).
->
-> ## Sections below remain as originally written
->
-> Historical traceability preserved. Sections D.4 and D.6 have been amended
-> inline with re-verification notes. Original "Critical security findings: 5"
-> list below is the AS-FOUND state, not current state.
+
+## Sprint A — Quick Wins (2026-05-17, resolved)
+
+Sprint A follow-up to the critical-fixes sprint. Scope: low-risk cleanups
+identified in Sections A.1, A.5, B.4, C.3, F.2, F.3.
+
+### Resolved (6 PRs)
+
+| PR | Section | Commit | Effect |
+|---|---|---|---|
+| 1/7 | A.1, A.5 | `ff5c55e` | Removed dead [`drizzle/relations.ts`](drizzle/relations.ts) + 5 backup JSON files (already gitignored, deleted from disk) |
+| 2/7 | A.1 | `4fb2e88` | Removed 4 deprecated `@types/*` (audit said 5 — `node-telegram-bot-api` kept; the lib has no built-in types) |
+| 3/7 | F.2, F.3 | `a691031` | Removed 5 `STAGE2_*` dead flags + 2 dedicated tests + `FORGE_API_KEY` alias. `APP_BASE_URL` kept — audit claimed alias; actually load-bearing for generic OAuth |
+| 4/7 | B.4 | `da30bbf` | Added 3 `destinations` indexes + dropped legacy `idx_target_websites_connection_id` (orphan from 0069 rename); applied to prod via [`apply-0091-*.mjs`](tooling/_archive/migrations/apply-0091-destinations-indexes.mjs) |
+| 5/7 | C.3, C.5 | `a711d6a` | Wrote [`docs/NAMING.md`](docs/NAMING.md) (282 lines) — codified actual conventions; flagged 5 inconsistencies |
+| 6/7 | A.5 | `2402b69` | Archived 55 one-shot scripts to [`tooling/_archive/`](tooling/_archive/) (migrations/incidents/renames/probes). Audit's "tooling is gitignored" was wrong — 218 files were tracked |
+
+### Audit findings amended
+
+Sprint A surfaced 5 audit inaccuracies, documented here for future reference:
+
+1. **A.1 — `node-telegram-bot-api` types** — audit said remove the stub;
+   in fact the library has no `types`/`typings` field and no `.d.ts`
+   files. Stub is required if the lib is ever imported. PR 2 KEPT the
+   stub; flagged the lib itself as appearing unused (follow-up #7).
+2. **A.5 — `tooling/` gitignored claim** — directory is NOT gitignored.
+   `git ls-files tooling/` returned 218 tracked `.mjs/.ts` files at
+   sprint start. PR 6 acknowledged this and used Variant C (narrow
+   tracked sweep) — full sweep deferred to follow-up #6.
+3. **B.4 — "destinations has ZERO secondary indexes"** — true per
+   `schema.ts`, but production had `idx_target_websites_connection_id`
+   left over from the `target_websites → destinations` rename in 0069.
+   PR 4's pre-apply probe detected this; migration 0091 atomically
+   added the new `idx_destinations_connection_id` then dropped the
+   legacy name. Memory saved under [[legacy-index-names-after-table-rename]].
+4. **C.3 — `circuitBreaker.ts` "state-machine object" export** —
+   actually exports bare functions `recordOutcome` and `evaluateClaim`.
+   `docs/NAMING.md` reflects the real shape (Pattern A — bare named functions).
+5. **F.2 — `APP_BASE_URL` "alias of APP_URL"** — it is a sole,
+   load-bearing reference in
+   [`server/oauth/providers/generic.provider.ts:91`](server/oauth/providers/generic.provider.ts#L91)
+   for OAuth redirect URI derivation. Distinct variable, not an alias.
+   PR 3 kept it (with a clarifying comment in `.env.example`).
+
+### Follow-ups discovered (NOT in Sprint A scope)
+
+Logged for a future cleanup sprint:
+
+1. **10 orphan apply scripts**: `apply-0043`, `0070-0078`, `0083`, `0084`
+   — DDL is present in production but the corresponding row is missing
+   from `__drizzle_migrations`. Same shape as the 8 that PR 5/5 of the
+   critical-fixes sprint resolved. Either backfill the rows (extend
+   [`backfill-migration-journal-phase2.mjs`](tooling/drizzle/backfill-migration-journal-phase2.mjs))
+   or move the apply scripts to a "verified-orphan" archive. See
+   [drizzle/MIGRATION_HISTORY.md](drizzle/MIGRATION_HISTORY.md) for the
+   existing 19-entry list.
+2. **`delete*` vs `remove*` semantics** at the tRPC layer —
+   `deleteIntegration` is soft delete (sets `deletedAt`), `deleteAccount`
+   is hard. Convention documented in `docs/NAMING.md`; existing
+   inconsistent names not yet refactored.
+3. **`AdAccount` interface shadows the DB row type** —
+   [`server/services/adAccountsService.ts:115`](server/services/adAccountsService.ts#L115)
+   exports an `AdAccount` interface for the FB API shape. Rename to
+   `FbAdAccount` per NAMING.md.
+4. **3 client components re-declare `Order`/`Lead` types locally**
+   instead of importing from `@shared`. See C.4.
+5. **`server/routes/` vs `server/routers/` autocomplete collision** —
+   noted in C.5. Renaming `routes/` → `rest/` is the planned fix; not
+   done in Sprint A.
+6. **~200 tracked one-shot scripts still in `tooling/` root** — PR 6
+   archived only the verifiable subset (Variant C). Variant A (~80-90
+   more files) deferred to a dedicated tooling-cleanup sprint.
+7. **`@types/node-telegram-bot-api` + runtime `node-telegram-bot-api`**
+   — both appear to have zero imports in source. Consider removing both
+   together in a future dead-deps PR.
+
+### Sprint A metrics
+
+- **7 commits** on branch `critical-fixes/2026-05-17` (6 substantive + this wrap-up)
+- **~124 net deletions** in PR 3 alone (STAGE2_* removal); ~200+ net across
+  the sprint when including PR 1 (relations.ts), PR 2 (@types), PR 6
+  (15 tracked moves with rename-pair churn)
+- **+3 secondary indexes** on `destinations` (1 legacy renamed atomically)
+- **+1 new doc** ([`docs/NAMING.md`](docs/NAMING.md), 282 lines)
+- **+1 new convention doc** ([`tooling/_archive/README.md`](tooling/_archive/README.md))
+- **55 one-shot scripts archived** (15 tracked git mvs + 40 untracked local mvs)
+- **Test count: 669 → 667** (2 tests deleted with their dead flags; no regressions)
+- **0 production incidents** during the sprint
+- **1 prod migration applied** (0091) — recorded in `__drizzle_migrations` row id 72
+
+## Sections below remain as originally written
+
+Historical traceability preserved. Sections D.4 and D.6 have been amended
+inline with re-verification notes. Original "Critical security findings: 5"
+list below is the AS-FOUND state, not current state.
 
 **Overall health score: 7.0 / 10.** A well-architected TypeScript monolith with clean layering, end-to-end types, and surprisingly disciplined adapter/registry patterns — but multi-tenancy is enforced per-procedure (no central guard), the worker process runs without Sentry, and 22 rollback-paired migrations + a journal/disk mismatch reflect real production turbulence over the last 30 days.
 

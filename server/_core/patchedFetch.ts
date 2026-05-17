@@ -11,7 +11,7 @@
  *
  * const openai = createOpenAI({
  *   baseURL: "https://forge.manus.im/v1",
- *   apiKey: process.env.FORGE_API_KEY,
+ *   apiKey: process.env.BUILT_IN_FORGE_API_KEY,
  *   fetch: createPatchedFetch(fetch),
  * });
  * ```

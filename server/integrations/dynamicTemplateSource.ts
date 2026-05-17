@@ -8,11 +8,6 @@ import type { AppActionRow, DestinationTemplate } from "../../drizzle/schema";
 import type { destinations } from "../../drizzle/schema";
 import type { DbClient } from "../db";
 
-const log =
-  process.env.STAGE2_DYNAMIC_TEMPLATE_LOG === "1" || process.env.STAGE2_DYNAMIC_TEMPLATE_LOG === "true"
-    ? (...a: unknown[]) => console.log("[stage2:dynamicTemplate]", ...a)
-    : () => {};
-
 /**
  * Legacy mirror keys were `t${templateId}`. For the first few built-in affiliate
  * templates we migrated to semantic keys in `app_actions.actionKey`, but we must
@@ -87,10 +82,8 @@ export async function loadDynamicExecutionTemplate(
       .where(eq(appActions.id, tw.actionId))
       .limit(1);
     if (a) {
-      log("delivery path=app_actions", { targetId: tw.id, actionId: tw.actionId, templateId: tw.templateId });
       return { template: appActionToDestinationTemplate(a, tw.templateId), source: "app_actions" };
     }
-    log("actionId row missing, fallback", { targetId: tw.id, actionId: tw.actionId, templateId: tw.templateId });
   }
 
   const [dt] = await db
@@ -99,7 +92,6 @@ export async function loadDynamicExecutionTemplate(
     .where(eq(destinationTemplates.id, tw.templateId))
     .limit(1);
   if (!dt) return null;
-  log("delivery path=destination_templates", { targetId: tw.id, templateId: tw.templateId });
   return { template: dt, source: "destination_templates" };
 }
 
@@ -179,10 +171,8 @@ export async function listDestinationTemplatesWithMirrorOverlay(
     if (!dt.appKey) return { ...dt, appIconUrl };
     const a = resolveOverlayAction(byKey, dt.appKey, dt.id);
     if (!a) {
-      log("list overlay miss — legacy only", { templateId: dt.id });
       return { ...dt, appIconUrl };
     }
-    log("list overlay hit", { templateId: dt.id });
     return {
       ...dt,
       name: a.name,

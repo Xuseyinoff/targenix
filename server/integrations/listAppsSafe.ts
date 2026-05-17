@@ -13,13 +13,6 @@ import {
   type ConnectionAuthType,
 } from "./connectionAppSpecs";
 
-const APPS_LOG =
-  process.env.STAGE2_APPS_LOG === "1" || process.env.STAGE2_APPS_LOG === "true";
-
-function isStage2SpecLog(): boolean {
-  return process.env.STAGE2_SPEC_LOG === "1" || process.env.STAGE2_SPEC_LOG === "true";
-}
-
 function narrowAuthType(raw: string): ConnectionAuthType {
   switch (raw) {
     case "api_key":
@@ -76,16 +69,8 @@ export async function listAppsSafe(db: DbClient): Promise<ConnectionAppSpec[]> {
       .where(eq(apps.isActive, true))
       .orderBy(asc(apps.appKey));
 
-    if (APPS_LOG) {
-      console.log({ stage: "apps_source", source: "DB" as const, count: rows.length });
-    }
     return rows.map(appRowToConnectionAppSpec);
-  } catch (err) {
-    if (APPS_LOG) {
-      console.warn("[listAppsSafe] DB read failed, returning empty list", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+  } catch {
     return [];
   }
 }
@@ -106,13 +91,6 @@ function mapToListKeyOption(s: ConnectionAppSpec): ListAppKeyOption {
   };
 }
 
-type SpecResolutionSource = "DB" | "NONE";
-
-function logSpecSource(source: SpecResolutionSource, appKey: string): void {
-  if (!isStage2SpecLog()) return;
-  console.log({ stage: "spec_resolution" as const, source, appKey });
-}
-
 /**
  * Resolve a spec for a single appKey from the `apps` DB table.
  * Returns null when db is null or no active row is found — never throws.
@@ -131,7 +109,6 @@ export async function resolveSpecSafe(
         .where(and(eq(apps.appKey, appKey), eq(apps.isActive, true)))
         .limit(1);
       if (row) {
-        logSpecSource("DB", appKey);
         return appRowToConnectionAppSpec(row);
       }
     } catch (err) {
@@ -141,7 +118,6 @@ export async function resolveSpecSafe(
     }
   }
 
-  logSpecSource("NONE", appKey);
   return null;
 }
 

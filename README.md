@@ -591,6 +591,7 @@ The following are potential next steps — not committed deliverables:
    pnpm test    # Vitest unit tests
    ```
 6. Keep PRs focused; separate refactors from feature additions
+7. See [docs/NAMING.md](docs/NAMING.md) for function-prefix, file-naming, and module-export conventions used across the codebase
 
 ---
 
