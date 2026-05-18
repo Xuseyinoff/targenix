@@ -18,10 +18,12 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Copy,
   Filter,
   FlaskConical,
   Loader2,
+  PauseCircle,
   Pencil,
   Plus,
   Search,
@@ -36,6 +38,14 @@ import { toast } from "sonner";
 import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { useT } from "@/hooks/useT";
+import { ScheduleDialog } from "@/components/destinations/ScheduleDialog";
+import { BulkSchedulesToolbar } from "@/components/destinations/BulkSchedulesToolbar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 function routingBadgeClass(isActive: boolean) {
   if (!isActive) {
@@ -71,6 +81,28 @@ export default function Integrations() {
     durationMs: number;
   } | null>(null);
   const [filterIntegrationId, setFilterIntegrationId] = useState<number | null>(null);
+
+  // Yuboraman PR 4/4 follow-up — schedule editor lives here now (originally
+  // landed on the hidden Destinations admin page in Phase C). `null` = closed.
+  // Single dialog instance driven by destinationId so we don't mount one per
+  // row.
+  const [scheduleEditFor, setScheduleEditFor] = useState<{ id: number; name: string } | null>(null);
+
+  // Batched fetches for per-row status badges + pending counts. One query
+  // each — the client builds Maps below for O(1) per-row lookup so a 100-row
+  // page doesn't fan out into 200 individual requests.
+  const { data: schedulesList = [] } = trpc.destinationSchedules.listForUser.useQuery();
+  const { data: pendingCounts = [] } = trpc.destinationSchedules.listPendingCountsForUser.useQuery();
+  const schedulesByDestId = useMemo(() => {
+    const m = new Map<number, typeof schedulesList[number]>();
+    for (const s of schedulesList) m.set(s.destinationId, s);
+    return m;
+  }, [schedulesList]);
+  const pendingByDestId = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const p of pendingCounts) m.set(p.destinationId, p.count);
+    return m;
+  }, [pendingCounts]);
 
   const toggleExpand = (id: number) => {
     setExpandedIds((prev) => {
@@ -160,6 +192,11 @@ export default function Integrations() {
       </div>
 
       <div className="max-w-5xl mx-auto space-y-5 pb-16">
+        {/* Fleet-wide schedule toolbar — Pause All / Start All / Send All
+            Pending / Reset Schedules. Hidden when no routing rules exist
+            so the onboarding cards below stay the focus. */}
+        {!isLoading && routingIntegrations.length > 0 && <BulkSchedulesToolbar />}
+
         {/* Search & status filters card — when at least one Lead Routing rule exists */}
         {!isLoading && routingIntegrations.length > 0 && (
           <div className="bg-white dark:bg-card border border-slate-200/70 dark:border-border rounded-2xl p-4 space-y-3">
@@ -282,6 +319,69 @@ export default function Integrations() {
                   .filter(Boolean)
                   .join(" · ");
 
+                // Schedule data — resolve which destination(s) this routing
+                // rule applies to. The integrations.list query enriches each
+                // row with `destinationIds[]` from integration_routes (new
+                // multi-dest model) plus the legacy single `destinationId`
+                // FK column.
+                const integrationDestIds =
+                  ((integration as { destinationIds?: number[] }).destinationIds ?? []).filter(
+                    (id): id is number => typeof id === "number" && id > 0,
+                  );
+                const effectiveDestIds =
+                  integrationDestIds.length > 0
+                    ? integrationDestIds
+                    : integration.destinationId
+                      ? [integration.destinationId]
+                      : [];
+                // For badges we surface the PRIMARY destination's schedule
+                // (the legacy destinationId column). Multi-route integrations
+                // have N badges' worth of state — for now we show the
+                // primary's, and Schedule action opens a picker.
+                const primaryDestId = integration.destinationId ?? effectiveDestIds[0] ?? null;
+                const schedule = primaryDestId != null ? schedulesByDestId.get(primaryDestId) : undefined;
+                const pendingCount =
+                  primaryDestId != null ? pendingByDestId.get(primaryDestId) ?? 0 : 0;
+                const scheduleStatusBadge = schedule
+                  ? schedule.isPausedNow
+                    ? {
+                        label: t("integrations.schedule.statusPaused"),
+                        tooltip:
+                          schedule.startHour != null
+                            ? t("integrations.schedule.statusPausedTooltip", {
+                                hour: String(schedule.startHour).padStart(2, "0"),
+                              })
+                            : t("integrations.schedule.statusPausedTooltipNoStart"),
+                        classes:
+                          "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-200",
+                        icon: <PauseCircle className="w-3 h-3" />,
+                      }
+                    : schedule.pauseHour != null
+                      ? {
+                          label: t("integrations.schedule.statusScheduled"),
+                          tooltip: t("integrations.schedule.statusScheduledTooltip", {
+                            hour: String(schedule.pauseHour).padStart(2, "0"),
+                          }),
+                          classes:
+                            "border-sky-300 bg-sky-50 text-sky-900 dark:border-sky-900/50 dark:bg-sky-950/40 dark:text-sky-200",
+                          icon: <Clock className="w-3 h-3" />,
+                        }
+                      : null
+                  : null;
+
+                // Schedule action. Single-destination: open dialog directly.
+                // Multi-destination: rendered as a DropdownMenu picker (see
+                // below). Both cases use the same dialog component.
+                const openScheduleForDestId = (destId: number, name: string) =>
+                  setScheduleEditFor({ id: destId, name });
+                const openScheduleForPrimary = () => {
+                  if (primaryDestId == null) return;
+                  const name = targetWebsiteName.trim() || `#${primaryDestId}`;
+                  openScheduleForDestId(primaryDestId, name);
+                };
+                const isMultiDest = effectiveDestIds.length > 1;
+                const hasAnyDest = effectiveDestIds.length > 0;
+
                 return (
                   <div
                     key={integration.id}
@@ -353,6 +453,26 @@ export default function Integrations() {
                               />
                               {t("integrations.routing")}
                             </span>
+                            {scheduleStatusBadge && (
+                              <span
+                                title={scheduleStatusBadge.tooltip}
+                                className={cn(
+                                  "inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest",
+                                  scheduleStatusBadge.classes,
+                                )}
+                              >
+                                {scheduleStatusBadge.icon}
+                                {scheduleStatusBadge.label}
+                              </span>
+                            )}
+                            {pendingCount > 0 && (
+                              <span
+                                title={t("integrations.schedule.queuedLeadsNoSend", { count: pendingCount })}
+                                className="inline-flex shrink-0 items-center rounded-full border border-orange-300 bg-orange-50 px-2 py-0.5 text-[10px] font-bold tabular-nums text-orange-900 dark:border-orange-900/50 dark:bg-orange-950/40 dark:text-orange-200"
+                              >
+                                {pendingCount}
+                              </span>
+                            )}
                           </div>
                           <p
                             className={cn(
@@ -398,6 +518,56 @@ export default function Integrations() {
                         >
                           <Copy className="h-3.5 w-3.5" />
                         </Button>
+                        {hasAnyDest && (
+                          isMultiDest ? (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-muted-foreground hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 h-9 w-9 rounded-lg"
+                                  title={t("integrations.schedule.tooltip")}
+                                >
+                                  <Clock className="h-3.5 w-3.5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-56">
+                                <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground">
+                                  {t("integrations.schedule.pickDestinationTitle")}
+                                </div>
+                                {effectiveDestIds.map((destId) => (
+                                  <DropdownMenuItem
+                                    key={destId}
+                                    onClick={() =>
+                                      openScheduleForDestId(
+                                        destId,
+                                        destId === integration.destinationId
+                                          ? targetWebsiteName.trim() || `#${destId}`
+                                          : `#${destId}`,
+                                      )
+                                    }
+                                    className="cursor-pointer"
+                                  >
+                                    <Clock className="mr-2 h-4 w-4 text-amber-600 dark:text-amber-400" />
+                                    {destId === integration.destinationId
+                                      ? targetWebsiteName.trim() || `#${destId}`
+                                      : `#${destId}`}
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-muted-foreground hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 h-9 w-9 rounded-lg"
+                              title={t("integrations.schedule.tooltip")}
+                              onClick={openScheduleForPrimary}
+                            >
+                              <Clock className="h-3.5 w-3.5" />
+                            </Button>
+                          )
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"
@@ -501,6 +671,58 @@ export default function Integrations() {
                               <Copy className="mr-1.5 h-3.5 w-3.5" />
                               {t("integrations.clone")}
                             </Button>
+                            {hasAnyDest && (
+                              isMultiDest ? (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="wapi-button-hover h-9 text-xs rounded-full font-medium text-amber-600 border-amber-200 hover:bg-amber-50 hover:text-amber-700 dark:border-amber-800 dark:hover:bg-amber-950/30"
+                                      title={t("integrations.schedule.tooltip")}
+                                    >
+                                      <Clock className="mr-1.5 h-3.5 w-3.5" />
+                                      {t("integrations.schedule.buttonLabel")}
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="start" className="w-56">
+                                    <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground">
+                                      {t("integrations.schedule.pickDestinationTitle")}
+                                    </div>
+                                    {effectiveDestIds.map((destId) => (
+                                      <DropdownMenuItem
+                                        key={destId}
+                                        onClick={() =>
+                                          openScheduleForDestId(
+                                            destId,
+                                            destId === integration.destinationId
+                                              ? targetWebsiteName.trim() || `#${destId}`
+                                              : `#${destId}`,
+                                          )
+                                        }
+                                        className="cursor-pointer"
+                                      >
+                                        <Clock className="mr-2 h-4 w-4 text-amber-600 dark:text-amber-400" />
+                                        {destId === integration.destinationId
+                                          ? targetWebsiteName.trim() || `#${destId}`
+                                          : `#${destId}`}
+                                      </DropdownMenuItem>
+                                    ))}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="wapi-button-hover h-9 text-xs rounded-full font-medium text-amber-600 border-amber-200 hover:bg-amber-50 hover:text-amber-700 dark:border-amber-800 dark:hover:bg-amber-950/30"
+                                  title={t("integrations.schedule.tooltip")}
+                                  onClick={openScheduleForPrimary}
+                                >
+                                  <Clock className="mr-1.5 h-3.5 w-3.5" />
+                                  {t("integrations.schedule.buttonLabel")}
+                                </Button>
+                              )
+                            )}
                             <Button
                               variant="outline"
                               size="sm"
@@ -640,6 +862,20 @@ export default function Integrations() {
           />
         );
       })()}
+
+      {/* Per-row Schedule editor — single instance, driven by scheduleEditFor.
+          Renders only when an integration's Schedule action picked a
+          destination (or its sole destination, for non-multi rows). */}
+      {scheduleEditFor && (
+        <ScheduleDialog
+          open={!!scheduleEditFor}
+          onOpenChange={(o) => {
+            if (!o) setScheduleEditFor(null);
+          }}
+          destinationId={scheduleEditFor.id}
+          destinationName={scheduleEditFor.name}
+        />
+      )}
 
       {/* Delete Confirm */}
       <Dialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>

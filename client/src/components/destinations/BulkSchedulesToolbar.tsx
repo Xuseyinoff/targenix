@@ -70,7 +70,7 @@ export function BulkSchedulesToolbar() {
   const pauseAllMutation = trpc.destinationSchedules.pauseAll.useMutation({
     onSuccess: (res) => {
       invalidateAll();
-      toast.success(t("destinations.bulk.toastPaused", { count: res.affected }));
+      toast.success(t("integrations.bulk.toastPaused", { count: res.affected }));
       setPauseAllOpen(false);
     },
   });
@@ -78,7 +78,7 @@ export function BulkSchedulesToolbar() {
     onSuccess: (res) => {
       invalidateAll();
       toast.success(
-        t("destinations.bulk.toastResumed", {
+        t("integrations.bulk.toastResumed", {
           count: res.destinationsResumed,
           flushed: res.flushed?.succeeded ?? 0,
         }),
@@ -88,14 +88,14 @@ export function BulkSchedulesToolbar() {
   const flushAllMutation = trpc.destinationSchedules.flushPendingAll.useMutation({
     onSuccess: (res) => {
       invalidateAll();
-      toast.success(t("destinations.bulk.toastFlushed", { queued: res.queued }));
+      toast.success(t("integrations.bulk.toastFlushed", { queued: res.queued }));
     },
   });
   const resetMutation = trpc.destinationSchedules.resetSchedules.useMutation({
     onSuccess: (res) => {
       invalidateAll();
       toast.success(
-        t("destinations.bulk.toastReset", { count: res.destinationsCleared }),
+        t("integrations.bulk.toastReset", { count: res.destinationsCleared }),
       );
     },
   });
@@ -107,13 +107,13 @@ export function BulkSchedulesToolbar() {
     resetMutation.isPending;
 
   function handleStartAll() {
-    if (confirm(t("destinations.bulk.confirmStartAll"))) startAllMutation.mutate();
+    if (confirm(t("integrations.bulk.confirmStartAll"))) startAllMutation.mutate();
   }
   function handleFlushAll() {
-    if (confirm(t("destinations.bulk.confirmFlushAll"))) flushAllMutation.mutate();
+    if (confirm(t("integrations.bulk.confirmFlushAll"))) flushAllMutation.mutate();
   }
   function handleReset() {
-    if (confirm(t("destinations.bulk.confirmReset"))) resetMutation.mutate();
+    if (confirm(t("integrations.bulk.confirmReset"))) resetMutation.mutate();
   }
   function handlePauseAllSave() {
     const pauseH = fromSelectValue(pauseHour);
@@ -121,7 +121,7 @@ export function BulkSchedulesToolbar() {
     // Defend at the UI layer too so the toast is friendly instead of a
     // tRPC validation error.
     if (pauseH == null) {
-      toast.error(t("destinations.schedule.pauseTime"));
+      toast.error(t("integrations.schedule.pauseTime"));
       return;
     }
     pauseAllMutation.mutate({
@@ -143,7 +143,7 @@ export function BulkSchedulesToolbar() {
           disabled={anyPending}
         >
           <Pause className="w-4 h-4" />
-          <span className="ml-1.5">{t("destinations.bulk.pauseAll")}</span>
+          <span className="ml-1.5">{t("integrations.bulk.pauseAll")}</span>
         </Button>
         <Button
           type="button"
@@ -158,7 +158,7 @@ export function BulkSchedulesToolbar() {
           ) : (
             <Play className="w-4 h-4" />
           )}
-          <span className="ml-1.5">{t("destinations.bulk.startAll")}</span>
+          <span className="ml-1.5">{t("integrations.bulk.startAll")}</span>
         </Button>
         <Button
           type="button"
@@ -173,7 +173,7 @@ export function BulkSchedulesToolbar() {
           ) : (
             <Send className="w-4 h-4" />
           )}
-          <span className="ml-1.5">{t("destinations.bulk.sendAllPending")}</span>
+          <span className="ml-1.5">{t("integrations.bulk.sendAllPending")}</span>
         </Button>
         <Button
           type="button"
@@ -188,42 +188,42 @@ export function BulkSchedulesToolbar() {
           ) : (
             <RotateCcw className="w-4 h-4" />
           )}
-          <span className="ml-1.5">{t("destinations.bulk.resetSchedules")}</span>
+          <span className="ml-1.5">{t("integrations.bulk.resetSchedules")}</span>
         </Button>
       </div>
 
       <Dialog open={pauseAllOpen} onOpenChange={setPauseAllOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>{t("destinations.bulk.pauseAllDialogTitle")}</DialogTitle>
+            <DialogTitle>{t("integrations.bulk.pauseAllDialogTitle")}</DialogTitle>
             <DialogDescription>
-              {t("destinations.bulk.pauseAllDialogDesc")}
+              {t("integrations.bulk.pauseAllDialogDesc")}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <ToolbarHourPicker
-              label={t("destinations.schedule.pauseTime")}
-              help={t("destinations.schedule.pauseTimeHelp")}
+              label={t("integrations.schedule.pauseTime")}
+              help={t("integrations.schedule.pauseTimeHelp")}
               value={pauseHour}
               onValueChange={setPauseHour}
-              notSetLabel={t("destinations.schedule.notSet")}
+              notSetLabel={t("integrations.schedule.notSet")}
               allowNotSet={false}
             />
             <ToolbarHourPicker
-              label={t("destinations.schedule.startTime")}
-              help={t("destinations.schedule.startTimeHelp")}
+              label={t("integrations.schedule.startTime")}
+              help={t("integrations.schedule.startTimeHelp")}
               value={startHour}
               onValueChange={setStartHour}
-              notSetLabel={t("destinations.schedule.notSet")}
+              notSetLabel={t("integrations.schedule.notSet")}
               allowNotSet
             />
             <ToolbarHourPicker
-              label={t("destinations.schedule.sendTime")}
-              help={t("destinations.schedule.sendTimeHelp")}
+              label={t("integrations.schedule.sendTime")}
+              help={t("integrations.schedule.sendTimeHelp")}
               value={sendHour}
               onValueChange={setSendHour}
-              notSetLabel={t("destinations.schedule.notSet")}
+              notSetLabel={t("integrations.schedule.notSet")}
               allowNotSet
             />
           </div>
@@ -234,7 +234,7 @@ export function BulkSchedulesToolbar() {
               onClick={() => setPauseAllOpen(false)}
               disabled={pauseAllMutation.isPending}
             >
-              {t("destinations.schedule.cancel")}
+              {t("integrations.schedule.cancel")}
             </Button>
             <Button
               onClick={handlePauseAllSave}
@@ -243,7 +243,7 @@ export function BulkSchedulesToolbar() {
               {pauseAllMutation.isPending && (
                 <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
               )}
-              {t("destinations.bulk.pauseAll")}
+              {t("integrations.bulk.pauseAll")}
             </Button>
           </DialogFooter>
         </DialogContent>
