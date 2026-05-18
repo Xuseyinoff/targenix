@@ -446,6 +446,9 @@
     "oauthBadgeTitle": "Serverdagi OAuth",
     "oauthBadgeBody": "token brauzeringizga tushmaydi.",
     "learnMore": "Batafsil",
+    "appCatalog": {
+      "unsupportedFromConnections": "Bu manzil turi «Ulanishlar» sahifasidan qo‘shilmaydi. Uni sozlash uchun «Integratsiyalar → Yangi integratsiya»ni oching."
+    },
     "loadErrorTitle": "Ulanishlar yuklanmadi",
     "tryAgain": "Qayta urinib ko‘ring.",
     "retry": "Qayta urinish",

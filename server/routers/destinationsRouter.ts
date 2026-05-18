@@ -256,13 +256,34 @@ const templateConfigSchema = z.record(z.string(), z.any());
 
 export const destinationsRouter = router({
   /** List all destinations for the authenticated user (secrets masked). */
-  list: protectedProcedure.query(async ({ ctx }) => {
+  list: protectedProcedure
+    .input(
+      z
+        .object({
+          /**
+           * Destinations Cleanup Sprint, PR 2/4. Default false — the destination
+           * picker (and the Connections page surface) must NOT show rows that
+           * are private to another integration. PR 1's edit-destination dialog
+           * (which fetches a specific row by id to pre-fill the form) sets this
+           * to true so it can prefill a row regardless of privacy state.
+           */
+          includePrivate: z.boolean().optional(),
+        })
+        .optional(),
+    )
+    .query(async ({ ctx, input }) => {
     const db = await getDb();
     if (!db) return [];
+    const includePrivate = input?.includePrivate ?? false;
     const rows = await db
       .select()
       .from(destinations)
-      .where(eq(destinations.userId, ctx.user.id))
+      .where(
+        and(
+          eq(destinations.userId, ctx.user.id),
+          includePrivate ? undefined : sql`${destinations.parentIntegrationId} IS NULL`,
+        ),
+      )
       .orderBy(desc(destinations.createdAt));
 
     // Enrich with template metadata for dynamic-template destinations.
@@ -364,6 +385,15 @@ export const destinationsRouter = router({
         messageTemplate: z.string().optional(),
         /** Phase 3 — link to unified connections table (optional, additive). */
         connectionId: z.number().int().positive().optional(),
+        /**
+         * Destinations Cleanup Sprint, PR 2/4. When set, marks this destination
+         * as private to that integration: it won't appear in the destination
+         * picker for OTHER integrations, won't show on the Connections page,
+         * and will be hard-deleted alongside the parent integration (PR 3).
+         * Validated to belong to this user before insert. Omit (or null) for
+         * the historical shared semantics.
+         */
+        parentIntegrationId: z.number().int().positive().nullable().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -382,6 +412,45 @@ export const destinationsRouter = router({
       // Phase 1 — derive dispatch type from EITHER templateType (legacy) or
       // appKey (modern). Throws if neither is provided.
       const dispatchType = resolveDispatchType(input);
+
+      // Destinations Cleanup Sprint, PR 2/4 — ownership-check the parent
+      // integration before storing the reference. The picker won't surface
+      // foreign integrations to the user, so a mismatch here means someone
+      // is hand-crafting a request — reject rather than silently ignoring.
+      let validatedParentIntegrationId: number | null = null;
+      if (input.parentIntegrationId != null) {
+        const [parentOk] = await db
+          .select({ id: integrations.id })
+          .from(integrations)
+          .where(
+            and(
+              eq(integrations.id, input.parentIntegrationId),
+              eq(integrations.userId, ctx.user.id),
+            ),
+          )
+          .limit(1);
+        if (!parentOk) throw new Error("Parent integration not found");
+        validatedParentIntegrationId = parentOk.id;
+      }
+
+      // Defence-in-depth SSRF check on the http-request URL at create time.
+      // The httpRequestAdapter re-runs this at dispatch, but failing here
+      // gives the user a friendly error in the wizard instead of a silent
+      // saved-but-broken destination they only discover when leads fail.
+      if (dispatchType === "http-request") {
+        const url = (input.templateConfig?.url ?? "") as string;
+        if (typeof url === "string" && url.trim()) {
+          await assertSafeOutboundUrl(url.trim());
+        }
+      }
+
+      // Single source of truth for the parent-integration write — spread
+      // into every dispatch-type's insert below so a "shared" destination
+      // (no parent) just omits the column, defaulting it to NULL.
+      const parentSpread =
+        validatedParentIntegrationId != null
+          ? { parentIntegrationId: validatedParentIntegrationId }
+          : {};
 
       const [me] = await db
         .select({
@@ -468,6 +537,7 @@ export const destinationsRouter = router({
           color: "#0088cc",
           isActive: true,
           ...(validatedConnectionId ? { connectionId: validatedConnectionId } : {}),
+          ...parentSpread,
         });
         const id = (inserted as unknown as { insertId?: number })?.insertId;
         return { success: true, id, name: input.name, appKey: "telegram" as const };
@@ -495,6 +565,7 @@ export const destinationsRouter = router({
           isActive: true,
           ...(autoChatId ? { telegramChatId: autoChatId } : {}),
           ...(validatedConnectionId ? { connectionId: validatedConnectionId } : {}),
+          ...parentSpread,
         });
         const id = (inserted as unknown as { insertId?: number })?.insertId;
         return { success: true, id, name: input.name, appKey: "google-sheets" as const };
@@ -513,6 +584,7 @@ export const destinationsRouter = router({
           templateConfig: input.templateConfig ?? {},
           isActive:       true,
           ...(validatedConnectionId ? { connectionId: validatedConnectionId } : {}),
+          ...parentSpread,
         });
         const id = (inserted as unknown as { insertId?: number })?.insertId;
         return { success: true, id, name: input.name, appKey: input.appKey.trim() };
@@ -530,6 +602,7 @@ export const destinationsRouter = router({
           appKey:         "http-request",
           templateConfig: input.templateConfig ?? {},
           isActive:       true,
+          ...parentSpread,
         });
         const id = (inserted as unknown as { insertId?: number })?.insertId;
         return { success: true, id, name: input.name, appKey: "http-request" };
@@ -576,6 +649,7 @@ export const destinationsRouter = router({
         templateConfig: config,
         ...(autoChatId ? { telegramChatId: autoChatId } : {}),
         isActive: true,
+        ...parentSpread,
       });
       const id = (inserted as unknown as { insertId?: number })?.insertId;
       return {
@@ -751,6 +825,64 @@ export const destinationsRouter = router({
 
       await db.update(destinations).set(updates).where(and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)));
       return { success: true };
+    }),
+
+  /**
+   * Destinations Cleanup Sprint, PR 2/4 — late-binding for the
+   * private-destination flow.
+   *
+   * The wizard creates the destination BEFORE the integration row exists
+   * (so the user can configure the HTTP webhook inline at action-step time).
+   * Once the user clicks Publish and the integration is saved, the client
+   * calls this proc to set parentIntegrationId. From that point the
+   * destination is filtered out of every other integration's picker and
+   * cascade-deleted with its parent (PR 3).
+   *
+   * Refuses to:
+   *  - re-parent a destination that is ALREADY private (avoids cross-
+   *    integration capture; UI shouldn't surface this case anyway)
+   *  - link to a foreign integration (ownership check + parent-tenant
+   *    check)
+   *
+   * Returns the new parentIntegrationId on success so the client can
+   * confirm rather than guess.
+   */
+  attachToIntegration: protectedProcedure
+    .input(
+      z.object({
+        destinationId: z.number().int().positive(),
+        integrationId: z.number().int().positive(),
+      }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) throw new Error("DB not available");
+
+      const [dest] = await db
+        .select({
+          id: destinations.id,
+          parentIntegrationId: destinations.parentIntegrationId,
+        })
+        .from(destinations)
+        .where(and(eq(destinations.id, input.destinationId), eq(destinations.userId, ctx.user.id)))
+        .limit(1);
+      if (!dest) throw new Error("Destination not found");
+      if (dest.parentIntegrationId != null && dest.parentIntegrationId !== input.integrationId) {
+        throw new Error("Destination already private to a different integration");
+      }
+
+      const [parent] = await db
+        .select({ id: integrations.id })
+        .from(integrations)
+        .where(and(eq(integrations.id, input.integrationId), eq(integrations.userId, ctx.user.id)))
+        .limit(1);
+      if (!parent) throw new Error("Integration not found");
+
+      await db
+        .update(destinations)
+        .set({ parentIntegrationId: input.integrationId })
+        .where(and(eq(destinations.id, input.destinationId), eq(destinations.userId, ctx.user.id)));
+      return { success: true, parentIntegrationId: input.integrationId };
     }),
 
   /** Delete a target website. Only owner can delete. */

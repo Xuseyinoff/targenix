@@ -645,6 +645,13 @@
       "when": 1779833280015,
       "tag": "0093_destination_schedules",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "5",
+      "when": 1779833280016,
+      "tag": "0094_destinations_parent_integration",
+      "breakpoints": true
     }
   ]
 }

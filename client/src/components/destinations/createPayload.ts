@@ -58,15 +58,23 @@ export function isSupportedAppKey(key: string): key is SupportedAppKey {
  * removal). Kept narrow so the call site gets compile-time help when the
  * server contract changes.
  */
+/**
+ * Destinations Cleanup Sprint, PR 2/4 — every payload variant accepts an
+ * optional `parentIntegrationId`. When set, the server marks the new
+ * destination as private to that integration (filtered out of other
+ * integrations' pickers, cascade-deleted with its parent in PR 3).
+ */
+type PrivateScope = { parentIntegrationId?: number };
+
 export type CreatePayload =
-  | {
+  | ({
       name: string;
       appKey: "telegram";
       connectionId?: number;
       chatId?: string;
       messageTemplate?: string;
-    }
-  | {
+    } & PrivateScope)
+  | ({
       name: string;
       appKey: "google-sheets";
       connectionId?: number;
@@ -75,15 +83,15 @@ export type CreatePayload =
       sheetName: string;
       sheetHeaders?: string[];
       mapping?: Record<string, string>;
-    }
-  | {
+    } & PrivateScope)
+  | ({
       /** Generic handler for all manifest-driven http-api-key apps —
        *  appKey is the specific app (e.g. "bitrix24", "webhook-json"). */
       name: string;
       appKey: string;
       connectionId?: number;
       templateConfig: Record<string, unknown>;
-    };
+    } & PrivateScope);
 
 // ─── Builder ─────────────────────────────────────────────────────────────────
 

@@ -89,7 +89,16 @@ export default function IntegrationWizardV2() {
     isSaving,
     handleSave,
     actionPickerOpen,
+    editId,
+    markDestinationPrivate,
   } = useIntegrationWizardState();
+
+  // Destinations Cleanup Sprint, PR 2/4 — only the universal HTTP module
+  // (the make.com-style "HTTP Request") is private-by-default when invoked
+  // from the wizard. Other apps (Telegram/Sheets/CRMs) keep their existing
+  // shared semantics: their credentials live on the connection row and are
+  // legitimately reusable across integrations.
+  const isPrivateHttpFlow = inlineCreatorAppKey === "http-request";
 
   // ─── Render ────────────────────────────────────────────────────────────────
   return (
@@ -196,8 +205,21 @@ export default function IntegrationWizardV2() {
               /* ── Inline destination creator (Zapier-style, no drawer) ── */
               <DestinationCreatorInline
                 initialAppKey={inlineCreatorAppKey ?? undefined}
+                /* PR 2/4 — HTTP-Request is private-by-default when invoked
+                   from the wizard (make.com-style). In edit mode the
+                   integration id already exists and is sent inline so the
+                   create call sets parentIntegrationId atomically. In
+                   create mode we mark the new destination as pending-private
+                   and the wizard's handleSave attaches it after Publish. */
+                privateMode={isPrivateHttpFlow}
+                parentIntegrationId={
+                  isPrivateHttpFlow && editId ? editId : undefined
+                }
                 onCreated={({ id, name, templateType }) => {
                   addDestination(id, name, templateType);
+                  if (isPrivateHttpFlow && !editId) {
+                    markDestinationPrivate(id);
+                  }
                   setInlineCreatorAppKey(undefined);
                 }}
                 onCancel={() => setInlineCreatorAppKey(undefined)}

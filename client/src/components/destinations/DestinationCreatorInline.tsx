@@ -83,6 +83,22 @@ export interface DestinationCreatorInlineProps {
    * for the standalone /destinations page where no trigger is bound yet.
    */
   triggerVariables?: VariableGroup[];
+  /**
+   * Destinations Cleanup Sprint, PR 2/4 — private-mode hint.
+   *
+   * When `true`, the inline creator surfaces a banner explaining the new
+   * destination will be private to whichever integration the parent wizard
+   * is editing (it pulls `parentIntegrationId` from `parentIntegrationId`
+   * below). Server-side, this sets the new column at create time.
+   *
+   * Set `parentIntegrationId` to the integration's id when the wizard is
+   * in EDIT mode and the id already exists. In CREATE mode the integration
+   * row doesn't exist yet, so the wizard creates the destination "pending
+   * private" (parent omitted) and then calls `destinations.attachToIntegration`
+   * after Publish to finalize the link.
+   */
+  privateMode?: boolean;
+  parentIntegrationId?: number;
 }
 
 interface AppListItem {
@@ -112,6 +128,8 @@ export function DestinationCreatorInline({
   onSaved,
   onCancel,
   triggerVariables,
+  privateMode,
+  parentIntegrationId,
 }: DestinationCreatorInlineProps) {
   const isEditMode = editingDestinationId != null;
   const [step, setStep] = React.useState<"pick" | "configure">(
@@ -139,11 +157,12 @@ export function DestinationCreatorInline({
   const updateFromTemplateMutation =
     trpc.destinations.updateFromTemplate.useMutation();
 
-  // Edit mode — load the destination so we can pre-fill the form. We reuse
-  // the existing list query (same data the parent /integrations page already
-  // has cached) instead of adding a focused getById endpoint.
+  // Edit mode — load the destination so we can pre-fill the form. We pass
+  // `includePrivate: true` so the dialog can prefill a private destination
+  // (PR 2/4 — private rows are filtered out of the default list, but the
+  // owner editing one of their own integrations should still see it here).
   const { data: allDestinations = [] } = trpc.destinations.list.useQuery(
-    undefined,
+    { includePrivate: true },
     { enabled: isEditMode },
   );
   const editingDestination = React.useMemo(
@@ -344,10 +363,19 @@ export function DestinationCreatorInline({
       return;
     }
 
-    // ── Create mode (unchanged) ──────────────────────────────────────────
+    // ── Create mode (with optional private parent) ───────────────────────
     let payload: Parameters<typeof createMutation.mutateAsync>[0];
     try {
-      payload = buildCreatePayload(selectedApp.key, effectiveName, formValues);
+      const base = buildCreatePayload(selectedApp.key, effectiveName, formValues);
+      // Destinations Cleanup Sprint, PR 2/4 — set parentIntegrationId when
+      // the wizard is in edit mode for an existing integration. In create
+      // mode parentIntegrationId is undefined; the wizard finishes the
+      // private link by calling destinations.attachToIntegration after the
+      // integration row is saved.
+      payload =
+        privateMode && parentIntegrationId != null
+          ? ({ ...base, parentIntegrationId } as typeof base)
+          : base;
     } catch (err) {
       toast.error(
         err instanceof Error ? err.message : "Could not build payload",
@@ -624,6 +652,18 @@ export function DestinationCreatorInline({
               Linked {hiddenConnectionField.label ?? "connection"} is preserved.
             </span>
           )}
+        </div>
+      )}
+
+      {/* Private-mode banner (Destinations Cleanup Sprint, PR 2/4). Make.com-
+          style HTTP-module semantics: this destination belongs to ONE
+          integration, never shared, never on the Connections page. We render
+          it for both create AND edit so users coming back to a private row
+          see why it doesn't show up elsewhere. */}
+      {privateMode && (
+        <div className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-[11px] text-violet-900 dark:border-violet-900/40 dark:bg-violet-950/30 dark:text-violet-200">
+          This webhook is private to this integration. Other integrations
+          can&rsquo;t use it, and it won&rsquo;t appear on the Connections page.
         </div>
       )}
 

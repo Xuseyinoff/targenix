@@ -29,7 +29,6 @@
  */
 
 import { useMemo, useState } from "react";
-import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -156,7 +155,6 @@ export function AppCatalogPicker({
   onPickManifestApp,
   onConnectionCreated,
 }: AppCatalogPickerProps) {
-  const [, setLocation] = useLocation();
   const t = useT();
   const utils = trpc.useUtils();
 
@@ -457,9 +455,18 @@ export function AppCatalogPicker({
         void startOAuth2(entry.appKey);
         return;
       }
-      // http-webhook & misc → fall through to /destinations?type=…
+      // Destinations Cleanup Sprint, PR 2/4 — the historical fall-through
+      // here was `setLocation('/destinations?type=' + entry.appKey)`. That
+      // route is admin-only + hidden from the sidebar, and the destinations
+      // page never handled the `?type=` param anyway, so non-admins landed
+      // at a redirect-back-to-/integrations dead end. Webhook destinations
+      // are now configured inline inside the integration wizard via the
+      // new private-HTTP flow, so this branch should never be reached for
+      // http-webhook entries (they go through onPickManifestApp instead).
+      // Anything that DOES reach here is an unknown entry shape — close the
+      // picker and surface a friendly toast so the user isn't stranded.
       onOpenChange(false);
-      setLocation(`/destinations?type=${entry.appKey}`);
+      toast.error(t("connections.appCatalog.unsupportedFromConnections"));
       return;
     }
 

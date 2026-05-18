@@ -445,6 +445,9 @@
     "oauthBadgeTitle": "OAuth on the server",
     "oauthBadgeBody": "tokens never touch your browser.",
     "learnMore": "Learn more",
+    "appCatalog": {
+      "unsupportedFromConnections": "This destination type can't be added from Connections. Open Integrations → New integration to configure it inline."
+    },
     "loadErrorTitle": "Couldn't load connections",
     "tryAgain": "Please try again.",
     "retry": "Retry",

@@ -507,11 +507,24 @@ export const destinations = mysqlTable("destinations", {
    * tests working without any data migration.
    */
   connectionId: int("connectionId"),
+  /**
+   * Destinations Cleanup Sprint, PR 2/4 (migration 0094).
+   *   NULL  → shared (the historical default; reusable across any of this
+   *           user's integrations — preserves the ~268 shared CPA-template
+   *           references in prod exactly as-is)
+   *   set   → private to this integration. Filtered out of destination
+   *           pickers and the Connections page. PR 3 will hard-delete
+   *           private rows when their parent integration is deleted.
+   * Not declared as a real FK — same convention as connectionId / templateId
+   * (application-level integrity).
+   */
+  parentIntegrationId: int("parentIntegrationId"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (t) => ({
   idxUserId: index("idx_destinations_user_id").on(t.userId),
   idxUserAppKey: index("idx_destinations_user_app").on(t.userId, t.appKey),
   idxConnectionId: index("idx_destinations_connection_id").on(t.connectionId),
+  idxParentIntegration: index("idx_destinations_parent_integration").on(t.parentIntegrationId),
 }));
 
 export type Destination = typeof destinations.$inferSelect;

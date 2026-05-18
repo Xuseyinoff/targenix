@@ -78,6 +78,19 @@ export function useIntegrationWizardState() {
   // collapsed trigger and by "Add another destination" inside the chip view.
   const [actionPickerOpen, setActionPickerOpen] = useState(false);
 
+  // Destinations Cleanup Sprint, PR 2/4 — track destinations that were created
+  // in private mode while the wizard was in CREATE mode (no integration id
+  // yet). After integrations.create returns, handleSave walks this list and
+  // calls destinations.attachToIntegration to set parentIntegrationId.
+  // Edit-mode private creates pass parentIntegrationId straight through and
+  // don't need this list.
+  const [pendingPrivateDestinationIds, setPendingPrivateDestinationIds] =
+    useState<number[]>([]);
+  const markDestinationPrivate = (destinationId: number) =>
+    setPendingPrivateDestinationIds((prev) =>
+      prev.includes(destinationId) ? prev : [...prev, destinationId],
+    );
+
   // ─── Edit mode: load existing integration ─────────────────────────────────
   const { data: integrationsList } = trpc.integrations.list.useQuery(undefined, {
     enabled: isEditMode,
@@ -163,6 +176,11 @@ export function useIntegrationWizardState() {
     },
     onError: (err) => toast.error(err.message),
   });
+  // Destinations Cleanup Sprint, PR 2/4 — fires after integrations.create
+  // returns the new integration's id. No onSuccess toast (it's a follow-up
+  // call the user shouldn't have to think about).
+  const attachPrivateMutation =
+    trpc.destinations.attachToIntegration.useMutation();
 
   // ─── Edit mode: populate wizard state from saved integration ──────────────
   useEffect(() => {
@@ -693,13 +711,37 @@ export function useIntegrationWizardState() {
             pageId: state.pageId,
           });
         }
-        await createMutation.mutateAsync({
+        const created = await createMutation.mutateAsync({
           type: "LEAD_ROUTING",
           name: state.integrationName.trim(),
           config,
           destinationIds,
           ...dedicatedFields,
         });
+
+        // Destinations Cleanup Sprint, PR 2/4 — late-bind any HTTP destinations
+        // that were created in private mode during this wizard session. The
+        // server's attachToIntegration call sets parentIntegrationId on each
+        // pending row. Best-effort: a failure here logs but doesn't block the
+        // publish (the destination still works, it just isn't filtered out of
+        // other pickers — fixable from the destination row in PR 1's editor).
+        const newIntegrationId = (created as { id?: number } | undefined)?.id;
+        if (newIntegrationId && pendingPrivateDestinationIds.length > 0) {
+          for (const destId of pendingPrivateDestinationIds) {
+            try {
+              await attachPrivateMutation.mutateAsync({
+                destinationId: destId,
+                integrationId: newIntegrationId,
+              });
+            } catch (err) {
+              console.error(
+                "[IntegrationWizardV2] attachToIntegration failed",
+                { destId, err },
+              );
+            }
+          }
+          setPendingPrivateDestinationIds([]);
+        }
       }
     } catch (err) {
       console.error("[IntegrationWizardV2] save failed", err);
@@ -808,5 +850,8 @@ export function useIntegrationWizardState() {
     isSaving,
     handleSave,
     actionPickerOpen,
+    // Destinations Cleanup Sprint, PR 2/4
+    editId,
+    markDestinationPrivate,
   };
 }
