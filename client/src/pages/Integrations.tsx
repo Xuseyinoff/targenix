@@ -23,6 +23,7 @@ import {
   Edit3,
   Filter,
   FlaskConical,
+  Info,
   Loader2,
   PauseCircle,
   Pencil,
@@ -393,13 +394,34 @@ export default function Integrations() {
                 // editor mounted at the bottom of the page.
                 const openEditDestForId = (destId: number, name: string) =>
                   setEditDestFor({ id: destId, name });
-                const openEditDestForPrimary = () => {
-                  if (primaryDestId == null) return;
-                  const name = targetWebsiteName.trim() || `#${primaryDestId}`;
-                  openEditDestForId(primaryDestId, name);
-                };
                 const isMultiDest = effectiveDestIds.length > 1;
                 const hasAnyDest = effectiveDestIds.length > 0;
+                // Edit-destination visibility (post-sprint UX feedback):
+                // admin-created CPA template destinations work out of the box
+                // and any API-key change happens on the Connections page —
+                // surfacing the Edit button on those rows implies users can
+                // change something they can't. The server enriches
+                // `editableDestinationIds` with the subset of destinationIds
+                // whose templateId is NULL (modern destinations only).
+                const editableDestIds =
+                  ((integration as { editableDestinationIds?: number[] })
+                    .editableDestinationIds ?? []).filter(
+                    (id): id is number => typeof id === "number" && id > 0,
+                  );
+                const hasAnyEditable = editableDestIds.length > 0;
+                const isMultiEditable = editableDestIds.length > 1;
+                const primaryEditableId = editableDestIds[0] ?? null;
+                const openEditDestForFirstEditable = () => {
+                  if (primaryEditableId == null) return;
+                  // Use the row's targetWebsiteName when the editable id IS
+                  // the primary destination (server enriched its name);
+                  // otherwise just show the id so the user gets some context.
+                  const name =
+                    primaryEditableId === integration.destinationId
+                      ? targetWebsiteName.trim() || `#${primaryEditableId}`
+                      : `#${primaryEditableId}`;
+                  openEditDestForId(primaryEditableId, name);
+                };
 
                 return (
                   <div
@@ -587,8 +609,8 @@ export default function Integrations() {
                             </Button>
                           )
                         )}
-                        {hasAnyDest && (
-                          isMultiDest ? (
+                        {hasAnyEditable ? (
+                          isMultiEditable ? (
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button
@@ -604,7 +626,7 @@ export default function Integrations() {
                                 <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground">
                                   {t("integrations.editDestination.pickTitle")}
                                 </div>
-                                {effectiveDestIds.map((destId) => (
+                                {editableDestIds.map((destId) => (
                                   <DropdownMenuItem
                                     key={destId}
                                     onClick={() =>
@@ -631,12 +653,25 @@ export default function Integrations() {
                               size="icon"
                               className="text-muted-foreground hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30 h-9 w-9 rounded-lg"
                               title={t("integrations.editDestinationTooltip")}
-                              onClick={openEditDestForPrimary}
+                              onClick={openEditDestForFirstEditable}
                             >
                               <Edit3 className="h-3.5 w-3.5" />
                             </Button>
                           )
-                        )}
+                        ) : hasAnyDest ? (
+                          /* Edit-destination button hidden for template-based
+                             (CPA) destinations — they work out of the box and
+                             API key changes happen on the Connections page.
+                             A small grey Info icon preserves the discovery
+                             path with a hover hint pointing to Connections. */
+                          <span
+                            className="inline-flex h-9 w-9 items-center justify-center text-muted-foreground/60"
+                            title={t("integrations.editDestination.templateBasedHint")}
+                            aria-label={t("integrations.editDestination.templateBasedHint")}
+                          >
+                            <Info className="h-3.5 w-3.5" />
+                          </span>
+                        ) : null}
                         <Button
                           variant="ghost"
                           size="icon"
@@ -792,8 +827,8 @@ export default function Integrations() {
                                 </Button>
                               )
                             )}
-                            {hasAnyDest && (
-                              isMultiDest ? (
+                            {hasAnyEditable ? (
+                              isMultiEditable ? (
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
                                     <Button
@@ -810,7 +845,7 @@ export default function Integrations() {
                                     <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground">
                                       {t("integrations.editDestination.pickTitle")}
                                     </div>
-                                    {effectiveDestIds.map((destId) => (
+                                    {editableDestIds.map((destId) => (
                                       <DropdownMenuItem
                                         key={destId}
                                         onClick={() =>
@@ -837,13 +872,27 @@ export default function Integrations() {
                                   size="sm"
                                   className="wapi-button-hover h-9 text-xs rounded-full font-medium text-violet-600 border-violet-200 hover:bg-violet-50 hover:text-violet-700 dark:border-violet-800 dark:hover:bg-violet-950/30"
                                   title={t("integrations.editDestinationTooltip")}
-                                  onClick={openEditDestForPrimary}
+                                  onClick={openEditDestForFirstEditable}
                                 >
                                   <Edit3 className="mr-1.5 h-3.5 w-3.5" />
                                   {t("integrations.editDestination.buttonLabel")}
                                 </Button>
                               )
-                            )}
+                            ) : hasAnyDest ? (
+                              /* Template-based (CPA) destinations hide the
+                                 Edit button — see notes on the icon-bar
+                                 version above. Pill-bar variant uses the same
+                                 grey Info chip + tooltip pattern, sized to
+                                 fit the larger pill row. */
+                              <span
+                                className="inline-flex h-9 items-center gap-1.5 rounded-full border border-dashed border-muted-foreground/30 px-3 text-xs font-medium text-muted-foreground/70"
+                                title={t("integrations.editDestination.templateBasedHint")}
+                                aria-label={t("integrations.editDestination.templateBasedHint")}
+                              >
+                                <Info className="h-3.5 w-3.5" />
+                                {t("integrations.editDestination.templateBasedChip")}
+                              </span>
+                            ) : null}
                             <Button
                               variant="outline"
                               size="sm"

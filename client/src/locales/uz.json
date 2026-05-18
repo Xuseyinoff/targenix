@@ -887,7 +887,9 @@
       "buttonLabel": "Manzilni tahrirlash",
       "pickTitle": "Tahrirlash uchun manzilni tanlang",
       "dialogTitle": "Manzilni tahrirlash: {{name}}",
-      "lockedFields": "Ba’zi maydonlar bloklangan — shablon turi yoki ulanishni o‘zgartirish uchun yangi manzil yarating."
+      "lockedFields": "Ba’zi maydonlar bloklangan — shablon turi yoki ulanishni o‘zgartirish uchun yangi manzil yarating.",
+      "templateBasedHint": "Andoza manzil — API kalitni o‘zgartirish uchun Connections sahifasiga o‘ting",
+      "templateBasedChip": "Andoza"
     }
   },
   "builderV3": {

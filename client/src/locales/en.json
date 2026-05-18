@@ -887,7 +887,9 @@
       "buttonLabel": "Edit destination",
       "pickTitle": "Pick a destination to edit",
       "dialogTitle": "Edit destination: {{name}}",
-      "lockedFields": "Some fields are locked — to change template type or connection, create a new destination."
+      "lockedFields": "Some fields are locked — to change template type or connection, create a new destination.",
+      "templateBasedHint": "Template destination — to change the API key, go to Connections page",
+      "templateBasedChip": "Template"
     }
   },
   "builderV3": {

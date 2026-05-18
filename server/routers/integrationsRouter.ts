@@ -37,28 +37,11 @@ export const integrationsRouter = router({
     const leadRouting = list.filter((i) => i.type === "LEAD_ROUTING" && i.destinationId);
     if (leadRouting.length === 0) return list;
 
-    // Batch 1 — destination names for the dedicated destinationId column.
-    const destIds = Array.from(
-      new Set(
-        leadRouting
-          .map((i) => i.destinationId)
-          .filter((id): id is number => id != null),
-      ),
-    );
-    const destNameById = new Map<number, string>();
-    if (destIds.length > 0) {
-      const destRows = await db
-        .select({ id: destinations.id, name: destinations.name })
-        .from(destinations)
-        .where(and(
-          inArray(destinations.id, destIds),
-          eq(destinations.userId, ctx.user.id),
-        ));
-      for (const d of destRows) destNameById.set(d.id, d.name);
-    }
-
     // Batch 2 — ordered route destinationIds, grouped by integrationId.
     // One query + in-memory group-by replaces N per-integration SELECTs.
+    // Hoisted ABOVE the destination name lookup so we can also feed those
+    // ids into the name + templateId batch (covers multi-destination
+    // integrations where the secondaries appear only via integration_routes).
     const integrationIds = leadRouting.map((i) => i.id);
     const routesByIntegration = new Map<number, number[]>();
     const routeRows = await db
@@ -78,6 +61,39 @@ export const integrationsRouter = router({
       routesByIntegration.set(r.integrationId, arr);
     }
 
+    // Batch 1 — destination metadata (name + templateId) for EVERY id
+    // referenced by either the dedicated destinationId column OR the
+    // integration_routes table. The templateId is needed by the client
+    // to gate the Edit-destination button (template-based CPA rows are
+    // not editable from the integrations page — change the API key on
+    // the Connections page instead).
+    const allReferencedDestIds = new Set<number>();
+    for (const i of leadRouting) {
+      if (i.destinationId != null) allReferencedDestIds.add(i.destinationId);
+    }
+    Array.from(routesByIntegration.values()).forEach((ids) => {
+      for (const id of ids) allReferencedDestIds.add(id);
+    });
+    const destNameById = new Map<number, string>();
+    const destTemplateIdById = new Map<number, number | null>();
+    if (allReferencedDestIds.size > 0) {
+      const destRows = await db
+        .select({
+          id: destinations.id,
+          name: destinations.name,
+          templateId: destinations.templateId,
+        })
+        .from(destinations)
+        .where(and(
+          inArray(destinations.id, Array.from(allReferencedDestIds)),
+          eq(destinations.userId, ctx.user.id),
+        ));
+      for (const d of destRows) {
+        destNameById.set(d.id, d.name);
+        destTemplateIdById.set(d.id, d.templateId);
+      }
+    }
+
     return list.map((integration) => {
       // Preserve original behaviour exactly: only LEAD_ROUTING rows that
       // have a dedicated destinationId get enriched; everything else is
@@ -86,6 +102,23 @@ export const integrationsRouter = router({
         return integration;
       }
       const cfg = integration.config as Record<string, unknown> | null;
+      const destinationIds = routesByIntegration.get(integration.id) ?? [];
+      // Edit-destination button visibility: a destination is "editable"
+      // from the integrations row iff its templateId is NULL (i.e. it's
+      // a modern destination — telegram / google-sheets / http-request /
+      // http-api-key). CPA template destinations (templateId set) work
+      // out of the box and any API-key change is done on the Connections
+      // page; surfacing the Edit button on those rows would imply users
+      // can change something they can't. Compute the editable subset
+      // server-side so the client doesn't need to fetch destinations.list
+      // separately just to gate one button.
+      const baseIds = destinationIds.length > 0
+        ? destinationIds
+        : [integration.destinationId];
+      const editableDestinationIds = baseIds.filter((id) => {
+        const tid = destTemplateIdById.get(id);
+        return tid === null || tid === undefined;
+      });
       return {
         ...integration,
         // `targetWebsiteName` has no dedicated column — falls back to JSON
@@ -94,7 +127,8 @@ export const integrationsRouter = router({
           destNameById.get(integration.destinationId) ??
           (cfg?.targetWebsiteName as string | undefined) ??
           null,
-        destinationIds: routesByIntegration.get(integration.id) ?? [],
+        destinationIds,
+        editableDestinationIds,
       };
     });
   }),
