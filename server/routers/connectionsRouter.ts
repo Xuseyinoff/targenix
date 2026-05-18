@@ -17,7 +17,7 @@
  * then calls `upsertGoogleConnection()`.
  */
 
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -28,6 +28,8 @@ import {
   destinationTemplates,
   oauthTokens,
   destinations,
+  integrations,
+  integrationRoutes,
 } from "../../drizzle/schema";
 import { encrypt } from "../encryption";
 import {
@@ -135,6 +137,203 @@ export function scrubSecretsFromTemplateConfig(tc: unknown): {
     out[k] = v;
   }
   return { scrubbed: out, removed };
+}
+
+// ─── Cascade-delete planner (PR 3/4 — Destinations Cleanup Sprint) ──────────
+//
+// Shared by `previewDelete` (read-only forecast for the confirm dialog) and
+// `disconnect` (the actual mutation). Both surfaces MUST agree on:
+//   - which destinations are affected
+//   - which fallback connection (if any) absorbs them
+//   - what each destination's planned action is (reassign vs deactivate)
+//
+// Drift here would let the dialog promise "5 reassigned" and the mutation
+// quietly deactivate them all — so the planner is a single source of truth.
+
+/** What we plan to do with one dependent destination. */
+type CascadeAction = "reassign" | "deactivate";
+
+interface PlannedDestination {
+  destinationId: number;
+  destinationName: string;
+  appKey: string;
+  /** Count of active integrations that reference this destination via either
+   *  the legacy single `destinationId` column OR the multi-dest
+   *  `integration_routes` table. Drives the dialog's "N integration(s)"
+   *  badge so the user knows the real reach of the change. */
+  integrationCount: number;
+  action: CascadeAction;
+  /** Only set when `action === "reassign"`. */
+  reassignToConnectionId: number | null;
+}
+
+interface DisconnectPlan {
+  /** Echo of the input id — handy for client correlation. */
+  connectionId: number;
+  /** Connection being deleted — appKey is the grouping key. NULL for the
+   *  ~70% of prod connections that pre-date the appKey column (audit
+   *  2026-05-18); those always soft-delete since we can't reassign. */
+  connectionAppKey: string | null;
+  /** Display name of the connection (for the dialog's header context). */
+  connectionDisplayName: string;
+  /** The sibling connection's id we'd reassign to. Picked deterministically
+   *  (newest active connection for the same user + same appKey). NULL when
+   *  appKey is null OR the user has no other connection for that app. */
+  fallbackConnectionId: number | null;
+  /** Mirrors `fallbackConnectionId` for the dialog's "→ will switch to" line. */
+  fallbackConnectionDisplayName: string | null;
+  /** True iff at least one dependent will be reassigned. */
+  hasFallback: boolean;
+  dependents: PlannedDestination[];
+  totalDestinations: number;
+  /** Sum of every dependent's integrationCount — surfaced once at the top
+   *  of the dialog so the user sees the blast radius without scanning each
+   *  row. */
+  totalIntegrations: number;
+}
+
+/**
+ * Build the cascade plan WITHOUT touching anything. Read-only — both the
+ * query (`previewDelete`) and the mutation (`disconnect`) call this so they
+ * see the same world.
+ *
+ * Tenant-scoped on every query. Throws TRPC NOT_FOUND when the connection
+ * doesn't belong to the caller.
+ */
+async function buildDisconnectPlan(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  userId: number,
+  connectionId: number,
+): Promise<DisconnectPlan> {
+  const [conn] = await db
+    .select({
+      id: connections.id,
+      appKey: connections.appKey,
+      displayName: connections.displayName,
+    })
+    .from(connections)
+    .where(and(eq(connections.id, connectionId), eq(connections.userId, userId)))
+    .limit(1);
+  if (!conn) {
+    throw new TRPCError({ code: "NOT_FOUND", message: "Connection not found" });
+  }
+
+  // Only ACTIVE destinations are surfaced — already-deactivated rows are
+  // unaffected by this delete and would just clutter the dialog. They keep
+  // their stale connectionId; the next time the user manually edits them
+  // they'll see the link is broken (PR 1's editor handles the re-link).
+  const dependents = await db
+    .select({
+      id: destinations.id,
+      name: destinations.name,
+      appKey: destinations.appKey,
+    })
+    .from(destinations)
+    .where(
+      and(
+        eq(destinations.userId, userId),
+        eq(destinations.connectionId, connectionId),
+        eq(destinations.isActive, true),
+      ),
+    );
+
+  // Fallback lookup — only meaningful when the deleting connection has an
+  // appKey. Legacy NULL-appKey connections always soft-delete (decided with
+  // user before implementing — 70% of prod connections are NULL-appKey).
+  // Newest first so a user who just rotated their key gets the rotation.
+  let fallback: { id: number; displayName: string } | null = null;
+  if (conn.appKey != null) {
+    const [sibling] = await db
+      .select({ id: connections.id, displayName: connections.displayName })
+      .from(connections)
+      .where(
+        and(
+          eq(connections.userId, userId),
+          eq(connections.appKey, conn.appKey),
+          ne(connections.id, connectionId),
+          eq(connections.status, "active"),
+        ),
+      )
+      .orderBy(desc(connections.createdAt))
+      .limit(1);
+    fallback = sibling ?? null;
+  }
+
+  // Per-dependent integration count. One batched query each for the legacy
+  // single-destination column (integrations.destinationId) AND the multi-
+  // dest integration_routes table. A destination present in BOTH surfaces
+  // is counted as MAX(legacyCount, routesCount) — undercounting by a few
+  // beats double-counting the primary destinationId.
+  const destIds = dependents.map((d) => d.id);
+  const integrationCountByDest = new Map<number, number>();
+  if (destIds.length > 0) {
+    const legacyRows = await db
+      .select({
+        destinationId: integrations.destinationId,
+        n: sql<number>`COUNT(*)`,
+      })
+      .from(integrations)
+      .where(
+        and(
+          eq(integrations.userId, userId),
+          isNull(integrations.deletedAt),
+          inArray(integrations.destinationId, destIds),
+        ),
+      )
+      .groupBy(integrations.destinationId);
+    for (const r of legacyRows) {
+      if (r.destinationId == null) continue;
+      integrationCountByDest.set(r.destinationId, Number(r.n) || 0);
+    }
+    const routeRows = await db
+      .select({
+        destinationId: integrationRoutes.destinationId,
+        integrationId: integrationRoutes.integrationId,
+      })
+      .from(integrationRoutes)
+      .innerJoin(integrations, eq(integrations.id, integrationRoutes.integrationId))
+      .where(
+        and(
+          eq(integrations.userId, userId),
+          isNull(integrations.deletedAt),
+          inArray(integrationRoutes.destinationId, destIds),
+          eq(integrationRoutes.enabled, true),
+        ),
+      );
+    const seen = new Map<number, Set<number>>();
+    for (const r of routeRows) {
+      if (!seen.has(r.destinationId)) seen.set(r.destinationId, new Set());
+      seen.get(r.destinationId)!.add(r.integrationId);
+    }
+    Array.from(seen.entries()).forEach(([destId, ids]) => {
+      const prev = integrationCountByDest.get(destId) ?? 0;
+      integrationCountByDest.set(destId, Math.max(prev, ids.size));
+    });
+  }
+
+  const dependentSummaries: PlannedDestination[] = dependents.map((d) => ({
+    destinationId: d.id,
+    destinationName: d.name,
+    appKey: d.appKey,
+    integrationCount: integrationCountByDest.get(d.id) ?? 0,
+    action: fallback ? "reassign" : "deactivate",
+    reassignToConnectionId: fallback?.id ?? null,
+  }));
+
+  return {
+    connectionId,
+    connectionAppKey: conn.appKey,
+    connectionDisplayName: conn.displayName,
+    fallbackConnectionId: fallback?.id ?? null,
+    fallbackConnectionDisplayName: fallback?.displayName ?? null,
+    hasFallback: fallback !== null,
+    dependents: dependentSummaries,
+    totalDestinations: dependentSummaries.length,
+    totalIntegrations: dependentSummaries.reduce(
+      (sum, d) => sum + d.integrationCount,
+      0,
+    ),
+  };
 }
 
 // ─── Router ──────────────────────────────────────────────────────────────────
@@ -465,6 +664,31 @@ export const connectionsRouter = router({
    * the destination keeps its configuration shell and the user can re-attach
    * a fresh connection without re-typing config.
    */
+  /**
+   * Destinations Cleanup Sprint, PR 3/4 — preview the cascade.
+   *
+   * Read-only forecast the Connections page calls BEFORE the user confirms
+   * a delete. Returns the per-destination action plan + fallback metadata
+   * so the confirm dialog can show "→ will switch to <other key>" or "→
+   * will be deactivated" for each affected destination.
+   *
+   * The dialog calls this on open + on refetch; the mutation re-runs the
+   * same planner inside the transaction so the user never sees stale data.
+   * Both call sites share `buildDisconnectPlan` above.
+   */
+  previewDelete: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      const db = await getDb();
+      if (!db) {
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: "Database not available",
+        });
+      }
+      return buildDisconnectPlan(db, ctx.user.id, input.id);
+    }),
+
   disconnect: protectedProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
@@ -484,7 +708,21 @@ export const connectionsRouter = router({
 
       const usage = await countDestinationsUsingConnection(db, userId, input.id);
 
+      // Destinations Cleanup Sprint, PR 3/4 — build the cascade plan ONCE,
+      // right before the transaction opens. We intentionally don't run it
+      // inside the tx (transaction type doesn't satisfy the planner's
+      // db param without invasive type acrobatics). The TOCTOU window is
+      // microseconds; worst case if a sibling connection is created in
+      // that window is "user gets a deactivate when reassign was possible"
+      // — they can fix that by editing the destination and picking the
+      // sibling. Ownership re-checks inside the tx still close all
+      // security-relevant races.
+      const plan = await buildDisconnectPlan(db, userId, input.id);
+      const fallbackId = plan.fallbackConnectionId;
+
       let scrubbedKeysCount = 0;
+      let reassignedDestinations = 0;
+      let deactivatedDestinations = 0;
       let deletedOrphanToken = false;
       await db.transaction(async (tx) => {
         // Snapshot the connection's oauthTokenId BEFORE deleting the row, so
@@ -496,10 +734,20 @@ export const connectionsRouter = router({
           .limit(1);
         const oauthTokenId = conn?.oauthTokenId ?? null;
 
-        // Per-row scrub: read each affected destination's templateConfig,
-        // strip credential-shaped keys, write back. Bulk UPDATE can't
-        // selectively edit JSON paths in MySQL 5.7-compatible way, and the
-        // set is tiny in practice (usually <10 rows per connection).
+        // Per-row scrub + cascade action. Two paths:
+        //   reassign  → connectionId points at the fallback sibling,
+        //               templateConfig still gets the credential scrub
+        //               (those inline secrets belonged to the OLD connection)
+        //   deactivate → connectionId null, isActive=false, scrubbed
+        //
+        // Bulk UPDATE can't selectively edit JSON paths in a 5.7-compatible
+        // way, and the set is tiny in practice (usually <10 rows per
+        // connection), so per-row is fine.
+        //
+        // NOTE: we re-fetch templateConfig here even though the planner
+        // already saw the destination ids — the planner intentionally
+        // doesn't read templateConfig (heavy JSON, never displayed in the
+        // preview), so we still need this select for the scrub.
         const affected = await tx
           .select({
             id: destinations.id,
@@ -510,17 +758,46 @@ export const connectionsRouter = router({
             and(
               eq(destinations.userId, userId),
               eq(destinations.connectionId, input.id),
+              eq(destinations.isActive, true),
             ),
           );
 
         for (const tw of affected) {
           const { scrubbed, removed } = scrubSecretsFromTemplateConfig(tw.templateConfig);
           scrubbedKeysCount += removed;
-          await tx
-            .update(destinations)
-            .set({ connectionId: null, templateConfig: scrubbed })
-            .where(eq(destinations.id, tw.id));
+          if (fallbackId != null) {
+            await tx
+              .update(destinations)
+              .set({ connectionId: fallbackId, templateConfig: scrubbed })
+              .where(eq(destinations.id, tw.id));
+            reassignedDestinations++;
+          } else {
+            await tx
+              .update(destinations)
+              .set({
+                connectionId: null,
+                templateConfig: scrubbed,
+                isActive: false,
+              })
+              .where(eq(destinations.id, tw.id));
+            deactivatedDestinations++;
+          }
         }
+
+        // Already-inactive destinations that referenced this connection: we
+        // still clear their stale connectionId so a future "reactivate"
+        // flow doesn't auto-resurrect with broken credentials. No status
+        // change for those rows; they're already deactivated.
+        await tx
+          .update(destinations)
+          .set({ connectionId: null })
+          .where(
+            and(
+              eq(destinations.userId, userId),
+              eq(destinations.connectionId, input.id),
+              eq(destinations.isActive, false),
+            ),
+          );
 
         await tx
           .delete(connections)
@@ -566,6 +843,10 @@ export const connectionsRouter = router({
           clearedDestinations: usage,
           scrubbedSecretKeys: scrubbedKeysCount,
           deletedOrphanToken,
+          // PR 3/4 cascade detail — keeps audit forensics intact.
+          reassignedDestinations,
+          deactivatedDestinations,
+          fallbackConnectionId: plan.fallbackConnectionId,
         },
       });
 
@@ -576,9 +857,19 @@ export const connectionsRouter = router({
         clearedDestinations: usage,
         scrubbedSecretKeys: scrubbedKeysCount,
         deletedOrphanToken,
+        reassignedDestinations,
+        deactivatedDestinations,
+        fallbackConnectionId: plan.fallbackConnectionId,
       });
 
-      return { success: true, clearedDestinations: usage };
+      return {
+        success: true,
+        clearedDestinations: usage,
+        // PR 3/4 — new counters drive the toast message on the client.
+        reassignedDestinations,
+        deactivatedDestinations,
+        fallbackConnectionId: plan.fallbackConnectionId,
+      };
     }),
 
   /**

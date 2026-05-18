@@ -214,14 +214,37 @@ export function ConnectionsList({ onReconnect }: { onReconnect?: () => void }) {
 
   const deleteMutation = trpc.connections.disconnect.useMutation({
     onSuccess: (res) => {
-      toast.success(res.clearedDestinations > 0
-        ? `Connection removed · ${res.clearedDestinations} destination(s) now use fallback`
-        : "Connection removed");
+      // PR 3/4 — counters from the cascade plan power an accurate toast.
+      // The pre-PR-3 message claimed "destinations now use fallback" even
+      // when nothing was reassigned; now the message reflects the actual
+      // split.
+      const parts: string[] = [];
+      if (res.reassignedDestinations && res.reassignedDestinations > 0) {
+        parts.push(`${res.reassignedDestinations} reassigned`);
+      }
+      if (res.deactivatedDestinations && res.deactivatedDestinations > 0) {
+        parts.push(`${res.deactivatedDestinations} deactivated`);
+      }
+      toast.success(
+        parts.length > 0
+          ? `Connection removed · ${parts.join(" · ")}`
+          : "Connection removed",
+      );
       utils.connections.list.invalidate();
+      utils.destinations.list.invalidate();
       setDeleteTarget(null);
     },
     onError: (err) => toast.error(err.message),
   });
+
+  // PR 3/4 — cascade-delete preview. Fires only while the dialog is open so
+  // the user always sees the current state (a sibling key created after the
+  // dialog opened still gets picked up by the planner inside the mutation).
+  const { data: deletePreview, isLoading: previewLoading } =
+    trpc.connections.previewDelete.useQuery(
+      { id: deleteTarget?.id ?? 0 },
+      { enabled: deleteTarget !== null, staleTime: 0 },
+    );
 
   if (isLoading) {
     return (
@@ -282,28 +305,102 @@ export function ConnectionsList({ onReconnect }: { onReconnect?: () => void }) {
         onVerifySuccess={() => utils.connections.list.invalidate()}
       />
 
+      {/* PR 3/4 — cascade-delete preview dialog. The pre-PR-3 AlertDialog
+          showed a vague "they'll fall back to legacy inline credentials"
+          warning that was inaccurate (the existing scrub already removed
+          those). This dialog uses connections.previewDelete to show each
+          dependent destination with its planned action (→ reassign to
+          sibling key, or → deactivate) so the user knows the blast
+          radius before confirming. */}
       <AlertDialog open={deleteTarget !== null} onOpenChange={v => !v && setDeleteTarget(null)}>
-        <AlertDialogContent className="rounded-2xl">
+        <AlertDialogContent className="rounded-2xl max-w-lg">
           <AlertDialogHeader>
             <AlertDialogTitle>Remove this connection?</AlertDialogTitle>
-            <AlertDialogDescription>
-              <span className="font-medium text-foreground">{deleteTarget?.displayName}</span>{" "}
-              will be deleted. Credentials are erased and cannot be recovered.
-              {deleteTarget && deleteTarget.usageCount > 0 && (
-                <span className="mt-2 block rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                  Used by {deleteTarget.usageCount} destination{deleteTarget.usageCount === 1 ? "" : "s"} — they'll fall back to legacy inline credentials (if any).
-                </span>
-              )}
+            <AlertDialogDescription asChild>
+              <div>
+                <span className="font-medium text-foreground">{deleteTarget?.displayName}</span>{" "}
+                will be deleted. Credentials are erased and cannot be recovered.
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
+
+          {/* Preview content. Loading → spinner. No dependents → green note.
+              Otherwise → per-row list + (when no fallback) a warning banner. */}
+          <div className="space-y-3 py-1">
+            {previewLoading || !deletePreview ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Checking dependent destinations…
+              </div>
+            ) : deletePreview.totalDestinations === 0 ? (
+              <div className="rounded-lg bg-emerald-500/10 px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300">
+                No destinations use this connection. Safe to delete.
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  Used by <span className="font-semibold text-foreground">{deletePreview.totalDestinations}</span> destination
+                  {deletePreview.totalDestinations === 1 ? "" : "s"}
+                  {deletePreview.totalIntegrations > 0 && (
+                    <> · spanning <span className="font-semibold text-foreground">{deletePreview.totalIntegrations}</span> integration{deletePreview.totalIntegrations === 1 ? "" : "s"}</>
+                  )}
+                  :
+                </p>
+                <ul className="max-h-48 space-y-1.5 overflow-y-auto rounded-lg border bg-muted/30 p-2">
+                  {deletePreview.dependents.map((d) => (
+                    <li key={d.destinationId} className="flex items-center justify-between gap-2 rounded-md bg-background px-2 py-1.5 text-xs">
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate font-medium text-foreground">{d.destinationName}</div>
+                        {d.integrationCount > 0 && (
+                          <div className="text-[10px] text-muted-foreground">
+                            {d.integrationCount} integration{d.integrationCount === 1 ? "" : "s"}
+                          </div>
+                        )}
+                      </div>
+                      <span
+                        className={cn(
+                          "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                          d.action === "reassign"
+                            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                            : "bg-red-500/15 text-red-700 dark:text-red-300",
+                        )}
+                      >
+                        {d.action === "reassign"
+                          ? `→ ${deletePreview.fallbackConnectionDisplayName ?? "fallback"}`
+                          : "→ deactivate"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                {!deletePreview.hasFallback && (
+                  <div className="rounded-lg bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                    {deletePreview.connectionAppKey ? (
+                      <>You don&rsquo;t have another <span className="font-semibold">{deletePreview.connectionAppKey}</span> connection. Affected destinations will stop delivering until you create a new one and re-link them.</>
+                    ) : (
+                      <>No fallback connection available. Affected destinations will stop delivering until you re-link them.</>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
           <AlertDialogFooter className="gap-2 sm:gap-0">
             <AlertDialogCancel className="rounded-xl">Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => deleteTarget && deleteMutation.mutate({ id: deleteTarget.id })}
-              disabled={deleteMutation.isPending}
+              disabled={deleteMutation.isPending || previewLoading}
             >
-              {deleteMutation.isPending ? <><Loader2 className="h-4 w-4 animate-spin" />Removing…</> : "Remove"}
+              {deleteMutation.isPending ? (
+                <><Loader2 className="h-4 w-4 animate-spin" />Removing…</>
+              ) : !deletePreview || deletePreview.totalDestinations === 0 ? (
+                "Remove"
+              ) : deletePreview.hasFallback ? (
+                "Remove and reassign"
+              ) : (
+                "Remove and deactivate"
+              )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
