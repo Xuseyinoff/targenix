@@ -878,6 +878,13 @@
       "toastResumed": "{{count}} ta manzil boshlandi · {{flushed}} ta lead yuborildi",
       "toastFlushed": "{{queued}} ta navbatdagi lead yuborildi",
       "toastReset": "{{count}} ta manzildan jadval olib tashlandi"
+    },
+    "editDestinationTooltip": "Manzil sozlamalarini tahrirlash (nomi, maydon mosligi, parametrlar)",
+    "editDestination": {
+      "buttonLabel": "Manzilni tahrirlash",
+      "pickTitle": "Tahrirlash uchun manzilni tanlang",
+      "dialogTitle": "Manzilni tahrirlash: {{name}}",
+      "lockedFields": "Ba’zi maydonlar bloklangan — shablon turi yoki ulanishni o‘zgartirish uchun yangi manzil yarating."
     }
   },
   "builderV3": {

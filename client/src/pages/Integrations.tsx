@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Clock,
   Copy,
+  Edit3,
   Filter,
   FlaskConical,
   Loader2,
@@ -40,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { useT } from "@/hooks/useT";
 import { ScheduleDialog } from "@/components/destinations/ScheduleDialog";
 import { BulkSchedulesToolbar } from "@/components/destinations/BulkSchedulesToolbar";
+import { DestinationCreatorInline } from "@/components/destinations/DestinationCreatorInline";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -87,6 +89,12 @@ export default function Integrations() {
   // Single dialog instance driven by destinationId so we don't mount one per
   // row.
   const [scheduleEditFor, setScheduleEditFor] = useState<{ id: number; name: string } | null>(null);
+
+  // Destinations Cleanup Sprint, PR 1/4 — edit-destination dialog. Same
+  // single-instance pattern as the schedule editor above: per-row buttons
+  // mutate this state, the dialog at the bottom of the page renders the
+  // editor for whichever destination is selected. `null` = closed.
+  const [editDestFor, setEditDestFor] = useState<{ id: number; name: string } | null>(null);
 
   // Batched fetches for per-row status badges + pending counts. One query
   // each — the client builds Maps below for O(1) per-row lookup so a 100-row
@@ -379,6 +387,17 @@ export default function Integrations() {
                   const name = targetWebsiteName.trim() || `#${primaryDestId}`;
                   openScheduleForDestId(primaryDestId, name);
                 };
+                // Edit-destination action mirrors Schedule's UX exactly: one
+                // button for single-destination rows, a dropdown picker for
+                // multi-destination rows. The selected id seeds the inline
+                // editor mounted at the bottom of the page.
+                const openEditDestForId = (destId: number, name: string) =>
+                  setEditDestFor({ id: destId, name });
+                const openEditDestForPrimary = () => {
+                  if (primaryDestId == null) return;
+                  const name = targetWebsiteName.trim() || `#${primaryDestId}`;
+                  openEditDestForId(primaryDestId, name);
+                };
                 const isMultiDest = effectiveDestIds.length > 1;
                 const hasAnyDest = effectiveDestIds.length > 0;
 
@@ -568,6 +587,56 @@ export default function Integrations() {
                             </Button>
                           )
                         )}
+                        {hasAnyDest && (
+                          isMultiDest ? (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-muted-foreground hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30 h-9 w-9 rounded-lg"
+                                  title={t("integrations.editDestinationTooltip")}
+                                >
+                                  <Edit3 className="h-3.5 w-3.5" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-56">
+                                <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground">
+                                  {t("integrations.editDestination.pickTitle")}
+                                </div>
+                                {effectiveDestIds.map((destId) => (
+                                  <DropdownMenuItem
+                                    key={destId}
+                                    onClick={() =>
+                                      openEditDestForId(
+                                        destId,
+                                        destId === integration.destinationId
+                                          ? targetWebsiteName.trim() || `#${destId}`
+                                          : `#${destId}`,
+                                      )
+                                    }
+                                    className="cursor-pointer"
+                                  >
+                                    <Edit3 className="mr-2 h-4 w-4 text-violet-600 dark:text-violet-400" />
+                                    {destId === integration.destinationId
+                                      ? targetWebsiteName.trim() || `#${destId}`
+                                      : `#${destId}`}
+                                  </DropdownMenuItem>
+                                ))}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          ) : (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-muted-foreground hover:text-violet-600 hover:bg-violet-50 dark:hover:bg-violet-950/30 h-9 w-9 rounded-lg"
+                              title={t("integrations.editDestinationTooltip")}
+                              onClick={openEditDestForPrimary}
+                            >
+                              <Edit3 className="h-3.5 w-3.5" />
+                            </Button>
+                          )
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"
@@ -720,6 +789,58 @@ export default function Integrations() {
                                 >
                                   <Clock className="mr-1.5 h-3.5 w-3.5" />
                                   {t("integrations.schedule.buttonLabel")}
+                                </Button>
+                              )
+                            )}
+                            {hasAnyDest && (
+                              isMultiDest ? (
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="wapi-button-hover h-9 text-xs rounded-full font-medium text-violet-600 border-violet-200 hover:bg-violet-50 hover:text-violet-700 dark:border-violet-800 dark:hover:bg-violet-950/30"
+                                      title={t("integrations.editDestinationTooltip")}
+                                    >
+                                      <Edit3 className="mr-1.5 h-3.5 w-3.5" />
+                                      {t("integrations.editDestination.buttonLabel")}
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="start" className="w-56">
+                                    <div className="px-2 py-1.5 text-[11px] font-semibold text-muted-foreground">
+                                      {t("integrations.editDestination.pickTitle")}
+                                    </div>
+                                    {effectiveDestIds.map((destId) => (
+                                      <DropdownMenuItem
+                                        key={destId}
+                                        onClick={() =>
+                                          openEditDestForId(
+                                            destId,
+                                            destId === integration.destinationId
+                                              ? targetWebsiteName.trim() || `#${destId}`
+                                              : `#${destId}`,
+                                          )
+                                        }
+                                        className="cursor-pointer"
+                                      >
+                                        <Edit3 className="mr-2 h-4 w-4 text-violet-600 dark:text-violet-400" />
+                                        {destId === integration.destinationId
+                                          ? targetWebsiteName.trim() || `#${destId}`
+                                          : `#${destId}`}
+                                      </DropdownMenuItem>
+                                    ))}
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              ) : (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="wapi-button-hover h-9 text-xs rounded-full font-medium text-violet-600 border-violet-200 hover:bg-violet-50 hover:text-violet-700 dark:border-violet-800 dark:hover:bg-violet-950/30"
+                                  title={t("integrations.editDestinationTooltip")}
+                                  onClick={openEditDestForPrimary}
+                                >
+                                  <Edit3 className="mr-1.5 h-3.5 w-3.5" />
+                                  {t("integrations.editDestination.buttonLabel")}
                                 </Button>
                               )
                             )}
@@ -876,6 +997,43 @@ export default function Integrations() {
           destinationName={scheduleEditFor.name}
         />
       )}
+
+      {/* Per-row Edit-destination editor — Destinations Cleanup Sprint, PR 1/4.
+          DestinationCreatorInline supports both create + edit; here we pass
+          editingDestinationId so it fetches the row, pre-fills the form, and
+          calls destinations.update (or updateFromTemplate for legacy CPA
+          rows) on Save. App type + connection are locked in edit mode. */}
+      <Dialog
+        open={!!editDestFor}
+        onOpenChange={(o) => {
+          if (!o) setEditDestFor(null);
+        }}
+      >
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>
+              {editDestFor
+                ? t("integrations.editDestination.dialogTitle", {
+                    name: editDestFor.name,
+                  })
+                : t("integrations.editDestination.buttonLabel")}
+            </DialogTitle>
+            <DialogDescription>
+              {t("integrations.editDestination.lockedFields")}
+            </DialogDescription>
+          </DialogHeader>
+          {editDestFor && (
+            <DestinationCreatorInline
+              editingDestinationId={editDestFor.id}
+              onCancel={() => setEditDestFor(null)}
+              onSaved={() => {
+                setEditDestFor(null);
+                utils.integrations.list.invalidate();
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Delete Confirm */}
       <Dialog open={deleteId !== null} onOpenChange={() => setDeleteId(null)}>

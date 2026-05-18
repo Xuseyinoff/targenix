@@ -878,6 +878,13 @@
       "toastResumed": "Resumed {{count}} destinations · {{flushed}} pending flushed",
       "toastFlushed": "Flushed {{queued}} pending leads",
       "toastReset": "Cleared schedules from {{count}} destinations"
+    },
+    "editDestinationTooltip": "Edit destination config (name, mapping, settings)",
+    "editDestination": {
+      "buttonLabel": "Edit destination",
+      "pickTitle": "Pick a destination to edit",
+      "dialogTitle": "Edit destination: {{name}}",
+      "lockedFields": "Some fields are locked — to change template type or connection, create a new destination."
     }
   },
   "builderV3": {

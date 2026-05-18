@@ -50,12 +50,27 @@ export interface DestinationCreatorInlineProps {
    * Pass `undefined` to start in "pick" mode.
    */
   initialAppKey?: string;
-  onCreated: (result: {
+  /**
+   * Edit mode. When set, the component fetches the destination, pre-fills the
+   * configure form with its values, and calls `destinations.update` (or
+   * `destinations.updateFromTemplate` for legacy CPA templateId-bearing rows)
+   * on save instead of `destinations.create`. The app-type picker and the
+   * connection-picker field are locked — switching either is a re-creation,
+   * not an edit. Pass `undefined` for create mode (default).
+   */
+  editingDestinationId?: number;
+  /**
+   * Optional in edit mode (only one path fires). Required in create mode.
+   * Kept optional in the type so call sites that only do edits can omit it.
+   */
+  onCreated?: (result: {
     id: number;
     name: string;
     templateType: string;
     category: string;
   }) => void;
+  /** Called after a successful edit save. */
+  onSaved?: (destinationId: number) => void;
   /** Called when the user clicks "Cancel" or "← Back" from the pick step. */
   onCancel: () => void;
   /**
@@ -92,12 +107,15 @@ interface AppListItem {
 
 export function DestinationCreatorInline({
   initialAppKey,
+  editingDestinationId,
   onCreated,
+  onSaved,
   onCancel,
   triggerVariables,
 }: DestinationCreatorInlineProps) {
+  const isEditMode = editingDestinationId != null;
   const [step, setStep] = React.useState<"pick" | "configure">(
-    initialAppKey ? "configure" : "pick",
+    initialAppKey || isEditMode ? "configure" : "pick",
   );
   const [selectedApp, setSelectedApp] = React.useState<AppListItem | null>(
     null,
@@ -117,6 +135,29 @@ export function DestinationCreatorInline({
     trpc.apps.list.useQuery();
 
   const createMutation = trpc.destinations.create.useMutation();
+  const updateMutation = trpc.destinations.update.useMutation();
+  const updateFromTemplateMutation =
+    trpc.destinations.updateFromTemplate.useMutation();
+
+  // Edit mode — load the destination so we can pre-fill the form. We reuse
+  // the existing list query (same data the parent /integrations page already
+  // has cached) instead of adding a focused getById endpoint.
+  const { data: allDestinations = [] } = trpc.destinations.list.useQuery(
+    undefined,
+    { enabled: isEditMode },
+  );
+  const editingDestination = React.useMemo(
+    () =>
+      isEditMode
+        ? allDestinations.find((d) => d.id === editingDestinationId) ?? null
+        : null,
+    [allDestinations, editingDestinationId, isEditMode],
+  );
+  const editingHasTemplateId =
+    !!(editingDestination as { templateId?: number | null } | null)?.templateId;
+  // `editPrefilled` guards the prefill effect so we don't clobber the user's
+  // in-progress edits if `editingDestination` re-renders.
+  const [editPrefilled, setEditPrefilled] = React.useState(false);
 
   const supportedApps = React.useMemo(
     () =>
@@ -143,6 +184,57 @@ export function DestinationCreatorInline({
     setPendingAppKey(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingAppKey, loadingApps, supportedApps]);
+
+  // Edit-mode prefill — runs once `destinations.list` + `apps.list` have both
+  // loaded. Finds the matching app manifest, reconstructs form values from
+  // the destination's templateConfig + connectionId, and seats them on the
+  // configure step. Legacy CPA destinations (templateId set) fall through to
+  // a simplified "name only" UI rendered below — no full form prefill.
+  React.useEffect(() => {
+    if (!isEditMode || editPrefilled || !editingDestination) return;
+    if (editingHasTemplateId) {
+      // Template-based destinations are edited via updateFromTemplate (name
+      // only — secrets live on the linked connection now). Prefill the name
+      // and stop; the configure UI below renders a stripped-down form.
+      setDestName(editingDestination.name ?? "");
+      setEditPrefilled(true);
+      return;
+    }
+    if (loadingApps || supportedApps.length === 0) return;
+    const app = supportedApps.find((a) => a.key === editingDestination.appKey);
+    if (!app) {
+      // Unsupported / deprecated app — leave selectedApp null so the editor
+      // renders the "not supported" notice (see configure step below).
+      setEditPrefilled(true);
+      return;
+    }
+    const fields = app.modules[0]?.fields ?? [];
+    const cfg =
+      (editingDestination.templateConfig as Record<string, unknown> | null) ??
+      {};
+    // connectionId lives on the destination row, not in templateConfig — copy
+    // it across so the (now locked) connection picker resolves to the right
+    // row and dependent loaders (sheet headers, etc.) keep working.
+    const seed: Record<string, unknown> = { ...cfg };
+    const connId = (editingDestination as { connectionId?: number | null })
+      .connectionId;
+    if (typeof connId === "number") seed.connectionId = connId;
+
+    setSelectedApp(app);
+    setFormValues(seedInitialValues(fields, seed as FieldValues));
+    setFormErrors({});
+    setDestName(editingDestination.name ?? "");
+    setStep("configure");
+    setEditPrefilled(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isEditMode,
+    editPrefilled,
+    editingDestination,
+    editingHasTemplateId,
+    loadingApps,
+    supportedApps,
+  ]);
 
   const filteredApps = React.useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -182,6 +274,30 @@ export function DestinationCreatorInline({
   };
 
   const handleSave = async () => {
+    // ── Edit mode: legacy CPA template (name-only update) ────────────────
+    if (isEditMode && editingHasTemplateId && editingDestinationId) {
+      setFormErrors({});
+      const name = destName.trim();
+      if (!name) {
+        toast.error("Name is required");
+        return;
+      }
+      try {
+        await updateFromTemplateMutation.mutateAsync({
+          id: editingDestinationId,
+          name,
+        });
+        await utils.destinations.list.invalidate();
+        toast.success("Destination updated");
+        onSaved?.(editingDestinationId);
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to update destination",
+        );
+      }
+      return;
+    }
+
     if (!selectedApp) return;
     const fields = selectedApp.modules[0]?.fields ?? [];
 
@@ -199,6 +315,36 @@ export function DestinationCreatorInline({
     const effectiveName =
       destName.trim() || smartDefaultName(selectedApp.key, selectedApp.name, formValues);
 
+    // ── Edit mode: modern destinations (telegram / google-sheets) ────────
+    if (isEditMode && editingDestinationId) {
+      const updatePayload = buildUpdatePayload(
+        selectedApp.key,
+        editingDestinationId,
+        effectiveName,
+        formValues,
+      );
+      if (!updatePayload) {
+        toast.error(
+          "Editing this destination type isn't supported here yet. Open /destinations.",
+        );
+        return;
+      }
+      try {
+        await updateMutation.mutateAsync(
+          updatePayload as Parameters<typeof updateMutation.mutateAsync>[0],
+        );
+        await utils.destinations.list.invalidate();
+        toast.success("Destination updated");
+        onSaved?.(editingDestinationId);
+      } catch (err) {
+        toast.error(
+          err instanceof Error ? err.message : "Failed to update destination",
+        );
+      }
+      return;
+    }
+
+    // ── Create mode (unchanged) ──────────────────────────────────────────
     let payload: Parameters<typeof createMutation.mutateAsync>[0];
     try {
       payload = buildCreatePayload(selectedApp.key, effectiveName, formValues);
@@ -222,7 +368,7 @@ export function DestinationCreatorInline({
       const fallbackTemplateType = isSupportedAppKey(selectedApp.key)
         ? APP_KEY_TO_TEMPLATE_TYPE[selectedApp.key]
         : "custom";
-      onCreated({
+      onCreated?.({
         id: result.id,
         name: result.name ?? effectiveName,
         // Phase 3 — server now returns `appKey` (not `templateType`). The
@@ -238,7 +384,10 @@ export function DestinationCreatorInline({
     }
   };
 
-  const isSaving = createMutation.isPending;
+  const isSaving =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    updateFromTemplateMutation.isPending;
 
   // ─── Pick step ──────────────────────────────────────────────────────────────
   if (step === "pick") {
@@ -334,23 +483,115 @@ export function DestinationCreatorInline({
   }
 
   // ─── Configure step ──────────────────────────────────────────────────────────
+
+  // Edit mode — initial loading. We stay on the configure shell so the
+  // dialog doesn't flicker between empty and populated. Once apps + the
+  // destination are both fetched, the prefill effect drops us into one of the
+  // branches below.
+  if (isEditMode && !editPrefilled) {
+    return (
+      <div className="flex items-center justify-center py-10">
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  // Edit mode — legacy CPA (templateId-bearing) destination. The server-side
+  // contract only allows name + secrets here, and secrets live on the linked
+  // connection now, so this surface is intentionally minimal: rename only.
+  if (isEditMode && editingHasTemplateId && editingDestination) {
+    return (
+      <div className="space-y-5">
+        <div
+          className={cn(
+            "flex items-center gap-3 rounded-lg border bg-muted/20 p-3",
+          )}
+        >
+          <div className={appBrandIconTileClass("h-9 w-9 rounded-md")}>
+            <AppIcon name="Globe" className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold">{editingDestination.name}</div>
+            <div className="text-[11px] text-muted-foreground">
+              Template-based destination — only the display name is editable here.
+            </div>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="inline-edit-name" className="text-xs">
+            Name
+          </Label>
+          <Input
+            id="inline-edit-name"
+            value={destName}
+            onChange={(e) => setDestName(e.target.value)}
+            disabled={isSaving}
+            maxLength={255}
+          />
+        </div>
+        <div className="flex items-center justify-between pt-2 border-t">
+          <Button variant="ghost" size="sm" onClick={onCancel} disabled={isSaving}>
+            Cancel
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={isSaving}>
+            {isSaving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+            Save changes
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Edit mode — destination's appKey isn't in the inline-supported set
+  // (http-api-key / http-request and other future types). The server's
+  // `destinations.update` doesn't currently round-trip arbitrary
+  // templateConfig overrides for these, so we surface a graceful notice
+  // pointing to the admin Destinations page.
+  if (isEditMode && !selectedApp) {
+    return (
+      <div className="space-y-5">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-200">
+          Editing this destination type isn&rsquo;t supported here yet. Use the
+          Destinations page to change its configuration.
+        </div>
+        <div className="flex items-center justify-end pt-2 border-t">
+          <Button variant="ghost" size="sm" onClick={onCancel}>
+            Close
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!selectedApp) return null;
-  const fields = selectedApp.modules[0]?.fields ?? [];
+  const allFields = selectedApp.modules[0]?.fields ?? [];
+  // Edit mode locks the connection picker — switching connection mid-edit is
+  // a different workflow (PR 3 of this sprint). We hide the picker field
+  // from the dynamic form and surface a read-only note above the form.
+  const fields = isEditMode
+    ? allFields.filter((f) => f.type !== "connection-picker")
+    : allFields;
+  const hiddenConnectionField = isEditMode
+    ? allFields.find((f) => f.type === "connection-picker") ?? null
+    : null;
 
   return (
     <div className="space-y-5">
-      {/* Header with back button */}
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={initialAppKey ? onCancel : handleBack}
-          disabled={isSaving}
-          className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          {initialAppKey ? "Back to destinations" : "Back"}
-        </button>
-      </div>
+      {/* Header with back button — hidden in edit mode (no app picker to
+          return to; the only exit is Cancel/Save). */}
+      {!isEditMode && (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={initialAppKey ? onCancel : handleBack}
+            disabled={isSaving}
+            className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            {initialAppKey ? "Back to destinations" : "Back"}
+          </button>
+        </div>
+      )}
 
       {/* App identity banner */}
       <div
@@ -371,12 +612,29 @@ export function DestinationCreatorInline({
         </div>
       </div>
 
-      {/* Destination name — optional. When blank we auto-derive a sensible
-          default from the primary config field (sheet name, chat id, URL
-          host) so the user never has to invent a label just to proceed. */}
+      {/* Edit mode: locked-fields explainer. Surfaces the two write-only-on-
+          create dimensions (template type + connection) so the user
+          understands why those controls aren't visible. */}
+      {isEditMode && (
+        <div className="rounded-md border border-dashed bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+          Some fields are locked — to change template type or connection,
+          create a new destination.
+          {hiddenConnectionField && (
+            <span className="block mt-0.5">
+              Linked {hiddenConnectionField.label ?? "connection"} is preserved.
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Destination name — optional in create mode (smart default fills in).
+          In edit mode we keep the same field but drop the "(optional)" label. */}
       <div className="space-y-1.5">
         <Label htmlFor="inline-dest-name" className="text-xs">
-          Name <span className="text-muted-foreground font-normal">(optional)</span>
+          Name{" "}
+          {!isEditMode && (
+            <span className="text-muted-foreground font-normal">(optional)</span>
+          )}
         </Label>
         <Input
           id="inline-dest-name"
@@ -386,9 +644,11 @@ export function DestinationCreatorInline({
           disabled={isSaving}
           maxLength={255}
         />
-        <p className="text-[11px] text-muted-foreground">
-          Shown on your dashboard. Auto-generated if left blank.
-        </p>
+        {!isEditMode && (
+          <p className="text-[11px] text-muted-foreground">
+            Shown on your dashboard. Auto-generated if left blank.
+          </p>
+        )}
       </div>
 
       {/* Dynamic form fields.
@@ -429,7 +689,7 @@ export function DestinationCreatorInline({
         </Button>
         <Button size="sm" onClick={handleSave} disabled={isSaving}>
           {isSaving && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
-          Save
+          {isEditMode ? "Save changes" : "Save"}
         </Button>
       </div>
     </div>
@@ -539,6 +799,59 @@ function smartDefaultName(
     default:
       return appName;
   }
+}
+
+/**
+ * Translate dynamic-form values into a `destinations.update` payload. Returns
+ * `null` for app types whose templateConfig fields aren't first-class on the
+ * update procedure (http-api-key, http-request) — the caller surfaces a
+ * graceful "not supported here yet" message.
+ *
+ * Locked fields (appKey, connectionId) are deliberately omitted — the server
+ * preserves what it isn't told to change, so omission == lock.
+ */
+function buildUpdatePayload(
+  appKey: string,
+  id: number,
+  name: string,
+  v: FieldValues,
+): Record<string, unknown> | null {
+  if (appKey === "telegram") {
+    const chatId =
+      typeof v.chatId === "string" ? v.chatId.trim() : undefined;
+    const messageTemplate =
+      typeof v.messageTemplate === "string" ? v.messageTemplate : undefined;
+    return {
+      id,
+      name,
+      ...(chatId !== undefined ? { chatId } : {}),
+      ...(messageTemplate !== undefined ? { messageTemplate } : {}),
+    };
+  }
+  if (appKey === "google-sheets") {
+    const spreadsheetId =
+      typeof v.spreadsheetId === "string" ? v.spreadsheetId.trim() : undefined;
+    const sheetName =
+      typeof v.sheetName === "string" ? v.sheetName.trim() : undefined;
+    const mapping =
+      v.mapping && typeof v.mapping === "object"
+        ? (v.mapping as Record<string, string>)
+        : undefined;
+    return {
+      id,
+      name,
+      ...(spreadsheetId !== undefined ? { spreadsheetId } : {}),
+      ...(sheetName !== undefined ? { sheetName } : {}),
+      ...(mapping !== undefined
+        ? { mapping, sheetHeaders: Object.keys(mapping) }
+        : {}),
+    };
+  }
+  // http-api-key / http-request / others: the server's `destinations.update`
+  // procedure doesn't currently write arbitrary `templateConfig` overrides
+  // back to the row, so we can't safely round-trip these. Returning null
+  // tells the caller to bail with a graceful notice.
+  return null;
 }
 
 function prettyCategory(cat: string): string {
