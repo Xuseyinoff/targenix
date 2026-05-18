@@ -25,12 +25,8 @@ import {
   sendAffiliateOrderByTemplate,
   sendLeadViaTemplate,
   buildBody,
-  buildVariableContext,
   buildCustomBody as _buildCustomBody,
-  injectVariables,
   extractCustomVariableNames,
-  type TemplateType,
-  type TemplateConfig,
 } from "../services/affiliateService";
 
 import { assertSafeOutboundUrl } from "../lib/urlSafety";
@@ -45,12 +41,6 @@ import {
 } from "../integrations/dynamicTemplateSource";
 import type { Connection } from "../../drizzle/schema";
 import { checkUserRateLimit } from "../lib/userRateLimit";
-import { sendTelegramRawMessage } from "../services/telegramService";
-import {
-  appendLeadToGoogleSheet,
-  buildGoogleSheetsAppendRow,
-  getGoogleSheetHeaders,
-} from "../services/googleSheetsService";
 import { insertApiKeyConnection } from "../services/connectionService";
 
 async function validateTargetUrl(url: string): Promise<void> {
@@ -117,18 +107,6 @@ function resolveDispatchTypeForUpdate(
   if (sk === "http-request") return "http-request";
   return "custom";
 }
-
-// ─── Variable field definitions per template ──────────────────────────────────
-export const TEMPLATE_VARIABLE_FIELDS: Record<string, Array<{ key: string; label: string; placeholder: string; required: boolean }>> = {
-  sotuvchi: [
-    { key: "offer_id", label: "Offer ID", placeholder: "e.g. 123", required: true },
-    { key: "stream", label: "Stream", placeholder: "e.g. main", required: true },
-  ],
-  "100k": [
-    { key: "stream_id", label: "Stream ID", placeholder: "e.g. 456", required: true },
-  ],
-  custom: [],
-};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -885,27 +863,6 @@ export const destinationsRouter = router({
       return { success: true, parentIntegrationId: input.integrationId };
     }),
 
-  /** Delete a target website. Only owner can delete. */
-  delete: protectedProcedure
-    .input(z.object({ id: z.number() }))
-    .mutation(async ({ ctx, input }) => {
-      const db = await getDb();
-      if (!db) throw new Error("DB not available");
-      await db
-        .delete(destinations)
-        .where(and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)));
-      return { success: true };
-    }),
-
-  /** Get variable field definitions for a destination app type. */
-  getVariableFields: protectedProcedure
-    .input(z.object({
-      appKey: z.enum(["sotuvchi", "100k", "custom"]),
-    }))
-    .query(({ input }) => {
-      return TEMPLATE_VARIABLE_FIELDS[input.appKey] ?? [];
-    }),
-
   /**
    * Return all variable field names for a custom template.
    * Priority order:
@@ -1109,91 +1066,6 @@ export const destinationsRouter = router({
   }),
 
   /**
-   * Create a destination from an admin-managed template.
-   * Encrypts all secret fields (those whose bodyFields value starts with {{SECRET:...}}).
-   */
-  createFromTemplate: protectedProcedure
-    .input(
-      z.object({
-        templateId: z.number(),
-        name: z.string().min(1),
-        /** User-filled secret values keyed by field key (e.g. { api_key: "xxx" }) */
-        secrets: z.record(z.string(), z.string()),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      // Same abuse guard as `create` — this path also inserts a destination
-      // row (plus encrypts secrets), so it carries the same 30/min ceiling.
-      checkUserRateLimit(ctx.user.id, "destinationCreate", {
-        max: 30,
-        windowMs: 60_000,
-        message: "Too many destinations created. Max 30 per minute.",
-      });
-
-      const db = await getDb();
-      if (!db) throw new Error("DB not available");
-
-      const [me] = await db
-        .select({
-          mode: users.telegramDestinationDeliveryMode,
-          defaultChatId: users.telegramDestinationDefaultChatId,
-        })
-        .from(users)
-        .where(eq(users.id, ctx.user.id))
-        .limit(1);
-      const autoChatId =
-        me?.mode === "ALL" && me.defaultChatId ? String(me.defaultChatId) : null;
-
-      const [template] = await db
-        .select()
-        .from(destinationTemplates)
-        .where(and(eq(destinationTemplates.id, input.templateId), eq(destinationTemplates.isActive, true)))
-        .limit(1);
-      if (!template) throw new Error("Template not found");
-
-      const actionId =
-        (await findAppActionIdForTemplate(db, template.id, template.appKey)) ?? null;
-
-      const initialUrl = await preferAppActionEndpointUrl(db, template.endpointUrl, actionId);
-
-      // Encrypt each secret field provided by the user
-      const encryptedSecrets: Record<string, string> = {};
-      for (const [key, value] of Object.entries(input.secrets)) {
-        if (value.trim()) {
-          encryptedSecrets[key] = encrypt(value);
-        }
-      }
-
-      // Create a connection row so secrets live only in `connections` (same
-      // contract as `createFromConnection`). Runtime delivery resolves secrets
-      // via `resolveSecretsForDelivery` → active connection wins; legacy rows
-      // without a link still carry `templateConfig.secrets` — never stripped here.
-      const connectionId = await insertApiKeyConnection(db, {
-        userId: ctx.user.id,
-        templateId: template.id,
-        displayName: input.name,
-        secretsEncrypted: encryptedSecrets,
-      });
-
-      await db.insert(destinations).values({
-        userId: ctx.user.id,
-        name: input.name,
-        url: initialUrl,
-        templateId: template.id,
-        appKey: template.appKey ?? "unknown",
-        actionId,
-        color: template.color,
-        connectionId,
-        templateConfig: {
-          variables: {},
-        },
-        ...(autoChatId ? { telegramChatId: autoChatId } : {}),
-        isActive: true,
-      });
-      return { success: true };
-    }),
-
-  /**
    * Create a destinations row from an EXISTING api_key connection —
    * Make.com/Zapier's "reuse an app I've already connected" shortcut used by
    * the wizard's Action picker.
@@ -1380,265 +1252,11 @@ export const destinationsRouter = router({
       return { id, name: finalName, templateId: template.id };
     }),
 
-  /**
-   * Load row 1 of a Google Sheet tab as header labels (for column mapping UI).
-   */
-  getSheetHeaders: protectedProcedure
-    .input(
-      z.object({
-        googleAccountId: z.number().int().positive(),
-        spreadsheetId: z.string().min(1),
-        sheetName: z.string().min(1),
-      }),
-    )
-    .mutation(async ({ ctx, input }) => {
-      checkUserRateLimit(ctx.user.id, "getSheetHeaders", {
-        max: 20,
-        windowMs: 60_000,
-        message: "Too many sheet header requests. Max 20 per minute.",
-      });
-      return getGoogleSheetHeaders({
-        userId: ctx.user.id,
-        googleAccountId: input.googleAccountId,
-        spreadsheetId: input.spreadsheetId,
-        sheetName: input.sheetName,
-      });
-    }),
-
-  /**
-   * Test an integration by sending a sample lead and returning the full request/response.
-   *
-   * For dynamic (admin-managed) templates:
-   *   - Builds body ONLY from template.bodyFields
-   *   - Decrypts secrets from templateConfig.secrets
-   *   - Falls back to "test_[key]" for missing variable fields
-   *
-   * For legacy custom templates:
-   *   - Uses existing sendAffiliateOrderByTemplate logic
-   */
-  testIntegration: protectedProcedure
-    .input(
-      z.object({
-        id: z.number(),
-        /** Optional variable overrides for the test (e.g. offer_id, stream) */
-        variableOverrides: z.record(z.string(), z.string()).optional(),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      checkUserRateLimit(ctx.user.id, "testIntegration", { max: 5, windowMs: 60_000, message: "Too many test requests. Max 5 per minute." });
-      const db = await getDb();
-      if (!db) throw new Error("DB not available");
-
-      const [site] = await db
-        .select()
-        .from(destinations)
-        .where(and(eq(destinations.id, input.id), eq(destinations.userId, ctx.user.id)))
-        .limit(1);
-      if (!site) throw new Error("Website not found");
-
-      const sampleLead = {
-        leadgenId: "test_lead_12345",
-        fullName: "Test User",
-        phone: "+998901234567",
-        email: "test@example.com",
-        pageId: "test_page_id",
-        formId: "test_form_id",
-      };
-
-      const varOverrides = input.variableOverrides ?? {};
-      const t0 = Date.now();
-
-      // ── Dynamic admin-managed template ────────────────────────────────────────
-      if (site.templateId) {
-        const loaded = await loadDynamicExecutionTemplate(db, site);
-        if (!loaded) throw new Error("Destination template not found");
-        const dynTpl = loaded.template;
-
-        const varFields = (dynTpl.variableFields as string[]) ?? [];
-        const existingVariables = ((site.templateConfig as Record<string, unknown>)?.variables as Record<string, string>) ?? {};
-        const varOverridesWithFallback: Record<string, string> = {};
-        for (const key of varFields) {
-          varOverridesWithFallback[key] = varOverrides[key] ?? existingVariables[key] ?? `test_${key}`;
-        }
-
-        let testConnection: Connection | null = null;
-        if (site.connectionId != null) {
-          testConnection = await loadConnectionForDelivery(
-            db,
-            site.connectionId,
-            ctx.user.id,
-          );
-        }
-
-        const result = await sendLeadViaTemplate(
-          dynTpl,
-          site.templateConfig,
-          sampleLead,
-          varOverridesWithFallback,
-          testConnection,
-          ctx.user.id,
-          db,
-        );
-        const durationMs = Date.now() - t0;
-
-        // Build preview using the same body builder and mask any secret fields.
-        const previewFields = buildBody(dynTpl, sampleLead, varOverridesWithFallback);
-        for (const field of (dynTpl.bodyFields as Array<{ key: string; value: string; isSecret: boolean }>) ?? []) {
-          if (field.value.startsWith("{{SECRET:") && field.value.endsWith("}}")) {
-            previewFields[field.key] = "••••••••";
-          }
-        }
-
-        const normalizedCt = dynTpl.contentType.toLowerCase();
-        let previewBody: unknown = previewFields;
-        if (normalizedCt.includes("form-urlencoded") || normalizedCt.includes("urlencoded")) {
-          const p = new URLSearchParams();
-          for (const [k, v] of Object.entries(previewFields)) p.append(k, v);
-          previewBody = p.toString();
-        }
-
-        return {
-          success: result.success,
-          responseData: result.responseData,
-          error: result.error,
-          durationMs,
-          requestPreview: {
-            url: dynTpl.endpointUrl,
-            method: dynTpl.method ?? "POST",
-            headers: { "Content-Type": dynTpl.contentType },
-            body: previewBody,
-          },
-        };
-      }
-
-      // ── Telegram destination test ─────────────────────────────────────────────
-      if (site.appKey === "telegram") {
-        const cfg = (site.templateConfig ?? {}) as { botTokenEncrypted?: string; chatId?: string; messageTemplate?: string };
-        if (!cfg.botTokenEncrypted || !cfg.chatId) {
-          return { success: false, responseData: null, error: "Telegram config incomplete (missing botToken or chatId)", durationMs: Date.now() - t0, requestPreview: null };
-        }
-        const token = decrypt(cfg.botTokenEncrypted);
-        const testText = `[TEST] Yangi lead\n\nIsm: Test User\nTelefon: +998901234567\nEmail: test@example.com`;
-        const result = await sendTelegramRawMessage(token, cfg.chatId, testText);
-        return { success: result.success, responseData: null, error: result.error, durationMs: Date.now() - t0, requestPreview: null };
-      }
-
-      // ── Google Sheets ──────────────────────────────────────────────────────────
-      if (site.appKey === "google-sheets") {
-        const cfg = (site.templateConfig ?? {}) as Record<string, unknown>;
-        const gidRaw = cfg.googleAccountId;
-        const googleAccountId =
-          typeof gidRaw === "number" && Number.isFinite(gidRaw)
-            ? gidRaw
-            : typeof gidRaw === "string"
-              ? parseInt(String(gidRaw).trim(), 10)
-              : NaN;
-        const spreadsheetId = typeof cfg.spreadsheetId === "string" ? cfg.spreadsheetId.trim() : "";
-        const sheetName = typeof cfg.sheetName === "string" ? cfg.sheetName.trim() : "";
-        if (!Number.isFinite(googleAccountId) || googleAccountId < 1 || !spreadsheetId || !sheetName) {
-          return {
-            success: false,
-            responseData: null,
-            error: "Google Sheets config incomplete (googleAccountId, spreadsheetId, or sheetName)",
-            durationMs: Date.now() - t0,
-            requestPreview: {
-              url: `POST spreadsheets/${spreadsheetId || "?"}/values/...:append`,
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: { values: [["Test User", "+998901234567", "test@example.com", new Date().toISOString()]] },
-            },
-          };
-        }
-        const ts = new Date().toISOString();
-        const sheetHeaders = Array.isArray(cfg.sheetHeaders) ? (cfg.sheetHeaders as string[]) : null;
-        const mapping =
-          cfg.mapping && typeof cfg.mapping === "object" && !Array.isArray(cfg.mapping)
-            ? (cfg.mapping as Record<string, string>)
-            : null;
-        const rowValues = buildGoogleSheetsAppendRow({
-          sheetHeaders,
-          mapping,
-          leadPayload: { ...sampleLead, extraFields: {} },
-          createdAtIso: ts,
-        });
-        const result = await appendLeadToGoogleSheet({
-          userId: ctx.user.id,
-          googleAccountId,
-          spreadsheetId,
-          sheetName,
-          values: rowValues,
-        });
-        const durationMs = Date.now() - t0;
-        return {
-          success: result.success,
-          responseData: result.responseData,
-          error: result.error,
-          durationMs,
-          requestPreview: {
-            url: `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/...:append`,
-            method: "POST",
-            headers: { Authorization: "Bearer ••••", "Content-Type": "application/json" },
-            body: { values: [rowValues] },
-          },
-        };
-      }
-
-      // ── Legacy custom template ─────────────────────────────────────────────────
-      let legacyConnection: Connection | null = null;
-      if (site.connectionId != null) {
-        legacyConnection = await loadConnectionForDelivery(
-          db,
-          site.connectionId,
-          ctx.user.id,
-        );
-      }
-      const result = await sendAffiliateOrderByTemplate(
-        site.appKey as TemplateType,
-        site.templateConfig as TemplateConfig,
-        sampleLead,
-        varOverrides,
-        site.url ?? "",
-        legacyConnection,
-        ctx.user.id,
-        db,
-      );
-      const durationMs = Date.now() - t0;
-
-      const cfg = (site.templateConfig ?? {}) as Record<string, unknown>;
-      let requestPreview: {
-        url: string;
-        method: string;
-        headers: Record<string, string>;
-        body: unknown;
-      } | null = null;
-
-      if (site.appKey === "custom") {
-        const varCtx = buildVariableContext(sampleLead, varOverrides);
-        const { body, contentTypeHeader } = _buildCustomBody(cfg, varCtx);
-        const rawHeaders = (cfg.headers as Record<string, string> | undefined) ?? {};
-        const injectedHeaders: Record<string, string> = {};
-        for (const [k, v] of Object.entries(rawHeaders)) {
-          injectedHeaders[k] = injectVariables(v, varCtx);
-        }
-        if (!injectedHeaders["Content-Type"] && !injectedHeaders["content-type"]) {
-          injectedHeaders["Content-Type"] = contentTypeHeader;
-        }
-        requestPreview = {
-          url: (cfg.url as string) || site.url || "",
-          method: (cfg.method as string) ?? "POST",
-          headers: injectedHeaders,
-          body,
-        };
-      }
-
-      return {
-        success: result.success,
-        responseData: result.responseData,
-        error: result.error,
-        durationMs,
-        requestPreview,
-      };
-    }),
+  // Destinations Cleanup Sprint, PR 4/4 — getSheetHeaders + testIntegration
+  // were Destinations.tsx-only. Removed alongside the page; their server-
+  // side helpers (loadDynamicExecutionTemplate, sendAffiliateOrderByTemplate,
+  // sendLeadViaTemplate, _buildCustomBody, etc.) are still in use by the
+  // dispatch / worker paths — left alone.
 
   // ── Destination performance analytics ────────────────────────────────────
   // Single aggregated query: destinations → integrations → orders (LEFT JOIN)

@@ -20,7 +20,13 @@ const Insights = lazyWithRetry(() => import("./pages/Insights"));
 const WebhookHealth = lazyWithRetry(() => import("./pages/WebhookHealth"));
 const Integrations = lazyWithRetry(() => import("./pages/Integrations"));
 const Connections = lazyWithRetry(() => import("./pages/Connections"));
-const Destinations = lazyWithRetry(() => import("./pages/Destinations"));
+// Destinations Cleanup Sprint, PR 4/4 — page deleted. Bookmarks to
+// /destinations or /target-websites resolve to this thin redirect
+// component, which bounces the user to /integrations with replace:true
+// (no flash, no 404, no back-button loop).
+const LegacyDestinationsRedirect = lazyWithRetry(
+  () => import("./pages/LegacyDestinationsRedirect"),
+);
 const Register = lazyWithRetry(() => import("./pages/Register"));
 const ForgotPassword = lazyWithRetry(() => import("./pages/ForgotPassword"));
 const ResetPassword = lazyWithRetry(() => import("./pages/ResetPassword"));
@@ -74,39 +80,6 @@ function AdminBusinessGate({ children }: { children: ReactNode }) {
     }
     if (user.role !== "admin") {
       setLocation("/overview");
-    }
-  }, [loading, user, setLocation]);
-
-  if (loading || !user || user.role !== "admin") {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="h-8 w-8 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-      </div>
-    );
-  }
-  return <>{children}</>;
-}
-
-/**
- * Legacy /destinations management page: admin-only.
- *
- * The Make-style wizard at /integrations/new-v2 auto-creates destinations
- * inline, so a regular user never needs the standalone management screen.
- * Non-admins arriving via an old bookmark are redirected to /integrations
- * where the wizard lives — friendlier than dumping them on /overview.
- */
-function AdminDestinationsGate({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
-  const [, setLocation] = useLocation();
-
-  useEffect(() => {
-    if (loading) return;
-    if (!user) {
-      setLocation("/login");
-      return;
-    }
-    if (user.role !== "admin") {
-      setLocation("/integrations");
     }
   }, [loading, user, setLocation]);
 
@@ -234,26 +207,14 @@ function Router() {
       {/* Legacy redirects kept for any bookmarks */}
       <Route path="/facebook" component={Connections} />
       <Route path="/facebook-accounts" component={Connections} />
-      {/* Legacy destinations-management UI — kept admin-only since the
-          integration wizard auto-creates destinations behind the scenes.
-          Regular users land here only via deep links; we redirect them to
-          /integrations where the user-facing creation flow lives. */}
-      <Route
-        path="/destinations"
-        component={() => (
-          <AdminDestinationsGate>
-            <Destinations />
-          </AdminDestinationsGate>
-        )}
-      />
-      <Route
-        path="/target-websites"
-        component={() => (
-          <AdminDestinationsGate>
-            <Destinations />
-          </AdminDestinationsGate>
-        )}
-      />
+      {/* Destinations Cleanup Sprint, PR 4/4 — the standalone Destinations
+          management page is gone. Bookmark-safety redirects send anyone
+          who still visits /destinations or /target-websites to the
+          Integrations page, where every former Destinations capability
+          now lives (PR 1 Edit-destination, PR 2 inline-HTTP, PR 3
+          cascade-delete on Connections). */}
+      <Route path="/destinations" component={LegacyDestinationsRedirect} />
+      <Route path="/target-websites" component={LegacyDestinationsRedirect} />
       <Route path="/activity" component={LegacyLogsRedirect} />
       <Route path="/logs" component={LegacyLogsRedirect} />
       <Route path="/admin/logs" component={AdminLogs} />
