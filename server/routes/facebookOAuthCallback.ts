@@ -323,7 +323,7 @@ export function registerFacebookOAuthRoutes(app: Express): void {
           .set({
             fbUserName: profile.name,
             accessToken: encryptedUserToken,
-            tokenExpiresAt: expiresAt ?? undefined,
+            tokenExpiresAt: expiresAt,
             connectedAt: now,
           })
           .where(and(eq(facebookAccounts.userId, userId), eq(facebookAccounts.fbUserId, profile.id)));
@@ -333,7 +333,7 @@ export function registerFacebookOAuthRoutes(app: Express): void {
           fbUserId: profile.id,
           fbUserName: profile.name,
           accessToken: encryptedUserToken,
-          tokenExpiresAt: expiresAt ?? undefined,
+          tokenExpiresAt: expiresAt,
           connectedAt: now,
         });
         accountId = (inserted as unknown as { insertId: number }).insertId;

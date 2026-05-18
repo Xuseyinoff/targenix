@@ -187,7 +187,7 @@ export const facebookAccountsRouter = router({
           .set({
             fbUserName: profile.name,
             accessToken: encryptedUserToken,
-            tokenExpiresAt: expiresAt ?? undefined,
+            tokenExpiresAt: expiresAt,
             connectedAt: now,
           })
           .where(and(eq(facebookAccounts.userId, userId), eq(facebookAccounts.fbUserId, profile.id)));
@@ -197,7 +197,7 @@ export const facebookAccountsRouter = router({
           fbUserId: profile.id,
           fbUserName: profile.name,
           accessToken: encryptedUserToken,
-          tokenExpiresAt: expiresAt ?? undefined,
+          tokenExpiresAt: expiresAt,
           connectedAt: now,
         });
         accountId = (inserted as unknown as { insertId: number }).insertId;
@@ -405,7 +405,7 @@ export const facebookAccountsRouter = router({
       if (existing.length > 0) {
         await db
           .update(facebookAccounts)
-          .set({ fbUserName: profile.name, accessToken: encryptedToken, tokenExpiresAt: expiresAt ?? undefined })
+          .set({ fbUserName: profile.name, accessToken: encryptedToken, tokenExpiresAt: expiresAt })
           .where(and(eq(facebookAccounts.userId, userId), eq(facebookAccounts.fbUserId, profile.id)));
       } else {
         await db.insert(facebookAccounts).values({
@@ -413,7 +413,7 @@ export const facebookAccountsRouter = router({
           fbUserId: profile.id,
           fbUserName: profile.name,
           accessToken: encryptedToken,
-          tokenExpiresAt: expiresAt ?? undefined,
+          tokenExpiresAt: expiresAt,
         });
       }
       return { success: true, fbUserId: profile.id, fbUserName: profile.name };
