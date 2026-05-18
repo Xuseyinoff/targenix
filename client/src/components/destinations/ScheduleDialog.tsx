@@ -106,7 +106,7 @@ export function ScheduleDialog({
   const setMutation = trpc.destinationSchedules.setSchedule.useMutation({
     onSuccess: () => {
       invalidate();
-      toast.success(t("destinations.schedule.saved"));
+      toast.success(t("integrations.schedule.saved"));
       onOpenChange(false);
     },
   });
@@ -116,11 +116,11 @@ export function ScheduleDialog({
       const flushed = res?.flushed?.succeeded ?? 0;
       toast.success(
         flushed > 0
-          ? `${t("destinations.schedule.cleared")} · ${t(
-              "destinations.schedule.flushed",
+          ? `${t("integrations.schedule.cleared")} · ${t(
+              "integrations.schedule.flushed",
               { count: flushed },
             )}`
-          : t("destinations.schedule.cleared"),
+          : t("integrations.schedule.cleared"),
       );
       onOpenChange(false);
     },
@@ -161,10 +161,10 @@ export function ScheduleDialog({
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {t("destinations.schedule.dialogTitle", { name: destinationName })}
+            {t("integrations.schedule.dialogTitle", { name: destinationName })}
           </DialogTitle>
           <DialogDescription className="sr-only">
-            {t("destinations.schedule.tooltip")}
+            {t("integrations.schedule.tooltip")}
           </DialogDescription>
         </DialogHeader>
 
@@ -181,11 +181,11 @@ export function ScheduleDialog({
                   <Send className="w-3.5 h-3.5 shrink-0" />
                   <span>
                     {effectiveSendHour != null
-                      ? t("destinations.schedule.queuedLeads", {
+                      ? t("integrations.schedule.queuedLeads", {
                           count: pendingForThis,
                           hour: String(effectiveSendHour).padStart(2, "0"),
                         })
-                      : t("destinations.schedule.queuedLeadsNoSend", {
+                      : t("integrations.schedule.queuedLeadsNoSend", {
                           count: pendingForThis,
                         })}
                   </span>
@@ -194,37 +194,37 @@ export function ScheduleDialog({
             )}
 
             <HourPicker
-              label={t("destinations.schedule.pauseTime")}
-              help={t("destinations.schedule.pauseTimeHelp")}
+              label={t("integrations.schedule.pauseTime")}
+              help={t("integrations.schedule.pauseTimeHelp")}
               value={pauseHour}
               onValueChange={setPauseHour}
-              notSetLabel={t("destinations.schedule.notSet")}
+              notSetLabel={t("integrations.schedule.notSet")}
             />
             <HourPicker
-              label={t("destinations.schedule.startTime")}
-              help={t("destinations.schedule.startTimeHelp")}
+              label={t("integrations.schedule.startTime")}
+              help={t("integrations.schedule.startTimeHelp")}
               value={startHour}
               onValueChange={setStartHour}
-              notSetLabel={t("destinations.schedule.notSet")}
+              notSetLabel={t("integrations.schedule.notSet")}
             />
             <HourPicker
-              label={t("destinations.schedule.sendTime")}
-              help={t("destinations.schedule.sendTimeHelp")}
+              label={t("integrations.schedule.sendTime")}
+              help={t("integrations.schedule.sendTimeHelp")}
               value={sendHour}
               onValueChange={setSendHour}
-              notSetLabel={t("destinations.schedule.notSet")}
+              notSetLabel={t("integrations.schedule.notSet")}
             />
 
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">
-                {t("destinations.schedule.timezone")}
+                {t("integrations.schedule.timezone")}
               </Label>
               <div className="flex items-center gap-2">
                 <Badge variant="secondary" className="font-mono text-xs">
                   {schedule?.timezone ?? "Asia/Tashkent"}
                 </Badge>
                 <span className="text-xs text-muted-foreground">
-                  {t("destinations.schedule.timezoneHelpComingSoon")}
+                  {t("integrations.schedule.timezoneHelpComingSoon")}
                 </span>
               </div>
             </div>
@@ -246,7 +246,7 @@ export function ScheduleDialog({
                 ) : (
                   <Trash2 className="w-4 h-4 mr-1.5" />
                 )}
-                {t("destinations.schedule.clear")}
+                {t("integrations.schedule.clear")}
               </Button>
             )}
           </div>
@@ -256,11 +256,11 @@ export function ScheduleDialog({
               onClick={() => onOpenChange(false)}
               disabled={isSaving || isClearing}
             >
-              {t("destinations.schedule.cancel")}
+              {t("integrations.schedule.cancel")}
             </Button>
             <Button onClick={handleSave} disabled={isSaving || isClearing || isLoading}>
               {isSaving && <Loader2 className="w-4 h-4 animate-spin mr-1.5" />}
-              {t("destinations.schedule.save")}
+              {t("integrations.schedule.save")}
             </Button>
           </div>
         </DialogFooter>
