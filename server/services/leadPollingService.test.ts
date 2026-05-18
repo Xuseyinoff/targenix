@@ -46,7 +46,16 @@ interface MockDbConfig {
     subscriptionStatus: "active" | "failed" | "inactive";
   }>;
   latestLeadByForm: Record<string, Date | null>;
-  existingLeadgenIds: Set<string>;
+  /** Rows that the existing-leads lookup should return. dataStatus drives
+   *  the classifier branch (ENRICHED/PENDING → skip; ERROR → re-enrich). */
+  existingLeads: Array<{
+    id: number;
+    leadgenId: string;
+    dataStatus: "PENDING" | "ENRICHED" | "ERROR";
+  }>;
+  /** affectedRows that the re-enrichment UPDATE should report. 1 = claim
+   *  won (dispatch fires); 0 = race lost (skip dispatch). Default 1. */
+  reEnrichAffectedRows?: number;
 }
 
 let mockDb: unknown;
@@ -85,13 +94,11 @@ function buildMockDb(cfg: MockDbConfig) {
         };
       }
 
-      // findExistingLeadgenIds: selects { leadgenId }
+      // findExistingLeads: selects { id, leadgenId, dataStatus }
       if (columns && Object.prototype.hasOwnProperty.call(columns, "leadgenId")) {
         return {
           from: vi.fn(() => ({
-            where: vi.fn(() =>
-              Promise.resolve(Array.from(cfg.existingLeadgenIds).map((id) => ({ leadgenId: id }))),
-            ),
+            where: vi.fn(() => Promise.resolve(cfg.existingLeads)),
           })),
         };
       }
@@ -111,6 +118,13 @@ function buildMockDb(cfg: MockDbConfig) {
     insert: vi.fn(() => ({
       values: vi.fn(() => Promise.resolve()),
     })),
+    update: vi.fn(() => ({
+      set: vi.fn(() => ({
+        where: vi.fn(() =>
+          Promise.resolve({ affectedRows: cfg.reEnrichAffectedRows ?? 1 }),
+        ),
+      })),
+    })),
   };
 }
 
@@ -120,7 +134,7 @@ beforeEach(() => {
   mockConfig = {
     targets: [],
     latestLeadByForm: {},
-    existingLeadgenIds: new Set(),
+    existingLeads: [],
   };
   mockDb = buildMockDb(mockConfig);
 });
@@ -139,7 +153,7 @@ describe("leadPollingService.runLeadPollingTick", () => {
     expect(fetchLeadsFromFormMock).not.toHaveBeenCalled();
   });
 
-  it("skips leads that already exist and dispatches only the new ones", async () => {
+  it("skips ENRICHED leads and dispatches only the new ones", async () => {
     mockConfig.targets = [
       {
         userId: 1,
@@ -151,7 +165,9 @@ describe("leadPollingService.runLeadPollingTick", () => {
         subscriptionStatus: "active",
       },
     ];
-    mockConfig.existingLeadgenIds = new Set(["lead-old"]);
+    mockConfig.existingLeads = [
+      { id: 100, leadgenId: "lead-old", dataStatus: "ENRICHED" },
+    ];
     mockDb = buildMockDb(mockConfig);
 
     fetchLeadsFromFormMock.mockResolvedValue([
@@ -164,11 +180,110 @@ describe("leadPollingService.runLeadPollingTick", () => {
 
     expect(result.forms).toBe(1);
     expect(result.leadsInserted).toBe(1);
+    expect(result.leadsReEnriched).toBe(0);
     expect(result.leadsSkipped).toBe(1);
     expect(dispatchLeadProcessingMock).toHaveBeenCalledTimes(1);
     expect(dispatchLeadProcessingMock).toHaveBeenCalledWith(
       expect.objectContaining({ leadgenId: "lead-new", userId: 1, pageId: "p1" }),
     );
+  });
+
+  it("re-enriches a parked ERROR lead and dispatches it (the user's 190-token recovery path)", async () => {
+    mockConfig.targets = [
+      {
+        userId: 1,
+        pageId: "p1",
+        pageName: "P1",
+        formId: "f1",
+        formName: "F1",
+        encryptedPageToken: "tok",
+        subscriptionStatus: "active",
+      },
+    ];
+    // The lead arrived via webhook but Graph enrichment failed (auth 190).
+    // It's now sitting in dataStatus='ERROR' with no usable field data.
+    mockConfig.existingLeads = [
+      { id: 8388262, leadgenId: "lead-parked", dataStatus: "ERROR" },
+    ];
+    mockDb = buildMockDb(mockConfig);
+
+    fetchLeadsFromFormMock.mockResolvedValue([
+      { id: "lead-parked", form_id: "f1", field_data: [] },
+    ]);
+
+    const { runLeadPollingTick } = await import("./leadPollingService");
+    const result = await runLeadPollingTick();
+
+    expect(result.leadsInserted).toBe(0);
+    expect(result.leadsReEnriched).toBe(1);
+    expect(result.leadsSkipped).toBe(0);
+    // dispatch fires with the SAME leadId — the existing row, not a new insert.
+    expect(dispatchLeadProcessingMock).toHaveBeenCalledTimes(1);
+    expect(dispatchLeadProcessingMock).toHaveBeenCalledWith(
+      expect.objectContaining({ leadId: 8388262, leadgenId: "lead-parked" }),
+    );
+  });
+
+  it("skips PENDING leads (worker is mid-processing — don't race the dispatcher)", async () => {
+    mockConfig.targets = [
+      {
+        userId: 1,
+        pageId: "p1",
+        pageName: "P1",
+        formId: "f1",
+        formName: "F1",
+        encryptedPageToken: "tok",
+        subscriptionStatus: "active",
+      },
+    ];
+    mockConfig.existingLeads = [
+      { id: 500, leadgenId: "lead-inflight", dataStatus: "PENDING" },
+    ];
+    mockDb = buildMockDb(mockConfig);
+
+    fetchLeadsFromFormMock.mockResolvedValue([
+      { id: "lead-inflight", form_id: "f1", field_data: [] },
+    ]);
+
+    const { runLeadPollingTick } = await import("./leadPollingService");
+    const result = await runLeadPollingTick();
+
+    expect(result.leadsSkipped).toBe(1);
+    expect(result.leadsReEnriched).toBe(0);
+    expect(dispatchLeadProcessingMock).not.toHaveBeenCalled();
+  });
+
+  it("re-enrichment lost the race (affectedRows=0) — skips dispatch", async () => {
+    // Simulates a concurrent recovery path (admin "Retry" click, or another
+    // replica's polling tick) flipping dataStatus out of ERROR between our
+    // SELECT and our UPDATE. The atomic WHERE clause guards the dispatch.
+    mockConfig.targets = [
+      {
+        userId: 1,
+        pageId: "p1",
+        pageName: "P1",
+        formId: "f1",
+        formName: "F1",
+        encryptedPageToken: "tok",
+        subscriptionStatus: "active",
+      },
+    ];
+    mockConfig.existingLeads = [
+      { id: 700, leadgenId: "lead-raced", dataStatus: "ERROR" },
+    ];
+    mockConfig.reEnrichAffectedRows = 0;
+    mockDb = buildMockDb(mockConfig);
+
+    fetchLeadsFromFormMock.mockResolvedValue([
+      { id: "lead-raced", form_id: "f1", field_data: [] },
+    ]);
+
+    const { runLeadPollingTick } = await import("./leadPollingService");
+    const result = await runLeadPollingTick();
+
+    expect(result.leadsReEnriched).toBe(0);
+    expect(result.leadsSkipped).toBe(1);
+    expect(dispatchLeadProcessingMock).not.toHaveBeenCalled();
   });
 
   it("filters out connections whose subscriptionStatus is 'inactive'", async () => {
