@@ -1,9 +1,10 @@
-import { useParams } from "wouter";
+import { Link, useParams } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  AlertTriangle,
   ArrowLeft,
   Phone,
   Clock,
@@ -24,6 +25,8 @@ import {
 import { useState } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { LeadPipelineBadge, OrderIntegrationBadge } from "@/components/leads/PipelineBadges";
+import { leadErrorTypeI18nKey } from "@/lib/leadPipelineBadgeModel";
+import { useT } from "@/hooks/useT";
 import { useBackToLeads } from "@/hooks/useBackToLeads";
 import { extractExternalOrderId } from "@shared/extractExternalOrderId";
 
@@ -164,6 +167,7 @@ export default function LeadDetail() {
   const backToLeads = useBackToLeads();
   const leadId = parseInt(params.id ?? "0", 10);
   const { user } = useAuth();
+  const t = useT();
   const isAdmin = user?.role === "admin";
   const [techOpen, setTechOpen] = useState(false);
 
@@ -283,15 +287,65 @@ export default function LeadDetail() {
                   {(lead as { deliveryStatus?: string }).deliveryStatus ?? "—"}
                 </span>
               </p>
-              {(lead as { dataError?: string | null }).dataError ? (
-                <p className="text-xs text-destructive leading-relaxed break-words">
-                  {(lead as { dataError?: string | null }).dataError}
-                </p>
-              ) : null}
             </div>
           </Section>
 
           <div className="h-px bg-border mx-0" />
+
+          {(lead as { dataStatus?: string }).dataStatus === "ERROR" ? (
+            <>
+              <Section label={t("leads.detail.errorTitle")}>
+                <div className="rounded-xl border border-red-200/70 dark:border-red-900/50 bg-red-50/60 dark:bg-red-950/25 p-3 space-y-2">
+                  <div className="flex items-center gap-2 text-red-700 dark:text-red-300">
+                    <AlertTriangle className="h-4 w-4 shrink-0" />
+                    <span className="text-sm font-semibold">
+                      {t(
+                        leadErrorTypeI18nKey(
+                          (lead as { dataErrorType?: string | null }).dataErrorType,
+                        ),
+                      )}
+                    </span>
+                  </div>
+
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 text-xs">
+                    <dt className="text-muted-foreground">{t("leads.detail.errorType")}</dt>
+                    <dd className="font-mono text-foreground/80 break-all">
+                      {(lead as { dataErrorType?: string | null }).dataErrorType ?? "—"}
+                    </dd>
+
+                    {(lead as { dataError?: string | null }).dataError ? (
+                      <>
+                        <dt className="text-muted-foreground">{t("leads.detail.errorMessage")}</dt>
+                        <dd className="font-mono text-foreground/80 break-words">
+                          {(lead as { dataError?: string | null }).dataError}
+                        </dd>
+                      </>
+                    ) : null}
+
+                    {(lead as { dataAttempts?: number }).dataAttempts != null ? (
+                      <>
+                        <dt className="text-muted-foreground">{t("leads.detail.errorAttempts")}</dt>
+                        <dd className="font-mono text-foreground/80">
+                          {(lead as { dataAttempts?: number }).dataAttempts ?? 0}
+                        </dd>
+                      </>
+                    ) : null}
+                  </dl>
+
+                  {(lead as { dataErrorType?: string | null }).dataErrorType === "auth" ? (
+                    <Link
+                      href="/connections"
+                      className="inline-flex items-center gap-1.5 mt-1 text-xs font-medium text-red-700 dark:text-red-300 hover:underline"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      {t("leads.detail.errorReconnectCta")}
+                    </Link>
+                  ) : null}
+                </div>
+              </Section>
+              <div className="h-px bg-border mx-0" />
+            </>
+          ) : null}
 
           {/* Contact */}
           {lead.phone && (

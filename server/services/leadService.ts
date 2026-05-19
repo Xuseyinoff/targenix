@@ -25,6 +25,10 @@ import { executeWorkflow } from "./workflowExecutor";
 import { recordOutcome } from "./circuitBreaker";
 import { checkPhone, syntheticInvalidPhoneResult } from "../lib/phoneValidation";
 import { enqueuePendingLead, shouldQueueForPause } from "./destinationPendingQueue";
+import {
+  sendLeadErrorTelegramNotification,
+  clearLeadErrorNotifyCooldown,
+} from "./leadErrorNotifier";
 
 // ─── Field extraction helpers ─────────────────────────────────────────────────
 
@@ -1073,6 +1077,29 @@ export async function processLead(params: {
     resolvedPlatform = (formRow?.platform as "fb" | "ig" | null) ?? null;
   } catch { /* non-critical */ }
 
+  // Hoisted integration-presence check (Phase 2 / failed-leads sprint).
+  //
+  // The error branch below fires a Telegram alert ONLY when an active
+  // LEAD_ROUTING integration exists for (userId, pageId, formId). Webhook
+  // leads with no integration are still persisted (audit trail) but stay
+  // silent — `getLeads` in db.ts uses the same predicate to hide them from
+  // the UI, so the two layers stay consistent.
+  //
+  // Determined once at the top so both `persistGraphFailure` (early-return
+  // paths) and the later success branch can rely on it without re-querying.
+  const hasIntegrationRows = await db
+    .select({ id: integrations.id })
+    .from(integrations)
+    .where(and(
+      eq(integrations.userId, params.userId),
+      eq(integrations.isActive, true),
+      eq(integrations.type, "LEAD_ROUTING"),
+      eq(integrations.pageId, params.pageId),
+      eq(integrations.formId, params.formId),
+    ))
+    .limit(1);
+  const hasIntegration = hasIntegrationRows.length > 0;
+
   const accessToken = await resolvePageAccessToken(params.pageId, params.formId, params.userId);
 
   // Persist a Graph-enrichment failure with retry-state metadata so the
@@ -1095,6 +1122,7 @@ export async function processLead(params: {
       .where(and(eq(leads.id, params.leadId), eq(leads.userId, params.userId)))
       .limit(1);
     const newAttempts = (currentRow?.dataAttempts ?? 0) + 1;
+    const isFinalExhaustion = newAttempts >= LEAD_MAX_GRAPH_ATTEMPTS;
     const nextRetryAt = computeLeadNextRetryAt({
       now: new Date(),
       newAttempts,
@@ -1116,6 +1144,44 @@ export async function processLead(params: {
         formName,
       })
       .where(and(eq(leads.id, params.leadId), eq(leads.userId, params.userId)));
+
+    // Fire-and-forget Telegram alert — gated on integration presence so
+    // we never notify about a form the user hasn't configured. The
+    // notifier itself classifies the errorType and applies the 1h
+    // per-(user, errorType) Redis cooldown; we just hand it the data.
+    // `void` + `.catch` guarantee the notifier can never throw into the
+    // lead-processing pipeline (Telegram outage must not block lead
+    // persistence).
+    if (hasIntegration) {
+      void sendLeadErrorTelegramNotification({
+        leadId: params.leadId,
+        userId: params.userId,
+        pageId: params.pageId,
+        pageName,
+        formId: params.formId,
+        formName,
+        leadgenId: params.leadgenId,
+        errorType: opts.errorType,
+        dataError: opts.dataError,
+        attempts: newAttempts,
+        maxAttempts: LEAD_MAX_GRAPH_ATTEMPTS,
+        isFinalExhaustion,
+      }).catch((err) => {
+        void log.error(
+          "LEAD",
+          "[leadErrorNotifier] Notification failed (non-fatal)",
+          {
+            leadId: params.leadId,
+            userId: params.userId,
+            errorType: opts.errorType,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          params.leadId,
+          params.pageId,
+          params.userId,
+        );
+      });
+    }
   }
 
   if (!accessToken) {
@@ -1145,6 +1211,12 @@ export async function processLead(params: {
     });
     return;
   }
+  // Graph fetch succeeded — wipe the user's error-notify cooldowns so a fresh
+  // failure after recovery (e.g. user reconnected, a few good leads pass, then
+  // another expiry) re-fires immediately instead of waiting out the leftover
+  // hour. Best-effort: Redis-down is silent here (the cooldown is at most
+  // 1h, so a missed clear is bounded).
+  void clearLeadErrorNotifyCooldown(params.userId);
   const leadData = fetchResult.data;
 
   const rawData: unknown = leadData;

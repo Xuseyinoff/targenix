@@ -13,7 +13,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
-import { leadIsRetryable, type LeadPipelineFields } from "@/lib/leadPipelineBadgeModel";
+import {
+  leadIsRetryable,
+  leadErrorTypeI18nKey,
+  type LeadPipelineFields,
+} from "@/lib/leadPipelineBadgeModel";
 import { LeadPipelineBadge, OrderIntegrationBadge } from "@/components/leads/PipelineBadges";
 import { useT } from "@/hooks/useT";
 
@@ -34,6 +38,10 @@ export interface LeadTableData extends LeadPipelineFields {
   formName?: string | null;
   platform?: string;
   orders?: Order[];
+  /** Classified Graph error bucket — drives the inline label on failed rows. */
+  dataErrorType?: string | null;
+  /** Raw Facebook error message — surfaced as the cell tooltip on failed rows. */
+  dataError?: string | null;
 }
 
 function LeadAvatar({ name, size = "sm" }: { name?: string | null; size?: "sm" | "md" }) {
@@ -250,6 +258,14 @@ export function LeadsTable({
                       <div className="flex flex-col items-start gap-1 max-w-[11rem] sm:max-w-[14rem]">
                         <LeadPipelineBadge lead={lead} size="compact" />
                         {firstOrder ? <OrderIntegrationBadge status={firstOrder.status} /> : null}
+                        {lead.dataStatus === "ERROR" && lead.dataErrorType ? (
+                          <span
+                            className="text-[10px] sm:text-[11px] font-medium text-red-700 dark:text-red-300/90 truncate max-w-full"
+                            title={lead.dataError ?? undefined}
+                          >
+                            {t(leadErrorTypeI18nKey(lead.dataErrorType))}
+                          </span>
+                        ) : null}
                       </div>
                     </td>
 

@@ -356,13 +356,32 @@ export const leadsRouter = router({
 
       if (!lead) throw new Error("Lead not found");
 
-      // Verify this lead was actually routed for this user (same visibility rule as Leads page)
-      const [exists] = await db
+      // Verify this lead was actually routed for this user (same visibility
+      // rule as Leads page in server/db.ts: either had a delivery attempt OR
+      // is a Graph-error row for a configured (pageId, formId)).
+      const [delivered] = await db
         .select({ n: sql<number>`1` })
         .from(orders)
         .where(and(eq(orders.leadId, lead.id), eq(orders.userId, userId), sql`${orders.attempts} > 0`))
         .limit(1);
-      if (!exists) throw new Error("Lead not found");
+      let visible = !!delivered;
+      if (!visible && lead.dataStatus === "ERROR") {
+        // Graph-error visibility branch — requires an active LEAD_ROUTING
+        // integration matching this lead's (pageId, formId). Mirrors db.ts.
+        const [matchedIntegration] = await db
+          .select({ n: sql<number>`1` })
+          .from(integrations)
+          .where(and(
+            eq(integrations.userId, userId),
+            eq(integrations.isActive, true),
+            eq(integrations.type, "LEAD_ROUTING"),
+            eq(integrations.pageId, lead.pageId),
+            eq(integrations.formId, lead.formId),
+          ))
+          .limit(1);
+        visible = !!matchedIntegration;
+      }
+      if (!visible) throw new Error("Lead not found");
 
       // Fetch orders — scope to both leadId AND userId for defense-in-depth
       const orderRows = await db

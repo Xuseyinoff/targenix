@@ -160,6 +160,21 @@
       "call": "Qo‘ng‘iroq",
       "view": "Ko‘rish",
       "retry": "Qayta urinish"
+    },
+    "errorType": {
+      "auth": "Token muddati o‘tgan",
+      "validation": "Sozlash xatosi",
+      "permanently_missing": "Facebook tomonidan o‘chirilgan",
+      "rate_limit": "So‘rovlar limiti",
+      "network": "Internet xatosi",
+      "unknown": "Xato"
+    },
+    "detail": {
+      "errorTitle": "Xato tafsilotlari",
+      "errorType": "Xato turi",
+      "errorMessage": "Facebook javobi",
+      "errorAttempts": "Urinishlar",
+      "errorReconnectCta": "Connections sahifasida Facebook’ni qayta ulang"
     }
   },
   "destinations": {

@@ -160,6 +160,21 @@
       "call": "Позвонить",
       "view": "Просмотр",
       "retry": "Повторить"
+    },
+    "errorType": {
+      "auth": "Токен истёк",
+      "validation": "Ошибка настройки",
+      "permanently_missing": "Удалено Facebook",
+      "rate_limit": "Лимит запросов",
+      "network": "Сетевая ошибка",
+      "unknown": "Ошибка"
+    },
+    "detail": {
+      "errorTitle": "Подробности ошибки",
+      "errorType": "Тип ошибки",
+      "errorMessage": "Ответ Facebook",
+      "errorAttempts": "Попыток",
+      "errorReconnectCta": "Переподключите Facebook на странице Connections"
     }
   },
   "destinations": {

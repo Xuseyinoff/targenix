@@ -3,8 +3,13 @@ import { Button } from "@/components/ui/button";
 import { Phone, Copy, Check, RotateCcw, Loader2, Facebook, Instagram, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
-import { leadIsRetryable, type LeadPipelineFields } from "@/lib/leadPipelineBadgeModel";
+import {
+  leadIsRetryable,
+  leadErrorTypeI18nKey,
+  type LeadPipelineFields,
+} from "@/lib/leadPipelineBadgeModel";
 import { LeadPipelineBadge, OrderIntegrationBadge } from "@/components/leads/PipelineBadges";
+import { useT } from "@/hooks/useT";
 
 interface Order {
   id: number;
@@ -23,6 +28,10 @@ export interface LeadCardData extends LeadPipelineFields {
   formName?: string | null;
   platform?: string;
   orders?: Order[];
+  /** Classified Graph error bucket — drives the inline label on failed rows. */
+  dataErrorType?: string | null;
+  /** Raw Facebook error message — surfaced as the tooltip on failed rows. */
+  dataError?: string | null;
 }
 
 function LeadAvatar({ name }: { name?: string | null }) {
@@ -54,6 +63,7 @@ interface LeadCardProps {
 }
 
 export function LeadCard({ lead, onClick, onRetry, isRetrying }: LeadCardProps) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const pageName = lead.pageName ?? lead.pageId;
   const formName = lead.formName ?? lead.formId;
@@ -106,9 +116,19 @@ export function LeadCard({ lead, onClick, onRetry, isRetrying }: LeadCardProps) 
                 </div>
               ) : null}
             </div>
-            <div className="flex shrink-0 flex-row flex-wrap items-center justify-end gap-0.5">
-              <LeadPipelineBadge lead={lead} size="compact" />
-              {firstOrder ? <OrderIntegrationBadge status={firstOrder.status} size="compact" /> : null}
+            <div className="flex shrink-0 flex-col items-end justify-end gap-0.5">
+              <div className="flex flex-row flex-wrap items-center justify-end gap-0.5">
+                <LeadPipelineBadge lead={lead} size="compact" />
+                {firstOrder ? <OrderIntegrationBadge status={firstOrder.status} size="compact" /> : null}
+              </div>
+              {lead.dataStatus === "ERROR" && lead.dataErrorType ? (
+                <span
+                  className="text-[10px] font-medium text-red-700 dark:text-red-300/90 truncate max-w-[10rem]"
+                  title={lead.dataError ?? undefined}
+                >
+                  {t(leadErrorTypeI18nKey(lead.dataErrorType))}
+                </span>
+              ) : null}
             </div>
           </div>
         </div>

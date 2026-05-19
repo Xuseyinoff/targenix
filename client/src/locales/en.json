@@ -160,6 +160,21 @@
       "call": "Call",
       "view": "View",
       "retry": "Retry"
+    },
+    "errorType": {
+      "auth": "Token expired",
+      "validation": "Misconfiguration",
+      "permanently_missing": "Removed by Facebook",
+      "rate_limit": "Rate limit",
+      "network": "Network error",
+      "unknown": "Error"
+    },
+    "detail": {
+      "errorTitle": "Error details",
+      "errorType": "Error type",
+      "errorMessage": "Facebook response",
+      "errorAttempts": "Attempts",
+      "errorReconnectCta": "Reconnect Facebook on Connections page"
     }
   },
   "destinations": {

@@ -172,10 +172,23 @@ export async function getLeads(
   if (!db) return [];
   const conditions = [eq(leads.userId, userId)];
 
-  // Visibility rule: only show leads that have been routed at least once
-  // (i.e., at least one integration delivery attempt exists).
+  // Visibility rule: show leads that EITHER had at least one delivery attempt
+  // OR are Graph-error rows for a form the user actually configured to route.
+  //
+  // The OR branch was added with the failed-leads sprint (2026-05-19): before
+  // it, leads whose Facebook Graph fetch failed never produced an `orders`
+  // row, so the `attempts > 0` predicate hid them from the UI. The added
+  // `dataStatus = 'ERROR' AND active LEAD_ROUTING integration matches` clause
+  // surfaces those rows IFF the user expressly hooked up that (pageId,
+  // formId) — webhook noise from un-configured forms stays hidden.
   conditions.push(
-    sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
+    or(
+      sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`,
+      and(
+        eq(leads.dataStatus, "ERROR"),
+        sql`EXISTS (SELECT 1 FROM ${integrations} WHERE ${integrations.userId} = ${userId} AND ${integrations.isActive} = 1 AND ${integrations.type} = 'LEAD_ROUTING' AND ${integrations.pageId} = ${leads.pageId} AND ${integrations.formId} = ${leads.formId})`,
+      ),
+    ) as SQL,
   );
 
   if (status === "PENDING") {
@@ -246,10 +259,19 @@ export async function getLeadStats(userId: number) {
       .where(
         and(
           eq(leads.userId, userId),
-          sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
+          or(
+            sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`,
+            and(
+              eq(leads.dataStatus, "ERROR"),
+              sql`EXISTS (SELECT 1 FROM ${integrations} WHERE ${integrations.userId} = ${userId} AND ${integrations.isActive} = 1 AND ${integrations.type} = 'LEAD_ROUTING' AND ${integrations.pageId} = ${leads.pageId} AND ${integrations.formId} = ${leads.formId})`,
+            ),
+          )
         )
       ),
-    // Leads received TODAY (integration-filtered — consistent with Leads page)
+    // Leads received TODAY — same visibility rule as getLeads (delivery
+    // attempt OR Graph-error on a configured form). Without the OR branch
+    // an auth-error burst would show 0 leads received today while the
+    // Leads page lists them.
     db
       .select({ n: count() })
       .from(leads)
@@ -257,9 +279,17 @@ export async function getLeadStats(userId: number) {
         eq(leads.userId, userId),
         gte(leads.createdAt, todayStart),
         lt(leads.createdAt, todayEnd),
-        sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
+        or(
+          sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`,
+          and(
+            eq(leads.dataStatus, "ERROR"),
+            sql`EXISTS (SELECT 1 FROM ${integrations} WHERE ${integrations.userId} = ${userId} AND ${integrations.isActive} = 1 AND ${integrations.type} = 'LEAD_ROUTING' AND ${integrations.pageId} = ${leads.pageId} AND ${integrations.formId} = ${leads.formId})`,
+          ),
+        )
       )),
-    // Leads received YESTERDAY (integration-filtered — used for trend comparison)
+    // Leads received YESTERDAY — same visibility rule (trend-comparison
+    // counter; must stay in sync with todayReceived or the delta is
+    // meaningless).
     db
       .select({ n: count() })
       .from(leads)
@@ -267,7 +297,13 @@ export async function getLeadStats(userId: number) {
         eq(leads.userId, userId),
         gte(leads.createdAt, yesterdayStart),
         lt(leads.createdAt, yesterdayEnd),
-        sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
+        or(
+          sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`,
+          and(
+            eq(leads.dataStatus, "ERROR"),
+            sql`EXISTS (SELECT 1 FROM ${integrations} WHERE ${integrations.userId} = ${userId} AND ${integrations.isActive} = 1 AND ${integrations.type} = 'LEAD_ROUTING' AND ${integrations.pageId} = ${leads.pageId} AND ${integrations.formId} = ${leads.formId})`,
+          ),
+        )
       )),
   ]);
 
@@ -291,9 +327,16 @@ export async function getLeadsCount(
   if (!db) return 0;
   const conditions = [eq(leads.userId, userId)];
 
-  // Same visibility rule as getLeads(): only count leads that have been routed at least once.
+  // Same visibility rule as getLeads(): count rows that EITHER had a delivery
+  // attempt OR are Graph-error rows for a configured (pageId, formId).
   conditions.push(
-    sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`
+    or(
+      sql`EXISTS (SELECT 1 FROM ${orders} WHERE ${orders.leadId} = ${leads.id} AND ${orders.userId} = ${userId} AND ${orders.attempts} > 0)`,
+      and(
+        eq(leads.dataStatus, "ERROR"),
+        sql`EXISTS (SELECT 1 FROM ${integrations} WHERE ${integrations.userId} = ${userId} AND ${integrations.isActive} = 1 AND ${integrations.type} = 'LEAD_ROUTING' AND ${integrations.pageId} = ${leads.pageId} AND ${integrations.formId} = ${leads.formId})`,
+      ),
+    ) as SQL,
   );
 
   if (status === "PENDING") {

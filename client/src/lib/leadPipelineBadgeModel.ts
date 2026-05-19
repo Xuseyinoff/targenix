@@ -15,6 +15,38 @@ export type LeadPipelineFields = {
   deliveryStatus: string;
 };
 
+/**
+ * Classifier buckets persisted on `leads.dataErrorType`. Mirrors the
+ * GraphErrorType enum on the server — kept as a plain string union so the
+ * client doesn't import server code.
+ */
+export type LeadDataErrorType =
+  | "auth"
+  | "validation"
+  | "permanently_missing"
+  | "rate_limit"
+  | "network";
+
+/**
+ * Resolve an i18n key for a classified Graph error. Unknown values (legacy
+ * rows, future server-side additions) fall back to a generic label.
+ *
+ * Lookups go through `leads.errorType.<key>` in the locale files. The "auth"
+ * key reads "Token expired" / "Token muddati o‘tgan" / "Токен истёк".
+ */
+export function leadErrorTypeI18nKey(errorType: string | null | undefined): string {
+  switch (errorType) {
+    case "auth":
+    case "validation":
+    case "permanently_missing":
+    case "rate_limit":
+    case "network":
+      return `leads.errorType.${errorType}`;
+    default:
+      return "leads.errorType.unknown";
+  }
+}
+
 /** Semantic key for icon + analytics */
 export type LeadBadgeKey =
   | "DATA_ERROR"

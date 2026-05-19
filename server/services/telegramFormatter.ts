@@ -353,3 +353,120 @@ export function formatLeadMessage(opts: FormatLeadMessageOptions): string {
 
   return parts.join("\n\n");
 }
+
+// ─── Lead-error messages (system chat: alerts/errors/stats) ──────────────────
+//
+// These messages are routed to `users.telegramChatId` (the "system" chat the
+// user linked with /start <token>), NOT to a destination's delivery chat.
+// They fire from `persistGraphFailure` in leadService.ts when the Facebook
+// Graph fetch for an inbound lead fails AND an active LEAD_ROUTING integration
+// is configured for that (pageId, formId) — silent otherwise.
+//
+// Category mapping (see `classifyForNotification` in leadErrorNotifier.ts):
+//   - auth                 → token expired/revoked → notify (auth template)
+//   - validation           → request shape wrong   → notify (validation template)
+//   - any errorType, attempts maxed → notify (final-exhaustion template,
+//                                    bypasses 1h cooldown)
+//   - permanently_missing / rate_limit / network (non-final) → silent
+
+export type LeadErrorMessageCategory = "auth" | "validation" | "final-exhaustion";
+
+export interface LeadErrorMessageParams {
+  /** Internal lead row id — used for the LeadDetail deep link. */
+  leadId: number;
+  /** Facebook page display name (falls back to "—" when empty). */
+  pageName: string | null | undefined;
+  /** Facebook form display name (falls back to "—" when empty). */
+  formName: string | null | undefined;
+  /** Facebook leadgen id (shown in validation + final templates). */
+  leadgenId: string | null | undefined;
+  /** Classified error bucket (auth/validation/network/...). */
+  errorType: string;
+  /** Raw Facebook error message — quoted verbatim per user decision (Phase 1 Q5). */
+  dataError: string | null | undefined;
+  /** 1-based completed attempts, only used in the final-exhaustion template. */
+  attempts: number;
+  /** Cap from LEAD_MAX_GRAPH_ATTEMPTS, only used in the final-exhaustion template. */
+  maxAttempts: number;
+  /** Override clock for tests; defaults to now. */
+  now?: Date;
+  /** Override base URL for tests; defaults to APP_URL env / https://targenix.uz. */
+  baseUrl?: string;
+}
+
+function resolveBaseUrl(override?: string): string {
+  const url = override ?? process.env.APP_URL ?? "https://targenix.uz";
+  return url.replace(/\/$/, "");
+}
+
+function formatHourMinute(d: Date): string {
+  // 24-hour HH:mm — locale-stable. Avoids `toLocaleTimeString("uz-UZ", ...)`
+  // because Node 20 on Railway has inconsistent ICU coverage for that tag
+  // (it sometimes falls back to en-US AM/PM, which looks wrong in Uzbek).
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+/**
+ * Build a Telegram HTML message for a failed-lead alert. The output is sent
+ * to the user's system chat by `sendLeadErrorTelegramNotification`.
+ *
+ * The Uzbek copy was approved in Phase 1 — keep it consistent with the
+ * `formatLeadMessage` delivery-template tone (emoji header, bold labels).
+ */
+export function formatLeadErrorMessage(
+  category: LeadErrorMessageCategory,
+  params: LeadErrorMessageParams,
+): string {
+  const baseUrl = resolveBaseUrl(params.baseUrl);
+  const pageNameSafe = esc(params.pageName?.trim() || "—");
+  const formNameSafe = esc(params.formName?.trim() || "—");
+  const errorSafe = esc(params.dataError?.trim() || "");
+  const errorTypeSafe = esc(params.errorType || "");
+  const leadgenIdSafe = params.leadgenId?.trim() ? esc(params.leadgenId.trim()) : "noma'lum";
+  const timeStr = formatHourMinute(params.now ?? new Date());
+
+  if (category === "auth") {
+    return [
+      `🚫 <b>Lead qabul qilinmadi — Facebook token muddati o'tgan</b>`,
+      ``,
+      `Sahifa: <b>${pageNameSafe}</b>`,
+      `Forma: <b>${formNameSafe}</b>`,
+      `Vaqt: ${timeStr}`,
+      ``,
+      `Sabab: Facebook access token muddati o'tgan yoki bekor qilingan.`,
+      `Iltimos, sahifani qayta ulang: <a href="${baseUrl}/connections">Connections</a>`,
+      ``,
+      `⚠️ Yangi leadlar token tiklanguncha qabul qilinmaydi.`,
+    ].join("\n");
+  }
+
+  if (category === "validation") {
+    return [
+      `⚠️ <b>Lead qabul qilinmadi — sozlash xatosi</b>`,
+      ``,
+      `Sahifa: <b>${pageNameSafe}</b>`,
+      `Forma: <b>${formNameSafe}</b>`,
+      `Lead ID: ${leadgenIdSafe}`,
+      ``,
+      `Sabab: ${errorSafe || "—"}`,
+      ``,
+      `Sozlamalarni tekshiring: <a href="${baseUrl}/integrations">Integrations</a>`,
+    ].join("\n");
+  }
+
+  // final-exhaustion
+  return [
+    `❌ <b>Lead bir necha urinishdan keyin ham qabul qilinmadi</b>`,
+    ``,
+    `Sahifa: <b>${pageNameSafe}</b>`,
+    `Forma: <b>${formNameSafe}</b>`,
+    `Lead ID: ${leadgenIdSafe}`,
+    ``,
+    `Xato turi: ${errorTypeSafe || "—"}`,
+    `Urinishlar: ${params.attempts}/${params.maxAttempts}`,
+    ``,
+    `Lead Targenix'da saqlangan — qo'l bilan qayta urinish: <a href="${baseUrl}/leads/${params.leadId}">Lead'ga o'tish</a>`,
+  ].join("\n");
+}
