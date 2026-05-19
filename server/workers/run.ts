@@ -38,6 +38,10 @@ import {
 import { startMetricSnapshotScheduler } from "../services/metricSnapshotScheduler";
 import { startInsightsRollupScheduler } from "../services/insightsRollupScheduler";
 import { startFxRateScheduler } from "../services/fxRateScheduler";
+import {
+  startFbTokenRefreshScheduler,
+  stopFbTokenRefreshScheduler,
+} from "../services/fbTokenRefreshScheduler";
 import { getDb } from "../db";
 import { getRedisConnection } from "../queues/redisConnection";
 
@@ -181,6 +185,11 @@ async function boot() {
   // boundaries; logs flush + TTL intent (Phase B will wire the actual
   // lead dispatch).
   startDestinationFlushScheduler();
+  // FB token auto-refresh — daily refresh of user access tokens 14d
+  // before expiry. Feature-flagged off by default
+  // (FB_TOKEN_REFRESH_ENABLED=true to enable). Phase 2A: scheduler only;
+  // Phase 2B will layer a Telegram alert on the dead-token branch.
+  startFbTokenRefreshScheduler();
 
   console.log("[Worker] All systems running. Waiting for jobs...");
 
@@ -194,6 +203,7 @@ async function boot() {
     // tied to msUntilNextHour() and needs explicit cancellation.
     stopOAuthStateCleanupScheduler();
     stopDestinationFlushScheduler();
+    stopFbTokenRefreshScheduler();
     await worker.close();
     // Flush any in-flight Sentry events before exit so a deploy-triggered
     // SIGTERM doesn't drop the last few errors. Capped at 2s so a hung

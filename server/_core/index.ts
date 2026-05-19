@@ -415,6 +415,7 @@ async function startServer() {
     const { startMetricSnapshotScheduler } = await import("../services/metricSnapshotScheduler");
     const { startInsightsRollupScheduler } = await import("../services/insightsRollupScheduler");
     const { startFxRateScheduler } = await import("../services/fxRateScheduler");
+    const { startFbTokenRefreshScheduler } = await import("../services/fbTokenRefreshScheduler");
     startLeadWorker();
     startRetryScheduler();
     startLogRetentionScheduler();
@@ -427,6 +428,10 @@ async function startServer() {
     startMetricSnapshotScheduler();
     startInsightsRollupScheduler();
     startFxRateScheduler();
+    // FB token auto-refresh — feature-flagged via FB_TOKEN_REFRESH_ENABLED.
+    // No-ops when the flag is unset. Phase 2A: scheduler only; Phase 2B
+    // will add Telegram alerts on the dead-token branch.
+    startFbTokenRefreshScheduler();
     console.log("[Server] Embedded worker + schedulers started.");
   }
 
