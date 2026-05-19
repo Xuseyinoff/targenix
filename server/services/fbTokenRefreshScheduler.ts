@@ -40,13 +40,29 @@
  *     and log loudly to Railway for triage. Phase 2B (next sprint) layers
  *     a Telegram alert to the user's system chat on top of this.
  *
- * This file is Phase 2A — scheduler core ONLY. No Telegram code lives
- * here yet; that lands in Phase 2B once we've observed one healthy tick
- * in production.
+ * Phase 2A (commit f922c89) shipped the scheduler core. Phase 2B (this
+ * file's current state) layers a Telegram alert onto the dead-token
+ * branch — when `auth` / `validation` / `permanently_missing` fires we
+ * notify the user via their system Telegram chat with a Reconnect link.
+ *
+ * The notifier follows `leadErrorNotifier` exactly:
+ *   - Send to `users.telegramChatId` (the system chat reserved for
+ *     alerts/errors/stats), never a destination's delivery chat.
+ *   - Redis throttle, 1 message per (userId, fbAccountId) per 24h via
+ *     `SET … EX 86400 NX`.
+ *   - Fail-open on Redis outage — a duplicate Telegram is preferable to
+ *     a silent token death.
+ *   - Recovery: a successful refresh DELs the throttle key so the next
+ *     failure re-fires immediately instead of waiting out 24h.
+ *
+ * Known reach: 33% of FB-using users (7 of 21 at the 2026-05-19 probe)
+ * have linked the system chat. The remaining 67% will see the expired
+ * badge on /connections + the failed-leads error notification when a
+ * fresh lead hits the dead token.
  */
 
 import { and, asc, eq, gte, isNotNull, lt } from "drizzle-orm";
-import { facebookAccounts } from "../../drizzle/schema";
+import { facebookAccounts, users } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { decrypt, encrypt } from "../encryption";
 import { exchangeForLongLivedToken } from "./facebookGraphService";
@@ -57,6 +73,8 @@ import {
 import { log } from "./appLogger";
 import { envBool, envInt } from "../lib/envHelpers";
 import { newSchedulerTraceId, runWithRequestContext } from "../lib/requestContext";
+import { getRedisConnection } from "../queues/redisConnection";
+import { sendTelegramMessage } from "../webhooks/telegramWebhook";
 
 /** Refresh tokens that expire within this window from now. */
 const REFRESH_AHEAD_DAYS = envInt("FB_TOKEN_REFRESH_AHEAD_DAYS", 14);
@@ -94,6 +112,228 @@ export interface FbTokenRefreshResult {
  */
 function emptyResult(): FbTokenRefreshResult {
   return { scanned: 0, refreshed: 0, failed: 0, skipped: 0, dead: 0 };
+}
+
+// ─── Telegram notifier (Phase 2B) ───────────────────────────────────────────
+
+/** TTL on the per-(user, fbAccount) throttle key. 24h = 1 alert/day. */
+export const FB_TOKEN_NOTIFY_TTL_SEC = 24 * 60 * 60;
+
+/**
+ * Redis throttle key shape. Exposed for tests + `clearTokenRefreshThrottle`.
+ *
+ *   `fb-token-refresh-fail:{userId}:{fbAccountId}`
+ */
+export function fbTokenRefreshFailKey(userId: number, fbAccountId: number): string {
+  return `fb-token-refresh-fail:${userId}:${fbAccountId}`;
+}
+
+/**
+ * Try to claim the 24h throttle slot for this (user, fbAccount) pair.
+ * `SET … EX 86400 NX` — first writer wins. Returns `true` when the caller
+ * may proceed to send.
+ *
+ * On Redis error we fail OPEN (return true). The recovery cost is one
+ * duplicate Telegram; the alternative — silently swallowing a token
+ * death — is what this whole sprint exists to prevent.
+ */
+async function tryClaimNotifyWindow(
+  userId: number,
+  fbAccountId: number,
+): Promise<boolean> {
+  try {
+    const redis = getRedisConnection();
+    const result = await redis.set(
+      fbTokenRefreshFailKey(userId, fbAccountId),
+      "1",
+      "EX",
+      FB_TOKEN_NOTIFY_TTL_SEC,
+      "NX",
+    );
+    return result === "OK";
+  } catch (err) {
+    await log.warn(
+      "FACEBOOK",
+      "[FbTokenRefresh] Redis SET NX failed — sending notification anyway",
+      {
+        userId,
+        fbAccountId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      null,
+      null,
+      userId,
+    );
+    return true;
+  }
+}
+
+/**
+ * DEL the throttle key on a successful refresh so a fresh failure
+ * re-fires immediately instead of waiting out the leftover 24h. Best-
+ * effort: a Redis outage here is silent (the key would expire on its
+ * own within the day anyway).
+ */
+async function clearTokenRefreshThrottle(
+  userId: number,
+  fbAccountId: number,
+): Promise<void> {
+  try {
+    const redis = getRedisConnection();
+    await redis.del(fbTokenRefreshFailKey(userId, fbAccountId));
+  } catch (err) {
+    await log.warn(
+      "FACEBOOK",
+      "[FbTokenRefresh] Throttle clear skipped (Redis unreachable)",
+      {
+        userId,
+        fbAccountId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      null,
+      null,
+      userId,
+    );
+  }
+}
+
+/**
+ * Inline HTML escape — `&`, `<`, `>` are sufficient for Telegram HTML
+ * parse-mode messages (quotes and apostrophes are safe inside tags here).
+ * Matches the `esc` helper in `telegramFormatter.ts` (not exported).
+ */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function resolveAppUrl(): string {
+  const raw = (process.env.APP_URL ?? "https://targenix.uz").trim();
+  return raw.replace(/\/$/, "");
+}
+
+/**
+ * Build the Uzbek alert body. `auth` and `permanently_missing` share the
+ * same template — both mean "the user needs to click Reconnect"; we
+ * don't expose the FB classifier distinction to end users.
+ */
+export function formatTokenDeadMessage(params: {
+  fbUserName: string;
+  errorType: "auth" | "validation" | "permanently_missing";
+  errorMessage: string;
+}): string {
+  const baseUrl = resolveAppUrl();
+  const fbUserNameSafe = escapeHtml(params.fbUserName?.trim() || "Facebook");
+  const errorMessageSafe = escapeHtml(params.errorMessage?.trim() || "");
+
+  if (params.errorType === "validation") {
+    return [
+      `⚠️ <b>Facebook token yangilashda xato</b>`,
+      ``,
+      `Akkaunt: <b>${fbUserNameSafe}</b>`,
+      `Sabab: ${errorMessageSafe || "—"}`,
+      ``,
+      `Sozlamalarni tekshiring yoki support bilan bog'laning.`,
+    ].join("\n");
+  }
+
+  // auth | permanently_missing — both mean "user must Reconnect".
+  return [
+    `🚫 <b>Facebook tokeningiz tugadi — qayta ulang</b>`,
+    ``,
+    `Akkaunt: <b>${fbUserNameSafe}</b>`,
+    `Holat: token bekor qilingan yoki muddati o'tgan`,
+    ``,
+    `Yangi lead'lar qabul qilish uchun:`,
+    `<a href="${baseUrl}/connections">${baseUrl}/connections</a> sahifasiga o'tib, Facebook'ni qayta ulang.`,
+    ``,
+    `⚠️ Reconnect qilmaguningizcha yangi lead'lar yetib kelmaydi.`,
+  ].join("\n");
+}
+
+/**
+ * Public-ish entry point. Fire-and-forget — every error is swallowed so
+ * the scheduler never gets blocked by a Telegram outage.
+ *
+ * Caller is responsible for deciding this account is dead (i.e. we've
+ * already classified as auth/validation/permanently_missing and
+ * UPDATEd `tokenExpiresAt`).
+ */
+export async function notifyTokenDead(params: {
+  userId: number;
+  fbAccountId: number;
+  fbUserName: string;
+  errorType: "auth" | "validation" | "permanently_missing";
+  errorMessage: string;
+}): Promise<void> {
+  try {
+    const won = await tryClaimNotifyWindow(params.userId, params.fbAccountId);
+    if (!won) {
+      // Inside the 24h cooldown — the user already got an alert about
+      // this fbAccount today. Stay silent.
+      return;
+    }
+
+    const db = await getDb();
+    if (!db) return;
+
+    const [userRow] = await db
+      .select({ telegramChatId: users.telegramChatId })
+      .from(users)
+      .where(eq(users.id, params.userId))
+      .limit(1);
+
+    const chatId = userRow?.telegramChatId?.trim();
+    if (!chatId) {
+      // User hasn't linked the system chat — we can't reach them via
+      // Telegram. The /connections badge is their only signal. The
+      // Redis slot stays claimed for the full 24h regardless; if they
+      // link their chat tomorrow, a NEW dead-token failure (uncommon
+      // unless the new token also dies) would alert them then.
+      await log.info(
+        "FACEBOOK",
+        "[FbTokenRefresh] User has no system Telegram chat — alert skipped",
+        { userId: params.userId, fbAccountId: params.fbAccountId },
+        null,
+        null,
+        params.userId,
+      );
+      return;
+    }
+
+    const message = formatTokenDeadMessage({
+      fbUserName: params.fbUserName,
+      errorType: params.errorType,
+      errorMessage: params.errorMessage,
+    });
+
+    const ok = await sendTelegramMessage(chatId, message, "HTML");
+    await log.info(
+      "FACEBOOK",
+      `[FbTokenRefresh] Telegram alert ${ok ? "sent" : "failed"}`,
+      {
+        userId: params.userId,
+        fbAccountId: params.fbAccountId,
+        errorType: params.errorType,
+      },
+      null,
+      null,
+      params.userId,
+    );
+  } catch (err) {
+    await log.error(
+      "FACEBOOK",
+      "[FbTokenRefresh] notifyTokenDead threw — alert not delivered",
+      {
+        userId: params.userId,
+        fbAccountId: params.fbAccountId,
+        errorType: params.errorType,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      null,
+      null,
+      params.userId,
+    );
+  }
 }
 
 /**
@@ -317,6 +557,12 @@ async function refreshOneAccount(
     })
     .where(eq(facebookAccounts.id, account.id));
 
+  // Recovery — DEL the throttle key so a *new* failure after this point
+  // re-fires the Telegram alert immediately instead of being silenced
+  // by the leftover 24h cooldown from the prior dead-token notification.
+  // Best-effort: Redis-down is silent (key would expire on its own).
+  void clearTokenRefreshThrottle(account.userId, account.id);
+
   result.refreshed++;
   await log.info(
     "FACEBOOK",
@@ -365,9 +611,6 @@ async function handleRefreshFailure(params: {
   // row as already-expired so the UI badge reads "Reconnect needed" and
   // the due-query skips it on future ticks (we never refresh expired
   // tokens — FB would reject anyway).
-  //
-  // Phase 2B will add a Telegram alert to the user's system chat from
-  // this branch.
   result.dead++;
   await db
     .update(facebookAccounts)
@@ -388,6 +631,32 @@ async function handleRefreshFailure(params: {
     null,
     account.userId,
   );
+
+  // Phase 2B — fire-and-forget Telegram alert to the user's system chat.
+  // `void` + `.catch` guarantees the alert can never throw into the
+  // per-account try/catch above; a Telegram outage must not stop the
+  // scheduler from processing other rows. The notifier itself swallows
+  // every error path internally too (belt + braces).
+  void notifyTokenDead({
+    userId: account.userId,
+    fbAccountId: account.id,
+    fbUserName: account.fbUserName,
+    errorType,
+    errorMessage: message,
+  }).catch(async (notifyErr) => {
+    await log.error(
+      "FACEBOOK",
+      `[FbTokenRefresh] notifyTokenDead unhandled rejection (non-fatal)`,
+      {
+        accountId: account.id,
+        userId: account.userId,
+        error: notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+      },
+      null,
+      null,
+      account.userId,
+    );
+  });
 }
 
 async function runTickGuarded(): Promise<void> {

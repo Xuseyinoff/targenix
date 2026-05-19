@@ -81,13 +81,51 @@ describe("fbTokenRefreshScheduler — correctness anchors", () => {
     expect(src).toMatch(/_running\s*=\s*false/);
   });
 
-  it("Phase 2A explicitly defers Telegram — the file references the followup, not the call", () => {
-    // Belt-and-braces: the scheduler must NOT import the Telegram surface
-    // in Phase 2A. The marker comment also helps Phase 2B grep for the
-    // dead-token branch later.
-    expect(src).not.toMatch(/from\s*"\.\.\/webhooks\/telegramWebhook"/);
-    expect(src).not.toMatch(/sendLeadErrorTelegramNotification/);
-    expect(src).toMatch(/Phase 2B/);
+  it("Phase 2B has wired the Telegram alert path on the dead-token branch", () => {
+    // Ratchet from Phase 2A: that sprint asserted the file did NOT import
+    // telegramWebhook. Phase 2B intentionally violates that — the scheduler
+    // now alerts the user when their token dies. If a future refactor
+    // accidentally drops the import, this test catches it.
+    expect(src).toMatch(/from\s*"\.\.\/webhooks\/telegramWebhook"/);
+    expect(src).toMatch(/sendTelegramMessage/);
+    // notifyTokenDead is the entry point and must be called void-fire-and-
+    // forget from the dead branch (so a Telegram outage can't crash the
+    // scheduler).
+    expect(src).toMatch(/void notifyTokenDead\(/);
+    // Recovery — the successful-refresh path must clear the throttle key
+    // so the next failure re-fires immediately.
+    expect(src).toMatch(/clearTokenRefreshThrottle\(/);
+  });
+});
+
+// ─── Phase 2B notifier contract ─────────────────────────────────────────────
+
+describe("notifyTokenDead — Redis throttle + system-chat target", () => {
+  const src = readSource("server/services/fbTokenRefreshScheduler.ts");
+
+  it("uses the documented Redis key shape: fb-token-refresh-fail:{userId}:{fbAccountId}", () => {
+    expect(src).toMatch(
+      /`fb-token-refresh-fail:\$\{userId\}:\$\{fbAccountId\}`/,
+    );
+  });
+
+  it("claims the throttle slot with SET NX EX 86400 (24h)", () => {
+    // Both the NX + the 86400 must survive a refactor. Without NX two
+    // ticks racing would each send a duplicate. Without 86400 the cooldown
+    // window drifts.
+    expect(src).toMatch(/FB_TOKEN_NOTIFY_TTL_SEC\s*=\s*24\s*\*\s*60\s*\*\s*60/);
+    // `"NX",` (trailing comma + newline) is the actual on-disk shape since
+    // the .set() call is multi-line — match the trailing comma as well.
+    expect(src).toMatch(/redis\.set\([\s\S]*?"NX"[\s,]*\)/);
+  });
+
+  it("fetches users.telegramChatId (system chat), NOT a destination's delivery chat", () => {
+    // The system chat is reserved for alerts/errors/stats (per
+    // telegramWebhook.ts /start docstring). Delivery chats belong to
+    // destinations and carry successful lead handoff — wrong audience.
+    expect(src).toMatch(/telegramChatId:\s*users\.telegramChatId/);
+    expect(src).not.toMatch(/destinations?\.telegramChatId/);
+    expect(src).not.toMatch(/integration\.telegramChatId/);
   });
 });
 

@@ -17,6 +17,12 @@ beforeEach(() => {
   process.env.FACEBOOK_APP_ID = "test-app-id";
   process.env.FACEBOOK_APP_SECRET = "test-app-secret";
   process.env.ENCRYPTION_KEY = "test-encryption-key-32chars-min-x";
+  // Default notifier mocks — every existing test indirectly exercises the
+  // dead-path Telegram path; without these stubs the scheduler would try
+  // to open a real Redis connection and timeout under `pnpm test`.
+  // Per-test overrides re-register the mocks via vi.doMock to capture
+  // assertion-relevant spies (see Phase 2B `notifyTokenDead` tests).
+  bindNotifierMocks();
 });
 
 afterEach(() => {
@@ -29,19 +35,25 @@ afterEach(() => {
 
 // ─── DB stub builder ────────────────────────────────────────────────────────
 //
-// The scheduler does:
-//   1. db.select().from(facebookAccounts).where(...).orderBy(...) → rows
-//   2. for each row: db.update(facebookAccounts).set({...}).where(...)
+// The scheduler has TWO select paths plus one update path:
+//   1. db.select().from(facebookAccounts).where(...).orderBy(...)   → work-queue rows
+//   2. db.select({...}).from(users).where(...).limit(1)              → notifier user lookup
+//   3. db.update(facebookAccounts).set({...}).where(...)             → refresh / mark-dead
 //
-// Stub both with chainable shapes that record what gets passed in.
+// The stub returns the facebookAccounts work-queue from .orderBy() and the
+// user row from .limit() — the calling code already knows which table it
+// asked for, so we keep the dispatch simple by serving both shapes from
+// the same `.where()` object.
 
 interface DbStub {
   rows: unknown[];
+  /** User row returned by the notifier's .limit(1) lookup. null/empty = no chat linked. */
+  userRow: { telegramChatId: string | null } | null;
   updates: Array<{ set: Record<string, unknown> }>;
 }
 
-function makeDb(initialRows: unknown[]): DbStub {
-  return { rows: initialRows, updates: [] };
+function makeDb(initialRows: unknown[], userRow: { telegramChatId: string | null } | null = null): DbStub {
+  return { rows: initialRows, userRow, updates: [] };
 }
 
 function bindDbMocks(stub: DbStub): void {
@@ -51,6 +63,7 @@ function bindDbMocks(stub: DbStub): void {
         from: () => ({
           where: () => ({
             orderBy: () => Promise.resolve(stub.rows),
+            limit: () => Promise.resolve(stub.userRow ? [stub.userRow] : []),
           }),
         }),
       }),
@@ -78,6 +91,33 @@ function bindEncryption(): void {
     decrypt: (s: string) => s,
     encrypt: (s: string) => s,
   }));
+}
+
+// ─── Redis + Telegram mocks ─────────────────────────────────────────────────
+//
+// Every Phase 2A-era test now indirectly exercises the Phase 2B notifier
+// (the dead-path tests call `notifyTokenDead`, which uses Redis + Telegram).
+// We pin both to safe defaults so existing tests don't trip; per-test
+// overrides go through `vi.hoisted` + reassigning the spies via the same
+// import.
+
+interface NotifierMocks {
+  redisSet: ReturnType<typeof vi.fn>;
+  redisDel: ReturnType<typeof vi.fn>;
+  telegramSend: ReturnType<typeof vi.fn>;
+}
+
+function bindNotifierMocks(): NotifierMocks {
+  const redisSet = vi.fn(async () => "OK" as string | null);
+  const redisDel = vi.fn(async () => 1);
+  const telegramSend = vi.fn(async () => true);
+  vi.doMock("../queues/redisConnection", () => ({
+    getRedisConnection: () => ({ set: redisSet, del: redisDel }),
+  }));
+  vi.doMock("../webhooks/telegramWebhook", () => ({
+    sendTelegramMessage: telegramSend,
+  }));
+  return { redisSet, redisDel, telegramSend };
 }
 
 // ─── Sample account row ─────────────────────────────────────────────────────
@@ -405,5 +445,279 @@ describe("startFbTokenRefreshScheduler — feature flag", () => {
 
     // Cleanup so the timer doesn't keep the test process alive.
     stopFbTokenRefreshScheduler();
+  });
+});
+
+// ─── Phase 2B — Telegram notification on dead tokens ────────────────────────
+
+describe("notifyTokenDead — Telegram alert path", () => {
+  it("sends to the user's system chat when chatId is set", async () => {
+    const stub = makeDb([], { telegramChatId: "555111" });
+    bindDbMocks(stub);
+    const m = bindNotifierMocks();
+
+    const { notifyTokenDead } = await import("./fbTokenRefreshScheduler");
+    await notifyTokenDead({
+      userId: 42,
+      fbAccountId: 60001,
+      fbUserName: "Test User",
+      errorType: "auth",
+      errorMessage: "Error validating access token",
+    });
+
+    expect(m.telegramSend).toHaveBeenCalledTimes(1);
+    expect(m.telegramSend.mock.calls[0]![0]).toBe("555111");
+    // Must use HTML parse mode so the <b> / <a> tags render correctly.
+    expect(m.telegramSend.mock.calls[0]![2]).toBe("HTML");
+  });
+
+  it("skips silently when the user has no system Telegram chat", async () => {
+    const stub = makeDb([], { telegramChatId: null });
+    bindDbMocks(stub);
+    const m = bindNotifierMocks();
+
+    const { notifyTokenDead } = await import("./fbTokenRefreshScheduler");
+    await notifyTokenDead({
+      userId: 42,
+      fbAccountId: 60001,
+      fbUserName: "Test User",
+      errorType: "auth",
+      errorMessage: "Error",
+    });
+
+    expect(m.telegramSend).not.toHaveBeenCalled();
+  });
+
+  it("skips silently when the chatId is whitespace-only", async () => {
+    const stub = makeDb([], { telegramChatId: "   " });
+    bindDbMocks(stub);
+    const m = bindNotifierMocks();
+
+    const { notifyTokenDead } = await import("./fbTokenRefreshScheduler");
+    await notifyTokenDead({
+      userId: 42,
+      fbAccountId: 60001,
+      fbUserName: "Test",
+      errorType: "auth",
+      errorMessage: "X",
+    });
+
+    expect(m.telegramSend).not.toHaveBeenCalled();
+  });
+});
+
+describe("notifyTokenDead — Redis throttle", () => {
+  it("claims the slot with SET … EX 86400 NX on first call", async () => {
+    const stub = makeDb([], { telegramChatId: "555111" });
+    bindDbMocks(stub);
+    const m = bindNotifierMocks();
+
+    const { notifyTokenDead } = await import("./fbTokenRefreshScheduler");
+    await notifyTokenDead({
+      userId: 42,
+      fbAccountId: 60001,
+      fbUserName: "Test",
+      errorType: "auth",
+      errorMessage: "X",
+    });
+
+    expect(m.redisSet).toHaveBeenCalledTimes(1);
+    const args = m.redisSet.mock.calls[0]!;
+    expect(args[0]).toBe("fb-token-refresh-fail:42:60001");
+    expect(args).toContain("EX");
+    expect(args).toContain(86400);
+    expect(args).toContain("NX");
+  });
+
+  it("skips Telegram when the throttle key already exists (within 24h cooldown)", async () => {
+    const stub = makeDb([], { telegramChatId: "555111" });
+    bindDbMocks(stub);
+    const m = bindNotifierMocks();
+    m.redisSet.mockResolvedValueOnce(null); // existing key — NX fails
+
+    const { notifyTokenDead } = await import("./fbTokenRefreshScheduler");
+    await notifyTokenDead({
+      userId: 42,
+      fbAccountId: 60001,
+      fbUserName: "Test",
+      errorType: "auth",
+      errorMessage: "X",
+    });
+
+    expect(m.redisSet).toHaveBeenCalledTimes(1);
+    expect(m.telegramSend).not.toHaveBeenCalled();
+  });
+
+  it("fails OPEN when Redis throws — sends the Telegram anyway", async () => {
+    const stub = makeDb([], { telegramChatId: "555111" });
+    bindDbMocks(stub);
+    const m = bindNotifierMocks();
+    m.redisSet.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+
+    const { notifyTokenDead } = await import("./fbTokenRefreshScheduler");
+    await notifyTokenDead({
+      userId: 42,
+      fbAccountId: 60001,
+      fbUserName: "Test",
+      errorType: "auth",
+      errorMessage: "X",
+    });
+
+    expect(m.telegramSend).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("recovery — successful refresh clears the throttle key", () => {
+  it("calls redis.del on the (userId, fbAccountId) throttle key after a successful refresh", async () => {
+    const stub = makeDb([
+      {
+        id: 7777,
+        userId: 9999,
+        fbUserId: "fb-9999",
+        fbUserName: "Recovered User",
+        accessToken: "old-token",
+        tokenExpiresAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000),
+        connectedAt: new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+    bindDbMocks(stub);
+    bindEncryption();
+    const m = bindNotifierMocks();
+    vi.doMock("./facebookGraphService", () => ({
+      exchangeForLongLivedToken: vi.fn().mockResolvedValue({
+        access_token: "fresh-token",
+        token_type: "bearer",
+        expires_in: 5_184_000,
+      }),
+    }));
+
+    const { runFbTokenRefreshTick } = await import("./fbTokenRefreshScheduler");
+    const result = await runFbTokenRefreshTick();
+
+    expect(result.refreshed).toBe(1);
+    // Wait a tick — the throttle clear is `void`'d (fire-and-forget), so
+    // it may complete one microtask after refreshOneAccount returns.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(m.redisDel).toHaveBeenCalledTimes(1);
+    expect(m.redisDel.mock.calls[0]![0]).toBe("fb-token-refresh-fail:9999:7777");
+  });
+
+  it("silently swallows Redis-down during throttle clear (best-effort recovery)", async () => {
+    const stub = makeDb([
+      {
+        id: 8888,
+        userId: 1234,
+        fbUserId: "fb-1234",
+        fbUserName: "User",
+        accessToken: "old",
+        tokenExpiresAt: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000),
+        connectedAt: new Date(),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
+    bindDbMocks(stub);
+    bindEncryption();
+    const m = bindNotifierMocks();
+    m.redisDel.mockRejectedValueOnce(new Error("Redis is down"));
+    vi.doMock("./facebookGraphService", () => ({
+      exchangeForLongLivedToken: vi.fn().mockResolvedValue({
+        access_token: "fresh",
+        token_type: "bearer",
+        expires_in: 5_184_000,
+      }),
+    }));
+
+    const { runFbTokenRefreshTick } = await import("./fbTokenRefreshScheduler");
+    // Must not throw — best-effort recovery means a Redis outage during
+    // throttle clear cannot break the refresh.
+    await expect(runFbTokenRefreshTick()).resolves.toMatchObject({ refreshed: 1 });
+  });
+});
+
+describe("formatTokenDeadMessage — Uzbek templates", () => {
+  it("auth template includes the Reconnect CTA + /connections link", async () => {
+    const { formatTokenDeadMessage } = await import("./fbTokenRefreshScheduler");
+    process.env.APP_URL = "https://example.com";
+    const msg = formatTokenDeadMessage({
+      fbUserName: "Test User",
+      errorType: "auth",
+      errorMessage: "Error validating access token",
+    });
+    expect(msg).toContain("Facebook tokeningiz tugadi");
+    expect(msg).toContain("Test User");
+    expect(msg).toContain('href="https://example.com/connections"');
+    expect(msg).toContain("Reconnect");
+    delete process.env.APP_URL;
+  });
+
+  it("permanently_missing uses the same template as auth (both → user must Reconnect)", async () => {
+    const { formatTokenDeadMessage } = await import("./fbTokenRefreshScheduler");
+    const msgAuth = formatTokenDeadMessage({
+      fbUserName: "X",
+      errorType: "auth",
+      errorMessage: "Y",
+    });
+    const msgPerm = formatTokenDeadMessage({
+      fbUserName: "X",
+      errorType: "permanently_missing",
+      errorMessage: "Y",
+    });
+    expect(msgAuth).toEqual(msgPerm);
+  });
+
+  it("validation uses a different template and quotes the FB error verbatim", async () => {
+    const { formatTokenDeadMessage } = await import("./fbTokenRefreshScheduler");
+    const msg = formatTokenDeadMessage({
+      fbUserName: "Test",
+      errorType: "validation",
+      errorMessage: "Some of the aliases you requested do not exist",
+    });
+    expect(msg).toContain("yangilashda xato");
+    expect(msg).toContain("Some of the aliases you requested do not exist");
+    expect(msg).not.toContain("Reconnect");
+  });
+
+  it("escapes HTML characters in fbUserName", async () => {
+    const { formatTokenDeadMessage } = await import("./fbTokenRefreshScheduler");
+    const msg = formatTokenDeadMessage({
+      fbUserName: "<script>alert(1)</script>",
+      errorType: "auth",
+      errorMessage: "x",
+    });
+    expect(msg).toContain("&lt;script&gt;");
+    expect(msg).not.toContain("<script>alert(1)</script>");
+  });
+
+  it("escapes HTML characters in errorMessage (validation template)", async () => {
+    const { formatTokenDeadMessage } = await import("./fbTokenRefreshScheduler");
+    const msg = formatTokenDeadMessage({
+      fbUserName: "User",
+      errorType: "validation",
+      errorMessage: "<b>bold</b> & < > chars",
+    });
+    expect(msg).toContain("&lt;b&gt;bold&lt;/b&gt;");
+    expect(msg).toContain("&amp;");
+  });
+
+  it("falls back to 'Facebook' when fbUserName is empty", async () => {
+    const { formatTokenDeadMessage } = await import("./fbTokenRefreshScheduler");
+    const msg = formatTokenDeadMessage({
+      fbUserName: "",
+      errorType: "auth",
+      errorMessage: "x",
+    });
+    expect(msg).toContain("Facebook");
+  });
+});
+
+describe("fbTokenRefreshFailKey — key shape", () => {
+  it("namespaces by user + fbAccount", async () => {
+    const { fbTokenRefreshFailKey } = await import("./fbTokenRefreshScheduler");
+    expect(fbTokenRefreshFailKey(42, 60001)).toBe("fb-token-refresh-fail:42:60001");
+    expect(fbTokenRefreshFailKey(99, 60001)).toBe("fb-token-refresh-fail:99:60001");
+    expect(fbTokenRefreshFailKey(42, 60002)).toBe("fb-token-refresh-fail:42:60002");
   });
 });
