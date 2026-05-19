@@ -224,6 +224,13 @@ export async function markOAuthConnectionExpired(
 
 interface UpsertTelegramConnectionInput {
   userId: number;
+  /**
+   * App-catalogue key for this connection — telegram-bot connections always
+   * pass the literal `"telegram"`. Kept `string | null` to match the column
+   * (nullable for legacy rows; new rows always populate it). Passing `null`
+   * is a deliberate escape hatch the codebase doesn't currently use.
+   */
+  appKey: string | null;
   displayName: string;
   /** Encrypted bot token — caller is responsible for running encrypt(). */
   botTokenEncrypted: string;
@@ -248,6 +255,7 @@ export async function insertTelegramConnection(
   const [inserted] = await db.insert(connections).values({
     userId: input.userId,
     type: validateConnectionType("telegram_bot"),
+    appKey: input.appKey,
     displayName,
     status: "active",
     credentialsJson: {
@@ -269,6 +277,15 @@ interface InsertApiKeyConnectionInput {
   userId: number;
   /** Must be a valid destination_templates.id; verified by the caller. */
   templateId: number;
+  /**
+   * Denormalized from `destination_templates.appKey` at insert time. Kept
+   * `string | null` because the column is nullable for legacy rows — all
+   * current templates have a non-null `appKey`, but a hypothetical template
+   * without one would still insert cleanly and surface as a NULL row that
+   * the cascade-delete sibling logic skips (same behaviour as the pre-fix
+   * world for that single row, instead of breaking the whole insert).
+   */
+  appKey: string | null;
   /** Label shown in the /connections list, e.g. "Sotuvchi main key". */
   displayName: string;
   /**
@@ -291,6 +308,7 @@ export async function insertApiKeyConnection(
   const [inserted] = await db.insert(connections).values({
     userId: input.userId,
     type: validateConnectionType("api_key"),
+    appKey: input.appKey,
     displayName,
     status: "active",
     credentialsJson: {

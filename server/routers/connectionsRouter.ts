@@ -921,6 +921,10 @@ export const connectionsRouter = router({
 
       const id = await insertTelegramConnection(db, {
         userId: ctx.user.id,
+        // Telegram is its own app in the catalogue — every telegram_bot
+        // connection gets the literal `"telegram"` appKey so the cascade-
+        // delete sibling lookup (see PR 3 / c3a819a) can group them.
+        appKey: "telegram",
         displayName: input.displayName,
         botTokenEncrypted: encrypt(input.botToken),
         chatId: input.chatId,
@@ -1010,6 +1014,10 @@ export const connectionsRouter = router({
           name: destinationTemplates.name,
           isActive: destinationTemplates.isActive,
           userVisibleFields: destinationTemplates.userVisibleFields,
+          // Needed for the appKey-on-insert fix — the canonical app-catalogue
+          // key is denormalized onto every connection so the cascade-delete
+          // sibling lookup (PR 3 / c3a819a) can group rows by app.
+          appKey: destinationTemplates.appKey,
         })
         .from(destinationTemplates)
         .where(eq(destinationTemplates.id, input.templateId))
@@ -1050,6 +1058,11 @@ export const connectionsRouter = router({
       const id = await insertApiKeyConnection(db, {
         userId,
         templateId: tpl.id,
+        // Propagates the canonical app-catalogue key at insert time so the
+        // cascade-delete sibling lookup (PR 3 / c3a819a) can group these
+        // connections. Pre-fix, 41 of 57 api_key rows in prod ended up
+        // with appKey=NULL because nothing wrote it on the insert path.
+        appKey: tpl.appKey,
         displayName: input.displayName,
         secretsEncrypted,
       });

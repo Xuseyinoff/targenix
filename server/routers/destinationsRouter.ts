@@ -41,7 +41,6 @@ import {
 } from "../integrations/dynamicTemplateSource";
 import type { Connection } from "../../drizzle/schema";
 import { checkUserRateLimit } from "../lib/userRateLimit";
-import { insertApiKeyConnection } from "../services/connectionService";
 
 async function validateTargetUrl(url: string): Promise<void> {
   await assertSafeOutboundUrl(url);

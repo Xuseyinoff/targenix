@@ -125,6 +125,7 @@ describe("connectionService.insertTelegramConnection", () => {
 
     const id = await insertTelegramConnection(db, {
       userId: 1,
+      appKey: "telegram",
       displayName: "SalesBot",
       botTokenEncrypted: "enc:xxxx",
       chatId: "-100123",
