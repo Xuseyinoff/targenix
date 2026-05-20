@@ -815,6 +815,16 @@ async function syncOneHundredKAccount(
 
         const terminal = isFinalStatus(normalized);
         const statusChanged = normalized !== match.crmStatus;
+        // Phase 3.1: 100k.uz bulk feed now returns SUM(order_items[].to_withdraw)
+        // as payoutAmount + "UZS" currency on every row (verified 2026-05-20).
+        // Mirror the Sotuvchi pattern: write payoutAmount whenever the parser
+        // captured it. The skip-when-unchanged guard above means historic rows
+        // whose status never changes after this PR ships won't get backfilled
+        // here — the tooling/backfill-100k-payouts.mjs one-shot covers those.
+        const payoutPatch =
+          ho.payoutAmount != null && ho.payoutCurrency
+            ? { payoutAmount: ho.payoutAmount, payoutCurrency: ho.payoutCurrency }
+            : {};
         await db
           .update(orders)
           .set({
@@ -822,6 +832,7 @@ async function syncOneHundredKAccount(
             crmRawStatus: ho.status,
             crmSyncedAt: new Date(),
             ...(statusChanged ? { isFinal: terminal } : {}),
+            ...payoutPatch,
           })
           .where(eq(orders.id, match.orderId));
         if (statusChanged) {

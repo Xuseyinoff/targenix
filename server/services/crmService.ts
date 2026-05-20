@@ -220,23 +220,51 @@ async function hundredKGetOrderStatus(
     timeout: 10_000,
   });
 
-  const raw: string =
-    res.data?.data?.status ??
-    res.data?.order?.status ??
-    res.data?.status ??
-    "";
+  const orderObj =
+    (res.data?.data && typeof res.data.data === "object" && !Array.isArray(res.data.data)
+      ? res.data.data
+      : null) ??
+    (res.data?.order && typeof res.data.order === "object" && !Array.isArray(res.data.order)
+      ? res.data.order
+      : null) ??
+    res.data ??
+    {};
+  const raw: string = (orderObj as { status?: string }).status ?? "";
 
-  // 100k.uz response shape not yet probed for payout — Phase 3.1 once a
-  // delivered 100k order is available to inspect. Returning null (rather
-  // than omitting the field) keeps the downstream sync from confusing
-  // "not yet checked" with "checked and absent" when destructuring.
+  // 100k.uz pays the advertiser via `order_items[].to_withdraw` — the
+  // committed payout per line item, set from order creation through every
+  // status. SUM across items to get the per-order payout. Phase 1 probe
+  // verified the field is on every status (not gated on delivered), so
+  // capturing it here also feeds the Pipeline KPI in Insights.
+  const payoutAmount = sumOrderItemsToWithdraw(orderObj);
   return {
     externalId: orderId,
     status: mapHundredKRawToNormalized(raw),
     rawStatus: raw,
-    payoutAmount: null,
-    payoutCurrency: null,
+    payoutAmount,
+    payoutCurrency: payoutAmount !== null ? "UZS" : null,
   };
+}
+
+/**
+ * SUM(order_items[].to_withdraw) — the committed advertiser payout for a
+ * 100k.uz order. `to_withdraw` is an integer UZS so'm value, set on every
+ * status (verified via Phase 1 probe 2026-05-20). Returns null when the
+ * row has no items or the sum is 0 — keeps the downstream "null = not
+ * captured" semantic intact so the rollup writer's `payoutAmount IS NOT
+ * NULL` filter excludes uncommitted rows.
+ */
+function sumOrderItemsToWithdraw(orderObj: unknown): number | null {
+  const obj = orderObj as { order_items?: unknown };
+  const items = Array.isArray(obj?.order_items) ? obj.order_items : [];
+  if (items.length === 0) return null;
+  let sum = 0;
+  for (const item of items) {
+    const v = (item as { to_withdraw?: unknown })?.to_withdraw;
+    const n = typeof v === "number" ? v : parseInt(String(v ?? ""), 10);
+    if (Number.isFinite(n) && n > 0) sum += Math.round(n);
+  }
+  return sum > 0 ? sum : null;
 }
 
 /**
@@ -272,11 +300,22 @@ export async function hundredKGetAdvertiserOrdersPage(
   const rows = res.data?.data ?? [];
   const meta = res.data?.meta ?? {};
   return {
-    data: (rows as Record<string, unknown>[]).map((item) => ({
-      id: Number(item.id),
-      status: String(item.status ?? ""),
-      created_at: String(item.created_at ?? ""),
-    })),
+    data: (rows as Record<string, unknown>[]).map((item) => {
+      // Phase 3.1: 100k.uz bulk feed returns the same rich row shape as
+      // the single-order endpoint (verified 2026-05-20). SUM
+      // order_items[].to_withdraw to populate payoutAmount; UZS always.
+      // The bulk sync writes payoutAmount on every status, so the Pipeline
+      // KPI in Insights gets data for in-flight orders too — matches the
+      // Sotuvchi pattern.
+      const payoutAmount = sumOrderItemsToWithdraw(item);
+      return {
+        id: Number(item.id),
+        status: String(item.status ?? ""),
+        created_at: String(item.created_at ?? ""),
+        payoutAmount,
+        payoutCurrency: payoutAmount !== null ? "UZS" : null,
+      };
+    }),
     current_page: Number(meta.current_page ?? page),
     last_page: Number(meta.last_page ?? page),
     total: Number(meta.total ?? 0),
