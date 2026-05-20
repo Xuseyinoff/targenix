@@ -325,11 +325,16 @@ export const insightsRouter = router({
         return emptyCampaignBreakdown(input.campaignId);
       }
 
-      // Date range → inclusive UTC day boundaries. `leads.createdAt` is
-      // TIMESTAMP — compare against the exact bounds so the upper limit
-      // includes the whole `end` day.
-      const startTs = new Date(input.start + "T00:00:00Z");
-      const endTs = new Date(input.end + "T23:59:59.999Z");
+      // Date range → inclusive Asia/Tashkent day boundaries. The frontend
+      // sends Tashkent dates, the rollup buckets by Tashkent day (CONVERT_TZ
+      // in insightsRollupScheduler.ts), so the drill-down must convert the
+      // YYYY-MM-DD strings to Tashkent midnight UTC instants — otherwise the
+      // 00:00–04:59 Tashkent slice would fall outside this window and the
+      // drill-down counts would disagree with the parent rollup by up to 5h.
+      // Tashkent is UTC+5 (no DST), so Tashkent 00:00 = UTC −05:00 the same
+      // calendar day; encode as the "-05:00" wall-clock offset.
+      const startTs = new Date(input.start + "T00:00:00+05:00");
+      const endTs = new Date(input.end + "T23:59:59.999+05:00");
 
       // 1) Campaign name + lead count + currency. campaignName lives on
       //    leads (denormalized from FB sync); we pick the freshest non-

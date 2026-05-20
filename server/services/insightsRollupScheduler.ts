@@ -70,17 +70,25 @@ let running = false;
 
 /**
  * Compute YYYY-MM-DD strings for the rebuild window, ending at "today" in
- * UTC. We use UTC consistently because leads.createdAt is stored in UTC
- * (MySQL TIMESTAMP) and DATE() returns its UTC date; mixing local
- * timezones here would silently mis-bucket rows around midnight.
+ * Asia/Tashkent (UTC+5). The whole insights pipeline buckets by the
+ * marketer's local day — leads.createdAt is stored in UTC but the
+ * rebuildOneDay SQL CONVERT_TZ's it to +05:00 before applying DATE(),
+ * and the frontend rangeFor sends Tashkent dates too. Picking dates here
+ * with `today` defined as Tashkent's current calendar day keeps the
+ * scheduler in lockstep with the read path — picking a UTC date would
+ * silently miss the 05:00–23:59 UTC range of "Tashkent today" until the
+ * next tick crossed UTC midnight.
  */
+const TZ_OFFSET_HOURS = 5; // Asia/Tashkent — no DST since 1992.
+function tashkentDayStr(d: Date): string {
+  const shifted = new Date(d.getTime() + TZ_OFFSET_HOURS * 60 * 60 * 1000);
+  return shifted.toISOString().slice(0, 10);
+}
 function rebuildDates(windowDays: number): string[] {
   const out: string[] = [];
-  const today = new Date();
+  const now = new Date();
   for (let i = 0; i < windowDays; i++) {
-    const d = new Date(today);
-    d.setUTCDate(d.getUTCDate() - i);
-    out.push(d.toISOString().slice(0, 10));
+    out.push(tashkentDayStr(new Date(now.getTime() - i * 86_400_000)));
   }
   return out;
 }
@@ -269,14 +277,14 @@ async function rebuildOneDay(
         SELECT userId, campaignId, COUNT(DISTINCT id) AS totalLeads
           FROM leads
          WHERE userId = ${userId}
-           AND DATE(createdAt) = ${date}
+           AND DATE(CONVERT_TZ(createdAt, '+00:00', '+05:00')) = ${date}
            AND campaignId IS NOT NULL
            AND campaignId != ''
          GROUP BY userId, campaignId
       ) clt              ON clt.userId       = l.userId
                          AND clt.campaignId   = l.campaignId
       WHERE l.userId = ${userId}
-        AND DATE(l.createdAt) = ${date}
+        AND DATE(CONVERT_TZ(l.createdAt, '+00:00', '+05:00')) = ${date}
       GROUP BY
         l.userId,
         bmId, adAccountId,
@@ -323,7 +331,8 @@ async function runRollup(opts: { forceFullWindow?: boolean } = {}): Promise<void
     const activeUsers = (await db.execute(sql`
       SELECT DISTINCT u.id AS userId, COALESCE(u.baseCurrency, 'USD') AS currency
       FROM users u
-      JOIN leads l ON l.userId = u.id AND DATE(l.createdAt) >= ${earliest}
+      JOIN leads l ON l.userId = u.id
+        AND DATE(CONVERT_TZ(l.createdAt, '+00:00', '+05:00')) >= ${earliest}
     `)) as unknown as Array<{ userId: number; currency: string }> | [Array<{ userId: number; currency: string }>, unknown];
 
     const rows = Array.isArray(activeUsers[0])

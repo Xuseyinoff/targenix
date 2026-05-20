@@ -38,14 +38,21 @@ import { StatusBar } from "@/components/insights/StatusBar";
 // ── Date range presets (kept local — small enough not to need a util) ────────
 type PresetKey = "today" | "yesterday" | "last_7d" | "last_30d";
 
+// All Insights data is bucketed by Asia/Tashkent day (UTC+5, no DST since
+// 1992). Picking "today" relative to UTC would silently mean "yesterday in
+// Tashkent" for the first 5 hours after local midnight. We anchor on the
+// marketer's wall-clock day so the row that comes back actually corresponds
+// to what they perceive as today/yesterday/last 7 days. The rollup writer
+// matches by CONVERT_TZ-ing leads.createdAt to +05:00 before DATE().
+const TZ_OFFSET_HOURS = 5;
+function tashkentToday(d: Date = new Date()): string {
+  const shifted = new Date(d.getTime() + TZ_OFFSET_HOURS * 60 * 60 * 1000);
+  return shifted.toISOString().slice(0, 10);
+}
 function rangeFor(preset: PresetKey): { start: string; end: string; label: string } {
-  const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
-  const dayShift = (n: number) => {
-    const d = new Date(today);
-    d.setUTCDate(d.getUTCDate() - n);
-    return d.toISOString().slice(0, 10);
-  };
+  const now = new Date();
+  const todayStr = tashkentToday(now);
+  const dayShift = (n: number) => tashkentToday(new Date(now.getTime() - n * 86_400_000));
   switch (preset) {
     case "today":     return { start: todayStr,    end: todayStr,    label: "Today" };
     case "yesterday": return { start: dayShift(1), end: dayShift(1), label: "Yesterday" };
