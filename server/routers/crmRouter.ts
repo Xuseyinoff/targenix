@@ -602,50 +602,32 @@ export async function performPaginationSync(): Promise<SyncResult> {
 
 // ─── 100k.uz pagination sync (bulk list → match DB orders by external id) ───────
 
-export async function performPaginationSync100k(): Promise<SyncResult> {
-  const db = await getDb();
-  if (!db) throw new Error("DB unavailable");
-
-  const [acc] = await db
-    .select()
-    .from(crmConnections)
-    .where(eq(crmConnections.platform, "100k"))
-    .limit(1);
-
-  if (!acc) {
-    return {
-      synced: 0,
-      errors: 0,
-      total: 0,
-      syncedAt: new Date().toISOString(),
-      message: "100k.uz akkaunt topilmadi",
-    };
-  }
-
+/**
+ * Sync one 100k.uz crm_connections account. Walks that account's
+ * advertiser-orders feed and updates ONLY orders belonging to destinations
+ * owned by `acc.userId`. Each Targenix user has their own 100k.uz advertiser
+ * profile (separate api_key + bearer), so without per-user scoping the sync
+ * sees only the account whose bearer token it holds.
+ */
+async function syncOneHundredKAccount(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  acc: typeof crmConnections.$inferSelect,
+): Promise<{ synced: number; errors: number; pagesProcessed: number; apiReportedTotal: number; message?: string }> {
   const profileId = acc.platformUserId?.trim();
   if (!profileId) {
-    return {
-      synced: 0,
-      errors: 0,
-      total: 0,
-      syncedAt: new Date().toISOString(),
-      message: "100k platformUserId bo'sh",
-    };
+    return { synced: 0, errors: 0, pagesProcessed: 0, apiReportedTotal: 0, message: `platformUserId bo'sh (acc=${acc.id})` };
   }
 
-  // Per-account circuit breaker — see performPaginationSync (sotuvchi) for rationale.
   const skip = shouldSkipCrmAccount(acc.id);
   if (skip.skip) {
-    console.warn(`[PaginationSync/100k] Skipping 100k account ${acc.id} — ${skip.reason}`);
-    return {
-      synced: 0,
-      errors: 0,
-      total: 0,
-      syncedAt: new Date().toISOString(),
-      message: `Skipped: ${skip.reason}`,
-    };
+    console.warn(`[PaginationSync/100k] Skipping 100k account ${acc.id} (user ${acc.userId}) — ${skip.reason}`);
+    return { synced: 0, errors: 0, pagesProcessed: 0, apiReportedTotal: 0, message: `Skipped: ${skip.reason}` };
   }
 
+  // Stop boundary is per-user: walk back until the oldest pending order
+  // belonging to THIS user. With one shared boundary across users the loop
+  // would chase an unreachable depth set by whichever user has the oldest
+  // backlog.
   const [oldestRow] = await db
     .select({ createdAt: orders.createdAt })
     .from(orders)
@@ -657,6 +639,7 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
         eq(orders.isFinal, false),
         isNotNull(orders.responseData),
         eq(destinations.appKey, "100k"),
+        eq(destinations.userId, acc.userId),
       ),
     )
     .orderBy(asc(orders.createdAt))
@@ -666,7 +649,7 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
     ? new Date(oldestRow.createdAt.getTime() - 24 * 60 * 60 * 1000)
     : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-  console.log(`[PaginationSync/100k] Stop boundary: ${stopBefore.toISOString()}`);
+  console.log(`[PaginationSync/100k] acc=${acc.id} user=${acc.userId} profile=${profileId} stopBefore=${stopBefore.toISOString()}`);
 
   let bearerToken = decrypt(acc.bearerTokenEncrypted);
   let page = 1;
@@ -674,18 +657,9 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
   let errors = 0;
   let pagesProcessed = 0;
   let consecutiveErrors = 0;
-  /** From API `meta.total` on first page — total advertiser orders ever. */
   let apiReportedTotal = 0;
 
-  syncState.progress = { current: 0, total: 0, platform: "100k", rateLimited: false };
-
-  // The advertiser-orders feed is sorted by created_at DESC across ALL
-  // statuses (the `lead_source_grouped` parameter is required but does not
-  // actually filter — verified empirically against api.100k.uz). One pass
-  // walks newest-first; we stop as soon as we cross the oldest pending DB
-  // order's created_at, OR when the safety cap fires.
   while (!syncState.aborted) {
-    // Daily request budget — bail out if we've already burned today's quota.
     const budget = hundredKBudgetCheck();
     if (!budget.allowed) {
       console.warn(
@@ -708,7 +682,7 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
           const password = decrypt(acc.passwordEncrypted);
           const r = await crmLogin("100k", acc.phone, password);
           bearerToken = r.bearerToken;
-          await db!.update(crmConnections)
+          await db.update(crmConnections)
             .set({
               bearerTokenEncrypted: encrypt(r.bearerToken),
               status: "active",
@@ -725,7 +699,7 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
         if (axiosErr?.response?.status === 429) {
           const pauseMs = hundredK429BackoffMs(err);
           console.warn(
-            `[PaginationSync/100k] 429 on page ${page} — pausing ${pauseMs / 1000}s`,
+            `[PaginationSync/100k] 429 on page ${page} (acc=${acc.id}) — pausing ${pauseMs / 1000}s`,
           );
           if (syncState.progress) syncState.progress.rateLimited = true;
           await new Promise((r) => setTimeout(r, pauseMs));
@@ -741,18 +715,17 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
       });
     } catch (err) {
       console.error(
-        `[PaginationSync/100k] Failed on page ${page}:`,
+        `[PaginationSync/100k] acc=${acc.id} failed on page ${page}:`,
         err instanceof Error ? err.message : err,
       );
       errors++;
       consecutiveErrors++;
       if (consecutiveErrors >= HUNDREDK_CIRCUIT_BREAKER_HITS) {
         console.warn(
-          `[PaginationSync/100k] Circuit breaker tripped (${consecutiveErrors} consecutive errors) — bailing out`,
+          `[PaginationSync/100k] Circuit breaker tripped for acc=${acc.id} (${consecutiveErrors} consecutive errors) — bailing out`,
         );
         break;
       }
-      // Skip this page, try next — long pause first so we don't hammer the API
       await hundredKPagePause(HUNDREDK_PAGE_DELAY_MS * 3, HUNDREDK_PAGE_JITTER_MS);
       page++;
       continue;
@@ -764,14 +737,13 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
     if (page === 1) {
       apiReportedTotal = pageResult.total > 0 ? pageResult.total : 0;
       console.log(
-        `[PaginationSync/100k] ${pageResult.total.toLocaleString()} orders (API), ${pageResult.last_page.toLocaleString()} sahifa`,
+        `[PaginationSync/100k] acc=${acc.id} ${pageResult.total.toLocaleString()} orders (API), ${pageResult.last_page.toLocaleString()} sahifa`,
       );
       if (syncState.progress) syncState.progress.total = pageResult.last_page;
     }
     if (syncState.progress) syncState.progress.current = page;
 
     const externalIds = pageResult.data.map((o) => String(o.id));
-    /** Align with `extractExternalOrderId` (100k API shape varies). */
     const externalIdExpr = sql<string>`COALESCE(
       NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.id')), ''),
       NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.order_id')), ''),
@@ -787,6 +759,10 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
       NULLIF(JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.body.order.id')), '')
     )`;
     try {
+      // Scope match query to this account's user — without this, an account's
+      // bearer token would silently update orders belonging to OTHER Targenix
+      // users that happen to share the same 100k order_id (which can happen
+      // because 100k.uz returns an existing order_id for duplicate phones).
       const matches = await db
         .select({
           orderId: orders.id,
@@ -801,6 +777,7 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
         .where(
           and(
             eq(destinations.appKey, "100k"),
+            eq(destinations.userId, acc.userId),
             eq(orders.isFinal, false),
             isNotNull(orders.responseData),
             sql`${externalIdExpr} IN (${sql.join(
@@ -835,7 +812,7 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
           .where(eq(orders.id, match.orderId));
         if (statusChanged) {
           console.log(
-            `[PaginationSync/100k] orderId=${match.orderId}: ${match.crmStatus ?? "null"} → ${normalized}${terminal ? " [FINAL]" : ""}`,
+            `[PaginationSync/100k] acc=${acc.id} orderId=${match.orderId}: ${match.crmStatus ?? "null"} → ${normalized}${terminal ? " [FINAL]" : ""}`,
           );
           void db
             .insert(orderEvents)
@@ -852,7 +829,7 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
       }
     } catch (err) {
       console.error(
-        `[PaginationSync/100k] DB error on page ${page}:`,
+        `[PaginationSync/100k] acc=${acc.id} DB error on page ${page}:`,
         err instanceof Error ? err.message : err,
       );
       errors++;
@@ -860,25 +837,23 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
 
     pagesProcessed++;
 
-    // Periodic progress so a long backfill is visible in the logs without
-    // having to wait for status changes to fire the per-order line.
     if (pagesProcessed % 25 === 0) {
       console.log(
-        `[PaginationSync/100k] Progress page=${page}, oldestOnPage=${pageResult.data.at(-1)!.created_at}, synced=${synced}`,
+        `[PaginationSync/100k] acc=${acc.id} progress page=${page}, oldestOnPage=${pageResult.data.at(-1)!.created_at}, synced=${synced}`,
       );
     }
 
     const oldestOnPage = new Date(pageResult.data.at(-1)!.created_at);
     if (oldestOnPage < stopBefore) {
       console.log(
-        `[PaginationSync/100k] Stop boundary at page ${page} (oldest=${oldestOnPage.toISOString()}, stopBefore=${stopBefore.toISOString()}) — done`,
+        `[PaginationSync/100k] acc=${acc.id} stop boundary at page ${page} (oldest=${oldestOnPage.toISOString()}, stopBefore=${stopBefore.toISOString()}) — done`,
       );
       break;
     }
     if (page >= pageResult.last_page) break;
     if (page >= HUNDREDK_MAX_PAGES_PER_CYCLE) {
       console.warn(
-        `[PaginationSync/100k] Hit max-pages cap (${HUNDREDK_MAX_PAGES_PER_CYCLE}) at oldest=${oldestOnPage.toISOString()} — bailing for next cycle`,
+        `[PaginationSync/100k] acc=${acc.id} hit max-pages cap (${HUNDREDK_MAX_PAGES_PER_CYCLE}) at oldest=${oldestOnPage.toISOString()} — bailing for next cycle`,
       );
       break;
     }
@@ -889,24 +864,72 @@ export async function performPaginationSync100k(): Promise<SyncResult> {
     }
   }
 
-  const scannedApprox =
-    apiReportedTotal > 0
-      ? apiReportedTotal
-      : pagesProcessed * HUNDREDK_FALLBACK_PAGE_ROWS;
-
-  const result: SyncResult = {
-    synced,
-    errors,
-    total: scannedApprox,
-    syncedAt: new Date().toISOString(),
-    message: `${pagesProcessed} sahifa (100k), ${synced} order yangilandi`,
-  };
   if (errors > 0 && synced === 0) {
     recordCrmFailure(acc.id);
   } else {
     recordCrmSuccess(acc.id);
   }
-  console.log(`[PaginationSync/100k] Done — pages=${pagesProcessed} synced=${synced} errors=${errors}`);
+
+  console.log(`[PaginationSync/100k] acc=${acc.id} user=${acc.userId} done — pages=${pagesProcessed} synced=${synced} errors=${errors}`);
+  return { synced, errors, pagesProcessed, apiReportedTotal };
+}
+
+export async function performPaginationSync100k(): Promise<SyncResult> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  // Iterate ALL active 100k accounts (one per Targenix user) — earlier code
+  // picked LIMIT 1, which meant only that user's orders ever synced. Other
+  // users' destinations push to their own 100k profiles with their own
+  // api_keys; the shared bearer can't see those orders.
+  const accounts = await db
+    .select()
+    .from(crmConnections)
+    .where(
+      and(
+        eq(crmConnections.platform, "100k"),
+        eq(crmConnections.status, "active"),
+      ),
+    );
+
+  if (accounts.length === 0) {
+    return {
+      synced: 0,
+      errors: 0,
+      total: 0,
+      syncedAt: new Date().toISOString(),
+      message: "100k.uz akkaunt topilmadi",
+    };
+  }
+
+  syncState.progress = { current: 0, total: 0, platform: "100k", rateLimited: false };
+
+  let totalSynced = 0;
+  let totalErrors = 0;
+  let totalPages = 0;
+  let aggApiReported = 0;
+
+  for (const acc of accounts) {
+    if (syncState.aborted) break;
+    const { synced, errors, pagesProcessed, apiReportedTotal } =
+      await syncOneHundredKAccount(db, acc);
+    totalSynced += synced;
+    totalErrors += errors;
+    totalPages += pagesProcessed;
+    aggApiReported += apiReportedTotal;
+  }
+
+  const scannedApprox =
+    aggApiReported > 0 ? aggApiReported : totalPages * HUNDREDK_FALLBACK_PAGE_ROWS;
+
+  const result: SyncResult = {
+    synced: totalSynced,
+    errors: totalErrors,
+    total: scannedApprox,
+    syncedAt: new Date().toISOString(),
+    message: `${accounts.length} akkaunt, ${totalPages} sahifa (100k), ${totalSynced} order yangilandi`,
+  };
+  console.log(`[PaginationSync/100k] all-accounts done — accounts=${accounts.length} pages=${totalPages} synced=${totalSynced} errors=${totalErrors}`);
   return result;
 }
 
