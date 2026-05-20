@@ -387,35 +387,25 @@ async function hundredKPagePause(base: number, jitter: number): Promise<void> {
   await new Promise((r) => setTimeout(r, ms));
 }
 
-export async function performPaginationSync(): Promise<SyncResult> {
-  const db = await getDb();
-  if (!db) throw new Error("DB unavailable");
-
-  const [acc] = await db
-    .select()
-    .from(crmConnections)
-    .where(eq(crmConnections.platform, "sotuvchi"))
-    .limit(1);
-
-  if (!acc) {
-    return { synced: 0, errors: 0, total: 0, syncedAt: new Date().toISOString(), message: "Sotuvchi akkaunt topilmadi" };
-  }
-
-  // Per-account circuit breaker — skip the entire sync if the CRM has been
-  // failing repeatedly. Prevents hammering a flapping endpoint every 5 min.
+/**
+ * Sync one Sotuvchi crm_connections account. Walks that account's
+ * /getOrders feed and updates ONLY orders belonging to destinations
+ * owned by `acc.userId`. Each Targenix user has their own Sotuvchi
+ * webmaster account (separate platformUserId + bearer), so without
+ * per-user scoping the sync sees only one account's orders.
+ */
+async function syncOneSotuvchiAccount(
+  db: NonNullable<Awaited<ReturnType<typeof getDb>>>,
+  acc: typeof crmConnections.$inferSelect,
+): Promise<{ synced: number; errors: number; pagesProcessed: number; message?: string }> {
   const skip = shouldSkipCrmAccount(acc.id);
   if (skip.skip) {
-    console.warn(`[PaginationSync] Skipping sotuvchi account ${acc.id} — ${skip.reason}`);
-    return {
-      synced: 0,
-      errors: 0,
-      total: 0,
-      syncedAt: new Date().toISOString(),
-      message: `Skipped: ${skip.reason}`,
-    };
+    console.warn(`[PaginationSync] Skipping sotuvchi account ${acc.id} (user ${acc.userId}) — ${skip.reason}`);
+    return { synced: 0, errors: 0, pagesProcessed: 0, message: `Skipped: ${skip.reason}` };
   }
 
-  // Find our oldest non-final Sotuvchi order — everything older than this can be skipped
+  // Stop boundary is per-user — anchor to THIS user's oldest pending
+  // order so we don't walk further back than needed for this account.
   const [oldestRow] = await db
     .select({ createdAt: orders.createdAt })
     .from(orders)
@@ -427,17 +417,17 @@ export async function performPaginationSync(): Promise<SyncResult> {
         eq(orders.isFinal, false),
         isNotNull(orders.responseData),
         eq(destinations.appKey, "sotuvchi"),
+        eq(destinations.userId, acc.userId),
       ),
     )
     .orderBy(asc(orders.createdAt))
     .limit(1);
 
-  // Stop 1 day before oldest active order (buffer for clock drift)
   const stopBefore = oldestRow
     ? new Date(oldestRow.createdAt.getTime() - 24 * 60 * 60 * 1000)
     : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-  console.log(`[PaginationSync] Stop boundary: ${stopBefore.toISOString()}`);
+  console.log(`[PaginationSync] acc=${acc.id} user=${acc.userId} stopBefore=${stopBefore.toISOString()}`);
 
   let bearerToken = decrypt(acc.bearerTokenEncrypted);
   let page = 1;
@@ -445,10 +435,7 @@ export async function performPaginationSync(): Promise<SyncResult> {
   let errors = 0;
   let pagesProcessed = 0;
 
-  syncState.progress = { current: 0, total: 0, platform: "sotuvchi", rateLimited: false };
-
   while (!syncState.aborted) {
-    // Fetch one page from Sotuvchi
     let pageResult: OrderPageResult;
     try {
       pageResult = await sotuvchiGetOrdersPage(bearerToken, page, PAGE_LIMIT)
@@ -457,13 +444,13 @@ export async function performPaginationSync(): Promise<SyncResult> {
             const password = decrypt(acc.passwordEncrypted);
             const r = await crmLogin("sotuvchi", acc.phone, password);
             bearerToken = r.bearerToken;
-            await db!.update(crmConnections)
+            await db.update(crmConnections)
               .set({ bearerTokenEncrypted: encrypt(r.bearerToken), status: "active", lastLoginAt: new Date() })
               .where(eq(crmConnections.id, acc.id));
             return sotuvchiGetOrdersPage(bearerToken, page, PAGE_LIMIT);
           }
           if (err?.response?.status === 429) {
-            console.warn(`[PaginationSync] 429 on page ${page} — pausing 30s`);
+            console.warn(`[PaginationSync] 429 on page ${page} (acc=${acc.id}) — pausing 30s`);
             if (syncState.progress) syncState.progress.rateLimited = true;
             await new Promise((r) => setTimeout(r, 30_000));
             if (syncState.progress) syncState.progress.rateLimited = false;
@@ -472,7 +459,7 @@ export async function performPaginationSync(): Promise<SyncResult> {
           throw err;
         });
     } catch (err) {
-      console.error(`[PaginationSync] Failed on page ${page}:`, err instanceof Error ? err.message : err);
+      console.error(`[PaginationSync] acc=${acc.id} failed on page ${page}:`, err instanceof Error ? err.message : err);
       errors++;
       break;
     }
@@ -480,14 +467,18 @@ export async function performPaginationSync(): Promise<SyncResult> {
     if (!pageResult.data.length) break;
 
     if (page === 1) {
-      console.log(`[PaginationSync] ${pageResult.total.toLocaleString()} total Sotuvchi orders, ${pageResult.last_page.toLocaleString()} pages`);
+      console.log(`[PaginationSync] acc=${acc.id} ${pageResult.total.toLocaleString()} total Sotuvchi orders, ${pageResult.last_page.toLocaleString()} pages`);
       if (syncState.progress) syncState.progress.total = pageResult.last_page;
     }
     if (syncState.progress) syncState.progress.current = page;
 
-    // Bulk match against our DB using JSON_EXTRACT
     const externalIds = pageResult.data.map((o) => String(o.id));
     try {
+      // Scope match query to this account's user — without this, an account's
+      // bearer would silently update orders belonging to OTHER Targenix users.
+      // The previous query had no destinations join at all; matches relied on
+      // sotuvchi extIds being globally unique. Adding the join + userId filter
+      // is correct + defensive.
       const matches = await db
         .select({
           orderId: orders.id,
@@ -496,8 +487,12 @@ export async function performPaginationSync(): Promise<SyncResult> {
           externalId: sql<string>`JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.id'))`,
         })
         .from(orders)
+        .innerJoin(integrations, eq(orders.integrationId, integrations.id))
+        .innerJoin(destinations, eq(integrations.destinationId, destinations.id))
         .where(
           and(
+            eq(destinations.appKey, "sotuvchi"),
+            eq(destinations.userId, acc.userId),
             eq(orders.isFinal, false),
             isNotNull(orders.responseData),
             sql`JSON_UNQUOTE(JSON_EXTRACT(${orders.responseData}, '$.id')) IN (${sql.join(
@@ -515,22 +510,6 @@ export async function performPaginationSync(): Promise<SyncResult> {
         const normalized = mapSotuvchiRawToNormalized(so.status);
         const terminal = isFinalStatus(normalized);
         const statusChanged = normalized !== match.crmStatus;
-        // Phase 4 follow-up: /getOrders now surfaces pay_for + offer.id +
-        // offer.name per order (verified via probe 2026-05-15). Capture
-        // them here so the pagination sync — which already touches every
-        // non-final order every 5 min — fills Pipeline / Revenue and the
-        // offer-name label without a separate per-order round-trip.
-        // ~85 pagination calls cover ~17k in-flight orders vs. ~17k
-        // individual calls before.
-        //
-        // offerName always written when present (sotuvchi is the source of
-        // truth for the display label).
-        //
-        // offerId from sotuvchi is the same numeric id we snapshot at order
-        // creation from `destination.templateConfig.variables.offer_id`, so
-        // we just overwrite — keeps the column consistent for legacy rows
-        // that pre-date the snapshot wire-up. Drop the patch if sotuvchi
-        // didn't surface one (rare).
         const payoutPatch =
           so.payoutAmount != null && so.payoutCurrency
             ? { payoutAmount: so.payoutAmount, payoutCurrency: so.payoutCurrency }
@@ -549,7 +528,7 @@ export async function performPaginationSync(): Promise<SyncResult> {
           })
           .where(eq(orders.id, match.orderId));
         if (statusChanged) {
-          console.log(`[PaginationSync] orderId=${match.orderId}: ${match.crmStatus ?? "null"} → ${normalized}${terminal ? " [FINAL]" : ""}`);
+          console.log(`[PaginationSync] acc=${acc.id} orderId=${match.orderId}: ${match.crmStatus ?? "null"} → ${normalized}${terminal ? " [FINAL]" : ""}`);
           void db.insert(orderEvents).values({
             orderId: match.orderId,
             userId: match.orderUserId,
@@ -561,16 +540,15 @@ export async function performPaginationSync(): Promise<SyncResult> {
         synced++;
       }
     } catch (err) {
-      console.error(`[PaginationSync] DB error on page ${page}:`, err instanceof Error ? err.message : err);
+      console.error(`[PaginationSync] acc=${acc.id} DB error on page ${page}:`, err instanceof Error ? err.message : err);
       errors++;
     }
 
     pagesProcessed++;
 
-    // Stop when oldest order on this page is older than our stop boundary
     const oldestOnPage = new Date(pageResult.data.at(-1)!.created_at);
     if (oldestOnPage < stopBefore) {
-      console.log(`[PaginationSync] Reached stop boundary at page ${page} (${oldestOnPage.toISOString()}) — done`);
+      console.log(`[PaginationSync] acc=${acc.id} reached stop boundary at page ${page} (${oldestOnPage.toISOString()}) — done`);
       break;
     }
     if (page >= pageResult.last_page) break;
@@ -581,22 +559,58 @@ export async function performPaginationSync(): Promise<SyncResult> {
     }
   }
 
-  const result: SyncResult = {
-    synced,
-    errors,
-    total: pagesProcessed * PAGE_LIMIT,
-    syncedAt: new Date().toISOString(),
-    message: `${pagesProcessed} sahifa, ${synced} order yangilandi`,
-  };
-  // Circuit breaker bookkeeping — a sync that synced zero rows AND had any
-  // errors is a "failed cycle" (auth bad, CRM down). One success wipes the
-  // failure streak; otherwise we tally toward cooldown.
   if (errors > 0 && synced === 0) {
     recordCrmFailure(acc.id);
   } else {
     recordCrmSuccess(acc.id);
   }
-  console.log(`[PaginationSync] Done — pages=${pagesProcessed} synced=${synced} errors=${errors}`);
+
+  console.log(`[PaginationSync] acc=${acc.id} user=${acc.userId} done — pages=${pagesProcessed} synced=${synced} errors=${errors}`);
+  return { synced, errors, pagesProcessed };
+}
+
+export async function performPaginationSync(): Promise<SyncResult> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+
+  // Iterate ALL active sotuvchi accounts (one per Targenix user). Same
+  // architectural fix as 100k.uz — see syncOneHundredKAccount.
+  const accounts = await db
+    .select()
+    .from(crmConnections)
+    .where(
+      and(
+        eq(crmConnections.platform, "sotuvchi"),
+        eq(crmConnections.status, "active"),
+      ),
+    );
+
+  if (accounts.length === 0) {
+    return { synced: 0, errors: 0, total: 0, syncedAt: new Date().toISOString(), message: "Sotuvchi akkaunt topilmadi" };
+  }
+
+  syncState.progress = { current: 0, total: 0, platform: "sotuvchi", rateLimited: false };
+
+  let totalSynced = 0;
+  let totalErrors = 0;
+  let totalPages = 0;
+
+  for (const acc of accounts) {
+    if (syncState.aborted) break;
+    const { synced, errors, pagesProcessed } = await syncOneSotuvchiAccount(db, acc);
+    totalSynced += synced;
+    totalErrors += errors;
+    totalPages += pagesProcessed;
+  }
+
+  const result: SyncResult = {
+    synced: totalSynced,
+    errors: totalErrors,
+    total: totalPages * PAGE_LIMIT,
+    syncedAt: new Date().toISOString(),
+    message: `${accounts.length} akkaunt, ${totalPages} sahifa, ${totalSynced} order yangilandi`,
+  };
+  console.log(`[PaginationSync] all-accounts done — accounts=${accounts.length} pages=${totalPages} synced=${totalSynced} errors=${totalErrors}`);
   return result;
 }
 
