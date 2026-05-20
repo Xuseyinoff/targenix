@@ -17,6 +17,7 @@ import NotFound from "@/pages/NotFound";
 const Home = lazyWithRetry(() => import("./pages/Home"));
 const Leads = lazyWithRetry(() => import("./pages/Leads"));
 const Insights = lazyWithRetry(() => import("./pages/Insights"));
+const CampaignDrilldown = lazyWithRetry(() => import("./pages/CampaignDrilldown"));
 const WebhookHealth = lazyWithRetry(() => import("./pages/WebhookHealth"));
 const Integrations = lazyWithRetry(() => import("./pages/Integrations"));
 const Connections = lazyWithRetry(() => import("./pages/Connections"));
@@ -189,6 +190,7 @@ function Router() {
       <Route path="/overview" component={Home} />
       <Route path="/leads" component={Leads} />
       <Route path="/insights" component={Insights} />
+      <Route path="/insights/campaign/:campaignId" component={CampaignDrilldown} />
       <Route path="/webhook" component={WebhookHealth} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/integrations/new-routing" component={LegacyLeadRoutingNewRedirect} />

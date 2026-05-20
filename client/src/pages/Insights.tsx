@@ -20,6 +20,7 @@
  *     in the API response.
  */
 import { useMemo, useState } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -85,6 +86,7 @@ const GROUP_BY_LABELS: Record<GroupByKey, string> = {
 };
 
 export default function Insights() {
+  const [, setLocation] = useLocation();
   const [preset, setPreset] = useState<PresetKey>("last_7d");
   const [groupBy, setGroupBy] = useState<GroupByKey>("campaign");
   const range = useMemo(() => rangeFor(preset), [preset]);
@@ -298,8 +300,25 @@ export default function Insights() {
                       // denominator is 0; the table renders "—" in that case.
                       const cpl = r.leads > 0 ? r.spend / r.leads : null;
                       const roas = r.spend > 0 ? r.revenue / r.spend : null;
+                      // Only campaign rows have a drill-down today. Other
+                      // group-by modes (adset/ad/page/form/offer) keep
+                      // their non-clickable styling.
+                      const isDrilldownable = groupBy === "campaign" && r.key !== "";
+                      const onClickRow = isDrilldownable
+                        ? () => setLocation(
+                            `/insights/campaign/${encodeURIComponent(r.key)}` +
+                              `?start=${range.start}&end=${range.end}`,
+                          )
+                        : undefined;
                       return (
-                        <tr key={r.key} className="border-b last:border-0 hover:bg-muted/40">
+                        <tr
+                          key={r.key}
+                          className={
+                            "border-b last:border-0 hover:bg-muted/40 " +
+                            (isDrilldownable ? "cursor-pointer" : "")
+                          }
+                          onClick={onClickRow}
+                        >
                           <td className="py-2 pr-3 max-w-[280px] truncate" title={r.label}>{r.label}</td>
                           <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.leads)}</td>
                           <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.delivered)}</td>

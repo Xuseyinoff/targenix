@@ -38,8 +38,11 @@ import {
   adSets,
   campaignInsights,
   campaigns,
+  destinations,
   facebookForms,
   factAttributionDaily,
+  integrations,
+  leads,
   orders,
 } from "../../drizzle/schema";
 import { runInsightsRollupOnce } from "../services/insightsRollupScheduler";
@@ -269,7 +272,226 @@ export const insightsRouter = router({
       return { rows, currency: currencyRow.baseCurrency ?? "USD" };
     }),
 
-  // ── 4. Admin: manual rollup trigger ──────────────────────────────────────
+  // ── 4. Campaign drill-down: per-affiliate breakdown ──────────────────────
+  // Departs from the rollup-only pattern used by the other procedures.
+  // `fact_attribution_daily` has no appKey dimension, so we LIVE-JOIN
+  // leads ⨯ orders ⨯ integrations ⨯ destinations for the single campaign
+  // the user clicked. Bounded query: ONE campaign × N days = a few thousand
+  // rows at most, fast enough without pre-aggregation.
+  //
+  // Three resultsets in one round-trip:
+  //   1. campaign — name + totalLeads + totalSpend + totalRevenue (with
+  //      "partial" flag when any affiliate has uncaptured payout)
+  //   2. perAffiliate — counts per appKey + revenue (or null when the
+  //      adapter doesn't capture payoutAmount yet, e.g. 100k.uz)
+  //   3. statusDistribution — raw + canonical status counts for the
+  //      "count strip" UI section
+  //
+  // Multi-tenant: every WHERE clause starts with `leads.userId = ctx.user.id`.
+  getCampaignAffiliateBreakdown: protectedProcedure
+    .input(
+      DateRange.extend({
+        campaignId: z.string().min(1).max(100),
+      }),
+    )
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user.id;
+      const db = await getDb();
+      if (!db) {
+        return emptyCampaignBreakdown(input.campaignId);
+      }
+
+      // Date range → inclusive UTC day boundaries. `leads.createdAt` is
+      // TIMESTAMP — compare against the exact bounds so the upper limit
+      // includes the whole `end` day.
+      const startTs = new Date(input.start + "T00:00:00Z");
+      const endTs = new Date(input.end + "T23:59:59.999Z");
+
+      // 1) Campaign name + lead count + currency. campaignName lives on
+      //    leads (denormalized from FB sync); we pick the freshest non-
+      //    empty one as the label.
+      const [campaignHeader] = await db
+        .select({
+          campaignName: sql<string>`COALESCE(MAX(NULLIF(${leads.campaignName}, '')), '')`,
+          totalLeads: sql<number>`COUNT(*)`,
+        })
+        .from(leads)
+        .where(
+          and(
+            eq(leads.userId, userId),
+            eq(leads.campaignId, input.campaignId),
+            sql`${leads.createdAt} BETWEEN ${startTs} AND ${endTs}`,
+          ),
+        );
+
+      const [u] = await db.execute(sql`SELECT baseCurrency FROM users WHERE id = ${userId}`);
+      const currency = ((u as unknown as { baseCurrency?: string }[])?.[0]?.baseCurrency) ?? "USD";
+
+      // 2) Spend for this campaign over the range. Reads campaign_daily_insights
+      //    (the same source the rollup writer uses); preset-overlay handling
+      //    is deliberately omitted here because the drill-down is supposed to
+      //    show the snapshot the rollup uses — adding the overlay would make
+      //    the drill-down disagree with the parent row by a small delta on
+      //    today/yesterday and is misleading for breakdown analysis.
+      const spendResult = await db.execute(sql`
+        SELECT
+          COALESCE(SUM(CAST(cdi.spend AS DECIMAL(20,2))), 0) AS spendDecimal,
+          MAX(aa.currency) AS spendCurrency
+        FROM campaign_daily_insights cdi
+        LEFT JOIN ad_accounts aa
+          ON aa.userId = cdi.userId AND aa.fbAdAccountId = cdi.fbAdAccountId
+        WHERE cdi.userId = ${userId}
+          AND cdi.fbCampaignId = ${input.campaignId}
+          AND cdi.date BETWEEN ${input.start} AND ${input.end}
+      `);
+      const spendList = ((spendResult as unknown as [Array<{
+        spendDecimal: string | number;
+        spendCurrency: string | null;
+      }>, unknown])?.[0] ?? []) as Array<{
+        spendDecimal: string | number;
+        spendCurrency: string | null;
+      }>;
+      const spendDecimal = String(spendList[0]?.spendDecimal ?? "0");
+      const spendCurrency = spendList[0]?.spendCurrency ?? currency;
+      const totalSpendMinor = presetSpendToRollupUnit(spendDecimal, spendCurrency);
+
+      // 3) Per-affiliate breakdown. Live JOIN leads → orders → integrations
+      //    → destinations. Group by appKey + the destination name so two
+      //    same-appKey destinations with different display names stay
+      //    distinct (rare; multi-tenant safety net).
+      const perAffiliateResult = await db.execute(sql`
+        SELECT
+          d.appKey AS appKey,
+          MAX(d.name) AS affiliateName,
+          COUNT(DISTINCT o.id) AS ordersSent,
+          SUM(CASE WHEN o.crmStatus = 'delivered' THEN 1 ELSE 0 END) AS delivered,
+          SUM(CASE WHEN o.crmStatus IS NOT NULL
+                    AND o.isFinal = 0 THEN 1 ELSE 0 END) AS inFlight,
+          SUM(CASE WHEN o.crmStatus IN ('cancelled','returned','not_sold')
+                   THEN 1 ELSE 0 END) AS rejected,
+          SUM(CASE WHEN o.crmStatus = 'archived' THEN 1 ELSE 0 END) AS archived,
+          SUM(CASE WHEN o.crmStatus IS NULL THEN 1 ELSE 0 END) AS unsynced,
+          COALESCE(SUM(CASE WHEN o.crmStatus = 'delivered'
+                              AND o.payoutAmount IS NOT NULL
+                            THEN o.payoutAmount ELSE 0 END), 0) AS revenueMinor,
+          MAX(o.payoutCurrency) AS payoutCurrency,
+          SUM(CASE WHEN o.payoutAmount IS NOT NULL THEN 1 ELSE 0 END) AS payoutCapturedCount
+        FROM leads l
+        INNER JOIN orders o ON o.leadId = l.id
+        INNER JOIN integrations i ON i.id = o.integrationId
+        INNER JOIN destinations d ON d.id = i.destinationId
+        WHERE l.userId = ${userId}
+          AND l.campaignId = ${input.campaignId}
+          AND l.createdAt BETWEEN ${startTs} AND ${endTs}
+        GROUP BY d.appKey
+        ORDER BY ordersSent DESC
+      `);
+
+      const affiliateList = ((perAffiliateResult as unknown as [Array<{
+        appKey: string;
+        affiliateName: string | null;
+        ordersSent: number | string;
+        delivered: number | string;
+        inFlight: number | string;
+        rejected: number | string;
+        archived: number | string;
+        unsynced: number | string;
+        revenueMinor: number | string;
+        payoutCurrency: string | null;
+        payoutCapturedCount: number | string;
+      }>, unknown])?.[0] ?? []) as Array<{
+        appKey: string;
+        affiliateName: string | null;
+        ordersSent: number | string;
+        delivered: number | string;
+        inFlight: number | string;
+        rejected: number | string;
+        archived: number | string;
+        unsynced: number | string;
+        revenueMinor: number | string;
+        payoutCurrency: string | null;
+        payoutCapturedCount: number | string;
+      }>;
+
+      let totalRevenueMinor = 0;
+      let anyAffiliateMissingPayout = false;
+      const perAffiliate = affiliateList.map((r) => {
+        const delivered = Number(r.delivered) || 0;
+        const payoutCapturedCount = Number(r.payoutCapturedCount) || 0;
+        const revenueMinor = Number(r.revenueMinor) || 0;
+        const revenueAvailable = delivered > 0 && payoutCapturedCount > 0;
+        const syncStatus = classifyAffiliateSync(r.appKey);
+        // Track partial-revenue: any affiliate with deliveries but no captured
+        // payout means the campaign total is incomplete.
+        if (delivered > 0 && payoutCapturedCount === 0) {
+          anyAffiliateMissingPayout = true;
+        }
+        if (revenueAvailable) totalRevenueMinor += revenueMinor;
+        return {
+          appKey: r.appKey,
+          affiliateName: r.affiliateName ?? r.appKey,
+          ordersSent: Number(r.ordersSent) || 0,
+          delivered,
+          inFlight: Number(r.inFlight) || 0,
+          rejected: Number(r.rejected) || 0,
+          archived: Number(r.archived) || 0,
+          unsynced: Number(r.unsynced) || 0,
+          revenue: revenueAvailable
+            ? {
+                amountMinor: revenueMinor,
+                currency: r.payoutCurrency ?? currency,
+              }
+            : null,
+          revenueAvailable,
+          syncStatus,
+        };
+      });
+
+      // 4) Status distribution — flat list, sorted by count desc. Empty
+      //    crmRawStatus is folded to '(unsynced)' so the UI strip shows a
+      //    single labeled cell rather than a blank.
+      const statusResult = await db.execute(sql`
+        SELECT
+          COALESCE(NULLIF(o.crmRawStatus, ''), '(unsynced)') AS crmRawStatus,
+          COALESCE(NULLIF(o.crmStatus, ''),    '(unsynced)') AS crmStatus,
+          COUNT(*) AS n
+        FROM leads l
+        INNER JOIN orders o ON o.leadId = l.id
+        WHERE l.userId = ${userId}
+          AND l.campaignId = ${input.campaignId}
+          AND l.createdAt BETWEEN ${startTs} AND ${endTs}
+        GROUP BY crmRawStatus, crmStatus
+        ORDER BY n DESC
+      `);
+      const statusDistribution = (((statusResult as unknown as [Array<{
+        crmRawStatus: string;
+        crmStatus: string;
+        n: number | string;
+      }>, unknown])?.[0] ?? []) as Array<{
+        crmRawStatus: string;
+        crmStatus: string;
+        n: number | string;
+      }>).map((r) => ({
+        crmRawStatus: r.crmRawStatus,
+        crmStatus: r.crmStatus,
+        count: Number(r.n) || 0,
+      }));
+
+      return {
+        campaign: {
+          id: input.campaignId,
+          name: campaignHeader?.campaignName ?? "",
+          totalLeads: Number(campaignHeader?.totalLeads) || 0,
+          totalSpend: { amountMinor: totalSpendMinor, currency: spendCurrency },
+          totalRevenue: { amountMinor: totalRevenueMinor, currency },
+          totalRevenueNote: anyAffiliateMissingPayout ? ("partial" as const) : ("complete" as const),
+        },
+        perAffiliate,
+        statusDistribution,
+      };
+    }),
+
+  // ── 5. Admin: manual rollup trigger ──────────────────────────────────────
   // For diagnostics + on-demand recompute. The scheduler runs every 15 min
   // automatically; this lets an operator force a pass without waiting (e.g.
   // right after a deploy to refresh the table immediately).
@@ -279,6 +501,62 @@ export const insightsRouter = router({
     return { ok: true, durationMs: Date.now() - startedAt };
   }),
 });
+
+// Classify an affiliate's CRM-sync maturity. Drives the badge in the
+// drill-down UI:
+//   'live'    → CRM sync wired up AND payout captured (sotuvchi)
+//   'pending' → CRM sync wired up but payout NOT captured (100k.uz —
+//               Phase 3.1 follow-up)
+//   'no-sync' → CRM sync not implemented for this platform (alijahon,
+//               inbaza, mgoods)
+// The list is explicit rather than dynamic — keeps the badge stable
+// across deploys and is one place to update when a new platform comes
+// online.
+function classifyAffiliateSync(appKey: string): "live" | "pending" | "no-sync" {
+  switch (appKey) {
+    case "sotuvchi":
+      return "live";
+    case "100k":
+      return "pending";
+    case "alijahon":
+    case "inbaza":
+    case "mgoods":
+      return "no-sync";
+    default:
+      return "no-sync";
+  }
+}
+
+function emptyCampaignBreakdown(campaignId: string) {
+  return {
+    campaign: {
+      id: campaignId,
+      name: "",
+      totalLeads: 0,
+      totalSpend: { amountMinor: 0, currency: "USD" },
+      totalRevenue: { amountMinor: 0, currency: "USD" },
+      totalRevenueNote: "complete" as const,
+    },
+    perAffiliate: [] as Array<{
+      appKey: string;
+      affiliateName: string;
+      ordersSent: number;
+      delivered: number;
+      inFlight: number;
+      rejected: number;
+      archived: number;
+      unsynced: number;
+      revenue: { amountMinor: number; currency: string } | null;
+      revenueAvailable: boolean;
+      syncStatus: "live" | "pending" | "no-sync";
+    }>,
+    statusDistribution: [] as Array<{
+      crmRawStatus: string;
+      crmStatus: string;
+      count: number;
+    }>,
+  };
+}
 
 // ── Shared types + helpers ───────────────────────────────────────────────────
 
