@@ -33,6 +33,7 @@ import {
 } from "recharts";
 import { ArrowDown, ArrowUp, BarChart3, Loader2 } from "lucide-react";
 import DashboardLayout from "@/components/DashboardLayout";
+import { StatusBar } from "@/components/insights/StatusBar";
 
 // ── Date range presets (kept local — small enough not to need a util) ────────
 type PresetKey = "today" | "yesterday" | "last_7d" | "last_30d";
@@ -286,10 +287,13 @@ export default function Insights() {
                       <th className="text-left py-2 pr-3">{GROUP_BY_LABELS[groupBy]}</th>
                       <th className="text-right py-2 px-3">Leads</th>
                       <th className="text-right py-2 px-3">Delivered</th>
+                      <th className="py-2 px-3" title="Order outcomes: delivered (green) · pipeline (amber) · trash (red) · unsynced (grey)">Status</th>
+                      <th className="text-right py-2 px-3" title="In-flight orders: contacted, callback, in-progress, not-delivered, out-of-stock — past 'new' but not yet 'delivered'.">Pipeline</th>
+                      <th className="text-right py-2 px-3" title="Terminal-negative orders: cancelled, returned, not-sold, trash.">Trash</th>
                       <th className="text-right py-2 px-3">CPL</th>
                       <th className="text-right py-2 px-3">Spend</th>
                       <th className="text-right py-2 px-3">Revenue</th>
-                      <th className="text-right py-2 px-3" title="In-flight money: orders past 'new' but not yet 'delivered'. Not counted in Profit.">Pipeline</th>
+                      <th className="text-right py-2 px-3" title="In-flight money: orders past 'new' but not yet 'delivered'. Not counted in Profit.">Pipeline $</th>
                       <th className="text-right py-2 px-3">ROAS</th>
                       <th className="text-right py-2 px-3">Profit</th>
                     </tr>
@@ -322,6 +326,21 @@ export default function Insights() {
                           <td className="py-2 pr-3 max-w-[280px] truncate" title={r.label}>{r.label}</td>
                           <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.leads)}</td>
                           <td className="text-right py-2 px-3 tabular-nums">{formatNumber(r.delivered)}</td>
+                          <td className="py-2 px-3">
+                            <StatusBar
+                              delivered={r.deliveredCount}
+                              pipeline={r.pipelineCount}
+                              trash={r.trashCount}
+                              unsynced={r.unsyncedCount}
+                              total={r.leads}
+                            />
+                          </td>
+                          <td className="text-right py-2 px-3 tabular-nums text-amber-600 dark:text-amber-400">
+                            {r.pipelineCount > 0 ? formatNumber(r.pipelineCount) : "—"}
+                          </td>
+                          <td className="text-right py-2 px-3 tabular-nums text-red-600 dark:text-red-400">
+                            {r.trashCount > 0 ? formatNumber(r.trashCount) : "—"}
+                          </td>
                           <td className="text-right py-2 px-3 tabular-nums">{cpl !== null ? formatMoney(cpl, currency) : "—"}</td>
                           <td className="text-right py-2 px-3 tabular-nums">{formatMoney(r.spend, currency)}</td>
                           <td className="text-right py-2 px-3 tabular-nums">{formatMoney(r.revenue, currency)}</td>

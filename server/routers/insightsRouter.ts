@@ -239,6 +239,9 @@ export const insightsRouter = router({
         const leads = Number(r.leads) || 0;
         const sent = Number(r.sent) || 0;
         const delivered = Number(r.delivered) || 0;
+        const held = Number(r.held) || 0;
+        const rejected = Number(r.rejected) || 0;
+        const trash = Number(r.trash) || 0;
         const revenue = Number(r.revenue) || 0;
         const spend = Number(r.spend) || 0;
         const key = r.key ?? "";
@@ -249,6 +252,23 @@ export const insightsRouter = router({
         //      or for offerId where there is no source table)
         //   3. The dimension-specific "(no X)" sentinel for the empty key
         const label = key === "" ? GROUP_BY_COLUMNS[groupKey].emptyLabel : (labelMap.get(key) ?? key);
+        // Derived per-status counts for the Insights table status bar.
+        // The rollup writer (insightsRollupScheduler.ts:200-204) classifies:
+        //   delivered → crmStatus = 'delivered'
+        //   held      → crmStatus IN (callback, in_progress, not_delivered, out_of_stock)  — in-flight, non-final
+        //   rejected  → crmStatus IN (cancelled, returned, not_sold)
+        //   trash     → crmStatus = 'trash'
+        //   accepted  → broader superset that overlaps with delivered+held; NOT a partition,
+        //               intentionally unused in the status bar to avoid double-counting.
+        // Mapping the rollup buckets onto the four UI segments:
+        //   pipelineCount = held              (in-flight, non-final)
+        //   trashCount    = rejected + trash  (terminal negative)
+        //   unsynced      = leads − the above − delivered (residual; lead-grained because
+        //                   `leads` is the row's denominator). Clamped to 0 — fan-out can
+        //                   make order-grained counts exceed leads on multi-affiliate rows.
+        const pipelineCount = held;
+        const trashCount = rejected + trash;
+        const unsyncedCount = Math.max(0, leads - delivered - pipelineCount - trashCount);
         return {
           key,
           label,
@@ -256,14 +276,18 @@ export const insightsRouter = router({
           sent,
           accepted: Number(r.accepted) || 0,
           delivered,
-          held: Number(r.held) || 0,
-          rejected: Number(r.rejected) || 0,
-          trash: Number(r.trash) || 0,
+          held,
+          rejected,
+          trash,
           revenue,
           pipeline: Number(r.pipeline) || 0,
           spend,
           profit: revenue - spend,
           deliveryRate: sent > 0 ? delivered / sent : 0,
+          deliveredCount: delivered,
+          pipelineCount,
+          trashCount,
+          unsyncedCount,
         };
       });
 
@@ -593,6 +617,15 @@ interface BreakdownRow extends Totals {
   key: string;
   label: string;
   deliveryRate: number;
+  /** UI status bar — derived counts from the rollup buckets above.
+   *  `deliveredCount` mirrors `delivered`; `pipelineCount` = `held`;
+   *  `trashCount` = `rejected + trash`; `unsyncedCount` is the
+   *  leads-grained residual (clamped to 0). See getBreakdown for
+   *  the mapping rationale. */
+  deliveredCount: number;
+  pipelineCount: number;
+  trashCount: number;
+  unsyncedCount: number;
 }
 
 function emptyTotals(): Totals {
